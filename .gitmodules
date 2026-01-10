@@ -1,0 +1,9 @@
+[submodule "vendor/browser-use"]
+	path = vendor/browser-use
+	url = git@github.com:browser-use/browser-use.git
+[submodule "vendor/react-grab"]
+	path = vendor/react-grab
+	url = git@github.com:aidenybai/react-grab.git
+[submodule "vendor/android-use"]
+	path = vendor/android-use
+	url = git@github.com:actionstatelabs/android-action-kernel.git

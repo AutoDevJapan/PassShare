@@ -1,0 +1,23 @@
+{
+  "name": "fullstack-template",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "setup": "pnpm -C frontend install",
+    "start": "node scripts/start.mjs",
+    "stop": "node scripts/stop.mjs",
+    "reset": "node scripts/stop.mjs --volumes",
+    "logs": "docker compose logs -f --tail=200 api",
+    "migrate": "docker compose exec api uv run alembic upgrade head",
+    "seed": "docker compose up -d mysql api && docker compose exec -T api uv run alembic upgrade head && docker compose exec -T api uv run python scripts/seed_all.py",
+    "start:be": "node scripts/start.mjs --backend-only",
+    "stop:be": "node scripts/stop.mjs --backend-only",
+    "start:fe": "node scripts/start.mjs --frontend-only",
+    "stop:fe": "node scripts/stop.mjs --frontend-only",
+    "quality-gate": "node scripts/quality-gate.mjs",
+    "qg": "node scripts/quality-gate.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "preflight:integration": "node scripts/preflight.mjs --run-integration"
+  }
+}

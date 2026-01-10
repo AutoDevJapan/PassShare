@@ -1,0 +1,6 @@
+[tools]
+terraform = "1.13.4"
+awscli = "2"
+uv = "latest"
+python = "3.13.2"
+node = "22"
