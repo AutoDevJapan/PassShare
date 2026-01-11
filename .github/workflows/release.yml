@@ -1,0 +1,295 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+
+env:
+  R2_ENDPOINT: https://05f6d2c09fa3ee88119588f182550e9c.r2.cloudflarestorage.com
+  R2_BUCKET: passshare-downloads
+
+jobs:
+  # バージョン情報を取得
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Get version from tag or input
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          fi
+
+  # デスクトップアプリのビルド（Windows）
+  build-desktop-windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build desktop app
+        run: pnpm --filter passshare-desktop build
+
+      - name: Package for Windows
+        run: pnpm --filter passshare-desktop dist:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to R2
+        uses: shallwefootball/s3-upload-action@master
+        with:
+          aws_key_id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws_bucket: ${{ env.R2_BUCKET }}
+          source_dir: desktop/release
+          destination_dir: ${{ needs.prepare.outputs.version }}/desktop/windows
+          endpoint: ${{ env.R2_ENDPOINT }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: desktop/release/*.exe
+
+  # デスクトップアプリのビルド（macOS）
+  build-desktop-macos:
+    needs: prepare
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build desktop app
+        run: pnpm --filter passshare-desktop build
+
+      - name: Package for macOS
+        run: pnpm --filter passshare-desktop dist:mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to R2
+        uses: shallwefootball/s3-upload-action@master
+        with:
+          aws_key_id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws_bucket: ${{ env.R2_BUCKET }}
+          source_dir: desktop/release
+          destination_dir: ${{ needs.prepare.outputs.version }}/desktop/macos
+          endpoint: ${{ env.R2_ENDPOINT }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+
+  # デスクトップアプリのビルド（Linux）
+  build-desktop-linux:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build desktop app
+        run: pnpm --filter passshare-desktop build
+
+      - name: Package for Linux
+        run: pnpm --filter passshare-desktop dist:linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to R2
+        uses: shallwefootball/s3-upload-action@master
+        with:
+          aws_key_id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws_bucket: ${{ env.R2_BUCKET }}
+          source_dir: desktop/release
+          destination_dir: ${{ needs.prepare.outputs.version }}/desktop/linux
+          endpoint: ${{ env.R2_ENDPOINT }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: |
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+
+  # ブラウザ拡張のビルド
+  build-browser-extension:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build extension
+        run: pnpm --filter passshare-browser-extension build
+
+      - name: Package for Chrome
+        run: |
+          cd browser-extension
+          zip -r ../passshare-chrome-${{ needs.prepare.outputs.version }}.zip dist/*
+
+      - name: Package for Firefox
+        run: |
+          cd browser-extension
+          zip -r ../passshare-firefox-${{ needs.prepare.outputs.version }}.xpi dist/*
+
+      - name: Upload to R2
+        uses: shallwefootball/s3-upload-action@master
+        with:
+          aws_key_id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws_bucket: ${{ env.R2_BUCKET }}
+          source_dir: .
+          destination_dir: ${{ needs.prepare.outputs.version }}/extension
+          endpoint: ${{ env.R2_ENDPOINT }}
+          include: '*.zip,*.xpi'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension
+          path: |
+            passshare-chrome-*.zip
+            passshare-firefox-*.xpi
+
+  # GitHub Releaseの作成
+  create-release:
+    needs: [prepare, build-desktop-windows, build-desktop-macos, build-desktop-linux, build-browser-extension]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: PassShare v${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.xpi
+          body: |
+            ## PassShare v${{ needs.prepare.outputs.version }}
+
+            ### ダウンロード
+
+            #### デスクトップアプリ
+            - **Windows**: [PassShare-${{ needs.prepare.outputs.version }}-win.exe](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/windows/PassShare-${{ needs.prepare.outputs.version }}.exe)
+            - **macOS**: [PassShare-${{ needs.prepare.outputs.version }}-mac.dmg](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/macos/PassShare-${{ needs.prepare.outputs.version }}.dmg)
+            - **Linux**: [PassShare-${{ needs.prepare.outputs.version }}-linux.AppImage](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/linux/PassShare-${{ needs.prepare.outputs.version }}.AppImage)
+
+            #### ブラウザ拡張
+            - **Chrome/Edge/Brave**: [passshare-chrome-${{ needs.prepare.outputs.version }}.zip](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-chrome-${{ needs.prepare.outputs.version }}.zip)
+            - **Firefox**: [passshare-firefox-${{ needs.prepare.outputs.version }}.xpi](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-firefox-${{ needs.prepare.outputs.version }}.xpi)
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 最新バージョンのメタデータを更新
+  update-latest:
+    needs: [prepare, create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create latest.json
+        run: |
+          cat > latest.json << EOF
+          {
+            "version": "${{ needs.prepare.outputs.version }}",
+            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "downloads": {
+              "desktop": {
+                "windows": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/windows/",
+                "macos": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/macos/",
+                "linux": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/linux/"
+              },
+              "extension": {
+                "chrome": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-chrome-${{ needs.prepare.outputs.version }}.zip",
+                "firefox": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-firefox-${{ needs.prepare.outputs.version }}.xpi"
+              }
+            }
+          }
+          EOF
+
+      - name: Upload latest.json to R2
+        uses: shallwefootball/s3-upload-action@master
+        with:
+          aws_key_id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws_bucket: ${{ env.R2_BUCKET }}
+          source_dir: .
+          destination_dir: ''
+          endpoint: ${{ env.R2_ENDPOINT }}
+          include: 'latest.json'

@@ -1,9 +1,11 @@
 """Download statistics endpoints."""
 
 import hashlib
+from datetime import datetime, timedelta
+from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -14,45 +16,73 @@ from app.infrastructure.database import async_session_factory
 router = APIRouter()
 
 
-# 利用可能なダウンロード
-AVAILABLE_DOWNLOADS = {
+# プラットフォーム設定（バージョン情報はR2から動的取得）
+PLATFORM_CONFIG = {
     # デスクトップ
     "desktop/windows": {
-        "filename": "PassShare-Setup.exe",
         "platform": "windows",
-        "version": "1.0.0",
+        "path_template": "{version}/desktop/windows/PassShare-{version}.exe",
     },
     "desktop/macos": {
-        "filename": "PassShare.dmg",
         "platform": "macos",
-        "version": "1.0.0",
+        "path_template": "{version}/desktop/macos/PassShare-{version}.dmg",
     },
     "desktop/linux": {
-        "filename": "PassShare.AppImage",
         "platform": "linux",
-        "version": "1.0.0",
+        "path_template": "{version}/desktop/linux/PassShare-{version}.AppImage",
     },
     # ブラウザ拡張
     "extension/chrome": {
-        "filename": "passshare-chrome.zip",
         "platform": "chrome",
-        "version": "1.0.0",
+        "path_template": "{version}/extension/passshare-chrome-{version}.zip",
     },
     "extension/firefox": {
-        "filename": "passshare-firefox.xpi",
         "platform": "firefox",
-        "version": "1.0.0",
+        "path_template": "{version}/extension/passshare-firefox-{version}.xpi",
     },
     # モバイル（直接ダウンロードではなくストアへリダイレクト）
     "mobile/ios": {
-        "redirect": "https://apps.apple.com/app/passshare",
         "platform": "ios",
+        "redirect": "https://apps.apple.com/app/passshare",
     },
     "mobile/android": {
-        "redirect": "https://play.google.com/store/apps/details?id=net.bm1314.passshare",
         "platform": "android",
+        "redirect": "https://play.google.com/store/apps/details?id=net.bm1314.passshare",
     },
 }
+
+# latest.json のキャッシュ
+_latest_cache: dict[str, Any] = {}
+_cache_expires: datetime | None = None
+CACHE_TTL = timedelta(minutes=5)
+
+
+async def get_latest_version() -> dict[str, Any]:
+    """R2からlatest.jsonを取得（キャッシュ付き）."""
+    global _latest_cache, _cache_expires
+
+    # キャッシュが有効なら返す
+    if _cache_expires and datetime.now() < _cache_expires and _latest_cache:
+        return _latest_cache
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.downloads_base_url}/latest.json",
+                timeout=5.0,
+            )
+            if response.status_code == 200:
+                _latest_cache = response.json()
+                _cache_expires = datetime.now() + CACHE_TTL
+                return _latest_cache
+    except Exception:
+        pass
+
+    # 取得失敗時はキャッシュがあれば返す、なければデフォルト
+    if _latest_cache:
+        return _latest_cache
+
+    return {"version": "1.0.0"}
 
 
 class DownloadStats(BaseModel):
@@ -93,16 +123,26 @@ class DownloadListResponse(BaseModel):
 @router.get("/list", response_model=DownloadListResponse)
 async def list_downloads() -> DownloadListResponse:
     """List all available downloads."""
+    latest = await get_latest_version()
+    version = latest.get("version", "1.0.0")
+
     desktop = []
     extension = []
     mobile = []
 
-    for key, info in AVAILABLE_DOWNLOADS.items():
+    for key, config in PLATFORM_CONFIG.items():
         category = key.split("/")[0]
+
+        # ファイル名を生成
+        filename = None
+        if "path_template" in config:
+            path = config["path_template"].format(version=version)
+            filename = path.split("/")[-1]
+
         dl_info = DownloadInfo(
-            platform=info["platform"],
-            filename=info.get("filename"),
-            version=info.get("version"),
+            platform=config["platform"],
+            filename=filename,
+            version=version if "redirect" not in config else None,
             url=f"/api/v1/downloads/{key}",
         )
 
@@ -121,12 +161,14 @@ async def download_file(category: str, platform: str, request: Request) -> Redir
     """Download a file and record statistics."""
     key = f"{category}/{platform}"
 
-    if key not in AVAILABLE_DOWNLOADS:
-        from fastapi import HTTPException
-
+    if key not in PLATFORM_CONFIG:
         raise HTTPException(status_code=404, detail="Download not found")
 
-    info = AVAILABLE_DOWNLOADS[key]
+    config = PLATFORM_CONFIG[key]
+
+    # 最新バージョンを取得
+    latest = await get_latest_version()
+    version = latest.get("version", "1.0.0")
 
     # ダウンロード統計を記録
     try:
@@ -137,8 +179,8 @@ async def download_file(category: str, platform: str, request: Request) -> Redir
         async with async_session_factory() as session:
             event = DownloadEvent(
                 package=f"passshare-{category}",
-                version=info.get("version", "1.0.0"),
-                platform=info["platform"],
+                version=version,
+                platform=config["platform"],
                 ip_hash=ip_hash,
                 user_agent=request.headers.get("user-agent"),
             )
@@ -148,12 +190,13 @@ async def download_file(category: str, platform: str, request: Request) -> Redir
         pass  # 統計記録失敗しても続行
 
     # リダイレクト先を決定
-    if "redirect" in info:
+    if "redirect" in config:
         # モバイルはストアへ直接リダイレクト
-        return RedirectResponse(url=info["redirect"], status_code=302)
+        return RedirectResponse(url=config["redirect"], status_code=302)
     else:
         # R2からファイルをダウンロード
-        file_url = f"{settings.downloads_base_url}/{info['version']}/{info['filename']}"
+        file_path = config["path_template"].format(version=version)
+        file_url = f"{settings.downloads_base_url}/{file_path}"
         return RedirectResponse(url=file_url, status_code=302)
 
 
