@@ -12,14 +12,17 @@ from fastapi.responses import JSONResponse
 
 from app.presentation.api.v1 import router as v1_router
 from app.config import settings
+from app.infrastructure.database import init_db, close_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     # Startup
+    await init_db()
     yield
     # Shutdown
+    await close_db()
 
 
 app = FastAPI(
@@ -44,7 +47,7 @@ app.add_middleware(
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": "1.0.0", "database": "postgresql"}
 
 
 # Include API routers

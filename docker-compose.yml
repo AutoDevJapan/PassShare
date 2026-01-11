@@ -1,74 +1,53 @@
 services:
-  mysql:
-    container_name: backend-mysql
+  postgres:
+    container_name: passshare-postgres
     restart: always
-    image: mysql:8.0.36
+    image: postgres:16-alpine
     volumes:
-      - mysql_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       TZ: Asia/Tokyo
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-app_db}
-      MYSQL_USER: ${MYSQL_USER:-app_user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
+      POSTGRES_USER: ${POSTGRES_USER:-passshare}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-passshare_db}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - app-network
     healthcheck:
-      test:
-        [
-          "CMD",
-          "mysqladmin",
-          "ping",
-          "-h",
-          "localhost",
-          "-u",
-          "root",
-          "-p${MYSQL_ROOT_PASSWORD:-password}",
-        ]
-      interval: 30s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-passshare} -d ${POSTGRES_DB:-passshare_db}"]
+      interval: 10s
       timeout: 5s
       retries: 5
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
   api:
-    container_name: backend-api
+    container_name: passshare-api
     restart: always
     tty: true
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
       TZ: Asia/Tokyo
-      # Database (override for container networking)
-      DB_HOST: mysql
-      DB_PORT: "3306"
-      DB_USER: ${MYSQL_USER:-app_user}
-      DB_PASSWORD: ${MYSQL_PASSWORD:-password}
-      DB_NAME: ${MYSQL_DATABASE:-app_db}
-      MYSQL_USER: ${MYSQL_USER:-app_user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-app_db}
-      DB_CHARSET: ${DB_CHARSET:-utf8mb4}
-      # LLM
-      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
-      # OpenAI
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
-      OPENAI_SUMMARY_MODEL: ${OPENAI_SUMMARY_MODEL:-gpt-4o}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      # Anthropic
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-5-20250929}
+      # Database (PostgreSQL)
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-passshare}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      DB_NAME: ${POSTGRES_DB:-passshare_db}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-passshare}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-passshare_db}
       # API
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8000}
+      DEBUG: ${DEBUG:-false}
       # CORS
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      # GitHub
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO: ${GITHUB_REPO:-bm1314/passshare}
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     build:
       context: ./backend
@@ -97,5 +76,5 @@ networks:
     driver: bridge
 
 volumes:
-  mysql_data:
+  postgres_data:
   backend-logs:

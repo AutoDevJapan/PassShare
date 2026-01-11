@@ -8,6 +8,7 @@ PassShare distribution website backend API.
 
 - Python 3.11+
 - uv (package manager)
+- PostgreSQL 16+
 
 ## Setup
 
@@ -19,11 +20,43 @@ uv sync
 cp .env.example .env
 ```
 
+## Database
+
+### PostgreSQL
+
+```bash
+# Start PostgreSQL (Docker)
+docker compose up -d postgres
+
+# Run migrations
+uv run alembic upgrade head
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_HOST` | localhost | PostgreSQL host |
+| `DB_PORT` | 5432 | PostgreSQL port |
+| `DB_USER` | passshare | Database user |
+| `DB_PASSWORD` | password | Database password |
+| `DB_NAME` | passshare_db | Database name |
+| `DATABASE_URL` | - | Full database URL (overrides above) |
+
 ## Development
 
 ```bash
 # Run development server
 uv run uvicorn app.main:app --reload --port 8000
+
+# Create new migration
+uv run alembic revision --autogenerate -m "description"
+
+# Run migrations
+uv run alembic upgrade head
+
+# Rollback migration
+uv run alembic downgrade -1
 ```
 
 ## API Endpoints
@@ -48,6 +81,14 @@ uv run uvicorn app.main:app --reload --port 8000
 - `GET /api/v1/docs/sections` - Get documentation structure
 - `GET /api/v1/docs/content/{doc_id}` - Get documentation content
 - `GET /api/v1/docs/search?q=query` - Search documentation
+
+## Tech Stack
+
+- **Framework**: FastAPI
+- **Database**: PostgreSQL 16
+- **ORM**: SQLAlchemy 2.0 (async)
+- **Migrations**: Alembic
+- **Validation**: Pydantic v2
 
 ## License
 
