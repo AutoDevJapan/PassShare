@@ -64,5 +64,8 @@ class Settings(BaseSettings):
     npm_package_cli: str = "passshare"
     npm_package_core: str = "@passshare/core"
 
+    # Downloads (Cloudflare R2)
+    downloads_base_url: str = "https://downloads.pass-share.bm1314.net"
+
 
 settings = Settings()

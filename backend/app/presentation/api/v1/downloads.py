@@ -1,13 +1,58 @@
 """Download statistics endpoints."""
 
+import hashlib
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.config import settings
+from app.domain.models import DownloadEvent
+from app.infrastructure.database import async_session_factory
 
 router = APIRouter()
+
+
+# 利用可能なダウンロード
+AVAILABLE_DOWNLOADS = {
+    # デスクトップ
+    "desktop/windows": {
+        "filename": "PassShare-Setup.exe",
+        "platform": "windows",
+        "version": "1.0.0",
+    },
+    "desktop/macos": {
+        "filename": "PassShare.dmg",
+        "platform": "macos",
+        "version": "1.0.0",
+    },
+    "desktop/linux": {
+        "filename": "PassShare.AppImage",
+        "platform": "linux",
+        "version": "1.0.0",
+    },
+    # ブラウザ拡張
+    "extension/chrome": {
+        "filename": "passshare-chrome.zip",
+        "platform": "chrome",
+        "version": "1.0.0",
+    },
+    "extension/firefox": {
+        "filename": "passshare-firefox.xpi",
+        "platform": "firefox",
+        "version": "1.0.0",
+    },
+    # モバイル（直接ダウンロードではなくストアへリダイレクト）
+    "mobile/ios": {
+        "redirect": "https://apps.apple.com/app/passshare",
+        "platform": "ios",
+    },
+    "mobile/android": {
+        "redirect": "https://play.google.com/store/apps/details?id=net.bm1314.passshare",
+        "platform": "android",
+    },
+}
 
 
 class DownloadStats(BaseModel):
@@ -26,6 +71,90 @@ class PackageInfo(BaseModel):
     downloads: int
     description: str
     homepage: str
+
+
+class DownloadInfo(BaseModel):
+    """Download information."""
+
+    platform: str
+    filename: str | None = None
+    version: str | None = None
+    url: str
+
+
+class DownloadListResponse(BaseModel):
+    """List of available downloads."""
+
+    desktop: list[DownloadInfo]
+    extension: list[DownloadInfo]
+    mobile: list[DownloadInfo]
+
+
+@router.get("/list", response_model=DownloadListResponse)
+async def list_downloads() -> DownloadListResponse:
+    """List all available downloads."""
+    desktop = []
+    extension = []
+    mobile = []
+
+    for key, info in AVAILABLE_DOWNLOADS.items():
+        category = key.split("/")[0]
+        dl_info = DownloadInfo(
+            platform=info["platform"],
+            filename=info.get("filename"),
+            version=info.get("version"),
+            url=f"/api/v1/downloads/{key}",
+        )
+
+        if category == "desktop":
+            desktop.append(dl_info)
+        elif category == "extension":
+            extension.append(dl_info)
+        elif category == "mobile":
+            mobile.append(dl_info)
+
+    return DownloadListResponse(desktop=desktop, extension=extension, mobile=mobile)
+
+
+@router.get("/{category}/{platform}")
+async def download_file(category: str, platform: str, request: Request) -> RedirectResponse:
+    """Download a file and record statistics."""
+    key = f"{category}/{platform}"
+
+    if key not in AVAILABLE_DOWNLOADS:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Download not found")
+
+    info = AVAILABLE_DOWNLOADS[key]
+
+    # ダウンロード統計を記録
+    try:
+        # IPアドレスをハッシュ化（プライバシー保護）
+        client_ip = request.client.host if request.client else "unknown"
+        ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
+
+        async with async_session_factory() as session:
+            event = DownloadEvent(
+                package=f"passshare-{category}",
+                version=info.get("version", "1.0.0"),
+                platform=info["platform"],
+                ip_hash=ip_hash,
+                user_agent=request.headers.get("user-agent"),
+            )
+            session.add(event)
+            await session.commit()
+    except Exception:
+        pass  # 統計記録失敗しても続行
+
+    # リダイレクト先を決定
+    if "redirect" in info:
+        # モバイルはストアへ直接リダイレクト
+        return RedirectResponse(url=info["redirect"], status_code=302)
+    else:
+        # R2からファイルをダウンロード
+        file_url = f"{settings.downloads_base_url}/{info['version']}/{info['filename']}"
+        return RedirectResponse(url=file_url, status_code=302)
 
 
 @router.get("/stats", response_model=DownloadStats)
