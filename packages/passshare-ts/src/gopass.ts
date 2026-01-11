@@ -9,7 +9,7 @@ import { AgeBackend } from './crypto/age.js';
 import { Secret } from './secret.js';
 import { Store } from './store.js';
 import { generatePassword } from './password.js';
-import { NotFoundError, NotInitializedError, StorageError } from './errors.js';
+import { NotInitializedError, StorageError } from './errors.js';
 
 export class Gopass {
   private _config: Config;
@@ -67,7 +67,7 @@ export class Gopass {
       return true;
     }
 
-    for (const store of this._mountStores.values()) {
+    if (this._mountStores.size > 0) {
       return true;
     }
 

@@ -1,5 +1,5 @@
 {
-  "name": "@passshare/core",
+  "name": "@bm1314/passshare-core",
   "version": "1.0.0",
   "description": "A gopass-compatible password manager for teams and individuals",
   "author": "BM1314 <info@bm1314.co.jp>",

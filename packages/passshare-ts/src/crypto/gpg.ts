@@ -36,11 +36,11 @@ export class GPGBackend extends BaseCryptoBackend {
       proc.stdout.on('data', (data) => stdout.push(data));
       proc.stderr.on('data', (data) => stderr.push(data));
 
-      proc.on('error', (err) => {
+      proc.on('error', (_err) => {
         reject(new EncryptError(`GPG binary not found: ${this._gpg}`));
       });
 
-      proc.on('close', (code) => {
+      proc.on('close', (_code) => {
         resolve({
           stdout: Buffer.concat(stdout),
           stderr: Buffer.concat(stderr),

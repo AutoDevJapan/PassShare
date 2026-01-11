@@ -2,14 +2,13 @@
  * Plain filesystem storage backend.
  */
 
-import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as nodePath from 'path';
 import { StorageBackend } from './base.js';
 import { NotFoundError, StorageError } from '../errors.js';
 
 export class FSBackend implements StorageBackend {
-  readonly name = 'fs';
+  readonly name: string = 'fs';
   private _path: string;
   private _extension: string;
 

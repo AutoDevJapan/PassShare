@@ -41,7 +41,7 @@ export class GitFSBackend extends FSBackend {
         stderr += data.toString('utf-8');
       });
 
-      proc.on('error', (err) => {
+      proc.on('error', (_err) => {
         reject(new GitError(`Git binary not found: ${this._git}`));
       });
 

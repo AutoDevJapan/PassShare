@@ -16,7 +16,7 @@ import {
   VERSION,
   NotFoundError,
   PassShareError,
-} from '@passshare/core';
+} from '@bm1314/passshare-core';
 
 const program = new Command();
 

@@ -5,4 +5,4 @@
  */
 
 // Re-export everything from core
-export * from '@passshare/core';
+export * from '@bm1314/passshare-core';
