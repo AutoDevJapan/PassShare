@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     debug: bool = False
     secret_key: str = "your-secret-key-change-in-production"
 
-    # Database (PostgreSQL)
+    # Database (PostgreSQL - Railway)
     db_host: str = "localhost"
     db_port: int = 5432
     db_user: str = "passshare"
@@ -28,16 +28,31 @@ class Settings(BaseSettings):
 
     @property
     def get_database_url(self) -> str:
-        """Get the database URL."""
+        """Get the database URL.
+        
+        Railway provides DATABASE_URL directly.
+        """
         if self.database_url:
-            return self.database_url
+            # Railway format: postgresql://user:pass@host:port/db
+            # Convert to asyncpg format if needed
+            url = self.database_url
+            if url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            elif url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            return url
         return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
 
-    # CORS
+    # CORS (Vercel frontend URLs)
     cors_origins: List[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
         "https://passshare.dev",
+        "https://passshare.vercel.app",
+        "https://*.vercel.app",
+        # Capacitor
+        "capacitor://localhost",
+        "http://localhost",
     ]
 
     # GitHub API (for release info)

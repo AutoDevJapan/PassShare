@@ -22,6 +22,14 @@
 
 PassShareは、pass/gopassと完全互換のオープンソースパスワードマネージャーです。GPG/Age暗号化とGitベースの同期により、安全にパスワードを管理・共有できます。
 
+### 対応プラットフォーム
+
+| プラットフォーム | 技術 | 状態 |
+|------------------|------|------|
+| 🌐 Web（PC/Tablet/Smartphone） | React + Vite | ✅ |
+| 🖥️ デスクトップ（Windows/Mac） | Electron | ✅ |
+| 📱 モバイル（iOS/Android） | Capacitor | ✅ |
+
 ### 特徴
 
 - 🔐 **GPG/Age暗号化** - 業界標準の暗号化でパスワードを保護
@@ -95,11 +103,23 @@ PassShare/
 │   ├── passshare-python/    # Python実装（PyPI配布）
 │   ├── passshare-ts/        # TypeScript実装（npm配布）
 │   └── passshare-node/      # Node.js CLI（npm配布）
-├── backend/                  # 配布サイトAPI（FastAPI）
-├── frontend/                 # 配布サイトUI（React + Vite）
+├── backend/                  # API（FastAPI + PostgreSQL）
+├── frontend/                 # UI（React + Vite + Electron + Capacitor）
+│   ├── src/                  # 共通Reactコード
+│   ├── electron/             # Electron固有
+│   ├── ios/                  # iOS（Capacitor）
+│   └── android/              # Android（Capacitor）
 ├── documents/               # 仕様書
 └── docker-compose.yml
 ```
+
+## インフラ構成
+
+| コンポーネント | サービス |
+|----------------|----------|
+| フロントエンド | Vercel |
+| バックエンド | Railway |
+| データベース | Railway PostgreSQL |
 
 ## 開発
 
@@ -121,8 +141,37 @@ pnpm install
 # Python依存関係
 cd packages/passshare-python && uv sync
 
+# PostgreSQL起動
+docker compose up -d postgres
+
 # 開発サーバー起動
 pnpm dev
+```
+
+### プラットフォーム別開発
+
+```bash
+# Web開発
+cd frontend && pnpm dev
+
+# Electron開発
+cd frontend && pnpm electron:dev
+
+# Capacitor同期（iOS/Android）
+cd frontend && pnpm cap:sync
+```
+
+### ビルド
+
+```bash
+# Webビルド
+cd frontend && pnpm build
+
+# Electronビルド（Windows）
+cd frontend && pnpm electron:build:win
+
+# Electronビルド（Mac）
+cd frontend && pnpm electron:build:mac
 ```
 
 ### 品質ゲート
@@ -138,6 +187,7 @@ pnpm quality-gate
 - [ストレージ仕様](documents/spec/passshare/storage.md)
 - [暗号化仕様](documents/spec/passshare/crypto.md)
 - [設定仕様](documents/spec/passshare/config.md)
+- [デプロイメントガイド](documents/setup/deployment.md)
 
 ## ライセンス
 

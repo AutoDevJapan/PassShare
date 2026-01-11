@@ -1,0 +1,80 @@
+# PassShare Electron Builder Configuration
+# © 2026 株式会社BM1314. All rights reserved.
+
+appId: dev.passshare.app
+productName: PassShare
+copyright: © 2026 株式会社BM1314. All rights reserved.
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+extraMetadata:
+  main: dist-electron/main.js
+
+# Windows
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+  icon: public/logo.png
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: true
+
+# macOS
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  icon: public/logo.png
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# Linux
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+  icon: public/logo.png
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  category: Utility
+
+# Publishing (disabled for now)
+publish: null

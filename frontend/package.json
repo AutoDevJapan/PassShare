@@ -1,16 +1,36 @@
 {
-  "name": "passshare-website",
+  "name": "passshare-app",
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "description": "PassShare - Secure password manager for teams and individuals",
+  "author": "株式会社BM1314 <info@bm1314.co.jp>",
+  "license": "MIT",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext .ts,.tsx",
-    "format": "prettier --write src/**/*.{ts,tsx,css}",
-    "format:check": "prettier --check src/**/*.{ts,tsx,css}",
-    "check-types": "tsc --noEmit"
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "check-types": "tsc --noEmit",
+
+    "electron:dev": "concurrently \"pnpm dev\" \"pnpm electron:start\"",
+    "electron:start": "wait-on http://localhost:5173 && tsc -p electron/tsconfig.json && electron .",
+    "electron:build": "pnpm build && tsc -p electron/tsconfig.json && electron-builder",
+    "electron:build:win": "pnpm electron:build --win",
+    "electron:build:mac": "pnpm electron:build --mac",
+    "electron:build:linux": "pnpm electron:build --linux",
+
+    "cap:init": "cap init PassShare dev.passshare.app --web-dir dist",
+    "cap:sync": "pnpm build && cap sync",
+    "cap:add:ios": "cap add ios",
+    "cap:add:android": "cap add android",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android",
+    "cap:run:ios": "cap run ios",
+    "cap:run:android": "cap run android"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -21,10 +41,17 @@
     "lucide-react": "^0.323.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
+    "concurrently": "^8.2.2",
+    "electron": "^29.0.0",
+    "electron-builder": "^24.13.3",
     "eslint": "^8.56.0",
     "eslint-plugin-react": "^7.33.2",
     "eslint-plugin-react-hooks": "^4.6.0",
@@ -32,6 +59,7 @@
     "prettier": "^3.2.4",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
-    "vite": "^5.0.12"
+    "vite": "^5.0.12",
+    "wait-on": "^7.2.0"
   }
 }
