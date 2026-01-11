@@ -1,0 +1,57 @@
+{
+  "name": "passshare",
+  "version": "1.0.0",
+  "description": "A gopass-compatible password manager CLI for teams and individuals",
+  "author": "BM1314 <info@bm1314.co.jp>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "passshare": "./bin/passshare.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "password",
+    "manager",
+    "gpg",
+    "gopass",
+    "pass",
+    "security",
+    "encryption",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bm1314/passshare"
+  },
+  "homepage": "https://passshare.dev",
+  "bugs": {
+    "url": "https://github.com/bm1314/passshare/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@passshare/core": "workspace:*",
+    "commander": "^12.0.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.0",
+    "vitest": "^1.2.0"
+  }
+}

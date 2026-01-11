@@ -1,0 +1,66 @@
+{
+  "name": "@passshare/core",
+  "version": "1.0.0",
+  "description": "A gopass-compatible password manager for teams and individuals",
+  "author": "BM1314 <info@bm1314.co.jp>",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/types/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm run build:esm && npm run build:cjs && npm run build:types",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:types": "tsc -p tsconfig.types.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write src/**/*.ts",
+    "format:check": "prettier --check src/**/*.ts",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "password",
+    "manager",
+    "gpg",
+    "gopass",
+    "pass",
+    "security",
+    "encryption"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bm1314/passshare"
+  },
+  "homepage": "https://passshare.dev",
+  "bugs": {
+    "url": "https://github.com/bm1314/passshare/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.11.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.0",
+    "vitest": "^1.2.0"
+  }
+}

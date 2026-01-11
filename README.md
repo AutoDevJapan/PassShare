@@ -1,84 +1,151 @@
-# FastAPI x React Fullstack Template
+# PassShare
 
-開発者（人間）が **ターミナルを触らず**、Cursor上で **自然言語でAgentに依頼するだけ** で開発できるフルスタックテンプレートです。
+<p align="center">
+  <img src="logo.png" alt="PassShare Logo" width="120" height="120">
+</p>
 
-## TL;DR（最短の入口）
-- **環境構築**: `.github/prompts/setup.prompt.md` を使ってAgentに依頼（preflight実行）
-- **実装を始める**: `.github/prompts/dev.prompt.md` の入力テンプレだけ埋めて依頼
-- **品質担保**: `pnpm quality-gate`（Agentが実行）
+<p align="center">
+  <strong>チームと個人のためのセキュアなパスワードマネージャー</strong>
+</p>
 
----
-
-## 🚀 初めての環境構築
-
-### Step 1: Cursorでプロンプトファイルをメンション
-Cursorのチャット欄で以下のようにメンション（`@` で補完）してください：
-
-```
-@.github/prompts/setup.prompt.md
-```
-
-### Step 2: 依頼文を入力して送信
-```
-このリポジトリをローカルで動かせるように環境構築してください。
-```
-
-### Step 3: Agentが自動で環境構築を実行
-- 必要コマンドの検出（git/python/pnpm/uv/docker）
-- 依存関係のインストール
-- 品質ゲート（format/lint/typecheck/build）
+<p align="center">
+  <a href="https://passshare.dev">Website</a> •
+  <a href="https://passshare.dev/docs">Documentation</a> •
+  <a href="https://github.com/bm1314/passshare">GitHub</a>
+</p>
 
 ---
 
-## 前提条件
+**© 2026 株式会社BM1314. All rights reserved.**
 
-| 項目 | 必須 | 確認方法 |
-|------|------|----------|
-| **Docker Desktop** | ✅ | `docker --version` |
-| **Node.js** (v20+) | ✅ | `node --version` |
-| **pnpm** (v10+) | ✅ | `pnpm --version` |
-| **Python** (3.11+) | ✅ | `python --version` |
-| **uv** | ✅ | `uv --version` |
+## 概要
 
----
+PassShareは、pass/gopassと完全互換のオープンソースパスワードマネージャーです。GPG/Age暗号化とGitベースの同期により、安全にパスワードを管理・共有できます。
+
+### 特徴
+
+- 🔐 **GPG/Age暗号化** - 業界標準の暗号化でパスワードを保護
+- 🔄 **Git同期** - 自動バージョン管理と複数デバイス間での同期
+- 👥 **チーム共有** - 複数の受信者に対応した安全な共有
+- 🔧 **gopass互換** - 既存のpass/gopassストアをそのまま利用可能
+- 💻 **CLI & API** - コマンドラインとプログラマティックAPI両対応
+- 🌐 **マルチ言語SDK** - Python、TypeScript、Node.jsに対応
+
+## クイックスタート
+
+### インストール
+
+```bash
+# Python
+pip install passshare
+
+# Node.js CLI
+npm install -g passshare
+
+# TypeScript Library
+npm install @passshare/core
+```
+
+### 基本的な使い方
+
+```bash
+# ストアを初期化
+passshare init 0xYOURGPGKEY
+
+# パスワードを追加
+passshare insert email/gmail
+
+# パスワードを表示
+passshare show email/gmail
+
+# パスワードを生成
+passshare generate website/example 24
+
+# 一覧表示
+passshare list
+```
+
+### API使用例
+
+**Python:**
+
+```python
+from passshare import Gopass, Secret
+
+gopass = Gopass()
+secret = gopass.get("email/gmail")
+print(secret.password)
+```
+
+**TypeScript:**
+
+```typescript
+import { Gopass, Secret } from '@passshare/core';
+
+const gopass = new Gopass();
+const secret = await gopass.get('email/gmail');
+console.log(secret.password);
+```
 
 ## プロジェクト構成
 
 ```text
-/
-├── backend/           # バックエンド（FastAPI + MySQL）
-├── frontend/          # フロント（React + Vite）
-├── scripts/           # 品質ゲート / preflight
-├── documents/         # Spec/テンプレ/設定SSOT
-└── docker-compose.yml # 開発用（MySQL + API）
+PassShare/
+├── packages/
+│   ├── passshare-python/    # Python実装（PyPI配布）
+│   ├── passshare-ts/        # TypeScript実装（npm配布）
+│   └── passshare-node/      # Node.js CLI（npm配布）
+├── backend/                  # 配布サイトAPI（FastAPI）
+├── frontend/                 # 配布サイトUI（React + Vite）
+├── documents/               # 仕様書
+└── docker-compose.yml
 ```
 
----
+## 開発
 
-## 開発の入口
+### 前提条件
+
+| 項目 | バージョン |
+|------|----------|
+| Python | 3.11+ |
+| Node.js | 18+ |
+| pnpm | 9+ |
+| Docker | Latest |
 
 ### 環境構築
-**正本プロンプト**: `.github/prompts/setup.prompt.md`
 
-### 実装〜PRまで
-**正本プロンプト**: `.github/prompts/dev.prompt.md`
+```bash
+# 依存関係のインストール
+pnpm install
 
----
+# Python依存関係
+cd packages/passshare-python && uv sync
 
-## 品質ゲート（必須）
-- `pnpm quality-gate`（または `pnpm qg`）
+# 開発サーバー起動
+pnpm dev
+```
 
----
+### 品質ゲート
 
-## よく使うURL（ローカル）
-- フロント（Vite）: `http://localhost:5173`
-- バックエンドAPI: `http://localhost:8000`
-- API docs: `http://localhost:8000/docs`
-- health: `http://localhost:8000/health`
-
----
+```bash
+pnpm quality-gate
+```
 
 ## ドキュメント
-- `documents/README.md`
-- `documents/spec/` - 仕様SSOT
-- `AGENTS.md` - AI Agent向けガイド
+
+- [CLI リファレンス](documents/spec/passshare/cli.md)
+- [API リファレンス](documents/spec/passshare/api.md)
+- [ストレージ仕様](documents/spec/passshare/storage.md)
+- [暗号化仕様](documents/spec/passshare/crypto.md)
+- [設定仕様](documents/spec/passshare/config.md)
+
+## ライセンス
+
+MIT License - 詳細は [LICENSE](LICENSE) を参照してください。
+
+## 会社情報
+
+**株式会社BM1314**
+
+- Website: https://bm1314.co.jp
+- Email: info@bm1314.co.jp
