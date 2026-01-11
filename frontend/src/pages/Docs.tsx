@@ -5,33 +5,111 @@ import clsx from 'clsx';
 const sections = [
   {
     id: 'getting-started',
-    title: 'はじめに',
+    title: 'クイックスタート',
     icon: Book,
     content: `
-## はじめに
+## クイックスタート
 
-PassShareは、pass/gopassと互換性のあるパスワードマネージャーです。
-GPG/Age暗号化とGitベースの同期により、安全にパスワードを管理・共有できます。
+PassShareを使い始めるための5ステップガイドです。
 
-### 特徴
+---
 
-- **gopass互換**: 既存のpass/gopassストアをそのまま利用可能
-- **マルチ言語SDK**: Python、TypeScript、Node.jsに対応
-- **Git同期**: 自動バージョン管理と複数デバイス間での同期
-- **チーム共有**: 複数の受信者に対応した安全な共有
+### Step 1: インストール
 
-### インストール
+お好みの方法でPassShareをインストールしてください。
 
 \`\`\`bash
-# Python
+# Python（推奨）
 pip install passshare
 
 # Node.js
 npm install -g passshare
-
-# TypeScript (ライブラリ)
-npm install @passshare/core
 \`\`\`
+
+---
+
+### Step 2: GPGキーを確認する
+
+PassShareはGPGキーでパスワードを暗号化します。まず、利用可能なGPGキーを確認しましょう。
+
+\`\`\`bash
+gpg --list-keys --keyid-format LONG
+\`\`\`
+
+出力例:
+\`\`\`
+pub   ed25519/ABCD1234EFGH5678 2024-01-01 [SC]
+      1234567890ABCDEF1234567890ABCDEF12345678
+uid           [ultimate] Your Name <your.email@example.com>
+\`\`\`
+
+**使えるキーID:**
+- \`ABCD1234EFGH5678\` ← ed25519/ の後の部分
+- \`your.email@example.com\` ← メールアドレスでもOK
+
+**GPGキーがない場合:**
+\`\`\`bash
+gpg --full-generate-key
+\`\`\`
+
+---
+
+### Step 3: ストアを初期化
+
+GPGキーIDを使ってパスワードストアを作成します。
+
+\`\`\`bash
+passshare init ABCD1234EFGH5678
+\`\`\`
+
+または、メールアドレスでも初期化できます:
+\`\`\`bash
+passshare init your.email@example.com
+\`\`\`
+
+---
+
+### Step 4: パスワードを追加
+
+最初のパスワードを追加してみましょう。
+
+\`\`\`bash
+# 対話形式で入力
+passshare insert email/gmail
+\`\`\`
+
+パスワードの入力を求められます:
+\`\`\`
+Enter password for email/gmail:
+Retype password for email/gmail:
+\`\`\`
+
+---
+
+### Step 5: パスワードを表示
+
+保存したパスワードを確認してみましょう。
+
+\`\`\`bash
+# ターミナルに表示
+passshare show email/gmail
+
+# クリップボードにコピー（45秒後に自動クリア）
+passshare show -c email/gmail
+\`\`\`
+
+---
+
+## 🎉 セットアップ完了！
+
+これでPassShareの基本的なセットアップは完了です。
+
+### 次のステップ
+
+- **パスワードを自動生成**: \`passshare generate website/example 24\`
+- **一覧を確認**: \`passshare ls\`
+- **Git同期を設定**: 「チーム共有」セクションを参照
+- **APIから操作**: 「APIリファレンス」セクションを参照
     `,
   },
   {

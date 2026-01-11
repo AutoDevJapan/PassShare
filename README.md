@@ -49,13 +49,40 @@ npm install @passshare/core
 
 ## はじめ方
 
+### 0. GPG キーを確認（初めての方）
+
+PassShare は GPG キーを使ってパスワードを暗号化します。まず、利用可能な GPG キーを確認しましょう。
+
+```bash
+# 利用可能な GPG キーを一覧表示
+gpg --list-keys --keyid-format LONG
+```
+
+出力例：
+```
+pub   ed25519/ABCD1234EFGH5678 2024-01-01 [SC]
+      1234567890ABCDEF1234567890ABCDEF12345678
+uid           [ultimate] Your Name <your.email@example.com>
+```
+
+上記の場合、以下のいずれかを GPG キー ID として使用できます：
+- `ABCD1234EFGH5678`（短い形式）
+- `1234567890ABCDEF1234567890ABCDEF12345678`（フィンガープリント）
+- `your.email@example.com`（メールアドレス）
+
+> **GPG キーがない場合：**
+> ```bash
+> gpg --full-generate-key
+> ```
+> 画面の指示に従ってキーを作成してください。
+
 ### 1. ストアを初期化
 
 ```bash
-# GPG キーで初期化
-passshare init YOUR_GPG_KEY_ID
+# GPG キー ID で初期化
+passshare init ABCD1234EFGH5678
 
-# 例: メールアドレスで指定
+# または、メールアドレスで指定
 passshare init your.email@example.com
 ```
 
