@@ -90,6 +90,36 @@
     "viaCli": "Через CLI",
     "multiLangSdk": "Мультиязычный SDK"
   },
+  "quickstart": {
+    "title": "Быстрый старт",
+    "viewDetails": "Подробнее",
+    "step1": {
+      "title": "Установка"
+    },
+    "step2": {
+      "title": "Проверьте GPG ключ",
+      "hint": "Нет GPG ключа? Создайте: gpg --full-generate-key",
+      "output": "Пример вывода:",
+      "useThis": "используйте как ID ключа"
+    },
+    "step3": {
+      "title": "Инициализация хранилища",
+      "hint": "Можно использовать email: passshare init you@example.com"
+    },
+    "step4": {
+      "title": "Добавить пароль",
+      "hint": "Вам будет предложено ввести пароль"
+    },
+    "step5": {
+      "title": "Показать пароль",
+      "terminal": "показать в терминале",
+      "clipboard": "скопировать (автоочистка через 45с)"
+    },
+    "done": {
+      "title": "🎉 Настройка завершена!",
+      "description": "Далее: используйте passshare generate для создания безопасных паролей"
+    }
+  },
   "cta": {
     "title": "Начните прямо сейчас",
     "description": "PassShare полностью бесплатен. Используйте существующее хранилище pass/gopass как есть.",

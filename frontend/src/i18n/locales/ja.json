@@ -90,6 +90,36 @@
     "viaCli": "CLI経由",
     "multiLangSdk": "複数言語SDK"
   },
+  "quickstart": {
+    "title": "クイックスタート",
+    "viewDetails": "詳細を見る",
+    "step1": {
+      "title": "インストール"
+    },
+    "step2": {
+      "title": "GPG鍵を確認",
+      "hint": "GPG鍵がない場合は gpg --full-generate-key で作成",
+      "output": "出力例:",
+      "useThis": "をキーIDとして使用"
+    },
+    "step3": {
+      "title": "ストアを初期化",
+      "hint": "メールアドレスでも指定可能: passshare init you@example.com"
+    },
+    "step4": {
+      "title": "パスワードを追加",
+      "hint": "パスワードの入力を求められます"
+    },
+    "step5": {
+      "title": "パスワードを表示",
+      "terminal": "ターミナルに表示",
+      "clipboard": "クリップボードにコピー（45秒後に自動削除）"
+    },
+    "done": {
+      "title": "🎉 セットアップ完了！",
+      "description": "次のステップ: passshare generate で安全なパスワードを自動生成できます"
+    }
+  },
   "cta": {
     "title": "今すぐ始めよう",
     "description": "PassShareは完全無料。既存のpass/gopassストアをそのまま使えます。",

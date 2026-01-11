@@ -90,6 +90,36 @@
     "viaCli": "CLI ile",
     "multiLangSdk": "Çok Dilli SDK"
   },
+  "quickstart": {
+    "title": "Hızlı Başlangıç",
+    "viewDetails": "Detayları gör",
+    "step1": {
+      "title": "Kurulum"
+    },
+    "step2": {
+      "title": "GPG Anahtarını Kontrol Et",
+      "hint": "GPG anahtarınız yok mu? Oluşturun: gpg --full-generate-key",
+      "output": "Örnek çıktı:",
+      "useThis": "Anahtar ID olarak kullanın"
+    },
+    "step3": {
+      "title": "Depoyu Başlat",
+      "hint": "E-posta da kullanabilirsiniz: passshare init you@example.com"
+    },
+    "step4": {
+      "title": "Şifre Ekle",
+      "hint": "Şifre girmeniz istenecek"
+    },
+    "step5": {
+      "title": "Şifreyi Göster",
+      "terminal": "terminalde göster",
+      "clipboard": "panoya kopyala (45s sonra otomatik temizlenir)"
+    },
+    "done": {
+      "title": "🎉 Kurulum Tamamlandı!",
+      "description": "Sonraki: passshare generate ile güvenli şifreler oluşturun"
+    }
+  },
   "cta": {
     "title": "Hemen Başlayın",
     "description": "PassShare tamamen ücretsizdir. Mevcut pass/gopass deponuzu olduğu gibi kullanın.",

@@ -90,6 +90,36 @@
     "viaCli": "通过 CLI",
     "multiLangSdk": "多语言 SDK"
   },
+  "quickstart": {
+    "title": "快速入门",
+    "viewDetails": "查看详情",
+    "step1": {
+      "title": "安装"
+    },
+    "step2": {
+      "title": "检查 GPG 密钥",
+      "hint": "没有 GPG 密钥？使用 gpg --full-generate-key 创建",
+      "output": "输出示例：",
+      "useThis": "作为密钥 ID 使用"
+    },
+    "step3": {
+      "title": "初始化存储",
+      "hint": "也可以使用邮箱：passshare init you@example.com"
+    },
+    "step4": {
+      "title": "添加密码",
+      "hint": "系统将提示您输入密码"
+    },
+    "step5": {
+      "title": "显示密码",
+      "terminal": "在终端显示",
+      "clipboard": "复制到剪贴板（45秒后自动清除）"
+    },
+    "done": {
+      "title": "🎉 设置完成！",
+      "description": "下一步：使用 passshare generate 自动生成安全密码"
+    }
+  },
   "cta": {
     "title": "立即开始",
     "description": "PassShare 完全免费。直接使用现有的 pass/gopass 存储。",

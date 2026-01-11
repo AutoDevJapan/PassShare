@@ -14,20 +14,13 @@ import {
   Download,
   Upload,
   CheckCircle,
+  Key,
+  FolderOpen,
+  Plus,
+  Eye,
+  Copy,
 } from 'lucide-react';
 import FeatureCard from '../components/FeatureCard';
-
-const codeExample = `# Install
-pip install passshare
-
-# Initialize store
-passshare init YOUR_GPG_KEY
-
-# Add password
-passshare insert email/gmail
-
-# Show password
-passshare show email/gmail`;
 
 export default function Home() {
   const { t } = useTranslation();
@@ -107,16 +100,132 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Code Preview */}
-          <div className="mt-16 max-w-2xl">
-            <div className="code-block">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-dark-700">
-                <div className="w-3 h-3 rounded-full bg-dark-600"></div>
-                <div className="w-3 h-3 rounded-full bg-dark-600"></div>
-                <div className="w-3 h-3 rounded-full bg-dark-600"></div>
-                <span className="ml-2 text-dark-500 text-xs">terminal</span>
+          {/* Quick Start Steps */}
+          <div className="mt-16 max-w-3xl">
+            <div className="card p-6 md:p-8">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-white">{t('quickstart.title')}</h2>
+                <Link to="/docs" className="text-primary-400 hover:text-primary-300 text-sm flex items-center gap-1">
+                  {t('quickstart.viewDetails')}
+                  <ArrowRight className="h-3 w-3" />
+                </Link>
               </div>
-              <pre className="text-primary-400 text-sm leading-relaxed">{codeExample}</pre>
+
+              <div className="space-y-6">
+                {/* Step 1: Install */}
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-400 font-bold text-sm">
+                    1
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Download className="h-4 w-4 text-primary-400" />
+                      <span className="font-medium text-white">{t('quickstart.step1.title')}</span>
+                    </div>
+                    <div className="code-block text-sm">
+                      <code className="text-primary-400">pip install passshare</code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Step 2: Check GPG Key */}
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-400 font-bold text-sm">
+                    2
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Key className="h-4 w-4 text-primary-400" />
+                      <span className="font-medium text-white">{t('quickstart.step2.title')}</span>
+                    </div>
+                    <div className="code-block text-sm mb-2">
+                      <code className="text-primary-400">gpg --list-keys --keyid-format LONG</code>
+                    </div>
+                    <p className="text-dark-500 text-xs">{t('quickstart.step2.hint')}</p>
+                    <div className="mt-2 p-3 rounded-lg bg-dark-800/50 border border-dark-700 text-xs">
+                      <p className="text-dark-500 mb-1">{t('quickstart.step2.output')}</p>
+                      <pre className="text-dark-400 font-mono overflow-x-auto">
+{`pub   ed25519/ABCD1234EFGH5678 2024-01-01 [SC]
+uid           [ultimate] Your Name <you@example.com>`}
+                      </pre>
+                      <p className="text-dark-500 mt-2">
+                        → <span className="text-primary-400 font-mono">ABCD1234EFGH5678</span> {t('quickstart.step2.useThis')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Step 3: Initialize Store */}
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-400 font-bold text-sm">
+                    3
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FolderOpen className="h-4 w-4 text-primary-400" />
+                      <span className="font-medium text-white">{t('quickstart.step3.title')}</span>
+                    </div>
+                    <div className="code-block text-sm">
+                      <code className="text-primary-400">passshare init ABCD1234EFGH5678</code>
+                    </div>
+                    <p className="text-dark-500 text-xs mt-2">{t('quickstart.step3.hint')}</p>
+                  </div>
+                </div>
+
+                {/* Step 4: Add Password */}
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-400 font-bold text-sm">
+                    4
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Plus className="h-4 w-4 text-primary-400" />
+                      <span className="font-medium text-white">{t('quickstart.step4.title')}</span>
+                    </div>
+                    <div className="code-block text-sm">
+                      <code className="text-primary-400">passshare insert email/gmail</code>
+                    </div>
+                    <p className="text-dark-500 text-xs mt-2">{t('quickstart.step4.hint')}</p>
+                  </div>
+                </div>
+
+                {/* Step 5: Show Password */}
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/20 flex items-center justify-center text-primary-400 font-bold text-sm">
+                    5
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Eye className="h-4 w-4 text-primary-400" />
+                      <span className="font-medium text-white">{t('quickstart.step5.title')}</span>
+                    </div>
+                    <div className="code-block text-sm space-y-1">
+                      <div className="flex items-center gap-2">
+                        <code className="text-primary-400">passshare show email/gmail</code>
+                        <span className="text-dark-600">|</span>
+                        <span className="text-dark-500 text-xs">{t('quickstart.step5.terminal')}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="text-primary-400">passshare show -c email/gmail</code>
+                        <span className="text-dark-600">|</span>
+                        <Copy className="h-3 w-3 text-dark-500" />
+                        <span className="text-dark-500 text-xs">{t('quickstart.step5.clipboard')}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Success */}
+                <div className="flex gap-4 pt-4 border-t border-dark-700">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center">
+                    <CheckCircle className="h-4 w-4 text-green-400" />
+                  </div>
+                  <div>
+                    <span className="font-medium text-green-400">{t('quickstart.done.title')}</span>
+                    <p className="text-dark-500 text-sm mt-1">{t('quickstart.done.description')}</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -90,6 +90,36 @@
     "viaCli": "Via CLI",
     "multiLangSdk": "Multi-language SDK"
   },
+  "quickstart": {
+    "title": "Quick Start",
+    "viewDetails": "View details",
+    "step1": {
+      "title": "Install"
+    },
+    "step2": {
+      "title": "Check GPG Key",
+      "hint": "No GPG key? Create one with: gpg --full-generate-key",
+      "output": "Example output:",
+      "useThis": "use this as Key ID"
+    },
+    "step3": {
+      "title": "Initialize Store",
+      "hint": "You can also use email: passshare init you@example.com"
+    },
+    "step4": {
+      "title": "Add Password",
+      "hint": "You'll be prompted to enter a password"
+    },
+    "step5": {
+      "title": "Show Password",
+      "terminal": "show in terminal",
+      "clipboard": "copy to clipboard (auto-clears after 45s)"
+    },
+    "done": {
+      "title": "🎉 Setup Complete!",
+      "description": "Next: Use passshare generate to create secure passwords automatically"
+    }
+  },
   "cta": {
     "title": "Get Started Now",
     "description": "PassShare is completely free. Use your existing pass/gopass store as-is.",

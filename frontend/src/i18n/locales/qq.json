@@ -90,6 +90,36 @@
     "viaCli": "CLI арқылы",
     "multiLangSdk": "Көп тілді SDK"
   },
+  "quickstart": {
+    "title": "Жылдам бастау",
+    "viewDetails": "Толығырақ",
+    "step1": {
+      "title": "Орнату"
+    },
+    "step2": {
+      "title": "GPG кілтін тексеру",
+      "hint": "GPG кілті жоқ па? Жасаңыз: gpg --full-generate-key",
+      "output": "Шығыс мысалы:",
+      "useThis": "кілт ID ретінде пайдаланыңыз"
+    },
+    "step3": {
+      "title": "Қойманы бастау",
+      "hint": "Email де қолдануға болады: passshare init you@example.com"
+    },
+    "step4": {
+      "title": "Құпия сөз қосу",
+      "hint": "Құпия сөзді енгізу сұралады"
+    },
+    "step5": {
+      "title": "Құпия сөзді көрсету",
+      "terminal": "терминалда көрсету",
+      "clipboard": "алмасу буферіне көшіру (45с кейін автотазалау)"
+    },
+    "done": {
+      "title": "🎉 Орнату аяқталды!",
+      "description": "Келесі: passshare generate арқылы қауіпсіз құпия сөздер жасаңыз"
+    }
+  },
   "cta": {
     "title": "Қазір бастаңыз",
     "description": "PassShare толық тегін. Бар pass/gopass қоймасын сол күйінде пайдаланыңыз.",
