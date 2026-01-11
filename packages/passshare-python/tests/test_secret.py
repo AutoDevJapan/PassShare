@@ -1,6 +1,5 @@
 """Tests for Secret class."""
 
-import pytest
 from passshare.secret import Secret
 
 
@@ -88,14 +87,14 @@ otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example
     def test_set_and_delete(self) -> None:
         """Test setting and deleting key-value pairs."""
         secret = Secret(password="password")
-        
+
         secret.set("key1", "value1")
         assert secret.get("key1") == "value1"
-        
+
         result = secret.delete("key1")
         assert result is True
         assert secret.get("key1") == ""
-        
+
         result = secret.delete("nonexistent")
         assert result is False
 
@@ -118,10 +117,10 @@ otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example
             data={"key": "value"},
             body="Body text",
         )
-        
+
         data = original.to_bytes()
         restored = Secret.from_bytes(data)
-        
+
         assert restored.password == original.password
         assert restored.get("key") == original.get("key")
         assert restored.body == original.body
@@ -131,7 +130,7 @@ otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example
         secret1 = Secret(password="pass", data={"key": "value"})
         secret2 = Secret(password="pass", data={"key": "value"})
         secret3 = Secret(password="different")
-        
+
         assert secret1 == secret2
         assert secret1 != secret3
 
@@ -151,6 +150,6 @@ otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example
         secret = Secret(password="pass", data={"key": "value"})
         data = secret.data
         data["new_key"] = "new_value"
-        
+
         # Original should not be affected
         assert secret.get("new_key") == ""

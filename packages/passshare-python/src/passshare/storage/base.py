@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
 
 
 class StorageBackend(ABC):
@@ -112,8 +111,11 @@ class StorageBackend(ABC):
 
         Args:
             prefix: The prefix to prune under.
+
+        Default implementation does nothing.
         """
-        pass
+        # Default: no-op. Override in subclasses if needed.
+        return
 
     @property
     @abstractmethod
@@ -127,7 +129,7 @@ class StorageBackend(ABC):
         """Get the store path."""
         pass
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the backend version.
 
         Returns:

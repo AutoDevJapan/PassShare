@@ -8,12 +8,11 @@ from __future__ import annotations
 import fnmatch
 import re
 from pathlib import Path
-from typing import Optional
 
 from passshare.config import Config
-from passshare.crypto.gpg import GPGBackend
 from passshare.crypto.age import AgeBackend
-from passshare.errors import NotFoundError, NotInitializedError, StorageError
+from passshare.crypto.gpg import GPGBackend
+from passshare.errors import NotInitializedError, StorageError
 from passshare.password import generate_password
 from passshare.secret import Secret
 from passshare.store import Store
@@ -31,7 +30,7 @@ class Gopass:
         >>> print(secret.password)
     """
 
-    def __init__(self, config_path: Optional[str] = None) -> None:
+    def __init__(self, config_path: str | None = None) -> None:
         """Initialize Gopass.
 
         Args:
@@ -40,7 +39,7 @@ class Gopass:
         self._config = Config(Path(config_path) if config_path else None)
         self._config.load()
 
-        self._root_store: Optional[Store] = None
+        self._root_store: Store | None = None
         self._mount_stores: dict[str, Store] = {}
 
         # Initialize stores
@@ -104,7 +103,7 @@ class Gopass:
     def init(
         self,
         recipients: list[str],
-        path: Optional[Path] = None,
+        path: Path | None = None,
         crypto: str = "gpg",
         storage: str = "gitfs",
     ) -> None:
@@ -345,7 +344,7 @@ class Gopass:
         self.copy(from_name, to_name, force)
         self.delete(from_name)
 
-    def sync(self, store: Optional[str] = None) -> None:
+    def sync(self, store: str | None = None) -> None:
         """Sync with remote.
 
         Args:
@@ -406,7 +405,7 @@ class Gopass:
         if alias in self._mount_stores:
             del self._mount_stores[alias]
 
-    def recipients(self, store: Optional[str] = None) -> list[str]:
+    def recipients(self, store: str | None = None) -> list[str]:
         """Get recipients for a store.
 
         Args:
@@ -423,7 +422,7 @@ class Gopass:
 
         return []
 
-    def add_recipient(self, key_id: str, store: Optional[str] = None) -> None:
+    def add_recipient(self, key_id: str, store: str | None = None) -> None:
         """Add a recipient to a store.
 
         Args:
@@ -435,7 +434,7 @@ class Gopass:
         elif self._root_store:
             self._root_store.add_recipient(key_id)
 
-    def remove_recipient(self, key_id: str, store: Optional[str] = None) -> None:
+    def remove_recipient(self, key_id: str, store: str | None = None) -> None:
         """Remove a recipient from a store.
 
         Args:

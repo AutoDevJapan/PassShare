@@ -1,7 +1,6 @@
 """Documentation endpoints."""
 
 from pathlib import Path
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -18,7 +17,7 @@ class DocSection(BaseModel):
     id: str
     title: str
     path: str
-    children: List["DocSection"] = []
+    children: list["DocSection"] = []
 
 
 class DocContent(BaseModel):
@@ -27,11 +26,11 @@ class DocContent(BaseModel):
     id: str
     title: str
     content: str
-    last_modified: Optional[str] = None
+    last_modified: str | None = None
 
 
-@router.get("/sections", response_model=List[DocSection])
-async def get_doc_sections() -> List[DocSection]:
+@router.get("/sections", response_model=list[DocSection])
+async def get_doc_sections() -> list[DocSection]:
     """Get documentation structure."""
     return [
         DocSection(
@@ -96,11 +95,11 @@ async def get_doc_content(doc_id: str) -> DocContent:
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read document: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read document: {e}") from e
 
 
 @router.get("/search")
-async def search_docs(q: str) -> List[dict]:
+async def search_docs(q: str) -> list[dict]:
     """Search documentation."""
     results = []
 

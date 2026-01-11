@@ -3,7 +3,6 @@
 import os
 import re
 import subprocess
-from typing import Optional
 
 from passshare.crypto.base import CryptoBackend
 from passshare.errors import DecryptError, EncryptError
@@ -12,19 +11,19 @@ from passshare.errors import DecryptError, EncryptError
 class GPGBackend(CryptoBackend):
     """GnuPG crypto backend."""
 
-    def __init__(self, gpg_binary: Optional[str] = None) -> None:
+    def __init__(self, gpg_binary: str | None = None) -> None:
         """Initialize GPG backend.
 
         Args:
             gpg_binary: Path to GPG binary. Uses GOPASS_GPG_BINARY env or 'gpg'.
         """
         self._gpg = gpg_binary or os.environ.get("GOPASS_GPG_BINARY", "gpg")
-        self._version_cache: Optional[str] = None
+        self._version_cache: str | None = None
 
     def _run_gpg(
         self,
         args: list[str],
-        input_data: Optional[bytes] = None,
+        input_data: bytes | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[bytes]:
         """Run a GPG command.
@@ -215,7 +214,7 @@ class GPGBackend(CryptoBackend):
         """Get the ID file name."""
         return ".gpg-id"
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the GPG version.
 
         Returns:

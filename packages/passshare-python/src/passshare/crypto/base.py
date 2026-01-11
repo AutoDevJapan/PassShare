@@ -1,7 +1,6 @@
 """Base crypto backend interface."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 
 class CryptoBackend(ABC):
@@ -114,7 +113,7 @@ class CryptoBackend(ABC):
         """Get the ID file name (e.g., '.gpg-id')."""
         pass
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the backend version.
 
         Returns:

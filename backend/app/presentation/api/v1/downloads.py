@@ -1,6 +1,5 @@
 """Download statistics endpoints."""
 
-from typing import Dict
 
 import httpx
 from fastapi import APIRouter
@@ -91,10 +90,10 @@ async def get_download_stats() -> DownloadStats:
     )
 
 
-@router.get("/packages", response_model=Dict[str, PackageInfo])
-async def get_package_info() -> Dict[str, PackageInfo]:
+@router.get("/packages", response_model=dict[str, PackageInfo])
+async def get_package_info() -> dict[str, PackageInfo]:
     """Get package information from registries."""
-    packages: Dict[str, PackageInfo] = {}
+    packages: dict[str, PackageInfo] = {}
 
     try:
         async with httpx.AsyncClient() as client:

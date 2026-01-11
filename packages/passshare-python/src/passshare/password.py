@@ -2,7 +2,6 @@
 
 import secrets
 import string
-from typing import Optional
 
 # Character sets for password generation
 LOWERCASE = string.ascii_lowercase
@@ -30,7 +29,7 @@ def generate_password(
     xkcd: bool = False,
     xkcd_separator: str = "-",
     xkcd_lang: str = "en",
-    xkcd_words: Optional[int] = None,
+    xkcd_words: int | None = None,
 ) -> str:
     """Generate a random password.
 

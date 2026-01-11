@@ -1,6 +1,5 @@
 """Release information endpoints."""
 
-from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -27,8 +26,8 @@ class Release(BaseModel):
     name: str
     published_at: str
     html_url: str
-    body: Optional[str] = None
-    assets: List[ReleaseAsset] = []
+    body: str | None = None
+    assets: list[ReleaseAsset] = []
 
 
 class LatestVersions(BaseModel):
@@ -86,7 +85,7 @@ async def get_latest_release() -> Release:
             )
 
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch release: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch release: {e}") from e
 
 
 @router.get("/versions", response_model=LatestVersions)
@@ -144,8 +143,8 @@ async def get_latest_versions() -> LatestVersions:
     )
 
 
-@router.get("/", response_model=List[Release])
-async def get_releases(limit: int = 10) -> List[Release]:
+@router.get("/", response_model=list[Release])
+async def get_releases(limit: int = 10) -> list[Release]:
     """Get recent releases from GitHub."""
     try:
         async with httpx.AsyncClient() as client:
@@ -187,4 +186,4 @@ async def get_releases(limit: int = 10) -> List[Release]:
             ]
 
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch releases: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to fetch releases: {e}") from e

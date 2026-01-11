@@ -1,4 +1,4 @@
-import { Download as DownloadIcon, Terminal, Package, Copy, Check } from 'lucide-react';
+import { Terminal, Package, Copy, Check } from 'lucide-react';
 import { useState } from 'react';
 
 interface DownloadOption {

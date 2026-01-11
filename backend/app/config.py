@@ -1,6 +1,5 @@
 """Application configuration."""
 
-from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -29,7 +28,7 @@ class Settings(BaseSettings):
     @property
     def get_database_url(self) -> str:
         """Get the database URL.
-        
+
         Railway provides DATABASE_URL directly.
         """
         if self.database_url:
@@ -44,7 +43,7 @@ class Settings(BaseSettings):
         return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
 
     # CORS (Vercel frontend URLs)
-    cors_origins: List[str] = [
+    cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
         "https://passshare.dev",

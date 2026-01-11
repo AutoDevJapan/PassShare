@@ -7,7 +7,6 @@ import hashlib
 import hmac
 import struct
 import time
-from typing import Optional, Union
 from urllib.parse import parse_qs, urlparse
 
 
@@ -51,7 +50,7 @@ class TOTP:
         secret += "=" * padding
         return base64.b32decode(secret)
 
-    def generate(self, timestamp: Optional[int] = None) -> str:
+    def generate(self, timestamp: int | None = None) -> str:
         """Generate current TOTP code.
 
         Args:
@@ -177,7 +176,7 @@ class HOTP:
         return False
 
 
-def parse_otp_uri(uri: str) -> Union[TOTP, HOTP]:
+def parse_otp_uri(uri: str) -> TOTP | HOTP:
     """Parse an OTP URI and return the appropriate OTP object.
 
     Args:

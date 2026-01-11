@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 
@@ -15,9 +14,8 @@ from passshare import __version__
 from passshare.clipboard import copy_to_clipboard
 from passshare.errors import NotFoundError, PassShareError
 from passshare.gopass import Gopass
-from passshare.password import generate_password, check_password_strength
+from passshare.password import check_password_strength, generate_password
 from passshare.secret import Secret
-
 
 # Global options
 pass_gopass = click.make_pass_decorator(Gopass, ensure=True)
@@ -64,13 +62,13 @@ def main(ctx: click.Context, version: bool) -> None:
 @click.option("-n", "--noparsing", is_flag=True, help="Show raw content")
 @click.option("-r", "--revision", help="Show specific revision")
 def show(
-    name: Optional[str],
-    key: Optional[str],
+    name: str | None,
+    key: str | None,
     clip: bool,
     alsoclip: bool,
     password: bool,
     noparsing: bool,
-    revision: Optional[str],
+    revision: str | None,
 ) -> None:
     """Show a secret.
 
@@ -139,8 +137,8 @@ main.add_command(show, name="")
 @click.option("--storage", default="gitfs", help="Storage backend (gitfs, fs)")
 def init_cmd(
     gpg_ids: tuple[str, ...],
-    store: Optional[str],
-    path: Optional[str],
+    store: str | None,
+    path: str | None,
     crypto: str,
     storage: str,
 ) -> None:
@@ -239,7 +237,7 @@ def insert(name: str, echo: bool, multiline: bool, force: bool, append: bool) ->
 @click.argument("name")
 @click.option("-e", "--editor", help="Editor to use")
 @click.option("-c", "--create", is_flag=True, help="Create if not exists")
-def edit(name: str, editor: Optional[str], create: bool) -> None:
+def edit(name: str, editor: str | None, create: bool) -> None:
     """Edit a secret.
 
     \b
@@ -280,7 +278,7 @@ def edit(name: str, editor: Optional[str], create: bool) -> None:
             subprocess.run([ed, temp_path], check=True)
 
             # Read back
-            with open(temp_path, "r") as f:
+            with open(temp_path) as f:
                 new_content = f.read()
 
             # Save
@@ -433,8 +431,8 @@ def generate_cmd(
 @click.option("-f", "--flat", is_flag=True, help="Flat list")
 @click.option("-s", "--strip-prefix", is_flag=True, help="Strip prefix")
 def list_cmd(
-    folder: Optional[str],
-    limit: Optional[int],
+    folder: str | None,
+    limit: int | None,
     flat: bool,
     strip_prefix: bool,
 ) -> None:
@@ -652,7 +650,7 @@ main.add_command(move_cmd, name="mv")
 
 @main.command("sync")
 @click.option("-s", "--store", help="Store to sync")
-def sync_cmd(store: Optional[str]) -> None:
+def sync_cmd(store: str | None) -> None:
     """Sync with remote.
 
     \b
@@ -679,7 +677,7 @@ def sync_cmd(store: Optional[str]) -> None:
 @click.argument("key", required=False)
 @click.argument("value", required=False)
 @click.option("-s", "--store", help="Store-specific config")
-def config_cmd(key: Optional[str], value: Optional[str], store: Optional[str]) -> None:
+def config_cmd(key: str | None, value: str | None, store: str | None) -> None:
     """Manage configuration.
 
     \b
@@ -730,7 +728,7 @@ def config_cmd(key: Optional[str], value: Optional[str], store: Optional[str]) -
 @main.command("mounts")
 @click.argument("action", required=False)
 @click.argument("args", nargs=-1)
-def mounts_cmd(action: Optional[str], args: tuple[str, ...]) -> None:
+def mounts_cmd(action: str | None, args: tuple[str, ...]) -> None:
     """Manage mount points.
 
     \b
@@ -780,9 +778,9 @@ def mounts_cmd(action: Optional[str], args: tuple[str, ...]) -> None:
 @click.argument("key_id", required=False)
 @click.option("-s", "--store", help="Store name")
 def recipients_cmd(
-    action: Optional[str],
-    key_id: Optional[str],
-    store: Optional[str],
+    action: str | None,
+    key_id: str | None,
+    store: str | None,
 ) -> None:
     """Manage recipients.
 
@@ -877,7 +875,7 @@ def otp_cmd(name: str, clip: bool, qr: bool) -> None:
 @click.argument("folder", required=False)
 @click.option("--full", is_flag=True, help="Full audit")
 @click.option("--hibp", is_flag=True, help="Check Have I Been Pwned")
-def audit_cmd(folder: Optional[str], full: bool, hibp: bool) -> None:
+def audit_cmd(folder: str | None, full: bool, hibp: bool) -> None:
     """Audit password strength.
 
     \b

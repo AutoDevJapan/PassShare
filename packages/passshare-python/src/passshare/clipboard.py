@@ -1,10 +1,8 @@
 """Clipboard utilities for PassShare."""
 
 import threading
-import time
-from typing import Optional
 
-_clipboard_timer: Optional[threading.Timer] = None
+_clipboard_timer: threading.Timer | None = None
 _clipboard_lock = threading.Lock()
 
 
@@ -79,7 +77,6 @@ def _copy_native(text: str) -> None:
     Args:
         text: The text to copy.
     """
-    import os
     import subprocess
     import sys
 

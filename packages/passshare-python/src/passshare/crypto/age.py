@@ -3,7 +3,6 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from passshare.crypto.base import CryptoBackend
 from passshare.errors import DecryptError, EncryptError
@@ -14,8 +13,8 @@ class AgeBackend(CryptoBackend):
 
     def __init__(
         self,
-        age_binary: Optional[str] = None,
-        identity_file: Optional[Path] = None,
+        age_binary: str | None = None,
+        identity_file: Path | None = None,
     ) -> None:
         """Initialize Age backend.
 
@@ -25,7 +24,7 @@ class AgeBackend(CryptoBackend):
         """
         self._age = age_binary or os.environ.get("GOPASS_AGE_BINARY", "age")
         self._identity_file = identity_file or self._default_identity_file()
-        self._version_cache: Optional[str] = None
+        self._version_cache: str | None = None
 
     def _default_identity_file(self) -> Path:
         """Get the default identity file path.
@@ -44,7 +43,7 @@ class AgeBackend(CryptoBackend):
     def _run_age(
         self,
         args: list[str],
-        input_data: Optional[bytes] = None,
+        input_data: bytes | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[bytes]:
         """Run an age command.
@@ -189,7 +188,7 @@ class AgeBackend(CryptoBackend):
         """Get the ID file name."""
         return ".age-recipients"
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the age version.
 
         Returns:
@@ -210,7 +209,7 @@ class AgeBackend(CryptoBackend):
 
         return None
 
-    def generate_key(self, output_path: Optional[Path] = None) -> tuple[str, str]:
+    def generate_key(self, output_path: Path | None = None) -> tuple[str, str]:
         """Generate a new key pair.
 
         Args:
@@ -251,4 +250,4 @@ class AgeBackend(CryptoBackend):
             stderr = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
             raise EncryptError(f"Key generation failed: {stderr}") from e
         except FileNotFoundError as e:
-            raise EncryptError(f"age-keygen binary not found") from e
+            raise EncryptError("age-keygen binary not found") from e

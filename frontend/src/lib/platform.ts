@@ -56,8 +56,6 @@ export function isDesktop(): boolean {
  * Get API base URL based on platform
  */
 export function getApiBaseUrl(): string {
-  const platform = getPlatform();
-
   // In development, use local API
   if (import.meta.env.DEV) {
     return 'http://localhost:8000';

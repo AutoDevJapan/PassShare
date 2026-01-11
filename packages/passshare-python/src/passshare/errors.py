@@ -1,6 +1,5 @@
 """PassShare error classes."""
 
-from typing import Optional
 
 
 class PassShareError(Exception):
@@ -34,7 +33,7 @@ class EncryptError(PassShareError):
 class StorageError(PassShareError):
     """Storage operation failed."""
 
-    def __init__(self, message: str, path: Optional[str] = None) -> None:
+    def __init__(self, message: str, path: str | None = None) -> None:
         self.path = path
         super().__init__(message)
 
@@ -49,7 +48,7 @@ class ConfigError(PassShareError):
 class NotInitializedError(PassShareError):
     """Store not initialized."""
 
-    def __init__(self, store_path: Optional[str] = None) -> None:
+    def __init__(self, store_path: str | None = None) -> None:
         self.store_path = store_path
         message = "Store not initialized"
         if store_path:
@@ -60,7 +59,7 @@ class NotInitializedError(PassShareError):
 class GitError(PassShareError):
     """Git operation failed."""
 
-    def __init__(self, message: str, command: Optional[str] = None) -> None:
+    def __init__(self, message: str, command: str | None = None) -> None:
         self.command = command
         super().__init__(message)
 
@@ -68,6 +67,6 @@ class GitError(PassShareError):
 class RecipientError(PassShareError):
     """Recipient management error."""
 
-    def __init__(self, message: str, key_id: Optional[str] = None) -> None:
+    def __init__(self, message: str, key_id: str | None = None) -> None:
         self.key_id = key_id
         super().__init__(message)

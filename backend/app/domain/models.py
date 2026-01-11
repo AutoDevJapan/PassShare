@@ -1,9 +1,8 @@
 """Database models."""
 
 from datetime import datetime
-from typing import Optional
 
-from sqlalchemy import String, Text, DateTime, Integer, func
+from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database import Base
@@ -18,8 +17,8 @@ class DownloadEvent(Base):
     package: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     version: Mapped[str] = mapped_column(String(50), nullable=False)
     platform: Mapped[str] = mapped_column(String(50), nullable=False)
-    ip_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -58,7 +57,7 @@ class Newsletter(Base):
         server_default=func.now(),
         nullable=False,
     )
-    unsubscribed_at: Mapped[Optional[datetime]] = mapped_column(
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

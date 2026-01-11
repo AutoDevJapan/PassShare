@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -91,7 +91,7 @@ class Config:
         },
     }
 
-    def __init__(self, path: Optional[Path] = None) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         """Initialize config.
 
         Args:
@@ -100,7 +100,7 @@ class Config:
         self._path = path or get_default_config_path()
         self._data: dict[str, Any] = {}
         self._mounts: dict[str, str] = {}
-        self._store_path: Optional[Path] = None
+        self._store_path: Path | None = None
 
     @property
     def path(self) -> Path:

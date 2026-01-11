@@ -9,11 +9,10 @@ A Store represents a single password store with:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
+from passshare.crypto.age import AgeBackend
 from passshare.crypto.base import CryptoBackend
 from passshare.crypto.gpg import GPGBackend
-from passshare.crypto.age import AgeBackend
 from passshare.errors import NotFoundError, NotInitializedError, StorageError
 from passshare.secret import Secret
 from passshare.storage.base import StorageBackend
@@ -27,8 +26,8 @@ class Store:
     def __init__(
         self,
         path: Path,
-        crypto: Optional[CryptoBackend] = None,
-        storage: Optional[StorageBackend] = None,
+        crypto: CryptoBackend | None = None,
+        storage: StorageBackend | None = None,
     ) -> None:
         """Initialize a store.
 
@@ -58,7 +57,6 @@ class Store:
         Returns:
             The detected crypto backend.
         """
-        gpg_id = self._path / ".gpg-id"
         age_recipients = self._path / ".age-recipients"
 
         if age_recipients.exists():

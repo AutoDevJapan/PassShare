@@ -3,7 +3,6 @@
 import os
 import stat
 from pathlib import Path
-from typing import Optional
 
 from passshare.errors import NotFoundError, StorageError
 from passshare.storage.base import StorageBackend
@@ -213,7 +212,7 @@ class FSBackend(StorageBackend):
             return
 
         # Walk from deepest to shallowest
-        for root, dirs, files in os.walk(str(dir_path), topdown=False):
+        for root, _dirs, _files in os.walk(str(dir_path), topdown=False):
             root_path = Path(root)
             if root_path == self._path:
                 continue
@@ -235,7 +234,7 @@ class FSBackend(StorageBackend):
         """Get the store path."""
         return self._path
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the backend version.
 
         Returns:

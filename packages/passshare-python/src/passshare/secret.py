@@ -9,7 +9,6 @@ A secret consists of:
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 
 class Secret:
@@ -18,7 +17,7 @@ class Secret:
     def __init__(
         self,
         password: str = "",
-        data: Optional[dict[str, str]] = None,
+        data: dict[str, str] | None = None,
         body: str = "",
     ) -> None:
         """Initialize a Secret.
@@ -97,7 +96,7 @@ class Secret:
         self._body = value
 
     @property
-    def otp_uri(self) -> Optional[str]:
+    def otp_uri(self) -> str | None:
         """Get the OTP URI if present.
 
         Returns:
@@ -108,7 +107,7 @@ class Secret:
                 return value
         return None
 
-    def otp(self) -> Optional[str]:
+    def otp(self) -> str | None:
         """Generate current OTP code.
 
         Returns:
@@ -189,23 +188,27 @@ class Secret:
             if in_body:
                 body_lines.append(line)
             elif in_data:
-                # Parse key: value
-                match = re.match(r"^([^:]+):\s*(.*)$", line)
-                if match:
-                    key = match.group(1).strip()
-                    value = match.group(2).strip()
-                    data[key] = value
-                elif line.startswith("otpauth://"):
+                # Check for otpauth URI first (before key:value matching)
+                if line.startswith("otpauth://"):
                     data["otp"] = line
+                else:
+                    # Parse key: value
+                    match = re.match(r"^([^:]+):\s*(.*)$", line)
+                    if match:
+                        key = match.group(1).strip()
+                        value = match.group(2).strip()
+                        data[key] = value
             else:
-                # Lines between password and first --- are also key-value
-                match = re.match(r"^([^:]+):\s*(.*)$", line)
-                if match:
-                    key = match.group(1).strip()
-                    value = match.group(2).strip()
-                    data[key] = value
-                elif line.startswith("otpauth://"):
+                # Check for otpauth URI first
+                if line.startswith("otpauth://"):
                     data["otp"] = line
+                else:
+                    # Lines between password and first --- are also key-value
+                    match = re.match(r"^([^:]+):\s*(.*)$", line)
+                    if match:
+                        key = match.group(1).strip()
+                        value = match.group(2).strip()
+                        data[key] = value
 
         body = "\n".join(body_lines)
 

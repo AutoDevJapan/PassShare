@@ -1,10 +1,8 @@
 """Git + Filesystem storage backend."""
 
-import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from passshare.errors import GitError, NotFoundError, StorageError
 from passshare.storage.fs import FSBackend
@@ -17,7 +15,7 @@ class GitFSBackend(FSBackend):
         self,
         path: Path,
         extension: str = ".gpg",
-        git_binary: Optional[str] = None,
+        git_binary: str | None = None,
     ) -> None:
         """Initialize the GitFS backend.
 
@@ -390,7 +388,7 @@ class GitFSBackend(FSBackend):
         """Get the backend name."""
         return "gitfs"
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the git version.
 
         Returns:

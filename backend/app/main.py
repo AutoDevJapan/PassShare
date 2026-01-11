@@ -3,16 +3,16 @@
 © 2026 株式会社BM1314. All rights reserved.
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.presentation.api.v1 import router as v1_router
 from app.config import settings
-from app.infrastructure.database import init_db, close_db
+from app.infrastructure.database import close_db, init_db
+from app.presentation.api.v1 import router as v1_router
 
 
 @asynccontextmanager

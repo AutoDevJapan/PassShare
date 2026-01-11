@@ -1,10 +1,9 @@
 """Tests for password generation."""
 
-import pytest
 from passshare.password import (
-    generate_password,
     calculate_entropy,
     check_password_strength,
+    generate_password,
 )
 
 
@@ -20,7 +19,7 @@ class TestGeneratePassword:
         """Test custom password length."""
         password = generate_password(length=16)
         assert len(password) == 16
-        
+
         password = generate_password(length=32)
         assert len(password) == 32
 
@@ -67,11 +66,11 @@ class TestGeneratePassword:
     def test_password_contains_required_chars(self) -> None:
         """Test password contains required character types."""
         password = generate_password(length=12, symbols=True)
-        
+
         has_lower = any(c.islower() for c in password)
         has_upper = any(c.isupper() for c in password)
         has_digit = any(c.isdigit() for c in password)
-        
+
         assert has_lower
         assert has_upper
         assert has_digit
@@ -95,14 +94,14 @@ class TestEntropy:
         """Test entropy increases with mixed case."""
         lower_only = calculate_entropy("abcdefgh")
         mixed_case = calculate_entropy("AbCdEfGh")
-        
+
         assert mixed_case > lower_only
 
     def test_entropy_with_symbols(self) -> None:
         """Test entropy increases with symbols."""
         no_symbols = calculate_entropy("Password123")
         with_symbols = calculate_entropy("P@ssword!23")
-        
+
         assert with_symbols > no_symbols
 
 
@@ -128,7 +127,7 @@ class TestPasswordStrength:
     def test_strength_contains_flags(self) -> None:
         """Test strength result contains all flags."""
         strength = check_password_strength("Test123!")
-        
+
         assert "has_lowercase" in strength
         assert "has_uppercase" in strength
         assert "has_digits" in strength
@@ -139,7 +138,7 @@ class TestPasswordStrength:
     def test_strength_flags_accuracy(self) -> None:
         """Test strength flags are accurate."""
         strength = check_password_strength("Password123!")
-        
+
         assert strength["has_lowercase"] is True
         assert strength["has_uppercase"] is True
         assert strength["has_digits"] is True

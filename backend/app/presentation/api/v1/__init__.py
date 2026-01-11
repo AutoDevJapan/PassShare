@@ -2,9 +2,9 @@
 
 from fastapi import APIRouter
 
-from app.presentation.api.v1.releases import router as releases_router
-from app.presentation.api.v1.downloads import router as downloads_router
 from app.presentation.api.v1.docs import router as docs_router
+from app.presentation.api.v1.downloads import router as downloads_router
+from app.presentation.api.v1.releases import router as releases_router
 
 router = APIRouter()
 

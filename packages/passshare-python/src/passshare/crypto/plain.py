@@ -4,7 +4,6 @@ WARNING: This backend is for testing only. Do NOT use in production.
 """
 
 import warnings
-from typing import Optional
 
 from passshare.crypto.base import CryptoBackend
 
@@ -92,7 +91,7 @@ class PlainBackend(CryptoBackend):
         """Get the ID file name."""
         return ".plain-id"
 
-    def version(self) -> Optional[str]:
+    def version(self) -> str | None:
         """Get the backend version.
 
         Returns:

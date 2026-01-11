@@ -186,24 +186,30 @@ export class Secret {
       if (inBody) {
         bodyLines.push(line);
       } else if (inData) {
-        // Parse key: value
-        const match = line.match(/^([^:]+):\s*(.*)$/);
-        if (match) {
-          const key = match[1].trim();
-          const value = match[2].trim();
-          data.set(key, value);
-        } else if (line.startsWith('otpauth://')) {
+        // Check for otpauth URI first (before key:value matching)
+        if (line.startsWith('otpauth://')) {
           data.set('otp', line);
+        } else {
+          // Parse key: value
+          const match = line.match(/^([^:]+):\s*(.*)$/);
+          if (match) {
+            const key = match[1].trim();
+            const value = match[2].trim();
+            data.set(key, value);
+          }
         }
       } else {
-        // Lines between password and first ---
-        const match = line.match(/^([^:]+):\s*(.*)$/);
-        if (match) {
-          const key = match[1].trim();
-          const value = match[2].trim();
-          data.set(key, value);
-        } else if (line.startsWith('otpauth://')) {
+        // Check for otpauth URI first
+        if (line.startsWith('otpauth://')) {
           data.set('otp', line);
+        } else {
+          // Lines between password and first ---
+          const match = line.match(/^([^:]+):\s*(.*)$/);
+          if (match) {
+            const key = match[1].trim();
+            const value = match[2].trim();
+            data.set(key, value);
+          }
         }
       }
     }
