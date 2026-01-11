@@ -1,0 +1,34 @@
+{
+  "name": "passshare-browser-extension",
+  "version": "1.0.0",
+  "description": "PassShare Browser Extension - Secure Password Manager",
+  "author": {
+    "name": "BM1314",
+    "email": "info@bm1314.co.jp"
+  },
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc && vite build",
+    "build:chrome": "pnpm run build && cp -r dist chrome-dist",
+    "build:firefox": "pnpm run build && cp -r dist firefox-dist",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.260",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.0",
+    "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "clsx": "^2.1.0",
+    "lucide-react": "^0.309.0"
+  }
+}
