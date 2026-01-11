@@ -77,7 +77,7 @@ export default function Home() {
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-dark-800 border border-dark-700 text-dark-400 text-sm mb-6">
               <span className="w-2 h-2 rounded-full bg-primary-500"></span>
-              オープンソース
+              完全無料
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight">
@@ -87,7 +87,7 @@ export default function Home() {
             </h1>
 
             <p className="text-lg text-dark-400 mb-8 max-w-2xl">
-              チームと個人のためのオープンソースパスワードマネージャー。
+              チームと個人のための無料パスワードマネージャー。
               GPG暗号化とGit同期で、どこでも安全にパスワードを共有。
             </p>
 
@@ -164,10 +164,10 @@ export default function Home() {
                 </thead>
                 <tbody className="text-dark-300">
                   <tr className="border-b border-dark-700/50">
-                    <td className="py-4 px-6">オープンソース</td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
-                    <td className="text-center py-4 px-6 text-dark-500">—</td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="py-4 px-6">無料プラン</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">全機能</span></td>
+                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">制限あり</span></td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
                   </tr>
                   <tr className="border-b border-dark-700/50">
@@ -220,7 +220,7 @@ export default function Home() {
               今すぐ始めよう
             </h2>
             <p className="text-dark-400 mb-8 max-w-xl mx-auto">
-              PassShareは無料でオープンソース。
+              PassShareは完全無料。
               既存のpass/gopassストアをそのまま使えます。
             </p>
             <Link to="/download" className="btn btn-primary px-8 py-3">

@@ -45,19 +45,19 @@ export default function Footer() {
             <h3 className="font-medium text-white mb-4">リソース</h3>
             <ul className="space-y-3 text-sm">
               <li>
+                <Link to="/docs" className="text-dark-400 hover:text-white transition-colors">
+                  APIリファレンス
+                </Link>
+              </li>
+              <li>
                 <a
-                  href="https://github.com/bm1314/passshare"
+                  href="https://bm1314.co.jp/support"
                   className="text-dark-400 hover:text-white transition-colors"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  GitHub
+                  サポート
                 </a>
-              </li>
-              <li>
-                <Link to="/docs" className="text-dark-400 hover:text-white transition-colors">
-                  APIリファレンス
-                </Link>
               </li>
             </ul>
           </div>
@@ -83,12 +83,6 @@ export default function Footer() {
         {/* Bottom */}
         <div className="border-t border-dark-800 mt-10 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-6">
-            <a
-              href="https://github.com/bm1314/passshare"
-              className="text-dark-500 hover:text-white transition-colors text-sm"
-            >
-              GitHub
-            </a>
             <a
               href="https://twitter.com/bm1314"
               className="text-dark-500 hover:text-white transition-colors text-sm"

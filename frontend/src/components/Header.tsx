@@ -52,15 +52,10 @@ export default function Header() {
               </kbd>
             </button>
 
-            {/* GitHub */}
-            <a
-              href="https://github.com/bm1314/passshare"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-primary py-1.5"
-            >
-              GitHub
-            </a>
+            {/* Download CTA */}
+            <Link to="/download" className="btn btn-primary py-1.5">
+              ダウンロード
+            </Link>
           </div>
 
           {/* Mobile Menu Button */}
@@ -93,14 +88,13 @@ export default function Header() {
                 {link.label}
               </Link>
             ))}
-            <a
-              href="https://github.com/bm1314/passshare"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              to="/download"
               className="block px-3 py-2 text-sm text-primary-400 hover:text-primary-300"
+              onClick={() => setIsMenuOpen(false)}
             >
-              GitHub
-            </a>
+              ダウンロード
+            </Link>
           </nav>
         </div>
       )}
