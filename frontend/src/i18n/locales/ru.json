@@ -1,0 +1,118 @@
+{
+  "common": {
+    "download": "Скачать",
+    "docs": "Документация",
+    "home": "Главная",
+    "search": "Поиск...",
+    "support": "Поддержка",
+    "apiReference": "API справочник",
+    "termsOfService": "Условия использования",
+    "privacyPolicy": "Политика конфиденциальности",
+    "product": "Продукт",
+    "resources": "Ресурсы",
+    "legal": "Правовая информация",
+    "allRightsReserved": "Все права защищены.",
+    "language": "Язык"
+  },
+  "hero": {
+    "badge": "Полностью бесплатно",
+    "title1": "Безопасное",
+    "title2": "управление паролями",
+    "title3": "",
+    "description": "Бесплатный менеджер паролей для команд и индивидуальных пользователей. Безопасно делитесь паролями где угодно с GPG-шифрованием и синхронизацией через Git.",
+    "viewDocs": "Смотреть документацию"
+  },
+  "features": {
+    "title": "Возможности",
+    "description": "PassShare полностью совместим с pass/gopass. Получите более мощные функции, не нарушая существующий рабочий процесс.",
+    "gpgEncryption": {
+      "title": "GPG/Age шифрование",
+      "description": "Защитите свои пароли с помощью шифрования промышленного стандарта. Используйте существующие GPG-ключи как есть."
+    },
+    "gitSync": {
+      "title": "Git синхронизация",
+      "description": "Автоматический контроль версий и синхронизация между устройствами. Полная история изменений."
+    },
+    "teamSharing": {
+      "title": "Командный доступ",
+      "description": "Поддержка нескольких получателей. Безопасно делитесь паролями с членами команды."
+    },
+    "gopassCompat": {
+      "title": "Совместимость с gopass",
+      "description": "Используйте существующее хранилище pass/gopass как есть. Нулевая стоимость миграции."
+    },
+    "cliApi": {
+      "title": "CLI и API",
+      "description": "Поддержка командной строки и программного API. Идеально для автоматизации."
+    },
+    "multiLangSdk": {
+      "title": "Мультиязычный SDK",
+      "description": "SDK доступен на 3 языках: Python, TypeScript и Node.js."
+    },
+    "performance": {
+      "title": "Высокая производительность",
+      "description": "Быстрая работа даже с 1000+ секретами. Эффективный дизайн."
+    },
+    "crossPlatform": {
+      "title": "Кроссплатформенность",
+      "description": "Поддержка Linux, macOS и Windows. Одинаковый опыт везде."
+    }
+  },
+  "migration": {
+    "title": "Простая миграция",
+    "description": "Перенесите данные из других менеджеров паролей одним кликом",
+    "fromAny": "Миграция откуда угодно",
+    "supported": "Поддерживаемые сервисы",
+    "onePassword": "1Password",
+    "bitwarden": "Bitwarden",
+    "passGopass": "pass/gopass",
+    "lastpass": "LastPass",
+    "keepass": "KeePass",
+    "steps": {
+      "export": "Экспортируйте из текущего сервиса",
+      "import": "Импортируйте в PassShare",
+      "done": "Миграция завершена!"
+    },
+    "cta": "Руководство по миграции"
+  },
+  "comparison": {
+    "title": "Сравнение",
+    "description": "Сравните PassShare с другими менеджерами паролей",
+    "feature": "Функция",
+    "freePlan": "Бесплатный план",
+    "allFeatures": "Все функции",
+    "limited": "Ограничено",
+    "selfHost": "Самостоятельный хостинг",
+    "gpgEncryption": "GPG шифрование",
+    "gitSync": "Git синхронизация",
+    "programmaticApi": "Программный API",
+    "paid": "Платно",
+    "viaCli": "Через CLI",
+    "multiLangSdk": "Мультиязычный SDK"
+  },
+  "cta": {
+    "title": "Начните прямо сейчас",
+    "description": "PassShare полностью бесплатен. Используйте существующее хранилище pass/gopass как есть.",
+    "freeDownload": "Скачать бесплатно"
+  },
+  "download": {
+    "title": "Скачать",
+    "description": "Скачайте PassShare для вашей платформы",
+    "selectPlatform": "Выберите платформу",
+    "version": "Версия",
+    "releaseDate": "Дата релиза",
+    "systemRequirements": "Системные требования",
+    "installation": "Установка",
+    "checksum": "Контрольная сумма"
+  },
+  "docs": {
+    "title": "Документация",
+    "description": "Узнайте, как использовать PassShare",
+    "gettingStarted": "Начало работы",
+    "installation": "Установка",
+    "configuration": "Настройка",
+    "usage": "Использование",
+    "api": "API",
+    "faq": "FAQ"
+  }
+}

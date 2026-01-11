@@ -1,0 +1,118 @@
+{
+  "common": {
+    "download": "ダウンロード",
+    "docs": "ドキュメント",
+    "home": "ホーム",
+    "search": "検索...",
+    "support": "サポート",
+    "apiReference": "APIリファレンス",
+    "termsOfService": "利用規約",
+    "privacyPolicy": "プライバシーポリシー",
+    "product": "プロダクト",
+    "resources": "リソース",
+    "legal": "リーガル",
+    "allRightsReserved": "All rights reserved.",
+    "language": "言語"
+  },
+  "hero": {
+    "badge": "完全無料",
+    "title1": "セキュアな",
+    "title2": "パスワード管理",
+    "title3": "を",
+    "description": "チームと個人のための無料パスワードマネージャー。GPG暗号化とGit同期で、どこでも安全にパスワードを共有。",
+    "viewDocs": "ドキュメントを見る"
+  },
+  "features": {
+    "title": "機能",
+    "description": "PassShareはpass/gopassと完全互換。既存のワークフローを壊さずに、より強力な機能を提供します。",
+    "gpgEncryption": {
+      "title": "GPG/Age暗号化",
+      "description": "業界標準の暗号化でパスワードを保護。既存のGPG鍵をそのまま利用可能。"
+    },
+    "gitSync": {
+      "title": "Git同期",
+      "description": "自動バージョン管理と複数デバイス間での同期。変更履歴も完全に追跡。"
+    },
+    "teamSharing": {
+      "title": "チーム共有",
+      "description": "複数の受信者に対応。チームメンバー間で安全にパスワードを共有。"
+    },
+    "gopassCompat": {
+      "title": "gopass互換",
+      "description": "既存のpass/gopassストアをそのまま利用可能。移行コスト不要。"
+    },
+    "cliApi": {
+      "title": "CLI & API",
+      "description": "コマンドラインとプログラマティックAPI両対応。自動化に最適。"
+    },
+    "multiLangSdk": {
+      "title": "マルチ言語SDK",
+      "description": "Python、TypeScript、Node.jsの3言語でSDKを提供。"
+    },
+    "performance": {
+      "title": "高速パフォーマンス",
+      "description": "1000件以上のシークレットでも高速に動作。効率的な設計。"
+    },
+    "crossPlatform": {
+      "title": "クロスプラットフォーム",
+      "description": "Linux、macOS、Windowsに対応。どこでも同じ体験を。"
+    }
+  },
+  "migration": {
+    "title": "簡単移行",
+    "description": "他のパスワードマネージャーからワンクリックで移行できます",
+    "fromAny": "どこからでも移行可能",
+    "supported": "対応サービス",
+    "onePassword": "1Password",
+    "bitwarden": "Bitwarden",
+    "passGopass": "pass/gopass",
+    "lastpass": "LastPass",
+    "keepass": "KeePass",
+    "steps": {
+      "export": "既存サービスからエクスポート",
+      "import": "PassShareでインポート",
+      "done": "移行完了！"
+    },
+    "cta": "移行ガイドを見る"
+  },
+  "comparison": {
+    "title": "比較",
+    "description": "PassShareと他のパスワードマネージャーの比較",
+    "feature": "特徴",
+    "freePlan": "無料プラン",
+    "allFeatures": "全機能",
+    "limited": "制限あり",
+    "selfHost": "セルフホスト",
+    "gpgEncryption": "GPG暗号化",
+    "gitSync": "Git同期",
+    "programmaticApi": "プログラマティックAPI",
+    "paid": "有料",
+    "viaCli": "CLI経由",
+    "multiLangSdk": "複数言語SDK"
+  },
+  "cta": {
+    "title": "今すぐ始めよう",
+    "description": "PassShareは完全無料。既存のpass/gopassストアをそのまま使えます。",
+    "freeDownload": "無料ダウンロード"
+  },
+  "download": {
+    "title": "ダウンロード",
+    "description": "お使いのプラットフォームに合わせてPassShareをダウンロード",
+    "selectPlatform": "プラットフォームを選択",
+    "version": "バージョン",
+    "releaseDate": "リリース日",
+    "systemRequirements": "システム要件",
+    "installation": "インストール方法",
+    "checksum": "チェックサム"
+  },
+  "docs": {
+    "title": "ドキュメント",
+    "description": "PassShareの使い方を学ぶ",
+    "gettingStarted": "はじめに",
+    "installation": "インストール",
+    "configuration": "設定",
+    "usage": "使い方",
+    "api": "API",
+    "faq": "FAQ"
+  }
+}

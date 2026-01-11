@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   Shield,
   Users,
@@ -10,65 +11,70 @@ import {
   Globe,
   ArrowRight,
   Check,
+  Download,
+  Upload,
+  CheckCircle,
 } from 'lucide-react';
 import FeatureCard from '../components/FeatureCard';
 
-const features = [
-  {
-    icon: Shield,
-    title: 'GPG/Age暗号化',
-    description: '業界標準の暗号化でパスワードを保護。既存のGPG鍵をそのまま利用可能。',
-  },
-  {
-    icon: GitBranch,
-    title: 'Git同期',
-    description: '自動バージョン管理と複数デバイス間での同期。変更履歴も完全に追跡。',
-  },
-  {
-    icon: Users,
-    title: 'チーム共有',
-    description: '複数の受信者に対応。チームメンバー間で安全にパスワードを共有。',
-  },
-  {
-    icon: Lock,
-    title: 'gopass互換',
-    description: '既存のpass/gopassストアをそのまま利用可能。移行コスト不要。',
-  },
-  {
-    icon: Terminal,
-    title: 'CLI & API',
-    description: 'コマンドラインとプログラマティックAPI両対応。自動化に最適。',
-  },
-  {
-    icon: Code,
-    title: 'マルチ言語SDK',
-    description: 'Python、TypeScript、Node.jsの3言語でSDKを提供。',
-  },
-  {
-    icon: Zap,
-    title: '高速パフォーマンス',
-    description: '1000件以上のシークレットでも高速に動作。効率的な設計。',
-  },
-  {
-    icon: Globe,
-    title: 'クロスプラットフォーム',
-    description: 'Linux、macOS、Windowsに対応。どこでも同じ体験を。',
-  },
-];
-
-const codeExample = `# インストール
+const codeExample = `# Install
 pip install passshare
 
-# ストアを初期化
+# Initialize store
 passshare init YOUR_GPG_KEY
 
-# パスワードを追加
+# Add password
 passshare insert email/gmail
 
-# パスワードを表示
+# Show password
 passshare show email/gmail`;
 
 export default function Home() {
+  const { t } = useTranslation();
+
+  const features = [
+    {
+      icon: Shield,
+      title: t('features.gpgEncryption.title'),
+      description: t('features.gpgEncryption.description'),
+    },
+    {
+      icon: GitBranch,
+      title: t('features.gitSync.title'),
+      description: t('features.gitSync.description'),
+    },
+    {
+      icon: Users,
+      title: t('features.teamSharing.title'),
+      description: t('features.teamSharing.description'),
+    },
+    {
+      icon: Lock,
+      title: t('features.gopassCompat.title'),
+      description: t('features.gopassCompat.description'),
+    },
+    {
+      icon: Terminal,
+      title: t('features.cliApi.title'),
+      description: t('features.cliApi.description'),
+    },
+    {
+      icon: Code,
+      title: t('features.multiLangSdk.title'),
+      description: t('features.multiLangSdk.description'),
+    },
+    {
+      icon: Zap,
+      title: t('features.performance.title'),
+      description: t('features.performance.description'),
+    },
+    {
+      icon: Globe,
+      title: t('features.crossPlatform.title'),
+      description: t('features.crossPlatform.description'),
+    },
+  ];
+
   return (
     <div className="animate-fade-in">
       {/* Hero Section */}
@@ -77,27 +83,26 @@ export default function Home() {
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-dark-800 border border-dark-700 text-dark-400 text-sm mb-6">
               <span className="w-2 h-2 rounded-full bg-primary-500"></span>
-              完全無料
+              {t('hero.badge')}
             </div>
 
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight">
-              セキュアな
+              {t('hero.title1')}
               <br />
-              <span className="gradient-text">パスワード管理</span>を
+              <span className="gradient-text">{t('hero.title2')}</span>{t('hero.title3')}
             </h1>
 
             <p className="text-lg text-dark-400 mb-8 max-w-2xl">
-              チームと個人のための無料パスワードマネージャー。
-              GPG暗号化とGit同期で、どこでも安全にパスワードを共有。
+              {t('hero.description')}
             </p>
 
             <div className="flex flex-wrap gap-3">
               <Link to="/download" className="btn btn-primary px-6 py-2.5">
-                ダウンロード
+                {t('common.download')}
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
               <Link to="/docs" className="btn btn-secondary px-6 py-2.5">
-                ドキュメントを見る
+                {t('hero.viewDocs')}
               </Link>
             </div>
           </div>
@@ -122,11 +127,10 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="mb-12">
             <h2 className="section-title text-white">
-              機能
+              {t('features.title')}
             </h2>
             <p className="section-subtitle">
-              PassShareはpass/gopassと完全互換。既存のワークフローを壊さずに、
-              より強力な機能を提供します。
+              {t('features.description')}
             </p>
           </div>
 
@@ -138,15 +142,90 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Migration Section */}
+      <section className="py-16 border-t border-dark-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="mb-12">
+            <h2 className="section-title text-white">
+              {t('migration.title')}
+            </h2>
+            <p className="section-subtitle">
+              {t('migration.description')}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Supported Services */}
+            <div className="card p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">{t('migration.supported')}</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {[
+                  { name: t('migration.onePassword'), icon: '1️⃣' },
+                  { name: t('migration.bitwarden'), icon: '🔐' },
+                  { name: t('migration.passGopass'), icon: '🔑' },
+                  { name: t('migration.lastpass'), icon: '🔒' },
+                  { name: t('migration.keepass'), icon: '🗝️' },
+                ].map((service) => (
+                  <div
+                    key={service.name}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-dark-700/50 text-dark-300"
+                  >
+                    <span>{service.icon}</span>
+                    <span className="text-sm">{service.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Migration Steps */}
+            <div className="card p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">{t('migration.fromAny')}</h3>
+              <div className="space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/10 flex items-center justify-center">
+                    <Download className="h-4 w-4 text-primary-400" />
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">1. {t('migration.steps.export')}</p>
+                    <p className="text-dark-500 text-sm">CSV / JSON</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/10 flex items-center justify-center">
+                    <Upload className="h-4 w-4 text-primary-400" />
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">2. {t('migration.steps.import')}</p>
+                    <p className="text-dark-500 text-sm font-mono text-xs">passshare import --from bitwarden export.json</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-500/10 flex items-center justify-center">
+                    <CheckCircle className="h-4 w-4 text-primary-400" />
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">3. {t('migration.steps.done')}</p>
+                  </div>
+                </div>
+              </div>
+              <Link to="/docs" className="btn btn-outline mt-6 w-full">
+                {t('migration.cta')}
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Comparison Section */}
       <section className="py-16 border-t border-dark-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="mb-12">
             <h2 className="section-title text-white">
-              比較
+              {t('comparison.title')}
             </h2>
             <p className="section-subtitle">
-              PassShareと他のパスワードマネージャーの比較
+              {t('comparison.description')}
             </p>
           </div>
 
@@ -155,7 +234,7 @@ export default function Home() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-dark-700 bg-dark-800/50">
-                    <th className="text-left py-4 px-6 font-medium text-dark-300">特徴</th>
+                    <th className="text-left py-4 px-6 font-medium text-dark-300">{t('comparison.feature')}</th>
                     <th className="text-center py-4 px-6 font-medium text-primary-400">PassShare</th>
                     <th className="text-center py-4 px-6 font-medium text-dark-400">1Password</th>
                     <th className="text-center py-4 px-6 font-medium text-dark-400">Bitwarden</th>
@@ -164,42 +243,42 @@ export default function Home() {
                 </thead>
                 <tbody className="text-dark-300">
                   <tr className="border-b border-dark-700/50">
-                    <td className="py-4 px-6">無料プラン</td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">全機能</span></td>
-                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">制限あり</span></td>
+                    <td className="py-4 px-6">{t('comparison.freePlan')}</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">{t('comparison.allFeatures')}</span></td>
+                    <td className="text-center py-4 px-6 text-dark-500">{t('comparison.limited')}</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">{t('comparison.limited')}</span></td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
                   </tr>
                   <tr className="border-b border-dark-700/50">
-                    <td className="py-4 px-6">セルフホスト</td>
+                    <td className="py-4 px-6">{t('comparison.selfHost')}</td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
                     <td className="text-center py-4 px-6 text-dark-500">—</td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
                   </tr>
                   <tr className="border-b border-dark-700/50">
-                    <td className="py-4 px-6">GPG暗号化</td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
-                    <td className="text-center py-4 px-6 text-dark-500">—</td>
-                    <td className="text-center py-4 px-6 text-dark-500">—</td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
-                  </tr>
-                  <tr className="border-b border-dark-700/50">
-                    <td className="py-4 px-6">Git同期</td>
+                    <td className="py-4 px-6">{t('comparison.gpgEncryption')}</td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
                     <td className="text-center py-4 px-6 text-dark-500">—</td>
                     <td className="text-center py-4 px-6 text-dark-500">—</td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
                   </tr>
                   <tr className="border-b border-dark-700/50">
-                    <td className="py-4 px-6">プログラマティックAPI</td>
+                    <td className="py-4 px-6">{t('comparison.gitSync')}</td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">有料</span></td>
-                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">有料</span></td>
-                    <td className="text-center py-4 px-6 text-dark-500">CLI経由</td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                  </tr>
+                  <tr className="border-b border-dark-700/50">
+                    <td className="py-4 px-6">{t('comparison.programmaticApi')}</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">{t('comparison.paid')}</span></td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">{t('comparison.paid')}</span></td>
+                    <td className="text-center py-4 px-6 text-dark-500">{t('comparison.viaCli')}</td>
                   </tr>
                   <tr>
-                    <td className="py-4 px-6">複数言語SDK</td>
+                    <td className="py-4 px-6">{t('comparison.multiLangSdk')}</td>
                     <td className="text-center py-4 px-6 text-primary-400">Py/TS/Node</td>
                     <td className="text-center py-4 px-6 text-dark-400">Go/Py/JS</td>
                     <td className="text-center py-4 px-6 text-dark-400">C#/Go/Java/Py</td>
@@ -217,14 +296,13 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="card p-8 md:p-12 text-center">
             <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
-              今すぐ始めよう
+              {t('cta.title')}
             </h2>
             <p className="text-dark-400 mb-8 max-w-xl mx-auto">
-              PassShareは完全無料。
-              既存のpass/gopassストアをそのまま使えます。
+              {t('cta.description')}
             </p>
             <Link to="/download" className="btn btn-primary px-8 py-3">
-              無料ダウンロード
+              {t('cta.freeDownload')}
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </div>

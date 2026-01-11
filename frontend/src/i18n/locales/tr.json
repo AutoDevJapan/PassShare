@@ -1,0 +1,118 @@
+{
+  "common": {
+    "download": "İndir",
+    "docs": "Belgeler",
+    "home": "Ana Sayfa",
+    "search": "Ara...",
+    "support": "Destek",
+    "apiReference": "API Referansı",
+    "termsOfService": "Kullanım Şartları",
+    "privacyPolicy": "Gizlilik Politikası",
+    "product": "Ürün",
+    "resources": "Kaynaklar",
+    "legal": "Yasal",
+    "allRightsReserved": "Tüm hakları saklıdır.",
+    "language": "Dil"
+  },
+  "hero": {
+    "badge": "Tamamen Ücretsiz",
+    "title1": "Güvenli",
+    "title2": "Şifre Yönetimi",
+    "title3": "",
+    "description": "Takımlar ve bireyler için ücretsiz şifre yöneticisi. GPG şifreleme ve Git senkronizasyonu ile şifrelerinizi her yerde güvenle paylaşın.",
+    "viewDocs": "Belgeleri Görüntüle"
+  },
+  "features": {
+    "title": "Özellikler",
+    "description": "PassShare, pass/gopass ile tam uyumludur. Mevcut iş akışınızı bozmadan daha güçlü özellikler edinin.",
+    "gpgEncryption": {
+      "title": "GPG/Age Şifreleme",
+      "description": "Şifrelerinizi endüstri standardı şifreleme ile koruyun. Mevcut GPG anahtarlarınızı olduğu gibi kullanın."
+    },
+    "gitSync": {
+      "title": "Git Senkronizasyonu",
+      "description": "Otomatik sürüm kontrolü ve cihazlar arası senkronizasyon. Tam değişiklik geçmişi takibi."
+    },
+    "teamSharing": {
+      "title": "Takım Paylaşımı",
+      "description": "Birden fazla alıcı desteği. Takım üyeleri arasında şifreleri güvenle paylaşın."
+    },
+    "gopassCompat": {
+      "title": "gopass Uyumlu",
+      "description": "Mevcut pass/gopass deponuzu olduğu gibi kullanın. Sıfır geçiş maliyeti."
+    },
+    "cliApi": {
+      "title": "CLI & API",
+      "description": "Hem komut satırı hem de programatik API desteği. Otomasyon için mükemmel."
+    },
+    "multiLangSdk": {
+      "title": "Çok Dilli SDK",
+      "description": "3 dilde SDK mevcut: Python, TypeScript ve Node.js."
+    },
+    "performance": {
+      "title": "Yüksek Performans",
+      "description": "1000+ sır ile bile hızlı çalışır. Verimli tasarım."
+    },
+    "crossPlatform": {
+      "title": "Çapraz Platform",
+      "description": "Linux, macOS ve Windows desteği. Her yerde aynı deneyim."
+    }
+  },
+  "migration": {
+    "title": "Kolay Geçiş",
+    "description": "Diğer şifre yöneticilerinden tek tıklamayla geçiş yapın",
+    "fromAny": "Her yerden geçiş yapın",
+    "supported": "Desteklenen hizmetler",
+    "onePassword": "1Password",
+    "bitwarden": "Bitwarden",
+    "passGopass": "pass/gopass",
+    "lastpass": "LastPass",
+    "keepass": "KeePass",
+    "steps": {
+      "export": "Mevcut hizmetinizden dışa aktarın",
+      "import": "PassShare'e içe aktarın",
+      "done": "Geçiş tamamlandı!"
+    },
+    "cta": "Geçiş Kılavuzunu Görüntüle"
+  },
+  "comparison": {
+    "title": "Karşılaştırma",
+    "description": "PassShare'i diğer şifre yöneticileriyle karşılaştırın",
+    "feature": "Özellik",
+    "freePlan": "Ücretsiz Plan",
+    "allFeatures": "Tüm özellikler",
+    "limited": "Sınırlı",
+    "selfHost": "Kendi Sunucunuzda",
+    "gpgEncryption": "GPG Şifreleme",
+    "gitSync": "Git Senkronizasyonu",
+    "programmaticApi": "Programatik API",
+    "paid": "Ücretli",
+    "viaCli": "CLI ile",
+    "multiLangSdk": "Çok Dilli SDK"
+  },
+  "cta": {
+    "title": "Hemen Başlayın",
+    "description": "PassShare tamamen ücretsizdir. Mevcut pass/gopass deponuzu olduğu gibi kullanın.",
+    "freeDownload": "Ücretsiz İndir"
+  },
+  "download": {
+    "title": "İndir",
+    "description": "Platformunuz için PassShare'i indirin",
+    "selectPlatform": "Platform Seçin",
+    "version": "Sürüm",
+    "releaseDate": "Yayın Tarihi",
+    "systemRequirements": "Sistem Gereksinimleri",
+    "installation": "Kurulum",
+    "checksum": "Kontrol Toplamı"
+  },
+  "docs": {
+    "title": "Belgeler",
+    "description": "PassShare'i nasıl kullanacağınızı öğrenin",
+    "gettingStarted": "Başlarken",
+    "installation": "Kurulum",
+    "configuration": "Yapılandırma",
+    "usage": "Kullanım",
+    "api": "API",
+    "faq": "SSS"
+  }
+}

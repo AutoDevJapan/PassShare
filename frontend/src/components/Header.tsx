@@ -1,17 +1,20 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, Search } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-
-const navLinks = [
-  { href: '/', label: 'ホーム' },
-  { href: '/download', label: 'ダウンロード' },
-  { href: '/docs', label: 'ドキュメント' },
-];
+import LanguageSwitcher from './LanguageSwitcher';
 
 export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
+  const { t } = useTranslation();
+
+  const navLinks = [
+    { href: '/', label: t('common.home') },
+    { href: '/download', label: t('common.download') },
+    { href: '/docs', label: t('common.docs') },
+  ];
 
   return (
     <header className="sticky top-0 z-50 bg-dark-900/95 backdrop-blur-sm border-b border-dark-800">
@@ -46,15 +49,18 @@ export default function Header() {
             {/* Search hint */}
             <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-dark-800 border border-dark-700 text-dark-500 text-sm hover:border-dark-600 transition-colors">
               <Search className="h-4 w-4" />
-              <span>検索...</span>
+              <span>{t('common.search')}</span>
               <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded bg-dark-700 text-dark-400 text-xs font-mono">
                 ⌘K
               </kbd>
             </button>
 
+            {/* Language Switcher */}
+            <LanguageSwitcher />
+
             {/* Download CTA */}
             <Link to="/download" className="btn btn-primary py-1.5">
-              ダウンロード
+              {t('common.download')}
             </Link>
           </div>
 
@@ -88,12 +94,15 @@ export default function Header() {
                 {link.label}
               </Link>
             ))}
+            <div className="px-3 py-2">
+              <LanguageSwitcher />
+            </div>
             <Link
               to="/download"
               className="block px-3 py-2 text-sm text-primary-400 hover:text-primary-300"
               onClick={() => setIsMenuOpen(false)}
             >
-              ダウンロード
+              {t('common.download')}
             </Link>
           </nav>
         </div>

@@ -1,0 +1,118 @@
+{
+  "common": {
+    "download": "下载",
+    "docs": "文档",
+    "home": "首页",
+    "search": "搜索...",
+    "support": "支持",
+    "apiReference": "API 参考",
+    "termsOfService": "服务条款",
+    "privacyPolicy": "隐私政策",
+    "product": "产品",
+    "resources": "资源",
+    "legal": "法律信息",
+    "allRightsReserved": "保留所有权利。",
+    "language": "语言"
+  },
+  "hero": {
+    "badge": "完全免费",
+    "title1": "安全的",
+    "title2": "密码管理",
+    "title3": "",
+    "description": "面向团队和个人的免费密码管理器。通过 GPG 加密和 Git 同步，随时随地安全共享密码。",
+    "viewDocs": "查看文档"
+  },
+  "features": {
+    "title": "功能特性",
+    "description": "PassShare 与 pass/gopass 完全兼容。在不破坏现有工作流程的情况下获得更强大的功能。",
+    "gpgEncryption": {
+      "title": "GPG/Age 加密",
+      "description": "使用行业标准加密保护您的密码。直接使用现有的 GPG 密钥。"
+    },
+    "gitSync": {
+      "title": "Git 同步",
+      "description": "自动版本控制和跨设备同步。完整的变更历史记录。"
+    },
+    "teamSharing": {
+      "title": "团队共享",
+      "description": "支持多个接收者。在团队成员之间安全共享密码。"
+    },
+    "gopassCompat": {
+      "title": "gopass 兼容",
+      "description": "直接使用现有的 pass/gopass 存储。零迁移成本。"
+    },
+    "cliApi": {
+      "title": "CLI 和 API",
+      "description": "同时支持命令行和程序化 API。非常适合自动化。"
+    },
+    "multiLangSdk": {
+      "title": "多语言 SDK",
+      "description": "提供 3 种语言的 SDK：Python、TypeScript 和 Node.js。"
+    },
+    "performance": {
+      "title": "高性能",
+      "description": "即使有 1000+ 个密钥也能快速运行。高效设计。"
+    },
+    "crossPlatform": {
+      "title": "跨平台",
+      "description": "支持 Linux、macOS 和 Windows。随处获得相同体验。"
+    }
+  },
+  "migration": {
+    "title": "轻松迁移",
+    "description": "一键从其他密码管理器迁移",
+    "fromAny": "从任何地方迁移",
+    "supported": "支持的服务",
+    "onePassword": "1Password",
+    "bitwarden": "Bitwarden",
+    "passGopass": "pass/gopass",
+    "lastpass": "LastPass",
+    "keepass": "KeePass",
+    "steps": {
+      "export": "从当前服务导出",
+      "import": "导入到 PassShare",
+      "done": "迁移完成！"
+    },
+    "cta": "查看迁移指南"
+  },
+  "comparison": {
+    "title": "对比",
+    "description": "将 PassShare 与其他密码管理器进行比较",
+    "feature": "功能",
+    "freePlan": "免费计划",
+    "allFeatures": "全部功能",
+    "limited": "有限制",
+    "selfHost": "自托管",
+    "gpgEncryption": "GPG 加密",
+    "gitSync": "Git 同步",
+    "programmaticApi": "程序化 API",
+    "paid": "付费",
+    "viaCli": "通过 CLI",
+    "multiLangSdk": "多语言 SDK"
+  },
+  "cta": {
+    "title": "立即开始",
+    "description": "PassShare 完全免费。直接使用现有的 pass/gopass 存储。",
+    "freeDownload": "免费下载"
+  },
+  "download": {
+    "title": "下载",
+    "description": "下载适用于您平台的 PassShare",
+    "selectPlatform": "选择平台",
+    "version": "版本",
+    "releaseDate": "发布日期",
+    "systemRequirements": "系统要求",
+    "installation": "安装",
+    "checksum": "校验和"
+  },
+  "docs": {
+    "title": "文档",
+    "description": "了解如何使用 PassShare",
+    "gettingStarted": "快速入门",
+    "installation": "安装",
+    "configuration": "配置",
+    "usage": "使用方法",
+    "api": "API",
+    "faq": "常见问题"
+  }
+}

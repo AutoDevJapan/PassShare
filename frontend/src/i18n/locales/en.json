@@ -1,0 +1,118 @@
+{
+  "common": {
+    "download": "Download",
+    "docs": "Docs",
+    "home": "Home",
+    "search": "Search...",
+    "support": "Support",
+    "apiReference": "API Reference",
+    "termsOfService": "Terms of Service",
+    "privacyPolicy": "Privacy Policy",
+    "product": "Product",
+    "resources": "Resources",
+    "legal": "Legal",
+    "allRightsReserved": "All rights reserved.",
+    "language": "Language"
+  },
+  "hero": {
+    "badge": "Completely Free",
+    "title1": "Secure",
+    "title2": "Password Management",
+    "title3": "",
+    "description": "A free password manager for teams and individuals. Share passwords securely anywhere with GPG encryption and Git sync.",
+    "viewDocs": "View Documentation"
+  },
+  "features": {
+    "title": "Features",
+    "description": "PassShare is fully compatible with pass/gopass. Get more powerful features without breaking your existing workflow.",
+    "gpgEncryption": {
+      "title": "GPG/Age Encryption",
+      "description": "Protect your passwords with industry-standard encryption. Use your existing GPG keys as-is."
+    },
+    "gitSync": {
+      "title": "Git Sync",
+      "description": "Automatic version control and sync across multiple devices. Full change history tracking."
+    },
+    "teamSharing": {
+      "title": "Team Sharing",
+      "description": "Support for multiple recipients. Securely share passwords among team members."
+    },
+    "gopassCompat": {
+      "title": "gopass Compatible",
+      "description": "Use your existing pass/gopass store as-is. Zero migration cost."
+    },
+    "cliApi": {
+      "title": "CLI & API",
+      "description": "Both command-line and programmatic API support. Perfect for automation."
+    },
+    "multiLangSdk": {
+      "title": "Multi-language SDK",
+      "description": "SDKs available in 3 languages: Python, TypeScript, and Node.js."
+    },
+    "performance": {
+      "title": "High Performance",
+      "description": "Fast operation even with 1000+ secrets. Efficient design."
+    },
+    "crossPlatform": {
+      "title": "Cross-Platform",
+      "description": "Supports Linux, macOS, and Windows. Same experience everywhere."
+    }
+  },
+  "migration": {
+    "title": "Easy Migration",
+    "description": "Migrate from other password managers with just one click",
+    "fromAny": "Migrate from anywhere",
+    "supported": "Supported services",
+    "onePassword": "1Password",
+    "bitwarden": "Bitwarden",
+    "passGopass": "pass/gopass",
+    "lastpass": "LastPass",
+    "keepass": "KeePass",
+    "steps": {
+      "export": "Export from your current service",
+      "import": "Import into PassShare",
+      "done": "Migration complete!"
+    },
+    "cta": "View Migration Guide"
+  },
+  "comparison": {
+    "title": "Comparison",
+    "description": "Compare PassShare with other password managers",
+    "feature": "Feature",
+    "freePlan": "Free Plan",
+    "allFeatures": "All features",
+    "limited": "Limited",
+    "selfHost": "Self-Host",
+    "gpgEncryption": "GPG Encryption",
+    "gitSync": "Git Sync",
+    "programmaticApi": "Programmatic API",
+    "paid": "Paid",
+    "viaCli": "Via CLI",
+    "multiLangSdk": "Multi-language SDK"
+  },
+  "cta": {
+    "title": "Get Started Now",
+    "description": "PassShare is completely free. Use your existing pass/gopass store as-is.",
+    "freeDownload": "Free Download"
+  },
+  "download": {
+    "title": "Download",
+    "description": "Download PassShare for your platform",
+    "selectPlatform": "Select Platform",
+    "version": "Version",
+    "releaseDate": "Release Date",
+    "systemRequirements": "System Requirements",
+    "installation": "Installation",
+    "checksum": "Checksum"
+  },
+  "docs": {
+    "title": "Documentation",
+    "description": "Learn how to use PassShare",
+    "gettingStarted": "Getting Started",
+    "installation": "Installation",
+    "configuration": "Configuration",
+    "usage": "Usage",
+    "api": "API",
+    "faq": "FAQ"
+  }
+}

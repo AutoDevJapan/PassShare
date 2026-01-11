@@ -1,0 +1,118 @@
+{
+  "common": {
+    "download": "Жүктеу",
+    "docs": "Құжаттама",
+    "home": "Басты бет",
+    "search": "Іздеу...",
+    "support": "Қолдау",
+    "apiReference": "API анықтамасы",
+    "termsOfService": "Қызмет көрсету шарттары",
+    "privacyPolicy": "Құпиялылық саясаты",
+    "product": "Өнім",
+    "resources": "Ресурстар",
+    "legal": "Құқықтық ақпарат",
+    "allRightsReserved": "Барлық құқықтар қорғалған.",
+    "language": "Тіл"
+  },
+  "hero": {
+    "badge": "Толық тегін",
+    "title1": "Қауіпсіз",
+    "title2": "құпия сөз басқару",
+    "title3": "",
+    "description": "Командалар мен жеке пайдаланушыларға арналған тегін құпия сөз менеджері. GPG шифрлау және Git синхронизациясы арқылы құпия сөздерді қауіпсіз бөлісіңіз.",
+    "viewDocs": "Құжаттаманы қарау"
+  },
+  "features": {
+    "title": "Мүмкіндіктер",
+    "description": "PassShare pass/gopass-пен толық үйлесімді. Бар жұмыс процесін бұзбай, қуаттырақ мүмкіндіктерге ие болыңыз.",
+    "gpgEncryption": {
+      "title": "GPG/Age шифрлау",
+      "description": "Құпия сөздеріңізді өнеркәсіптік стандартты шифрлаумен қорғаңыз. Бар GPG кілттерін сол күйінде пайдаланыңыз."
+    },
+    "gitSync": {
+      "title": "Git синхронизациясы",
+      "description": "Автоматты нұсқаларды басқару және құрылғылар арасында синхрондау. Толық өзгерістер тарихы."
+    },
+    "teamSharing": {
+      "title": "Команда бөлісуі",
+      "description": "Бірнеше алушыларды қолдау. Команда мүшелерімен құпия сөздерді қауіпсіз бөлісіңіз."
+    },
+    "gopassCompat": {
+      "title": "gopass үйлесімділігі",
+      "description": "Бар pass/gopass қоймасын сол күйінде пайдаланыңыз. Көшу шығыны нөл."
+    },
+    "cliApi": {
+      "title": "CLI & API",
+      "description": "Командалық жол және бағдарламалық API қолдауы. Автоматтандыру үшін тамаша."
+    },
+    "multiLangSdk": {
+      "title": "Көп тілді SDK",
+      "description": "SDK 3 тілде қол жетімді: Python, TypeScript және Node.js."
+    },
+    "performance": {
+      "title": "Жоғары өнімділік",
+      "description": "1000+ құпиямен де жылдам жұмыс істейді. Тиімді дизайн."
+    },
+    "crossPlatform": {
+      "title": "Кросс-платформа",
+      "description": "Linux, macOS және Windows қолдауы. Барлық жерде бірдей тәжірибе."
+    }
+  },
+  "migration": {
+    "title": "Оңай көшу",
+    "description": "Басқа құпия сөз менеджерлерінен бір шертумен көшіңіз",
+    "fromAny": "Кез келген жерден көшу",
+    "supported": "Қолдау көрсетілетін қызметтер",
+    "onePassword": "1Password",
+    "bitwarden": "Bitwarden",
+    "passGopass": "pass/gopass",
+    "lastpass": "LastPass",
+    "keepass": "KeePass",
+    "steps": {
+      "export": "Ағымдағы қызметтен экспорттау",
+      "import": "PassShare-ға импорттау",
+      "done": "Көшу аяқталды!"
+    },
+    "cta": "Көшу нұсқаулығын қарау"
+  },
+  "comparison": {
+    "title": "Салыстыру",
+    "description": "PassShare-ды басқа құпия сөз менеджерлерімен салыстырыңыз",
+    "feature": "Мүмкіндік",
+    "freePlan": "Тегін жоспар",
+    "allFeatures": "Барлық мүмкіндіктер",
+    "limited": "Шектелген",
+    "selfHost": "Өзіндік хостинг",
+    "gpgEncryption": "GPG шифрлау",
+    "gitSync": "Git синхронизациясы",
+    "programmaticApi": "Бағдарламалық API",
+    "paid": "Ақылы",
+    "viaCli": "CLI арқылы",
+    "multiLangSdk": "Көп тілді SDK"
+  },
+  "cta": {
+    "title": "Қазір бастаңыз",
+    "description": "PassShare толық тегін. Бар pass/gopass қоймасын сол күйінде пайдаланыңыз.",
+    "freeDownload": "Тегін жүктеу"
+  },
+  "download": {
+    "title": "Жүктеу",
+    "description": "Платформаңызға арналған PassShare жүктеңіз",
+    "selectPlatform": "Платформаны таңдаңыз",
+    "version": "Нұсқа",
+    "releaseDate": "Шығу күні",
+    "systemRequirements": "Жүйе талаптары",
+    "installation": "Орнату",
+    "checksum": "Бақылау сомасы"
+  },
+  "docs": {
+    "title": "Құжаттама",
+    "description": "PassShare пайдалану жолын үйреніңіз",
+    "gettingStarted": "Бастау",
+    "installation": "Орнату",
+    "configuration": "Конфигурация",
+    "usage": "Пайдалану",
+    "api": "API",
+    "faq": "ЖҚС"
+  }
+}

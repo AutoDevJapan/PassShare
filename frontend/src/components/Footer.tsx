@@ -1,6 +1,9 @@
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 export default function Footer() {
+  const { t } = useTranslation();
+
   return (
     <footer className="bg-dark-900 border-t border-dark-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -12,29 +15,29 @@ export default function Footer() {
               <span className="text-lg font-semibold text-white">PassShare</span>
             </Link>
             <p className="text-dark-500 text-sm">
-              © 2026 株式会社BM1314.
+              © 2026 BM1314 Inc.
               <br />
-              All rights reserved.
+              {t('common.allRightsReserved')}
             </p>
           </div>
 
           {/* Discover */}
           <div>
-            <h3 className="font-medium text-white mb-4">プロダクト</h3>
+            <h3 className="font-medium text-white mb-4">{t('common.product')}</h3>
             <ul className="space-y-3 text-sm">
               <li>
                 <Link to="/" className="text-dark-400 hover:text-white transition-colors">
-                  ホーム
+                  {t('common.home')}
                 </Link>
               </li>
               <li>
                 <Link to="/download" className="text-dark-400 hover:text-white transition-colors">
-                  ダウンロード
+                  {t('common.download')}
                 </Link>
               </li>
               <li>
                 <Link to="/docs" className="text-dark-400 hover:text-white transition-colors">
-                  ドキュメント
+                  {t('common.docs')}
                 </Link>
               </li>
             </ul>
@@ -42,11 +45,11 @@ export default function Footer() {
 
           {/* Resources */}
           <div>
-            <h3 className="font-medium text-white mb-4">リソース</h3>
+            <h3 className="font-medium text-white mb-4">{t('common.resources')}</h3>
             <ul className="space-y-3 text-sm">
               <li>
                 <Link to="/docs" className="text-dark-400 hover:text-white transition-colors">
-                  APIリファレンス
+                  {t('common.apiReference')}
                 </Link>
               </li>
               <li>
@@ -56,7 +59,7 @@ export default function Footer() {
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  サポート
+                  {t('common.support')}
                 </a>
               </li>
             </ul>
@@ -64,16 +67,16 @@ export default function Footer() {
 
           {/* Legal */}
           <div>
-            <h3 className="font-medium text-white mb-4">リーガル</h3>
+            <h3 className="font-medium text-white mb-4">{t('common.legal')}</h3>
             <ul className="space-y-3 text-sm">
               <li>
                 <a href="/terms" className="text-dark-400 hover:text-white transition-colors">
-                  利用規約
+                  {t('common.termsOfService')}
                 </a>
               </li>
               <li>
                 <a href="/privacy" className="text-dark-400 hover:text-white transition-colors">
-                  プライバシーポリシー
+                  {t('common.privacyPolicy')}
                 </a>
               </li>
             </ul>
@@ -97,7 +100,7 @@ export default function Footer() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              株式会社BM1314
+              BM1314 Inc.
             </a>
           </div>
         </div>
