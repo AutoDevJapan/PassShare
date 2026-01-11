@@ -46,8 +46,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:3000",
-        "https://passshare.dev",
-        "https://passshare.vercel.app",
+        "https://pass-share.bm1314.net",
         "https://*.vercel.app",
         # Capacitor
         "capacitor://localhost",

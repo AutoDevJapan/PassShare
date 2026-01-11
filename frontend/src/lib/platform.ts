@@ -62,5 +62,5 @@ export function getApiBaseUrl(): string {
   }
 
   // In production, use Railway API
-  return import.meta.env.VITE_API_URL || 'https://passshare-api.up.railway.app';
+  return import.meta.env.VITE_API_URL || 'https://pass-share-api.up.railway.app';
 }

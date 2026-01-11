@@ -49,8 +49,8 @@ dev = [
 passshare = "passshare.cli:main"
 
 [project.urls]
-Homepage = "https://passshare.dev"
-Documentation = "https://passshare.dev/docs"
+Homepage = "https://pass-share.bm1314.net"
+Documentation = "https://pass-share.bm1314.net/docs"
 Repository = "https://github.com/bm1314/passshare"
 Issues = "https://github.com/bm1314/passshare/issues"
 

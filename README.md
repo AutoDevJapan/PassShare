@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://passshare.dev">公式サイト</a> •
-  <a href="https://passshare.dev/docs">ドキュメント</a> •
-  <a href="https://passshare.dev/download">ダウンロード</a>
+  <a href="https://pass-share.bm1314.net">公式サイト</a> •
+  <a href="https://pass-share.bm1314.net/docs">ドキュメント</a> •
+  <a href="https://pass-share.bm1314.net/download">ダウンロード</a>
 </p>
 
 ---
@@ -304,8 +304,8 @@ passshare generate --help
 
 ## リンク
 
-- [公式サイト](https://passshare.dev)
-- [ドキュメント](https://passshare.dev/docs)
+- [公式サイト](https://pass-share.bm1314.net)
+- [ドキュメント](https://pass-share.bm1314.net/docs)
 - [GitHub](https://github.com/bm1314/passshare)
 - [問い合わせ](mailto:info@bm1314.co.jp)
 

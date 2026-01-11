@@ -7,7 +7,7 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'https',
     iosScheme: 'https',
-    hostname: 'passshare.dev',
+    hostname: 'pass-share.bm1314.net',
   },
   plugins: {
     SplashScreen: {

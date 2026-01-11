@@ -119,7 +119,7 @@ async def get_package_info() -> dict[str, PackageInfo]:
                     version="1.0.0",
                     downloads=0,
                     description="A gopass-compatible password manager",
-                    homepage="https://passshare.dev",
+                    homepage="https://pass-share.bm1314.net",
                 )
 
             # npm CLI
@@ -145,7 +145,7 @@ async def get_package_info() -> dict[str, PackageInfo]:
                     version="1.0.0",
                     downloads=0,
                     description="A gopass-compatible password manager CLI",
-                    homepage="https://passshare.dev",
+                    homepage="https://pass-share.bm1314.net",
                 )
 
             # npm Core
@@ -171,7 +171,7 @@ async def get_package_info() -> dict[str, PackageInfo]:
                     version="1.0.0",
                     downloads=0,
                     description="A gopass-compatible password manager library",
-                    homepage="https://passshare.dev",
+                    homepage="https://pass-share.bm1314.net",
                 )
 
     except Exception:

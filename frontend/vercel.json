@@ -7,7 +7,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://passshare-api.up.railway.app/api/:path*"
+      "destination": "https://pass-share-api.up.railway.app/api/:path*"
     },
     {
       "source": "/((?!assets|favicon|logo).*)",

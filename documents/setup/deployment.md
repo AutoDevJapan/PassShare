@@ -4,8 +4,8 @@
 
 | コンポーネント | サービス | URL |
 |----------------|----------|-----|
-| フロントエンド | Vercel | https://passshare.dev |
-| バックエンドAPI | Railway | https://passshare-api.up.railway.app |
+| フロントエンド | Vercel | https://pass-share.bm1314.net |
+| バックエンドAPI | Railway | https://pass-share-api.up.railway.app |
 | データベース | Railway PostgreSQL | （内部接続） |
 
 ## Vercel（フロントエンド）
@@ -25,7 +25,7 @@ vercel link
 
 | 変数 | 値 |
 |------|-----|
-| `VITE_API_URL` | https://passshare-api.up.railway.app |
+| `VITE_API_URL` | https://pass-share-api.up.railway.app |
 
 ### デプロイ
 
@@ -214,5 +214,5 @@ jobs:
 | 環境 | フロントURL | API URL |
 |------|-------------|---------|
 | 開発 | http://localhost:5173 | http://localhost:8000 |
-| ステージング | https://passshare-staging.vercel.app | https://passshare-api-staging.up.railway.app |
-| 本番 | https://passshare.dev | https://passshare-api.up.railway.app |
+| ステージング | https://pass-share-staging.vercel.app | https://pass-share-api-staging.up.railway.app |
+| 本番 | https://pass-share.bm1314.net | https://pass-share-api.up.railway.app |
