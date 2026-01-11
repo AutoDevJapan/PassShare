@@ -269,16 +269,16 @@ export default function Docs() {
   const currentSection = sections.find((s) => s.id === activeSection) || sections[0];
 
   return (
-    <div className="py-12">
+    <div className="py-12 animate-fade-in">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col lg:flex-row gap-8">
           {/* Sidebar */}
-          <nav className="lg:w-64 flex-shrink-0">
-            <div className="sticky top-24">
-              <h2 className="font-semibold mb-4 text-dark-400 uppercase text-xs tracking-wider">
+          <nav className="lg:w-56 flex-shrink-0">
+            <div className="sticky top-20">
+              <h2 className="font-medium text-dark-500 uppercase text-xs tracking-wider mb-4">
                 ドキュメント
               </h2>
-              <ul className="space-y-1">
+              <ul className="space-y-0.5">
                 {sections.map((section) => {
                   const Icon = section.icon;
                   return (
@@ -286,17 +286,17 @@ export default function Docs() {
                       <button
                         onClick={() => setActiveSection(section.id)}
                         className={clsx(
-                          'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors',
+                          'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors',
                           activeSection === section.id
-                            ? 'bg-primary-500/10 text-primary-400'
-                            : 'text-dark-300 hover:bg-dark-700 hover:text-white'
+                            ? 'bg-dark-800 text-white'
+                            : 'text-dark-400 hover:bg-dark-800/50 hover:text-white'
                         )}
                       >
-                        <Icon className="h-4 w-4" />
-                        <span className="text-sm">{section.title}</span>
+                        <Icon className="h-4 w-4 flex-shrink-0" />
+                        <span className="flex-grow">{section.title}</span>
                         <ChevronRight
                           className={clsx(
-                            'h-4 w-4 ml-auto transition-transform',
+                            'h-3.5 w-3.5 transition-transform',
                             activeSection === section.id && 'rotate-90'
                           )}
                         />
@@ -310,7 +310,7 @@ export default function Docs() {
 
           {/* Content */}
           <main className="flex-grow min-w-0">
-            <div className="card p-8">
+            <div className="card p-6 md:p-8">
               <article className="prose prose-invert prose-primary max-w-none">
                 <div
                   dangerouslySetInnerHTML={{
@@ -330,19 +330,19 @@ export default function Docs() {
 function renderMarkdown(content: string): string {
   return content
     .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
-    .replace(/`([^`]+)`/g, '<code class="bg-dark-700 px-1.5 py-0.5 rounded text-primary-400">$1</code>')
-    .replace(/^### (.+)$/gm, '<h3 class="text-xl font-semibold mt-8 mb-4">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="text-2xl font-bold mt-8 mb-4 gradient-text">$1</h2>')
+    .replace(/`([^`]+)`/g, '<code class="bg-dark-800 px-1.5 py-0.5 rounded text-primary-400 text-sm">$1</code>')
+    .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold mt-8 mb-3 text-white">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold mt-6 mb-4 text-white">$1</h2>')
     .replace(/^\| (.+) \|$/gm, (match) => {
       const cells = match.split('|').filter(Boolean).map((c) => c.trim());
-      return `<tr>${cells.map((c) => `<td class="border border-dark-600 px-4 py-2">${c}</td>`).join('')}</tr>`;
+      return `<tr>${cells.map((c) => `<td class="border border-dark-700 px-4 py-2 text-sm">${c}</td>`).join('')}</tr>`;
     })
-    .replace(/^- (.+)$/gm, '<li class="ml-4">$1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n\n/g, '</p><p class="mb-4">')
+    .replace(/^- (.+)$/gm, '<li class="ml-4 text-dark-300">$1</li>')
+    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 list-decimal text-dark-300">$1</li>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white">$1</strong>')
+    .replace(/\n\n/g, '</p><p class="mb-3 text-dark-300">')
     .replace(/^(.+)$/gm, (match) => {
       if (match.startsWith('<')) return match;
-      return `<p class="mb-4">${match}</p>`;
+      return `<p class="mb-3 text-dark-300">${match}</p>`;
     });
 }

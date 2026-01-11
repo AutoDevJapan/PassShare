@@ -8,6 +8,8 @@ import {
   Code,
   Zap,
   Globe,
+  ArrowRight,
+  Check,
 } from 'lucide-react';
 import FeatureCard from '../components/FeatureCard';
 
@@ -56,72 +58,79 @@ const features = [
 
 const codeExample = `# インストール
 pip install passshare
-# または
-npm install -g passshare
 
 # ストアを初期化
-passshare init 0xYOURGPGKEY
+passshare init YOUR_GPG_KEY
 
 # パスワードを追加
 passshare insert email/gmail
 
 # パスワードを表示
-passshare show email/gmail
-
-# パスワードを生成
-passshare generate website/example 24`;
+passshare show email/gmail`;
 
 export default function Home() {
   return (
-    <div>
+    <div className="animate-fade-in">
       {/* Hero Section */}
-      <section className="relative overflow-hidden py-20 lg:py-32">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary-900/20 via-dark-800 to-secondary-900/20" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary-500/5 rounded-full blur-3xl" />
-        
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center">
-            <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-6">
-              <span className="gradient-text">セキュアな</span>
+      <section className="py-20 lg:py-28">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-dark-800 border border-dark-700 text-dark-400 text-sm mb-6">
+              <span className="w-2 h-2 rounded-full bg-primary-500"></span>
+              オープンソース
+            </div>
+
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight">
+              セキュアな
               <br />
-              パスワード管理を
+              <span className="gradient-text">パスワード管理</span>を
             </h1>
-            <p className="text-xl md:text-2xl text-dark-300 max-w-3xl mx-auto mb-8">
+
+            <p className="text-lg text-dark-400 mb-8 max-w-2xl">
               チームと個人のためのオープンソースパスワードマネージャー。
-              <br className="hidden md:block" />
               GPG暗号化とGit同期で、どこでも安全にパスワードを共有。
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link to="/download" className="btn btn-primary text-lg px-8 py-4">
+
+            <div className="flex flex-wrap gap-3">
+              <Link to="/download" className="btn btn-primary px-6 py-2.5">
                 ダウンロード
+                <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
-              <Link to="/docs" className="btn btn-outline text-lg px-8 py-4">
+              <Link to="/docs" className="btn btn-secondary px-6 py-2.5">
                 ドキュメントを見る
               </Link>
             </div>
           </div>
 
           {/* Code Preview */}
-          <div className="mt-16 max-w-3xl mx-auto">
-            <div className="code-block border border-dark-600">
-              <pre className="text-green-400">{codeExample}</pre>
+          <div className="mt-16 max-w-2xl">
+            <div className="code-block">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-dark-700">
+                <div className="w-3 h-3 rounded-full bg-dark-600"></div>
+                <div className="w-3 h-3 rounded-full bg-dark-600"></div>
+                <div className="w-3 h-3 rounded-full bg-dark-600"></div>
+                <span className="ml-2 text-dark-500 text-xs">terminal</span>
+              </div>
+              <pre className="text-primary-400 text-sm leading-relaxed">{codeExample}</pre>
             </div>
           </div>
         </div>
       </section>
 
       {/* Features Section */}
-      <section className="py-20 bg-dark-900/50">
+      <section className="py-16 border-t border-dark-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="section-title">
-            <span className="gradient-text">機能</span>
-          </h2>
-          <p className="section-subtitle">
-            PassShareはpass/gopassと完全互換。既存のワークフローを壊さずに、
-            より強力な機能を提供します。
-          </p>
+          <div className="mb-12">
+            <h2 className="section-title text-white">
+              機能
+            </h2>
+            <p className="section-subtitle">
+              PassShareはpass/gopassと完全互換。既存のワークフローを壊さずに、
+              より強力な機能を提供します。
+            </p>
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {features.map((feature) => (
               <FeatureCard key={feature.title} {...feature} />
             ))}
@@ -130,88 +139,95 @@ export default function Home() {
       </section>
 
       {/* Comparison Section */}
-      <section className="py-20">
+      <section className="py-16 border-t border-dark-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="section-title">
-            <span className="gradient-text">比較</span>
-          </h2>
-          <p className="section-subtitle">
-            PassShareと他のパスワードマネージャーの比較
-          </p>
+          <div className="mb-12">
+            <h2 className="section-title text-white">
+              比較
+            </h2>
+            <p className="section-subtitle">
+              PassShareと他のパスワードマネージャーの比較
+            </p>
+          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-dark-600">
-                  <th className="text-left py-4 px-4">特徴</th>
-                  <th className="text-center py-4 px-4">PassShare</th>
-                  <th className="text-center py-4 px-4">1Password</th>
-                  <th className="text-center py-4 px-4">Bitwarden</th>
-                  <th className="text-center py-4 px-4">pass/gopass</th>
-                </tr>
-              </thead>
-              <tbody className="text-dark-300">
-                <tr className="border-b border-dark-700">
-                  <td className="py-4 px-4">オープンソース</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                </tr>
-                <tr className="border-b border-dark-700">
-                  <td className="py-4 px-4">セルフホスト</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                </tr>
-                <tr className="border-b border-dark-700">
-                  <td className="py-4 px-4">GPG暗号化</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                </tr>
-                <tr className="border-b border-dark-700">
-                  <td className="py-4 px-4">Git同期</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                </tr>
-                <tr className="border-b border-dark-700">
-                  <td className="py-4 px-4">プログラマティックAPI</td>
-                  <td className="text-center py-4 px-4 text-green-400">✓</td>
-                  <td className="text-center py-4 px-4 text-yellow-400">制限あり</td>
-                  <td className="text-center py-4 px-4 text-yellow-400">制限あり</td>
-                  <td className="text-center py-4 px-4 text-yellow-400">制限あり</td>
-                </tr>
-                <tr>
-                  <td className="py-4 px-4">複数言語SDK</td>
-                  <td className="text-center py-4 px-4 text-green-400">Py/TS/Node</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                  <td className="text-center py-4 px-4 text-red-400">✗</td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="card overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-dark-700 bg-dark-800/50">
+                    <th className="text-left py-4 px-6 font-medium text-dark-300">特徴</th>
+                    <th className="text-center py-4 px-6 font-medium text-primary-400">PassShare</th>
+                    <th className="text-center py-4 px-6 font-medium text-dark-400">1Password</th>
+                    <th className="text-center py-4 px-6 font-medium text-dark-400">Bitwarden</th>
+                    <th className="text-center py-4 px-6 font-medium text-dark-400">pass/gopass</th>
+                  </tr>
+                </thead>
+                <tbody className="text-dark-300">
+                  <tr className="border-b border-dark-700/50">
+                    <td className="py-4 px-6">オープンソース</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                  </tr>
+                  <tr className="border-b border-dark-700/50">
+                    <td className="py-4 px-6">セルフホスト</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                  </tr>
+                  <tr className="border-b border-dark-700/50">
+                    <td className="py-4 px-6">GPG暗号化</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                  </tr>
+                  <tr className="border-b border-dark-700/50">
+                    <td className="py-4 px-6">Git同期</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                  </tr>
+                  <tr className="border-b border-dark-700/50">
+                    <td className="py-4 px-6">プログラマティックAPI</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
+                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
+                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
+                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
+                  </tr>
+                  <tr>
+                    <td className="py-4 px-6">複数言語SDK</td>
+                    <td className="text-center py-4 px-6 text-primary-400">Py/TS/Node</td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-primary-900/30 to-secondary-900/30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
-            今すぐ始めよう
-          </h2>
-          <p className="text-dark-300 text-lg mb-8 max-w-2xl mx-auto">
-            PassShareは無料でオープンソース。
-            既存のpass/gopassストアをそのまま使えます。
-          </p>
-          <Link to="/download" className="btn btn-secondary text-lg px-8 py-4">
-            無料ダウンロード
-          </Link>
+      <section className="py-20 border-t border-dark-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="card p-8 md:p-12 text-center">
+            <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
+              今すぐ始めよう
+            </h2>
+            <p className="text-dark-400 mb-8 max-w-xl mx-auto">
+              PassShareは無料でオープンソース。
+              既存のpass/gopassストアをそのまま使えます。
+            </p>
+            <Link to="/download" className="btn btn-primary px-8 py-3">
+              無料ダウンロード
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </div>
         </div>
       </section>
     </div>
