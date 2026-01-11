@@ -194,15 +194,15 @@ export default function Home() {
                   <tr className="border-b border-dark-700/50">
                     <td className="py-4 px-6">プログラマティックAPI</td>
                     <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /></td>
-                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
-                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
-                    <td className="text-center py-4 px-6 text-dark-500">制限あり</td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">有料</span></td>
+                    <td className="text-center py-4 px-6"><Check className="inline h-4 w-4 text-primary-400" /><span className="text-dark-500 text-xs ml-1">有料</span></td>
+                    <td className="text-center py-4 px-6 text-dark-500">CLI経由</td>
                   </tr>
                   <tr>
                     <td className="py-4 px-6">複数言語SDK</td>
                     <td className="text-center py-4 px-6 text-primary-400">Py/TS/Node</td>
-                    <td className="text-center py-4 px-6 text-dark-500">—</td>
-                    <td className="text-center py-4 px-6 text-dark-500">—</td>
+                    <td className="text-center py-4 px-6 text-dark-400">Go/Py/JS</td>
+                    <td className="text-center py-4 px-6 text-dark-400">C#/Go/Java/Py</td>
                     <td className="text-center py-4 px-6 text-dark-500">—</td>
                   </tr>
                 </tbody>
