@@ -97,7 +97,7 @@ importers:
   packages/passshare-node:
     dependencies:
       '@bm1314/passshare-core':
-        specifier: file:../passshare-ts
+        specifier: workspace:*
         version: link:../passshare-ts
       chalk:
         specifier: ^5.3.0
