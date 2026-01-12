@@ -11,6 +11,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+
 env:
   R2_ENDPOINT: https://05f6d2c09fa3ee88119588f182550e9c.r2.cloudflarestorage.com
   R2_BUCKET: passshare-downloads
