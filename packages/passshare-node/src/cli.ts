@@ -16,6 +16,8 @@ import {
   VERSION,
   NotFoundError,
   PassShareError,
+  SeedScanner,
+  type ScanResult,
 } from '@bm1314/passshare-core';
 
 const program = new Command();
@@ -595,6 +597,114 @@ program
       for (const entry of history) {
         console.log(`  * ${entry.date} - ${entry.message}`);
       }
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+// Scan command
+program
+  .command('scan <directory>')
+  .description('Scan directory for seed data and import credentials to vault')
+  .option('-n, --name <name>', 'Vault name (default: directory name)')
+  .option('-f, --fields <fields>', 'Additional fields to detect (comma-separated)')
+  .option('--dry-run', 'Show detected credentials without importing')
+  .option('--force', 'Overwrite existing entries')
+  .action(async (directory, options) => {
+    try {
+      const customFields = options.fields
+        ? options.fields.split(',').map((f: string) => f.trim())
+        : [];
+
+      const scanner = new SeedScanner({ customFields });
+      console.log(chalk.cyan(`Scanning ${directory}...`));
+
+      const result: ScanResult = await scanner.scan(directory, options.name);
+
+      // Print summary
+      console.log('');
+      console.log(chalk.bold(`Project: ${result.projectName}`));
+      console.log(`Scanned files: ${result.scannedFiles.length}`);
+      console.log(`Skipped files: ${result.skippedFiles.length}`);
+      console.log(`Credentials found: ${result.credentials.length}`);
+
+      if (result.errors.length > 0) {
+        console.log(chalk.yellow(`\nWarnings: ${result.errors.length}`));
+        for (const err of result.errors.slice(0, 5)) {
+          console.log(chalk.yellow(`  ${err.file}: ${err.error}`));
+        }
+        if (result.errors.length > 5) {
+          console.log(chalk.yellow(`  ... and ${result.errors.length - 5} more`));
+        }
+      }
+
+      if (result.credentials.length === 0) {
+        console.log(chalk.yellow('\nNo credentials detected.'));
+        return;
+      }
+
+      // Print detected credentials
+      console.log(chalk.bold('\nDetected credentials:'));
+      for (const cred of result.credentials) {
+        console.log(`\n  ${chalk.green(cred.name)}`);
+        console.log(`    File: ${cred.file}`);
+        if (cred.email) {
+          console.log(`    Email: ${cred.email}`);
+        }
+        if (cred.password) {
+          console.log(`    Password: ${chalk.gray('********')}`);
+        }
+        const extraKeys = Object.keys(cred.extras);
+        if (extraKeys.length > 0) {
+          console.log(`    Extras: ${extraKeys.join(', ')}`);
+        }
+      }
+
+      // Import to vault unless dry-run
+      if (options.dryRun) {
+        console.log(chalk.cyan('\n--dry-run specified, not importing.'));
+        return;
+      }
+
+      console.log(chalk.cyan('\nImporting to vault...'));
+
+      const gopass = getGopass();
+      let imported = 0;
+      let skipped = 0;
+
+      for (const cred of result.credentials) {
+        try {
+          // Check if already exists
+          if ((await gopass.exists(cred.name)) && !options.force) {
+            console.log(chalk.yellow(`  Skipped: ${cred.name} (already exists)`));
+            skipped++;
+            continue;
+          }
+
+          // Create secret
+          const secret = new Secret(cred.password || '');
+
+          if (cred.email) {
+            secret.set('email', cred.email);
+            secret.set('username', cred.email);
+          }
+
+          for (const [key, value] of Object.entries(cred.extras)) {
+            secret.set(key, value);
+          }
+
+          // Save
+          await gopass.set(cred.name, secret);
+          console.log(chalk.green(`  Imported: ${cred.name}`));
+          imported++;
+        } catch (error) {
+          console.error(
+            chalk.red(`  Error importing ${cred.name}: ${error}`)
+          );
+        }
+      }
+
+      console.log(chalk.bold(`\nDone: ${imported} imported, ${skipped} skipped`));
     } catch (error) {
       handleError(error);
     }

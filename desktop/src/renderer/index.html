@@ -68,6 +68,159 @@
       transition: background 0.2s;
     }
     .btn:hover { background: #16a34a; }
+    .btn:disabled { background: #3f3f46; cursor: not-allowed; }
+    .btn-close {
+      background: transparent;
+      border: none;
+      color: #a1a1aa;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+    }
+    .btn-close:hover { color: #fff; }
+    .vault-list {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 1rem;
+      margin-top: 1.5rem;
+      text-align: left;
+      max-width: 400px;
+      width: 100%;
+    }
+    .vault-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #27272a;
+    }
+    .vault-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .vault-content {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .secret-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .secret-item:hover { background: #27272a; }
+    .secret-name { font-size: 0.9rem; }
+    .secret-action {
+      font-size: 0.75rem;
+      color: #22c55e;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .secret-item:hover .secret-action { opacity: 1; }
+    .empty-message, .error-message {
+      text-align: center;
+      padding: 2rem 1rem;
+      color: #a1a1aa;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+    .error-message { color: #ef4444; }
+    .notification {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #22c55e;
+      color: #fff;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      animation: fadeInOut 3s ease-in-out;
+    }
+    .notification.error { background: #ef4444; }
+    .button-group {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn-secondary {
+      background: #3b82f6;
+    }
+    .btn-secondary:hover { background: #2563eb; }
+    .scan-panel {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 1rem;
+      margin-top: 1.5rem;
+      text-align: left;
+      max-width: 500px;
+      width: 100%;
+    }
+    .scan-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #27272a;
+    }
+    .scan-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .scan-info {
+      font-size: 0.85rem;
+      color: #a1a1aa;
+      margin-bottom: 1rem;
+    }
+    .scan-results {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .credential-item {
+      background: #27272a;
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .credential-name {
+      font-weight: 600;
+      color: #22c55e;
+      font-size: 0.9rem;
+      margin-bottom: 0.25rem;
+    }
+    .credential-details {
+      font-size: 0.8rem;
+      color: #a1a1aa;
+    }
+    .credential-details span {
+      display: block;
+      margin-top: 0.15rem;
+    }
+    .scan-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid #27272a;
+    }
+    .btn-sm {
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+    }
+    @keyframes fadeInOut {
+      0% { opacity: 0; transform: translateX(-50%) translateY(1rem); }
+      10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      90% { opacity: 1; transform: translateX(-50%) translateY(0); }
+      100% { opacity: 0; transform: translateX(-50%) translateY(1rem); }
+    }
   </style>
 </head>
 <body>
@@ -91,10 +244,40 @@
       </div>
     </div>
     
-    <button class="btn" onclick="openVault()">Vault を開く</button>
+    <div class="button-group">
+      <button class="btn" id="vault-btn" onclick="openVault()">Vault を開く</button>
+      <button class="btn btn-secondary" id="scan-btn" onclick="scanProject()">プロジェクトをスキャン</button>
+    </div>
+    
+    <div id="vault-list" class="vault-list" style="display: none;">
+      <div class="vault-header">
+        <h2>🔑 Vault 一覧</h2>
+        <button class="btn-close" onclick="closeVault()">×</button>
+      </div>
+      <div id="vault-content" class="vault-content">
+        <!-- Secrets will be listed here -->
+      </div>
+    </div>
+    
+    <div id="scan-panel" class="scan-panel" style="display: none;">
+      <div class="scan-header">
+        <h2>📂 スキャン結果</h2>
+        <button class="btn-close" onclick="closeScan()">×</button>
+      </div>
+      <div id="scan-info" class="scan-info"></div>
+      <div id="scan-results" class="scan-results">
+        <!-- Scan results will be listed here -->
+      </div>
+      <div class="scan-actions">
+        <button class="btn btn-sm" id="import-btn" onclick="importCredentials()">Vault に追加</button>
+        <button class="btn btn-sm btn-secondary" onclick="closeScan()">キャンセル</button>
+      </div>
+    </div>
   </div>
   
   <script>
+    // Store scan results for import
+    let currentScanResult = null;
     // Initialize status
     setTimeout(() => {
       document.getElementById('store-status').textContent = '準備完了';
@@ -103,12 +286,207 @@
     }, 1000);
     
     function openVault() {
+      const btn = document.getElementById('vault-btn');
+      const vaultList = document.getElementById('vault-list');
+      const vaultContent = document.getElementById('vault-content');
+      
+      btn.textContent = '読み込み中...';
+      btn.disabled = true;
+      
       if (window.passshare) {
-        window.passshare.list().then(secrets => {
-          console.log('Secrets:', secrets);
+        window.passshare.list().then(result => {
+          btn.textContent = 'Vault を開く';
+          btn.disabled = false;
+          
+          if (result.success) {
+            const secrets = result.data || [];
+            if (secrets.length === 0) {
+              vaultContent.innerHTML = '<p class="empty-message">Vault にシークレットがありません。<br>新しいパスワードを追加してください。</p>';
+            } else {
+              vaultContent.innerHTML = secrets.map(name => 
+                '<div class="secret-item" onclick="copySecret(\'' + name + '\')">' +
+                  '<span class="secret-name">🔐 ' + name + '</span>' +
+                  '<span class="secret-action">コピー</span>' +
+                '</div>'
+              ).join('');
+            }
+            vaultList.style.display = 'block';
+          } else {
+            vaultContent.innerHTML = '<p class="error-message">エラー: ' + (result.error || 'Vault を開けませんでした') + '</p>';
+            vaultList.style.display = 'block';
+          }
+        }).catch(err => {
+          btn.textContent = 'Vault を開く';
+          btn.disabled = false;
+          vaultContent.innerHTML = '<p class="error-message">エラー: ' + err.message + '</p>';
+          vaultList.style.display = 'block';
         });
       } else {
-        alert('PassShare Vaultを開きます');
+        btn.textContent = 'Vault を開く';
+        btn.disabled = false;
+        vaultContent.innerHTML = '<p class="error-message">PassShare API が利用できません</p>';
+        vaultList.style.display = 'block';
+      }
+    }
+    
+    function closeVault() {
+      document.getElementById('vault-list').style.display = 'none';
+    }
+    
+    function copySecret(name) {
+      if (window.passshare) {
+        window.passshare.get(name).then(result => {
+          if (result.success && result.data && result.data.password) {
+            if (window.clipboard) {
+              window.clipboard.copy(result.data.password);
+              showNotification('パスワードをコピーしました（45秒後に自動クリア）');
+            }
+          } else {
+            showNotification('パスワードを取得できませんでした', true);
+          }
+        });
+      }
+    }
+    
+    function showNotification(message, isError = false) {
+      const existing = document.querySelector('.notification');
+      if (existing) existing.remove();
+      
+      const notification = document.createElement('div');
+      notification.className = 'notification' + (isError ? ' error' : '');
+      notification.textContent = message;
+      document.body.appendChild(notification);
+      
+      setTimeout(() => notification.remove(), 3000);
+    }
+    
+    async function scanProject() {
+      const btn = document.getElementById('scan-btn');
+      btn.textContent = 'スキャン中...';
+      btn.disabled = true;
+      
+      if (window.passshare && window.passshare.scan) {
+        try {
+          const result = await window.passshare.scan();
+          
+          btn.textContent = 'プロジェクトをスキャン';
+          btn.disabled = false;
+          
+          if (result.success && result.data) {
+            currentScanResult = result.data;
+            displayScanResults(result.data);
+          } else if (result.cancelled) {
+            // User cancelled directory selection
+          } else {
+            showNotification(result.error || 'スキャンに失敗しました', true);
+          }
+        } catch (err) {
+          btn.textContent = 'プロジェクトをスキャン';
+          btn.disabled = false;
+          showNotification('スキャンエラー: ' + err.message, true);
+        }
+      } else {
+        btn.textContent = 'プロジェクトをスキャン';
+        btn.disabled = false;
+        showNotification('スキャン機能が利用できません', true);
+      }
+    }
+    
+    function displayScanResults(scanResult) {
+      const panel = document.getElementById('scan-panel');
+      const info = document.getElementById('scan-info');
+      const results = document.getElementById('scan-results');
+      
+      // Update info
+      info.innerHTML = 
+        '<strong>プロジェクト:</strong> ' + scanResult.projectName + '<br>' +
+        '<strong>スキャン済み:</strong> ' + scanResult.scannedFiles.length + ' ファイル<br>' +
+        '<strong>検出:</strong> ' + scanResult.credentials.length + ' 件の資格情報';
+      
+      // Display credentials
+      if (scanResult.credentials.length === 0) {
+        results.innerHTML = '<p class="empty-message">資格情報が検出されませんでした。</p>';
+        document.getElementById('import-btn').style.display = 'none';
+      } else {
+        results.innerHTML = scanResult.credentials.map(cred => {
+          let details = '<span>📄 ' + cred.file.split(/[/\\]/).pop() + '</span>';
+          if (cred.email) {
+            details += '<span>📧 ' + cred.email + '</span>';
+          }
+          if (cred.password) {
+            details += '<span>🔑 ********</span>';
+          }
+          const extraKeys = Object.keys(cred.extras || {});
+          if (extraKeys.length > 0) {
+            details += '<span>📋 ' + extraKeys.join(', ') + '</span>';
+          }
+          return '<div class="credential-item">' +
+            '<div class="credential-name">' + cred.name + '</div>' +
+            '<div class="credential-details">' + details + '</div>' +
+          '</div>';
+        }).join('');
+        document.getElementById('import-btn').style.display = 'inline-block';
+      }
+      
+      panel.style.display = 'block';
+    }
+    
+    function closeScan() {
+      document.getElementById('scan-panel').style.display = 'none';
+      currentScanResult = null;
+    }
+    
+    async function importCredentials() {
+      if (!currentScanResult || !window.passshare) {
+        showNotification('インポートできません', true);
+        return;
+      }
+      
+      const btn = document.getElementById('import-btn');
+      btn.textContent = 'インポート中...';
+      btn.disabled = true;
+      
+      try {
+        let imported = 0;
+        let failed = 0;
+        
+        for (const cred of currentScanResult.credentials) {
+          try {
+            const secretData = {
+              password: cred.password || '',
+              data: {}
+            };
+            
+            if (cred.email) {
+              secretData.data.email = cred.email;
+              secretData.data.username = cred.email;
+            }
+            
+            // Add extras
+            for (const [key, value] of Object.entries(cred.extras || {})) {
+              secretData.data[key] = value;
+            }
+            
+            const result = await window.passshare.set(cred.name, secretData);
+            if (result.success) {
+              imported++;
+            } else {
+              failed++;
+            }
+          } catch {
+            failed++;
+          }
+        }
+        
+        btn.textContent = 'Vault に追加';
+        btn.disabled = false;
+        
+        showNotification(imported + ' 件をインポートしました' + (failed > 0 ? ' (' + failed + ' 件失敗)' : ''));
+        closeScan();
+      } catch (err) {
+        btn.textContent = 'Vault に追加';
+        btn.disabled = false;
+        showNotification('インポートエラー: ' + err.message, true);
       }
     }
   </script>

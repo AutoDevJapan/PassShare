@@ -69,6 +69,9 @@ contextBridge.exposeInMainWorld('passshare', {
 
   // Status
   initialized: () => ipcRenderer.invoke('passshare:initialized'),
+
+  // Seed scanning
+  scan: () => ipcRenderer.invoke('passshare:scan'),
 });
 
 // Expose clipboard API
@@ -173,6 +176,25 @@ declare global {
         error?: string;
       }>;
       initialized: () => Promise<{ success: boolean; data?: boolean; error?: string }>;
+      scan: () => Promise<{
+        success: boolean;
+        cancelled?: boolean;
+        data?: {
+          projectName: string;
+          rootDir: string;
+          credentials: Array<{
+            file: string;
+            name: string;
+            email?: string;
+            password?: string;
+            extras: Record<string, string>;
+          }>;
+          scannedFiles: string[];
+          skippedFiles: string[];
+          errors: Array<{ file: string; error: string }>;
+        };
+        error?: string;
+      }>;
     };
     clipboard: {
       copy: (text: string, timeout?: number) => void;

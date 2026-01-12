@@ -25,6 +25,21 @@ export { generatePassword, checkPasswordStrength } from './password.js';
 export { copyToClipboard, clearClipboard } from './clipboard.js';
 export { TOTP, HOTP, parseOtpUri } from './otp.js';
 
+// Seed scanning
+export {
+  SeedScanner,
+  scanDirectory,
+  CredentialExtractor,
+  parseFile,
+  getSupportedExtensions,
+  type ScanResult,
+  type ScanOptions,
+  type CredentialGroup,
+  type DetectedCredential,
+  DEFAULT_CREDENTIAL_FIELDS,
+  DEFAULT_IGNORE_PATTERNS,
+} from './seed/index.js';
+
 // Errors
 export {
   PassShareError,
