@@ -21,6 +21,7 @@ import {
   Copy,
 } from 'lucide-react';
 import FeatureCard from '../components/FeatureCard';
+import CyberBackground from '../components/CyberBackground';
 
 export default function Home() {
   const { t } = useTranslation();
@@ -69,20 +70,31 @@ export default function Home() {
   ];
 
   return (
-    <div className="animate-fade-in">
+    <div className="animate-fade-in relative">
+      {/* Cyber Background */}
+      <CyberBackground />
+
       {/* Hero Section */}
-      <section className="py-20 lg:py-28">
+      <section className="py-20 lg:py-28 relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-dark-800 border border-dark-700 text-dark-400 text-sm mb-6">
-              <span className="w-2 h-2 rounded-full bg-primary-500"></span>
-              {t('hero.badge')}
+            {/* Animated badge */}
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-dark-800/80 border border-primary-500/30 text-dark-400 text-sm mb-6 backdrop-blur-sm cyber-border">
+              <span className="w-2 h-2 rounded-full bg-primary-500 animate-pulse"></span>
+              <span className="typing-cursor">{t('hero.badge')}</span>
             </div>
 
+            {/* Glitch title */}
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 leading-tight">
-              {t('hero.title1')}
+              <span 
+                className="glitch inline-block" 
+                data-text={t('hero.title1')}
+              >
+                {t('hero.title1')}
+              </span>
               <br />
-              <span className="gradient-text">{t('hero.title2')}</span>{t('hero.title3')}
+              <span className="gradient-text neon-glow text-primary-400">{t('hero.title2')}</span>
+              <span>{t('hero.title3')}</span>
             </h1>
 
             <p className="text-lg text-dark-400 mb-8 max-w-2xl">
@@ -90,11 +102,14 @@ export default function Home() {
             </p>
 
             <div className="flex flex-wrap gap-3">
-              <Link to="/download" className="btn btn-primary px-6 py-2.5">
-                {t('common.download')}
-                <ArrowRight className="ml-2 h-4 w-4" />
+              <Link to="/download" className="btn btn-primary px-6 py-2.5 relative overflow-hidden group">
+                <span className="relative z-10 flex items-center">
+                  {t('common.download')}
+                  <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                </span>
+                <span className="absolute inset-0 bg-gradient-to-r from-primary-600 to-cyan-500 opacity-0 group-hover:opacity-100 transition-opacity"></span>
               </Link>
-              <Link to="/docs" className="btn btn-secondary px-6 py-2.5">
+              <Link to="/docs" className="btn btn-secondary px-6 py-2.5 hover:border-primary-500/50 transition-colors">
                 {t('hero.viewDocs')}
               </Link>
             </div>
@@ -102,7 +117,7 @@ export default function Home() {
 
           {/* Quick Start Steps */}
           <div className="mt-16 max-w-3xl">
-            <div className="card p-6 md:p-8">
+            <div className="card p-6 md:p-8 backdrop-blur-sm bg-dark-800/90 cyber-border scanlines">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-bold text-white">{t('quickstart.title')}</h2>
                 <Link to="/docs" className="text-primary-400 hover:text-primary-300 text-sm flex items-center gap-1">
@@ -232,11 +247,11 @@ uid           [ultimate] Your Name <you@example.com>`}
       </section>
 
       {/* Features Section */}
-      <section className="py-16 border-t border-dark-800">
+      <section className="py-16 border-t border-dark-800 relative z-10 hex-bg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="mb-12">
             <h2 className="section-title text-white">
-              {t('features.title')}
+              <span className="glitch" data-text={t('features.title')}>{t('features.title')}</span>
             </h2>
             <p className="section-subtitle">
               {t('features.description')}
@@ -252,7 +267,7 @@ uid           [ultimate] Your Name <you@example.com>`}
       </section>
 
       {/* Migration Section */}
-      <section className="py-16 border-t border-dark-800">
+      <section className="py-16 border-t border-dark-800 relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="mb-12">
             <h2 className="section-title text-white">
@@ -327,7 +342,7 @@ uid           [ultimate] Your Name <you@example.com>`}
       </section>
 
       {/* Comparison Section */}
-      <section className="py-16 border-t border-dark-800">
+      <section className="py-16 border-t border-dark-800 relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="mb-12">
             <h2 className="section-title text-white">
@@ -401,18 +416,21 @@ uid           [ultimate] Your Name <you@example.com>`}
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 border-t border-dark-800">
+      <section className="py-20 border-t border-dark-800 relative z-10 data-stream">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="card p-8 md:p-12 text-center">
+          <div className="card p-8 md:p-12 text-center cyber-border backdrop-blur-sm bg-dark-800/90">
             <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
-              {t('cta.title')}
+              <span className="glitch" data-text={t('cta.title')}>{t('cta.title')}</span>
             </h2>
             <p className="text-dark-400 mb-8 max-w-xl mx-auto">
               {t('cta.description')}
             </p>
-            <Link to="/download" className="btn btn-primary px-8 py-3">
-              {t('cta.freeDownload')}
-              <ArrowRight className="ml-2 h-4 w-4" />
+            <Link to="/download" className="btn btn-primary px-8 py-3 relative overflow-hidden group">
+              <span className="relative z-10 flex items-center">
+                {t('cta.freeDownload')}
+                <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
+              </span>
+              <span className="absolute inset-0 bg-gradient-to-r from-primary-600 to-cyan-500 opacity-0 group-hover:opacity-100 transition-opacity"></span>
             </Link>
           </div>
         </div>
