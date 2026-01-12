@@ -200,24 +200,27 @@ jobs:
           cd browser-extension
           zip -r ../passshare-firefox-${{ needs.prepare.outputs.version }}.xpi dist/*
 
+      - name: Create extension upload dir
+        run: |
+          mkdir -p extension-upload
+          mv passshare-chrome-*.zip extension-upload/
+          mv passshare-firefox-*.xpi extension-upload/
+
       - name: Upload to R2
         uses: shallwefootball/s3-upload-action@master
         with:
           aws_key_id: ${{ secrets.R2_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           aws_bucket: ${{ env.R2_BUCKET }}
-          source_dir: .
+          source_dir: extension-upload
           destination_dir: ${{ needs.prepare.outputs.version }}/extension
           endpoint: ${{ env.R2_ENDPOINT }}
-          include: '*.zip,*.xpi'
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: browser-extension
-          path: |
-            passshare-chrome-*.zip
-            passshare-firefox-*.xpi
+          path: extension-upload/
 
   # GitHub Releaseの作成
   create-release:
@@ -269,7 +272,8 @@ jobs:
     steps:
       - name: Create latest.json
         run: |
-          cat > latest.json << 'EOF'
+          mkdir -p latest-upload
+          cat > latest-upload/latest.json << EOF
           {
             "version": "${{ needs.prepare.outputs.version }}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -293,7 +297,6 @@ jobs:
           aws_key_id: ${{ secrets.R2_ACCESS_KEY_ID }}
           aws_secret_access_key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           aws_bucket: ${{ env.R2_BUCKET }}
-          source_dir: .
+          source_dir: latest-upload
           destination_dir: ''
           endpoint: ${{ env.R2_ENDPOINT }}
-          include: 'latest.json'

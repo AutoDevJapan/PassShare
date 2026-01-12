@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "PassShare Desktop - Secure Password Manager",
   "main": "dist/main/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AutoDevJapan/PassShare.git"
+  },
   "author": {
     "name": "BM1314",
     "email": "info@bm1314.co.jp"
@@ -38,6 +42,7 @@
   "build": {
     "appId": "net.bm1314.passshare",
     "productName": "PassShare",
+    "publish": null,
     "directories": {
       "output": "release"
     },
