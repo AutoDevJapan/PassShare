@@ -57,3 +57,18 @@ htmlcov/
 *.bak
 *.tmp
 *.temp
+
+# Wrangler
+.wrangler/
+
+# Browser use (cloned tool)
+browser-use/
+
+# Build artifacts
+*.zip
+*.xpi
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.blockmap

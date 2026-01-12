@@ -14,6 +14,7 @@ on:
 env:
   R2_ENDPOINT: https://05f6d2c09fa3ee88119588f182550e9c.r2.cloudflarestorage.com
   R2_BUCKET: passshare-downloads
+  R2_PUBLIC_URL: https://pub-a6b1a19862a948aa9bdba40ffcbf34ab.r2.dev
 
 jobs:
   # バージョン情報を取得
@@ -186,6 +187,9 @@ jobs:
       - name: Build extension
         run: pnpm --filter passshare-browser-extension build
 
+      - name: Copy manifest to dist
+        run: cp browser-extension/manifest.json browser-extension/dist/
+
       - name: Package for Chrome
         run: |
           cd browser-extension
@@ -247,13 +251,13 @@ jobs:
             ### ダウンロード
 
             #### デスクトップアプリ
-            - **Windows**: [PassShare-${{ needs.prepare.outputs.version }}-win.exe](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/windows/PassShare-${{ needs.prepare.outputs.version }}.exe)
-            - **macOS**: [PassShare-${{ needs.prepare.outputs.version }}-mac.dmg](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/macos/PassShare-${{ needs.prepare.outputs.version }}.dmg)
-            - **Linux**: [PassShare-${{ needs.prepare.outputs.version }}-linux.AppImage](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/linux/PassShare-${{ needs.prepare.outputs.version }}.AppImage)
+            - **Windows**: [PassShare Setup ${{ needs.prepare.outputs.version }}.exe](${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/desktop/windows/PassShare%20Setup%20${{ needs.prepare.outputs.version }}.exe)
+            - **macOS**: [PassShare-${{ needs.prepare.outputs.version }}.dmg](${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/desktop/macos/PassShare-${{ needs.prepare.outputs.version }}.dmg)
+            - **Linux**: [PassShare-${{ needs.prepare.outputs.version }}.AppImage](${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/desktop/linux/PassShare-${{ needs.prepare.outputs.version }}.AppImage)
 
             #### ブラウザ拡張
-            - **Chrome/Edge/Brave**: [passshare-chrome-${{ needs.prepare.outputs.version }}.zip](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-chrome-${{ needs.prepare.outputs.version }}.zip)
-            - **Firefox**: [passshare-firefox-${{ needs.prepare.outputs.version }}.xpi](https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-firefox-${{ needs.prepare.outputs.version }}.xpi)
+            - **Chrome/Edge/Brave**: [passshare-chrome-${{ needs.prepare.outputs.version }}.zip](${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/extension/passshare-chrome-${{ needs.prepare.outputs.version }}.zip)
+            - **Firefox**: [passshare-firefox-${{ needs.prepare.outputs.version }}.xpi](${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/extension/passshare-firefox-${{ needs.prepare.outputs.version }}.xpi)
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -265,19 +269,19 @@ jobs:
     steps:
       - name: Create latest.json
         run: |
-          cat > latest.json << EOF
+          cat > latest.json << 'EOF'
           {
             "version": "${{ needs.prepare.outputs.version }}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "downloads": {
               "desktop": {
-                "windows": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/windows/",
-                "macos": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/macos/",
-                "linux": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/desktop/linux/"
+                "windows": "${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/desktop/windows/PassShare%20Setup%20${{ needs.prepare.outputs.version }}.exe",
+                "macos": "${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/desktop/macos/PassShare-${{ needs.prepare.outputs.version }}.dmg",
+                "linux": "${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/desktop/linux/PassShare-${{ needs.prepare.outputs.version }}.AppImage"
               },
               "extension": {
-                "chrome": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-chrome-${{ needs.prepare.outputs.version }}.zip",
-                "firefox": "https://downloads.pass-share.bm1314.net/${{ needs.prepare.outputs.version }}/extension/passshare-firefox-${{ needs.prepare.outputs.version }}.xpi"
+                "chrome": "${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/extension/passshare-chrome-${{ needs.prepare.outputs.version }}.zip",
+                "firefox": "${{ env.R2_PUBLIC_URL }}/${{ needs.prepare.outputs.version }}/extension/passshare-firefox-${{ needs.prepare.outputs.version }}.xpi"
               }
             }
           }

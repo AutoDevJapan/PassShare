@@ -9,22 +9,23 @@
   },
   "license": "MIT",
   "scripts": {
-    "dev": "concurrently \"pnpm run dev:main\" \"pnpm run dev:renderer\"",
+    "dev": "concurrently \"pnpm run dev:main\" \"pnpm run dev:preload\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
-    "dev:renderer": "vite",
-    "build": "pnpm run build:main && pnpm run build:renderer",
+    "dev:preload": "tsc -p tsconfig.preload.json --watch",
+    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:renderer": "vite build",
+    "build:preload": "tsc -p tsconfig.preload.json",
+    "build:renderer": "node -e \"const fs=require('fs');fs.mkdirSync('dist/renderer',{recursive:true});fs.copyFileSync('src/renderer/index.html','dist/renderer/index.html');\"",
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "dist:win": "electron-builder --win",
+    "dist:win": "electron-builder --win --x64",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@bm1314/passshare-core": "workspace:*"
+    "electron-updater": "^6.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
