@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.domain.models import DownloadEvent
-from app.infrastructure.database import async_session_factory
+from app.infrastructure.database import get_session_factory
 
 router = APIRouter()
 
@@ -172,20 +172,22 @@ async def download_file(category: str, platform: str, request: Request) -> Redir
 
     # ダウンロード統計を記録
     try:
-        # IPアドレスをハッシュ化（プライバシー保護）
-        client_ip = request.client.host if request.client else "unknown"
-        ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
+        factory = get_session_factory()
+        if factory is not None:
+            # IPアドレスをハッシュ化（プライバシー保護）
+            client_ip = request.client.host if request.client else "unknown"
+            ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
 
-        async with async_session_factory() as session:
-            event = DownloadEvent(
-                package=f"passshare-{category}",
-                version=version,
-                platform=config["platform"],
-                ip_hash=ip_hash,
-                user_agent=request.headers.get("user-agent"),
-            )
-            session.add(event)
-            await session.commit()
+            async with factory() as session:
+                event = DownloadEvent(
+                    package=f"passshare-{category}",
+                    version=version,
+                    platform=config["platform"],
+                    ip_hash=ip_hash,
+                    user_agent=request.headers.get("user-agent"),
+                )
+                session.add(event)
+                await session.commit()
     except Exception:
         pass  # 統計記録失敗しても続行
 
