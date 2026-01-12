@@ -55,11 +55,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multiple recipients for team sharing
 - Cross-platform support (Linux, macOS, Windows)
 
+## [1.1.0] - 2026-01-12
+
+### Added
+
+- **Browser Extension Auto Setup**
+  - デスクトップアプリ初回起動時に Native Messaging Host を自動設定
+  - Chrome, Edge, Firefox 全ブラウザ対応
+  - Windows, macOS, Linux 全プラットフォーム対応
+
+- **Native Messaging Host**
+  - ブラウザ拡張機能とデスクトップアプリ間の通信を実現
+  - stdin/stdout による Chrome Native Messaging Protocol 実装
+  - シークレットの取得、一覧表示、URL マッチングをサポート
+
+- **ブラウザ拡張機能の改善**
+  - Firefox 対応（browser_specific_settings 追加）
+  - ビルド時のアイコン自動生成
+  - popup.html パス修正
+
+- **IPC ハンドラ**
+  - `nativeHost:status` - インストール状態確認
+  - `nativeHost:install` - 手動インストール
+  - `nativeHost:uninstall` - アンインストール
+  - `nativeHost:openExtensionStore` - ブラウザストアを開く
+
+### Changed
+
+- electron-builder 設定を更新（Native Host バンドル対応）
+
 ## [Unreleased]
 
 ### Planned
 
-- Browser extension
 - Mobile app (React Native)
 - Web vault interface
 - HIBP integration for password auditing

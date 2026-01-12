@@ -1,6 +1,6 @@
 {
   "name": "passshare-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PassShare Desktop - Secure Password Manager",
   "main": "dist/main/index.js",
   "repository": {
