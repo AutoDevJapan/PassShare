@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "released_at": "2026-01-12T07:30:00Z",
+  "downloads": {
+    "desktop": {
+      "windows": "https://pub-a6b1a19862a948aa9bdba40ffcbf34ab.r2.dev/1.0.0/desktop/windows/PassShare%20Setup%201.0.0.exe",
+      "macos": "https://pub-a6b1a19862a948aa9bdba40ffcbf34ab.r2.dev/1.0.0/desktop/macos/PassShare-1.0.0-arm64.dmg",
+      "linux": "https://pub-a6b1a19862a948aa9bdba40ffcbf34ab.r2.dev/1.0.0/desktop/linux/PassShare-1.0.0.AppImage"
+    },
+    "extension": {
+      "chrome": "https://pub-a6b1a19862a948aa9bdba40ffcbf34ab.r2.dev/1.0.0/extension/passshare-chrome-1.0.0.zip",
+      "firefox": "https://pub-a6b1a19862a948aa9bdba40ffcbf34ab.r2.dev/1.0.0/extension/passshare-firefox-1.0.0.xpi"
+    }
+  }
+}
