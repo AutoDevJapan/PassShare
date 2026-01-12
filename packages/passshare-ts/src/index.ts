@@ -25,6 +25,16 @@ export { generatePassword, checkPasswordStrength } from './password.js';
 export { copyToClipboard, clearClipboard } from './clipboard.js';
 export { TOTP, HOTP, parseOtpUri } from './otp.js';
 
+// HIBP (Have I Been Pwned)
+export {
+  checkPassword as hibpCheckPassword,
+  checkPasswordsBatch as hibpCheckPasswordsBatch,
+  checkEmail as hibpCheckEmail,
+  formatPwnedCount,
+  type HIBPCheckResult,
+  type HIBPBatchResult,
+} from './hibp.js';
+
 // Seed scanning
 export {
   SeedScanner,
@@ -39,6 +49,46 @@ export {
   DEFAULT_CREDENTIAL_FIELDS,
   DEFAULT_IGNORE_PATTERNS,
 } from './seed/index.js';
+
+// Templates
+export {
+  TemplateManager,
+  defaultTemplateManager,
+  BUILTIN_TEMPLATES,
+  LOGIN_TEMPLATE,
+  CREDIT_CARD_TEMPLATE,
+  BANK_ACCOUNT_TEMPLATE,
+  SSH_KEY_TEMPLATE,
+  API_TOKEN_TEMPLATE,
+  DATABASE_TEMPLATE,
+  PASSPORT_TEMPLATE,
+  DRIVERS_LICENSE_TEMPLATE,
+  SOFTWARE_LICENSE_TEMPLATE,
+  WIFI_TEMPLATE,
+  SECURE_NOTE_TEMPLATE,
+  IDENTITY_TEMPLATE,
+  SERVER_TEMPLATE,
+  type Template,
+  type TemplateField,
+  type TemplateManagerOptions,
+} from './templates/index.js';
+
+// Import/Export
+export {
+  Importer,
+  importPasswords,
+  type ImportSource,
+  type ImportResult,
+  type ImportOptions,
+} from './importer.js';
+
+export {
+  Exporter,
+  exportPasswords,
+  type ExportFormat,
+  type ExportResult,
+  type ExportOptions,
+} from './exporter.js';
 
 // Errors
 export {

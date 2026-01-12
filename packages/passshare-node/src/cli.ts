@@ -17,7 +17,13 @@ import {
   NotFoundError,
   PassShareError,
   SeedScanner,
+  importPasswords,
+  exportPasswords,
+  hibpCheckPassword,
+  formatPwnedCount,
   type ScanResult,
+  type ImportSource,
+  type ExportFormat,
 } from '@bm1314/passshare-core';
 
 const program = new Command();
@@ -501,8 +507,10 @@ program
 // Audit command
 program
   .command('audit [folder]')
-  .description('Audit password strength')
-  .action(async (folder) => {
+  .description('Audit password strength and check for breaches')
+  .option('--hibp', 'Check passwords against Have I Been Pwned database')
+  .option('--full', 'Show all details')
+  .action(async (folder, options) => {
     try {
       const gopass = getGopass();
       const secrets = await gopass.list(folder || '');
@@ -510,12 +518,18 @@ program
       console.log(`Auditing ${secrets.length} secrets...`);
 
       const weakPasswords: Array<{ name: string; strength: ReturnType<typeof checkPasswordStrength> }> = [];
+      const pwnedPasswords: Array<{ name: string; count: number }> = [];
       const duplicates: Map<string, string[]> = new Map();
+      const passwordsToCheck: Array<{ name: string; password: string }> = [];
 
+      // First pass: collect passwords and check strength
       for (const name of secrets) {
         try {
           const secret = await gopass.get(name);
           const password = secret.password;
+
+          if (!password) continue;
+
           const strength = checkPasswordStrength(password);
 
           if (strength.strength === 'weak' || strength.strength === 'fair') {
@@ -526,28 +540,85 @@ program
             duplicates.set(password, []);
           }
           duplicates.get(password)!.push(name);
+
+          if (options.hibp) {
+            passwordsToCheck.push({ name, password });
+          }
         } catch {
           // Skip
         }
       }
 
+      // HIBP check if enabled
+      if (options.hibp && passwordsToCheck.length > 0) {
+        console.log(chalk.cyan('\nChecking passwords against Have I Been Pwned...'));
+        console.log(chalk.gray('(This may take a while for large vaults)\n'));
+
+        let checked = 0;
+        for (const { name, password } of passwordsToCheck) {
+          try {
+            const result = await hibpCheckPassword(password);
+            checked++;
+
+            // Progress indicator
+            if (checked % 10 === 0) {
+              process.stdout.write(`\r  Checked ${checked}/${passwordsToCheck.length}...`);
+            }
+
+            if (result.pwned) {
+              pwnedPasswords.push({ name, count: result.count });
+            }
+
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } catch (e) {
+            // Skip on error
+          }
+        }
+        console.log(`\r  Checked ${checked}/${passwordsToCheck.length} passwords.`);
+      }
+
+      // Report results
+      let hasIssues = false;
+
+      if (pwnedPasswords.length) {
+        hasIssues = true;
+        console.log(chalk.red('\n⚠️  COMPROMISED PASSWORDS (found in data breaches):'));
+        for (const { name, count } of pwnedPasswords) {
+          console.log(chalk.red(`  ✗ ${name}: appeared ${formatPwnedCount(count)} times in breaches`));
+        }
+      }
+
       if (weakPasswords.length) {
-        console.log(chalk.yellow('\nWeak passwords:'));
+        hasIssues = true;
+        console.log(chalk.yellow('\n⚠️  Weak passwords:'));
         for (const { name, strength } of weakPasswords) {
-          console.log(`  ${name}: ${strength.strength} (entropy: ${strength.entropy.toFixed(1)})`);
+          console.log(`  ${name}: ${strength.strength} (entropy: ${strength.entropy.toFixed(1)} bits)`);
         }
       }
 
       const dupGroups = Array.from(duplicates.values()).filter((names) => names.length > 1);
       if (dupGroups.length) {
-        console.log(chalk.yellow('\nDuplicate passwords:'));
+        hasIssues = true;
+        console.log(chalk.yellow('\n⚠️  Duplicate passwords (same password used multiple times):'));
         for (const names of dupGroups) {
           console.log(`  ${names.join(', ')}`);
         }
       }
 
-      if (!weakPasswords.length && !dupGroups.length) {
-        console.log(chalk.green('All passwords look good!'));
+      // Summary
+      console.log('\n' + chalk.bold('Summary:'));
+      console.log(`  Total secrets: ${secrets.length}`);
+      if (options.hibp) {
+        console.log(`  Compromised: ${pwnedPasswords.length > 0 ? chalk.red(pwnedPasswords.length.toString()) : chalk.green('0')}`);
+      }
+      console.log(`  Weak: ${weakPasswords.length > 0 ? chalk.yellow(weakPasswords.length.toString()) : chalk.green('0')}`);
+      console.log(`  Duplicate groups: ${dupGroups.length > 0 ? chalk.yellow(dupGroups.length.toString()) : chalk.green('0')}`);
+
+      if (!hasIssues) {
+        console.log(chalk.green('\n✅ All passwords look good!'));
+      } else {
+        console.log(chalk.yellow('\n💡 Consider updating the flagged passwords.'));
       }
     } catch (error) {
       handleError(error);
@@ -577,6 +648,68 @@ program
     }
 
     console.log(passwords.join(' '));
+  });
+
+// Edit command
+program
+  .command('edit <name>')
+  .description('Edit a secret')
+  .option('-e, --editor <editor>', 'Editor to use')
+  .option('-c, --create', 'Create if not exists')
+  .action(async (name, options) => {
+    try {
+      const gopass = getGopass();
+      const fs = await import('fs');
+      const os = await import('os');
+      const path = await import('path');
+      const { spawn } = await import('child_process');
+
+      let content = '';
+
+      if (await gopass.exists(name)) {
+        const secret = await gopass.get(name);
+        content = secret.toString();
+      } else if (!options.create) {
+        throw new NotFoundError(name);
+      }
+
+      // Determine editor
+      const editor = options.editor || process.env.EDITOR || 'vim';
+
+      // Create temp file
+      const tempDir = os.tmpdir();
+      const tempFile = path.join(tempDir, `passshare-${Date.now()}.txt`);
+      fs.writeFileSync(tempFile, content, { mode: 0o600 });
+
+      // Open editor
+      const child = spawn(editor, [tempFile], {
+        stdio: 'inherit',
+        shell: true,
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        child.on('close', (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Editor exited with code ${code}`));
+          }
+        });
+        child.on('error', reject);
+      });
+
+      // Read back and save
+      const newContent = fs.readFileSync(tempFile, 'utf-8');
+      const newSecret = Secret.parse(newContent);
+      await gopass.set(name, newSecret);
+
+      // Clean up
+      fs.unlinkSync(tempFile);
+
+      console.log(chalk.green(`Saved ${name}`));
+    } catch (error) {
+      handleError(error);
+    }
   });
 
 // History command
@@ -705,6 +838,344 @@ program
       }
 
       console.log(chalk.bold(`\nDone: ${imported} imported, ${skipped} skipped`));
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+// Import command
+program
+  .command('import <source> <file>')
+  .description('Import passwords from another password manager')
+  .option('-p, --prefix <prefix>', 'Prefix for imported entries')
+  .option('-f, --force', 'Overwrite existing entries')
+  .action(async (source, file, options) => {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+
+      const validSources: ImportSource[] = ['1password', 'bitwarden', 'lastpass', 'keepass', 'csv'];
+      if (!validSources.includes(source as ImportSource)) {
+        console.error(chalk.red(`Invalid source. Valid sources: ${validSources.join(', ')}`));
+        process.exit(1);
+      }
+
+      const filePath = path.resolve(file);
+      if (!fs.existsSync(filePath)) {
+        console.error(chalk.red(`File not found: ${filePath}`));
+        process.exit(1);
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const gopass = getGopass();
+      const store = gopass.rootStore;
+
+      console.log(chalk.cyan(`Importing from ${source}...`));
+
+      const result = await importPasswords(store, source as ImportSource, content, {
+        prefix: options.prefix,
+        overwrite: options.force,
+      });
+
+      console.log(chalk.green(`\nImport complete!`));
+      console.log(`  Total entries: ${result.total}`);
+      console.log(`  Imported: ${chalk.green(result.imported.toString())}`);
+      console.log(`  Skipped: ${chalk.yellow(result.skipped.toString())}`);
+
+      if (result.errors.length > 0) {
+        console.log(chalk.red(`  Errors: ${result.errors.length}`));
+        for (const err of result.errors.slice(0, 5)) {
+          console.log(chalk.red(`    ${err}`));
+        }
+        if (result.errors.length > 5) {
+          console.log(chalk.red(`    ... and ${result.errors.length - 5} more`));
+        }
+      }
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+// Export command
+program
+  .command('export <format> [output]')
+  .description('Export passwords to a file')
+  .option('-p, --prefix <prefix>', 'Only export entries with this prefix')
+  .action(async (format, output, options) => {
+    try {
+      const validFormats: ExportFormat[] = ['passshare', 'bitwarden', 'csv'];
+      if (!validFormats.includes(format as ExportFormat)) {
+        console.error(chalk.red(`Invalid format. Valid formats: ${validFormats.join(', ')}`));
+        process.exit(1);
+      }
+
+      const gopass = getGopass();
+
+      console.log(chalk.cyan(`Exporting to ${format} format...`));
+
+      const result = await exportPasswords(gopass, format as ExportFormat, {
+        prefix: options.prefix,
+      });
+
+      if (output) {
+        const fs = await import('fs');
+        const path = await import('path');
+        const outputPath = path.resolve(output);
+        fs.writeFileSync(outputPath, result.content, 'utf-8');
+        console.log(chalk.green(`\nExported to ${outputPath}`));
+      } else {
+        console.log(result.content);
+      }
+
+      console.log(chalk.green(`\nExport complete!`));
+      console.log(`  Total entries: ${result.total}`);
+      console.log(`  Exported: ${chalk.green(result.exported.toString())}`);
+
+      if (result.errors.length > 0) {
+        console.log(chalk.red(`  Errors: ${result.errors.length}`));
+        for (const err of result.errors.slice(0, 5)) {
+          console.log(chalk.red(`    ${err}`));
+        }
+      }
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+// Version command
+program
+  .command('version')
+  .description('Show version information')
+  .action(() => {
+    console.log(`passshare ${VERSION}`);
+    console.log('© 2026 株式会社BM1314. All rights reserved.');
+  });
+
+// Completion command
+program
+  .command('completion <shell>')
+  .description('Generate shell completion script')
+  .action((shell) => {
+    switch (shell) {
+      case 'bash':
+        console.log(`
+# PassShare bash completion
+_passshare_completions() {
+    local cur="\${COMP_WORDS[COMP_CWORD]}"
+    local commands="show init insert edit delete generate list find grep copy move sync config mounts recipients otp audit pwgen history scan version"
+    COMPREPLY=($(compgen -W "\${commands}" -- "\${cur}"))
+}
+complete -F _passshare_completions passshare
+`);
+        break;
+      case 'zsh':
+        console.log(`
+#compdef passshare
+_passshare() {
+    local -a commands
+    commands=(
+        'show:Show a secret'
+        'init:Initialize a new password store'
+        'insert:Insert a new secret'
+        'edit:Edit a secret'
+        'delete:Delete a secret'
+        'generate:Generate a password'
+        'list:List secrets'
+        'find:Find secrets by name'
+        'grep:Search secret contents'
+        'copy:Copy a secret'
+        'move:Move a secret'
+        'sync:Sync with remote'
+        'config:Manage configuration'
+        'mounts:Manage mount points'
+        'recipients:Manage recipients'
+        'otp:Generate OTP code'
+        'audit:Audit password strength'
+        'pwgen:Generate standalone passwords'
+        'history:Show secret history'
+        'scan:Scan directory for credentials'
+        'version:Show version'
+    )
+    _describe 'command' commands
+}
+compdef _passshare passshare
+`);
+        break;
+      case 'fish':
+        console.log(`
+# PassShare fish completion
+complete -c passshare -n "__fish_use_subcommand" -a "show" -d "Show a secret"
+complete -c passshare -n "__fish_use_subcommand" -a "init" -d "Initialize a new password store"
+complete -c passshare -n "__fish_use_subcommand" -a "insert" -d "Insert a new secret"
+complete -c passshare -n "__fish_use_subcommand" -a "edit" -d "Edit a secret"
+complete -c passshare -n "__fish_use_subcommand" -a "delete" -d "Delete a secret"
+complete -c passshare -n "__fish_use_subcommand" -a "generate" -d "Generate a password"
+complete -c passshare -n "__fish_use_subcommand" -a "list" -d "List secrets"
+complete -c passshare -n "__fish_use_subcommand" -a "find" -d "Find secrets by name"
+complete -c passshare -n "__fish_use_subcommand" -a "grep" -d "Search secret contents"
+complete -c passshare -n "__fish_use_subcommand" -a "copy" -d "Copy a secret"
+complete -c passshare -n "__fish_use_subcommand" -a "move" -d "Move a secret"
+complete -c passshare -n "__fish_use_subcommand" -a "sync" -d "Sync with remote"
+complete -c passshare -n "__fish_use_subcommand" -a "config" -d "Manage configuration"
+complete -c passshare -n "__fish_use_subcommand" -a "mounts" -d "Manage mount points"
+complete -c passshare -n "__fish_use_subcommand" -a "recipients" -d "Manage recipients"
+complete -c passshare -n "__fish_use_subcommand" -a "otp" -d "Generate OTP code"
+complete -c passshare -n "__fish_use_subcommand" -a "audit" -d "Audit password strength"
+complete -c passshare -n "__fish_use_subcommand" -a "pwgen" -d "Generate standalone passwords"
+complete -c passshare -n "__fish_use_subcommand" -a "history" -d "Show secret history"
+complete -c passshare -n "__fish_use_subcommand" -a "scan" -d "Scan directory for credentials"
+complete -c passshare -n "__fish_use_subcommand" -a "version" -d "Show version"
+`);
+        break;
+      case 'powershell':
+        console.log(`
+# PassShare PowerShell completion
+Register-ArgumentCompleter -Native -CommandName passshare -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $commands = @(
+        'show', 'init', 'insert', 'edit', 'delete', 'generate', 'list',
+        'find', 'grep', 'copy', 'move', 'sync', 'config', 'mounts',
+        'recipients', 'otp', 'audit', 'pwgen', 'history', 'scan', 'version'
+    )
+    $commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    }
+}
+`);
+        break;
+      default:
+        console.error(chalk.red(`Unknown shell: ${shell}`));
+        console.log('Supported shells: bash, zsh, fish, powershell');
+        process.exit(1);
+    }
+  });
+
+// Create command (interactive)
+program
+  .command('create')
+  .description('Interactively create a new secret')
+  .option('-s, --store <name>', 'Store name')
+  .action(async (options) => {
+    try {
+      const readline = await import('readline');
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+
+      const question = (q: string): Promise<string> =>
+        new Promise((resolve) => rl.question(q, resolve));
+
+      console.log(chalk.cyan('🧪 Creating a new secret...\n'));
+
+      // Get name
+      const name = await question('Secret name (e.g., email/gmail): ');
+      if (!name.trim()) {
+        console.error(chalk.red('Name is required'));
+        rl.close();
+        process.exit(1);
+      }
+
+      const gopass = getGopass();
+
+      // Check if exists
+      if (await gopass.exists(name)) {
+        const overwrite = await question(chalk.yellow(`${name} already exists. Overwrite? [y/N]: `));
+        if (overwrite.toLowerCase() !== 'y') {
+          console.log('Cancelled');
+          rl.close();
+          return;
+        }
+      }
+
+      // Generate or enter password
+      const genPassword = await question('Generate password? [Y/n]: ');
+      let password: string;
+
+      if (genPassword.toLowerCase() !== 'n') {
+        const lengthStr = await question('Password length [24]: ');
+        const length = parseInt(lengthStr) || 24;
+        password = generatePassword({ length, symbols: true });
+        console.log(chalk.green(`Generated: ${password}`));
+      } else {
+        password = await question('Enter password: ');
+      }
+
+      // Additional fields
+      const secret = new Secret(password);
+
+      const username = await question('Username (optional): ');
+      if (username) secret.set('username', username);
+
+      const url = await question('URL (optional): ');
+      if (url) secret.set('url', url);
+
+      const notes = await question('Notes (optional): ');
+      if (notes) secret.body = notes;
+
+      rl.close();
+
+      // Save
+      await gopass.set(name, secret);
+      console.log(chalk.green(`\n✅ Saved ${name}`));
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+// Cat command
+program
+  .command('cat <name>')
+  .description('Output secret to stdout (no parsing)')
+  .action(async (name) => {
+    try {
+      const gopass = getGopass();
+      const secret = await gopass.get(name);
+      process.stdout.write(secret.toString());
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+// Env command
+program
+  .command('env <name> [command...]')
+  .description('Run command with secret as environment variables')
+  .action(async (name, command) => {
+    try {
+      if (!command.length) {
+        console.error(chalk.red('Usage: passshare env <name> -- <command...>'));
+        process.exit(2);
+      }
+
+      const gopass = getGopass();
+      const secret = await gopass.get(name);
+
+      // Build environment
+      const env: Record<string, string> = { ...process.env };
+
+      // Add password
+      env['PASSWORD'] = secret.password;
+
+      // Add all key-value pairs
+      for (const [key, value] of secret.data) {
+        const envKey = key.toUpperCase().replace(/-/g, '_');
+        env[envKey] = value;
+      }
+
+      // Execute command
+      const { spawn } = await import('child_process');
+      const [cmd, ...args] = command;
+
+      const child = spawn(cmd, args, {
+        env,
+        stdio: 'inherit',
+        shell: true,
+      });
+
+      child.on('close', (code) => {
+        process.exit(code || 0);
+      });
     } catch (error) {
       handleError(error);
     }

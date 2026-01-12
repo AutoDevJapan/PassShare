@@ -149,7 +149,72 @@ ipcMain.on('clipboard:copy', (_, text: string, timeout: number = 45000) => {
   }, timeout);
 });
 
+// Auto-lock functionality
+let isLocked = false;
+let autoLockTimeout: NodeJS.Timeout | null = null;
+const AUTO_LOCK_DELAY_MS = 5 * 60 * 1000; // 5 minutes
+
+function resetAutoLockTimer(): void {
+  if (autoLockTimeout) {
+    clearTimeout(autoLockTimeout);
+  }
+
+  autoLockTimeout = setTimeout(() => {
+    lockApp();
+  }, AUTO_LOCK_DELAY_MS);
+}
+
+function lockApp(): void {
+  isLocked = true;
+  if (mainWindow) {
+    mainWindow.webContents.send('app:locked');
+  }
+}
+
+function unlockApp(): void {
+  isLocked = false;
+  resetAutoLockTimer();
+  if (mainWindow) {
+    mainWindow.webContents.send('app:unlocked');
+  }
+}
+
+// Handle lock/unlock events
+ipcMain.on('app:unlock', (_, _masterPassword: string) => {
+  // In a real implementation, verify the master password
+  unlockApp();
+});
+
+ipcMain.on('app:lock', () => {
+  lockApp();
+});
+
+ipcMain.handle('app:isLocked', () => {
+  return isLocked;
+});
+
+ipcMain.handle('app:getAutoLockDelay', () => {
+  return AUTO_LOCK_DELAY_MS / 1000; // Return in seconds
+});
+
+ipcMain.on('app:setAutoLockDelay', (_, delaySeconds: number) => {
+  // Update delay and reset timer
+  // In a real implementation, this would be persisted to config
+  resetAutoLockTimer();
+});
+
+// Reset auto-lock on user activity
+ipcMain.on('app:userActivity', () => {
+  if (!isLocked) {
+    resetAutoLockTimer();
+  }
+});
+
 // Export for tray access
 export function getMainWindow(): BrowserWindow | null {
   return mainWindow;
+}
+
+export function lockApplication(): void {
+  lockApp();
 }
