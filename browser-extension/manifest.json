@@ -5,6 +5,12 @@
   "description": "Secure password manager with GPG encryption and Git sync",
   "author": "BM1314 Inc.",
   "homepage_url": "https://pass-share.bm1314.net",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "passshare@bm1314.net",
+      "strict_min_version": "109.0"
+    }
+  },
   "icons": {
     "16": "assets/icon-16.png",
     "32": "assets/icon-32.png",

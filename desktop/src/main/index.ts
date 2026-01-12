@@ -4,16 +4,29 @@
  * © 2026 株式会社BM1314. All rights reserved.
  */
 
-import { app, BrowserWindow, ipcMain, globalShortcut, clipboard, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, globalShortcut, clipboard, nativeTheme, dialog, shell } from 'electron';
 import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';
 import { createTray } from './tray';
 import { setupAutoUpdater } from './auto-updater';
+import {
+  installNativeHost,
+  needsFirstTimeSetup,
+  getInstallationStatus,
+  uninstallNativeHost,
+} from './native-host-setup';
 
 // Keep a global reference of the window object
 let mainWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
+
+// Browser extension install URLs
+const EXTENSION_URLS = {
+  chrome: 'https://chrome.google.com/webstore/detail/passshare/placeholder-id',
+  edge: 'https://microsoftedge.microsoft.com/addons/detail/passshare/placeholder-id',
+  firefox: 'https://addons.mozilla.org/firefox/addon/passshare/',
+};
 
 function createWindow(): void {
   // Create the browser window
@@ -76,8 +89,63 @@ function setupGlobalShortcuts(): void {
   });
 }
 
+/**
+ * Perform first-time setup for browser extension integration
+ */
+async function performFirstTimeSetup(): Promise<void> {
+  console.log('[FirstTimeSetup] Starting native host setup...');
+
+  const result = await installNativeHost();
+
+  if (result.success) {
+    console.log('[FirstTimeSetup] Native host installed successfully');
+    console.log('[FirstTimeSetup] Installed for:', result.installed.join(', '));
+
+    // Show success dialog with extension install instructions
+    const response = await dialog.showMessageBox(mainWindow!, {
+      type: 'info',
+      title: 'PassShare セットアップ完了',
+      message: 'ブラウザ連携の準備が完了しました',
+      detail: `以下のブラウザでオートフィル機能が利用可能です：\n${result.installed.join(', ')}\n\nブラウザ拡張機能をインストールして、オートフィル機能を有効にしてください。`,
+      buttons: ['Chrome 拡張機能をインストール', 'Firefox アドオンをインストール', '後で'],
+      defaultId: 2,
+      cancelId: 2,
+    });
+
+    if (response.response === 0) {
+      // Open Chrome Web Store
+      shell.openExternal(EXTENSION_URLS.chrome);
+    } else if (response.response === 1) {
+      // Open Firefox Add-ons
+      shell.openExternal(EXTENSION_URLS.firefox);
+    }
+  } else {
+    console.error('[FirstTimeSetup] Native host installation failed');
+    console.error('[FirstTimeSetup] Failed for:', result.failed.join(', '));
+
+    // Show error dialog
+    if (result.installed.length > 0) {
+      dialog.showMessageBox(mainWindow!, {
+        type: 'warning',
+        title: 'PassShare セットアップ',
+        message: '一部のブラウザでセットアップが失敗しました',
+        detail: `成功: ${result.installed.join(', ')}\n失敗: ${result.failed.join(', ')}\n\nセットアップに失敗したブラウザではオートフィル機能が利用できません。`,
+        buttons: ['OK'],
+      });
+    } else {
+      dialog.showMessageBox(mainWindow!, {
+        type: 'error',
+        title: 'PassShare セットアップ',
+        message: 'ブラウザ連携のセットアップに失敗しました',
+        detail: 'オートフィル機能を利用するには、アプリを再起動するか、設定画面から手動でセットアップを行ってください。',
+        buttons: ['OK'],
+      });
+    }
+  }
+}
+
 // App lifecycle
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Set app name
   app.setName('PassShare');
 
@@ -89,6 +157,9 @@ app.whenReady().then(() => {
 
   // Setup IPC handlers
   setupIpcHandlers();
+
+  // Setup native host IPC handlers
+  setupNativeHostIpcHandlers();
 
   // Setup tray
   createTray(() => {
@@ -106,6 +177,14 @@ app.whenReady().then(() => {
   // Setup auto-updater (only in production)
   if (!isDev) {
     setupAutoUpdater();
+  }
+
+  // Check if first-time setup is needed
+  if (needsFirstTimeSetup()) {
+    // Delay setup to allow window to fully load
+    setTimeout(() => {
+      performFirstTimeSetup();
+    }, 1500);
   }
 
   // macOS: recreate window when dock icon is clicked
@@ -197,7 +276,7 @@ ipcMain.handle('app:getAutoLockDelay', () => {
   return AUTO_LOCK_DELAY_MS / 1000; // Return in seconds
 });
 
-ipcMain.on('app:setAutoLockDelay', (_, delaySeconds: number) => {
+ipcMain.on('app:setAutoLockDelay', (_, _delaySeconds: number) => {
   // Update delay and reset timer
   // In a real implementation, this would be persisted to config
   resetAutoLockTimer();
@@ -209,6 +288,35 @@ ipcMain.on('app:userActivity', () => {
     resetAutoLockTimer();
   }
 });
+
+/**
+ * Setup IPC handlers for native host management
+ */
+function setupNativeHostIpcHandlers(): void {
+  // Get native host installation status
+  ipcMain.handle('nativeHost:status', () => {
+    return getInstallationStatus();
+  });
+
+  // Install native host
+  ipcMain.handle('nativeHost:install', async () => {
+    return await installNativeHost();
+  });
+
+  // Uninstall native host
+  ipcMain.handle('nativeHost:uninstall', async () => {
+    await uninstallNativeHost();
+    return { success: true };
+  });
+
+  // Open browser extension store
+  ipcMain.on('nativeHost:openExtensionStore', (_, browser: 'chrome' | 'edge' | 'firefox') => {
+    const url = EXTENSION_URLS[browser];
+    if (url) {
+      shell.openExternal(url);
+    }
+  });
+}
 
 // Export for tray access
 export function getMainWindow(): BrowserWindow | null {

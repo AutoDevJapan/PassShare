@@ -9,9 +9,9 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite build --watch",
-    "build": "tsc && vite build",
-    "build:chrome": "pnpm run build && cp -r dist chrome-dist",
-    "build:firefox": "pnpm run build && cp -r dist firefox-dist",
+    "build": "tsc && vite build && node scripts/generate-icons.mjs",
+    "build:chrome": "pnpm run build",
+    "build:firefox": "pnpm run build",
     "check-types": "tsc --noEmit"
   },
   "devDependencies": {

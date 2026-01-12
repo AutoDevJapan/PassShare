@@ -1,0 +1,9 @@
+{
+  "name": "net.bm1314.passshare",
+  "description": "PassShare Native Messaging Host - Secure password manager",
+  "path": "__NATIVE_HOST_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

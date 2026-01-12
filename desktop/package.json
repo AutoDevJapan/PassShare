@@ -13,12 +13,14 @@
   },
   "license": "MIT",
   "scripts": {
-    "dev": "concurrently \"pnpm run dev:main\" \"pnpm run dev:preload\"",
+    "dev": "concurrently \"pnpm run dev:main\" \"pnpm run dev:preload\" \"pnpm run dev:native-host\"",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:preload": "tsc -p tsconfig.preload.json --watch",
-    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:renderer",
+    "dev:native-host": "tsc -p tsconfig.native-host.json --watch",
+    "build": "pnpm run build:main && pnpm run build:preload && pnpm run build:renderer && pnpm run build:native-host",
     "build:main": "tsc -p tsconfig.main.json",
     "build:preload": "tsc -p tsconfig.preload.json",
+    "build:native-host": "tsc -p tsconfig.native-host.json",
     "build:renderer": "node -e \"const fs=require('fs');fs.mkdirSync('dist/renderer',{recursive:true});fs.copyFileSync('src/renderer/index.html','dist/renderer/index.html');\"",
     "start": "pnpm run build && electron .",
     "start:only": "electron .",
@@ -27,7 +29,7 @@
     "dist:win": "electron-builder --win --x64",
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.preload.json && tsc --noEmit -p tsconfig.native-host.json"
   },
   "dependencies": {
     "electron-updater": "^6.1.0"
@@ -50,6 +52,18 @@
     "files": [
       "dist/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/native-host",
+        "to": "native-host",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "native-host-manifests",
+        "to": "native-host-manifests",
+        "filter": ["**/*"]
+      }
     ],
     "mac": {
       "category": "public.app-category.productivity",
@@ -76,7 +90,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true
     }
   }
 }
