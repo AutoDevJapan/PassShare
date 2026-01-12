@@ -87,7 +87,7 @@ export default function Footer() {
         <div className="border-t border-dark-800 mt-10 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-6">
             <a
-              href="https://twitter.com/bm1314"
+              href="https://x.com/Makhmeto_AI"
               className="text-dark-500 hover:text-white transition-colors text-sm"
             >
               Twitter / X
