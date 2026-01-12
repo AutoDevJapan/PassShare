@@ -72,6 +72,11 @@ contextBridge.exposeInMainWorld('passshare', {
 
   // Seed scanning
   scan: () => ipcRenderer.invoke('passshare:scan'),
+
+  // Project management
+  registerProject: (projectPath: string) => ipcRenderer.invoke('passshare:registerProject', projectPath),
+  listProjects: () => ipcRenderer.invoke('passshare:listProjects'),
+  removeProject: (projectPath: string) => ipcRenderer.invoke('passshare:removeProject', projectPath),
 });
 
 // Expose clipboard API

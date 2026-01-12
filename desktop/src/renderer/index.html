@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
   <title>PassShare</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -204,6 +204,48 @@
       display: block;
       margin-top: 0.15rem;
     }
+    /* Project Vault Styles */
+    .vault-project {
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      overflow: hidden;
+    }
+    .project-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .project-header:hover { background: #27272a; }
+    .project-name { font-size: 0.9rem; font-weight: 500; }
+    .project-toggle { color: #a1a1aa; font-size: 0.75rem; }
+    .project-credentials {
+      background: #1f1f23;
+      border-top: 1px solid #27272a;
+      padding: 0.5rem;
+    }
+    .credential-source {
+      font-size: 0.75rem;
+      color: #71717a;
+      margin-bottom: 0.25rem;
+    }
+    .credential-field {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: background 0.2s;
+    }
+    .credential-field:hover { background: #27272a; }
+    .field-label { color: #a1a1aa; min-width: 70px; }
+    .field-value { color: #fff; word-break: break-all; }
+    .field-value.password { color: #22c55e; }
+    .loading { text-align: center; color: #a1a1aa; padding: 1rem; }
     .scan-actions {
       display: flex;
       gap: 0.5rem;
@@ -269,8 +311,8 @@
         <!-- Scan results will be listed here -->
       </div>
       <div class="scan-actions">
-        <button class="btn btn-sm" id="import-btn" onclick="importCredentials()">Vault に追加</button>
-        <button class="btn btn-sm btn-secondary" onclick="closeScan()">キャンセル</button>
+        <button class="btn btn-sm" onclick="closeScanAndOpenVault()">Vault を開く</button>
+        <button class="btn btn-sm btn-secondary" onclick="closeScan()">閉じる</button>
       </div>
     </div>
   </div>
@@ -304,9 +346,12 @@
               vaultContent.innerHTML = '<p class="empty-message">Vault にシークレットがありません。<br>新しいパスワードを追加してください。</p>';
             } else {
               vaultContent.innerHTML = secrets.map(name => 
-                '<div class="secret-item" onclick="copySecret(\'' + name + '\')">' +
-                  '<span class="secret-name">🔐 ' + name + '</span>' +
-                  '<span class="secret-action">コピー</span>' +
+                '<div class="vault-project" id="vault-' + name + '">' +
+                  '<div class="project-header" onclick="toggleProject(\'' + name + '\')">' +
+                    '<span class="project-name">📁 ' + name + '</span>' +
+                    '<span class="project-toggle">▶</span>' +
+                  '</div>' +
+                  '<div class="project-credentials" style="display: none;"></div>' +
                 '</div>'
               ).join('');
             }
@@ -331,6 +376,59 @@
     
     function closeVault() {
       document.getElementById('vault-list').style.display = 'none';
+    }
+    
+    async function toggleProject(name) {
+      const container = document.getElementById('vault-' + name);
+      const credentialsDiv = container.querySelector('.project-credentials');
+      const toggle = container.querySelector('.project-toggle');
+      
+      if (credentialsDiv.style.display === 'none') {
+        // Load and show credentials
+        toggle.textContent = '▼';
+        credentialsDiv.innerHTML = '<p class="loading">読み込み中...</p>';
+        credentialsDiv.style.display = 'block';
+        
+        try {
+          const result = await window.passshare.get(name);
+          if (result.success && result.data && result.data.credentials) {
+            const creds = result.data.credentials;
+            if (creds.length === 0) {
+              credentialsDiv.innerHTML = '<p class="empty-message">認証情報がありません</p>';
+            } else {
+              credentialsDiv.innerHTML = creds.map((cred, idx) => 
+                '<div class="credential-item">' +
+                  '<div class="credential-source">📄 ' + cred.source + '</div>' +
+                  (cred.email ? '<div class="credential-field" onclick="copyValue(\'' + escapeHtml(cred.email) + '\')"><span class="field-label">Email:</span> <span class="field-value">' + escapeHtml(cred.email) + '</span></div>' : '') +
+                  (cred.password ? '<div class="credential-field" onclick="copyValue(\'' + escapeHtml(cred.password) + '\')"><span class="field-label">Password:</span> <span class="field-value password">••••••••</span></div>' : '') +
+                  Object.entries(cred.extras || {}).map(([k, v]) => 
+                    '<div class="credential-field" onclick="copyValue(\'' + escapeHtml(v) + '\')"><span class="field-label">' + escapeHtml(k) + ':</span> <span class="field-value">' + escapeHtml(String(v).substring(0, 20)) + (String(v).length > 20 ? '...' : '') + '</span></div>'
+                  ).join('') +
+                '</div>'
+              ).join('');
+            }
+          } else {
+            credentialsDiv.innerHTML = '<p class="error-message">読み込みエラー</p>';
+          }
+        } catch (err) {
+          credentialsDiv.innerHTML = '<p class="error-message">エラー: ' + err.message + '</p>';
+        }
+      } else {
+        // Hide credentials
+        toggle.textContent = '▶';
+        credentialsDiv.style.display = 'none';
+      }
+    }
+    
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    
+    function copyValue(value) {
+      if (window.clipboard) {
+        window.clipboard.copy(value);
+        showNotification('コピーしました');
+      }
     }
     
     function copySecret(name) {
@@ -398,15 +496,17 @@
       const results = document.getElementById('scan-results');
       
       // Update info
+      const registeredMsg = scanResult.credentials.length > 0 
+        ? '<br><span style="color: #22c55e;">✓ プロジェクトが登録されました</span>' 
+        : '';
       info.innerHTML = 
         '<strong>プロジェクト:</strong> ' + scanResult.projectName + '<br>' +
         '<strong>スキャン済み:</strong> ' + scanResult.scannedFiles.length + ' ファイル<br>' +
-        '<strong>検出:</strong> ' + scanResult.credentials.length + ' 件の資格情報';
+        '<strong>検出:</strong> ' + scanResult.credentials.length + ' 件の資格情報' + registeredMsg;
       
       // Display credentials
       if (scanResult.credentials.length === 0) {
         results.innerHTML = '<p class="empty-message">資格情報が検出されませんでした。</p>';
-        document.getElementById('import-btn').style.display = 'none';
       } else {
         results.innerHTML = scanResult.credentials.map(cred => {
           let details = '<span>📄 ' + cred.file.split(/[/\\]/).pop() + '</span>';
@@ -425,7 +525,6 @@
             '<div class="credential-details">' + details + '</div>' +
           '</div>';
         }).join('');
-        document.getElementById('import-btn').style.display = 'inline-block';
       }
       
       panel.style.display = 'block';
@@ -434,6 +533,11 @@
     function closeScan() {
       document.getElementById('scan-panel').style.display = 'none';
       currentScanResult = null;
+    }
+    
+    function closeScanAndOpenVault() {
+      closeScan();
+      openVault();
     }
     
     async function importCredentials() {

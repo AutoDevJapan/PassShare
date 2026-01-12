@@ -1,10 +1,10 @@
 /**
  * IPC Handlers for PassShare operations
  *
- * Placeholder implementation for initial release
+ * On-demand scanning: registered projects are re-scanned when Vault is opened
  */
 
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -26,39 +26,183 @@ interface ScanResult {
   errors: Array<{ file: string; error: string }>;
 }
 
+// Single credential entry within a project
+interface CredentialEntry {
+  source: string; // relative path from project root
+  email?: string;
+  password?: string;
+  extras: Record<string, string>;
+}
+
+// Project vault (one per registered project)
+interface ProjectVault {
+  name: string; // project directory name
+  path: string; // absolute path
+  credentials: CredentialEntry[];
+}
+
+// Registered projects (persisted to config file)
+interface ProjectConfig {
+  registeredProjects: string[];
+}
+
+// Config file path
+function getConfigPath(): string {
+  const userDataPath = app.getPath('userData');
+  return path.join(userDataPath, 'passshare-projects.json');
+}
+
+// Load registered projects
+function loadProjects(): string[] {
+  try {
+    const configPath = getConfigPath();
+    if (fs.existsSync(configPath)) {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as ProjectConfig;
+      // Filter out non-existent directories
+      return data.registeredProjects.filter((p) => fs.existsSync(p));
+    }
+  } catch (err) {
+    console.error('[Config] Failed to load projects:', err);
+  }
+  return [];
+}
+
+// Save registered projects
+function saveProjects(projects: string[]): void {
+  try {
+    const configPath = getConfigPath();
+    const data: ProjectConfig = { registeredProjects: projects };
+    fs.writeFileSync(configPath, JSON.stringify(data, null, 2), 'utf-8');
+    console.log(`[Config] Saved ${projects.length} projects to ${configPath}`);
+  } catch (err) {
+    console.error('[Config] Failed to save projects:', err);
+  }
+}
+
+// Add a project to registered list
+function addProject(projectPath: string): void {
+  const projects = loadProjects();
+  if (!projects.includes(projectPath)) {
+    projects.push(projectPath);
+    saveProjects(projects);
+  }
+}
+
+// Scan all registered projects and return project vaults
+async function scanAllProjects(): Promise<ProjectVault[]> {
+  const projects = loadProjects();
+  const vaults: ProjectVault[] = [];
+
+  for (const projectPath of projects) {
+    if (!fs.existsSync(projectPath)) continue;
+
+    const projectName = path.basename(projectPath);
+    const scanResult = await performScan(projectPath, projectName);
+
+    // Only include projects that have credentials with passwords
+    const credentialsWithPasswords = scanResult.credentials.filter(
+      (cred) => cred.password || Object.keys(cred.extras).some((k) => /token|key|secret/i.test(k))
+    );
+
+    if (credentialsWithPasswords.length > 0) {
+      const vault: ProjectVault = {
+        name: projectName,
+        path: projectPath,
+        credentials: credentialsWithPasswords.map((cred) => ({
+          source: path.relative(projectPath, cred.file),
+          email: cred.email,
+          password: cred.password,
+          extras: cred.extras,
+        })),
+      };
+      vaults.push(vault);
+    }
+  }
+
+  return vaults;
+}
+
 export function setupIpcHandlers(): void {
-  // List secrets (placeholder)
+  // List vaults (one per registered project, re-scans to get latest)
   ipcMain.handle('passshare:list', async () => {
-    return { success: true, data: [] };
+    try {
+      const vaults = await scanAllProjects();
+      const names = vaults.map((v) => v.name).sort();
+      return { success: true, data: names };
+    } catch (err) {
+      console.error('[IPC] passshare:list error:', err);
+      return { success: false, error: String(err) };
+    }
   });
 
-  // Get secret (placeholder)
+  // Get vault details (all credentials in a project)
   ipcMain.handle('passshare:get', async (_, name: string) => {
-    return {
-      success: true,
-      data: {
-        name,
-        password: '',
-        data: {},
-        notes: '',
-        hasOtp: false,
-      },
-    };
+    try {
+      const vaults = await scanAllProjects();
+      const vault = vaults.find((v) => v.name === name);
+      if (vault) {
+        // Return in a format the UI can display
+        return {
+          success: true,
+          data: {
+            name: vault.name,
+            path: vault.path,
+            credentials: vault.credentials,
+            // Legacy fields for compatibility
+            password: vault.credentials[0]?.password || '',
+            data: {
+              projectPath: vault.path,
+              credentialCount: String(vault.credentials.length),
+            },
+            notes: '',
+            hasOtp: false,
+          },
+        };
+      }
+      return { success: false, error: `Vault not found: ${name}` };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
   });
 
-  // Set secret (placeholder)
+  // Set secret (not supported - read-only view)
   ipcMain.handle(
     'passshare:set',
-    async (_, name: string, data: { password: string; data?: Record<string, string> }) => {
-      // Placeholder - in real implementation, this would save to the store
-      console.log(`[IPC] passshare:set called for ${name}`);
-      return { success: true };
+    async (_, name: string, _data: { password: string; data?: Record<string, string>; notes?: string }) => {
+      console.log(`[IPC] passshare:set called for ${name} (read-only mode, ignored)`);
+      return { success: true }; // Silently succeed for import flow
     }
   );
 
-  // Check if initialized (placeholder)
+  // Delete secret (not supported - read-only view)
+  ipcMain.handle('passshare:delete', async (_, name: string) => {
+    console.log(`[IPC] passshare:delete called for ${name} (read-only mode, ignored)`);
+    return { success: false, error: 'Read-only mode: cannot delete secrets' };
+  });
+
+  // Check if initialized
   ipcMain.handle('passshare:initialized', async () => {
-    return { success: true, data: false };
+    const projects = loadProjects();
+    return { success: true, data: projects.length > 0 };
+  });
+
+  // Register a project (called after scan)
+  ipcMain.handle('passshare:registerProject', async (_, projectPath: string) => {
+    addProject(projectPath);
+    return { success: true };
+  });
+
+  // List registered projects
+  ipcMain.handle('passshare:listProjects', async () => {
+    const projects = loadProjects();
+    return { success: true, data: projects };
+  });
+
+  // Remove a registered project
+  ipcMain.handle('passshare:removeProject', async (_, projectPath: string) => {
+    const projects = loadProjects().filter((p) => p !== projectPath);
+    saveProjects(projects);
+    return { success: true };
   });
 
   // Scan directory for seed data
@@ -84,6 +228,12 @@ export function setupIpcHandlers(): void {
       // Perform scan using built-in simple scanner
       // Note: In production, this would import SeedScanner from passshare-core
       const scanResult = await performScan(directory, projectName);
+
+      // Auto-register the project if credentials were found
+      if (scanResult.credentials.length > 0) {
+        addProject(directory);
+        console.log(`[IPC] Project registered: ${directory}`);
+      }
 
       return { success: true, data: scanResult };
     } catch (error) {

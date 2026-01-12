@@ -467,3 +467,46 @@ passshare show -r abc1234 foo/bar
 - 復号可能性
 - 受信者ファイルとの整合性
 - Gitリポジトリの状態
+
+---
+
+## 13. Seed 自動検出（開発者向け）
+
+**詳細仕様:** [seed-detection.md](./seed-detection.md)
+
+### 13.1 概要
+
+**目的:** 開発プロジェクト内のSeedデータ（テスト用認証情報）を自動検出し、Vault として一元管理する
+
+**動作モード:**
+- オンデマンド型（Vault表示時に毎回再スキャン）
+- 読み取り専用（Seedファイルは変更しない）
+
+### 13.2 対応形式
+
+| 形式 | 拡張子 |
+|------|--------|
+| 環境変数 | `.env`, `.env.*` |
+| JSON | `.json` |
+| YAML | `.yaml`, `.yml` |
+| CSV | `.csv` |
+| JavaScript/TypeScript | `.js`, `.ts`, `.mjs` |
+| Python | `.py` |
+
+### 13.3 検出フィールド
+
+- `email`, `password`, `username`, `token`, `api_key`, `secret` など
+
+### 13.4 Vault 構造
+
+```
+📁 project-name       ← 1プロジェクト = 1 Vault
+   📄 .env
+   📄 seeds/users.json
+   📄 config.yaml
+```
+
+### 13.5 UI/CLI
+
+- **Desktop:** 「プロジェクトをスキャン」ボタン → Vault 一覧にプロジェクト単位で表示
+- **CLI:** `passshare scan [directory]`
