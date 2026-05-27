@@ -18,7 +18,8 @@ frontend/src/
     Header.tsx
     Hero.tsx
     Footer.tsx
-    MatrixBackground.tsx
+    MatrixBackground.tsx  — shared/ui へ移行（Issue #8）
+    SearchDialog.tsx
   styles/
     landing.css   — ランディング固有レイアウト
   style.css       — shared/styles + landing.css
@@ -32,8 +33,8 @@ frontend/src/
 |------|------|
 | ロゴ | ロックアイコン + `PassShare` |
 | ナビ | Home / Download / Docs（Home がアクティブ） |
-| 検索 | `Search...` プレースホルダ + `⌘K` 表示（シェルのみ） |
-| 言語 | 日本語 / EN 切替 UI（シェルのみ） |
+| 検索 | ページ内検索ダイアログ + `⌘K` / `Ctrl+K` |
+| 言語 | 日本語 / EN 切替（`shared/i18n`） |
 | CTA | Download（Primary） |
 
 モバイル（≤960px）ではハンバーガーメニューでナビ・ツールを展開する。
@@ -46,7 +47,9 @@ frontend/src/
 | 見出し | 白 + ネオングリーンの 2 行（グロー効果） |
 | リード | MVP 向け文言（**パスワードボックス** を使用） |
 | CTA | Download（Primary）/ View Documentation（Secondary） |
-| 背景 | Matrix 風縦ストリーク（`MatrixBackground`） |
+| 背景 | Matrix 風縦ストリーク（`shared/ui/MatrixBackground`） |
+| 検索 | `⌘K` / `Ctrl+K` で SearchDialog を開く |
+| 言語 | 日本語 / EN 切替（`shared/i18n`） |
 
 ### Footer
 

@@ -70,6 +70,7 @@ scripts/                 — Vercel / Railway セットアップ
 - [デスクトップ UI](documents/spec/desktop-ui.md)
 - [ランディングページ UI](documents/spec/landing-page-shell.md)
 - [ランディングコンテンツ](documents/spec/landing-page-content.md)
+- [UI 仕上げ（i18n / 検索 / 背景）](documents/spec/ui-polish.md)
 - [インフラ仕様](documents/spec/infrastructure.md)
 - [質問リスト](質問リスト.md)
 

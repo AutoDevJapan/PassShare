@@ -23,6 +23,7 @@ shared/styles/
 |--------|--------|
 | Web | `frontend/src/style.css` → `../../shared/styles/index.css` |
 | Desktop | `apps/desktop/src/style.css` → `../../../shared/styles/index.css` |
+| Matrix | `shared/styles/matrix.css`（`index.css` 経由） |
 
 ## デザイントークン
 
