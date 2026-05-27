@@ -20,7 +20,6 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy backend to Railway (preview)
-        working-directory: backend
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
@@ -28,4 +27,4 @@ jobs:
             --project "${{ secrets.RAILWAY_PROJECT_ID }}" \
             --service "${{ secrets.RAILWAY_SERVICE_ID }}" \
             --environment "${{ secrets.RAILWAY_PREVIEW_ENV_ID }}" \
-            --detach
+            --ci
