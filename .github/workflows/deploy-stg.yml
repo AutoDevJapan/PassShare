@@ -1,0 +1,29 @@
+name: Deploy Staging Backend
+
+on:
+  push:
+    branches: [stg]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
+jobs:
+  deploy-backend-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy backend to Railway (staging)
+        working-directory: backend
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          railway up \
+            --project "${{ secrets.RAILWAY_PROJECT_ID }}" \
+            --service "${{ secrets.RAILWAY_SERVICE_ID }}" \
+            --environment "${{ secrets.RAILWAY_STAGING_ENV_ID }}" \
+            --detach
