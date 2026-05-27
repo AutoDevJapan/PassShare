@@ -9,7 +9,7 @@ const FOOTER_COLUMNS: FooterColumn[] = [
     links: [
       { label: "パスワードボックス", href: "#" },
       { label: "ダウンロード", href: "#download" },
-      { label: "機能一覧", href: "#" },
+      { label: "機能一覧", href: "#features" },
     ],
   },
   {
