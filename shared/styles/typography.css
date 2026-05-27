@@ -1,0 +1,63 @@
+.ps-body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--ps-bg-base);
+  color: var(--ps-text-primary);
+  font-family: var(--ps-font-sans);
+  font-size: var(--ps-text-base);
+  line-height: var(--ps-leading-normal);
+}
+
+.ps-shell {
+  max-width: var(--ps-shell-max);
+  margin: 0 auto;
+  padding: var(--ps-space-16) var(--ps-space-6);
+}
+
+.ps-shell--wide {
+  max-width: var(--ps-shell-wide);
+}
+
+.ps-eyebrow {
+  margin: 0 0 var(--ps-space-2);
+  color: var(--ps-text-muted);
+  font-size: var(--ps-text-sm);
+  letter-spacing: var(--ps-tracking-wide);
+  text-transform: uppercase;
+}
+
+.ps-heading-1 {
+  margin: 0 0 var(--ps-space-4);
+  color: var(--ps-text-primary);
+  font-size: var(--ps-text-3xl);
+  font-weight: 700;
+  line-height: var(--ps-leading-tight);
+  text-shadow: var(--ps-shadow-glow-heading);
+}
+
+.ps-heading-2 {
+  margin: 0 0 var(--ps-space-3);
+  color: var(--ps-text-primary);
+  font-size: var(--ps-text-2xl);
+  font-weight: 600;
+  line-height: var(--ps-leading-tight);
+}
+
+.ps-heading-3 {
+  margin: 0 0 var(--ps-space-2);
+  color: var(--ps-text-primary);
+  font-size: var(--ps-text-xl);
+  font-weight: 600;
+}
+
+.ps-lead {
+  margin: 0 0 var(--ps-space-8);
+  color: var(--ps-text-secondary);
+  font-size: var(--ps-text-lg);
+  line-height: var(--ps-leading-relaxed);
+}
+
+.ps-text-muted {
+  color: var(--ps-text-muted);
+  font-size: var(--ps-text-sm);
+}
