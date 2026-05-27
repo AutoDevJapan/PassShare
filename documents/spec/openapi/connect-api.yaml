@@ -1,0 +1,159 @@
+openapi: 3.0.2
+info:
+  title: PassShare Connect API
+  description: |
+    1Password Connect API compatible REST interface for PassShare.
+    SSOT: documents/spec/1password-connect-compatibility.md
+    Upstream reference: https://www.1password.dev/connect/api-reference
+  version: 1.0.0
+  contact:
+    name: PassShare
+servers:
+  - url: /v1
+    description: Connect API v1 (Railway pass-share-backend)
+security:
+  - ConnectToken: []
+components:
+  securitySchemes:
+    ConnectToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Vault:
+      $ref: "https://www.1password.dev/connect/api-reference#vault-object"
+    Item:
+      $ref: "https://www.1password.dev/connect/api-reference#item-object"
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        message:
+          type: string
+paths:
+  /vaults:
+    get:
+      summary: List vaults
+      operationId: listVaults
+      tags: [Vaults]
+      responses:
+        "200":
+          description: Vault list
+  /vaults/{vaultUuid}:
+    get:
+      summary: Get vault details
+      operationId: getVault
+      tags: [Vaults]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z0-9]{26}$"
+      responses:
+        "200":
+          description: Vault details
+  /vaults/{vaultUuid}/items:
+    get:
+      summary: List items in vault
+      operationId: listItems
+      tags: [Items]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Item summaries
+    post:
+      summary: Create item
+      operationId: createItem
+      tags: [Items]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created item
+  /vaults/{vaultUuid}/items/{itemUuid}:
+    get:
+      summary: Get item details
+      operationId: getItem
+      tags: [Items]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Item details
+    put:
+      summary: Replace item
+      operationId: replaceItem
+      tags: [Items]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Replaced item
+    patch:
+      summary: Update item (JSON Patch)
+      operationId: patchItem
+      tags: [Items]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Patched item
+    delete:
+      summary: Delete item
+      operationId: deleteItem
+      tags: [Items]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+# TODO: Full schema fork from 1Password Connect OpenAPI — Phase 2 implementation
