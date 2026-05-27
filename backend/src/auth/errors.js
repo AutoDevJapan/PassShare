@@ -13,7 +13,12 @@ export function authHttpError(status, code, message) {
 /** @param {import('express').Response} res @param {unknown} error */
 export function sendAuthError(res, error) {
   if (error && typeof error === "object" && "status" in error && "code" in error) {
-    const authError = /** @type {{ status: number, code: string, message: string }} */ (error);
+    const authError = /** @type {{ status: number, code: string, message: string, retryAfterSec?: number }} */ (
+      error
+    );
+    if (authError.retryAfterSec) {
+      res.setHeader("Retry-After", String(authError.retryAfterSec));
+    }
     res.status(authError.status).json({
       error: authError.code,
       message: authError.message,
