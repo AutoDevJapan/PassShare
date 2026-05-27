@@ -79,9 +79,9 @@ impl PasswordBox {
         Ok(self.payload.recovery_secret.as_deref())
     }
 
-    pub fn list_connect_items(&self) -> Result<&[Item], PassShareError> {
+    pub fn list_connect_items(&self) -> Result<Vec<Item>, PassShareError> {
         self.ensure_unlocked()?;
-        Ok(&self.payload.items)
+        Ok(self.payload.items.clone())
     }
 
     pub fn list_items(&self) -> Result<Vec<LoginItemView>, PassShareError> {
@@ -106,6 +106,21 @@ impl PasswordBox {
             .iter()
             .filter(|item| item.matches_search(q))
             .filter_map(|item| item.to_login_view())
+            .collect())
+    }
+
+    pub fn search_connect_items(&self, query: &str) -> Result<Vec<Item>, PassShareError> {
+        self.ensure_unlocked()?;
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(self.payload.items.clone());
+        }
+        Ok(self
+            .payload
+            .items
+            .iter()
+            .filter(|item| item.matches_search(q))
+            .cloned()
             .collect())
     }
 
