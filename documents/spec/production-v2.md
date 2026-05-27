@@ -23,6 +23,7 @@ PassShare v2.0 は **本番公開可能な完全版** を定義する。MVP（v0
 | [design-system.md](./design-system.md) | デザイントークン・コンポーネント |
 | [ui-polish.md](./ui-polish.md) | i18n 骨格・A11y |
 | [infrastructure.md](./infrastructure.md) | Vercel / Railway 環境 |
+| [ADR 003: マルチクライアント](../adr/003-multi-client-architecture.md) | 4 クライアント・データ経路・拡張接続 |
 | production-i18n.md | 多言語 SSOT（[#117](https://github.com/AutoDevJapan/PassShare/issues/117) で策定予定） |
 
 ## クライアント一覧
@@ -156,7 +157,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 
 | Epic | # | 子 Issue 範囲 | 完了条件 |
 |------|---|--------------|---------|
-| v2.0 SSOT / ADR | [#28](https://github.com/AutoDevJapan/PassShare/issues/28) | #39–#41 | 本 SSOT + ADR 003/004 Accepted |
+| v2.0 SSOT / ADR | [#28](https://github.com/AutoDevJapan/PassShare/issues/28) | #39–#41 | 本 SSOT + [ADR 003](../adr/003-multi-client-architecture.md) Accepted + ADR 004 Accepted |
 | 認証・セキュリティ | [#29](https://github.com/AutoDevJapan/PassShare/issues/29) | #42–#50 | 多ユーザー認可 + セッション |
 | Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) | #51–#59 | OpenAPI Must ギャップ 0 |
 | Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) | #60–#69 | 320px レスポンシブ + E2E |
