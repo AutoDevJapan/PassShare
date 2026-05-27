@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { MatrixBackground } from "../../../shared/ui/MatrixBackground";
 import type { AppView } from "./types";
 import { getState } from "./tauri";
 import { AppHeader } from "./components/AppHeader";
@@ -37,19 +38,22 @@ export function App() {
   }
 
   return (
-    <main className="ps-app">
-      <AppHeader />
-      {view === "setup" ? (
-        <SetupPanel
-          boxPath={boxPath}
-          masterPassword={masterPassword}
-          onBoxPathChange={setBoxPath}
-          onMasterPasswordChange={setMasterPassword}
-          onUnlocked={() => setView("main")}
-        />
-      ) : (
-        <MainPanel masterPassword={masterPassword} onLocked={handleLocked} />
-      )}
-    </main>
+    <div className="ps-app-shell">
+      <MatrixBackground className="matrix-rain--fixed" />
+      <main className="ps-app">
+        <AppHeader />
+        {view === "setup" ? (
+          <SetupPanel
+            boxPath={boxPath}
+            masterPassword={masterPassword}
+            onBoxPathChange={setBoxPath}
+            onMasterPasswordChange={setMasterPassword}
+            onUnlocked={() => setView("main")}
+          />
+        ) : (
+          <MainPanel masterPassword={masterPassword} onLocked={handleLocked} />
+        )}
+      </main>
+    </div>
   );
 }

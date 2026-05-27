@@ -1,3 +1,7 @@
+type MatrixBackgroundProps = {
+  className?: string;
+};
+
 const MATRIX_CHARS = "パスワードボックス0123456789ABCDEF";
 
 function randomChars(length: number): string {
@@ -16,9 +20,11 @@ const COLUMNS = Array.from({ length: 24 }, (_, index) => ({
   text: randomChars(18),
 }));
 
-export function MatrixBackground() {
+export function MatrixBackground({ className }: MatrixBackgroundProps) {
+  const rootClass = className ? `matrix-rain ${className}` : "matrix-rain";
+
   return (
-    <div className="matrix-rain" aria-hidden="true">
+    <div className={rootClass} aria-hidden="true">
       {COLUMNS.map((column) => (
         <span
           key={column.id}

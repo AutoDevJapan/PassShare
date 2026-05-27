@@ -143,9 +143,6 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-}
-
-.landing-search input {
   width: 11rem;
   padding: var(--ps-space-2) var(--ps-space-10) var(--ps-space-2) var(--ps-space-3);
   border: 1px solid var(--ps-border);
@@ -154,15 +151,24 @@
   color: var(--ps-text-primary);
   font-family: inherit;
   font-size: var(--ps-text-sm);
+  text-align: left;
+  cursor: pointer;
 }
 
-.landing-search input::placeholder {
-  color: var(--ps-text-muted);
+.landing-search:hover {
+  border-color: var(--ps-border-accent);
 }
 
-.landing-search input:focus-visible {
+.landing-search:focus-visible {
   outline: 2px solid var(--ps-accent-bright);
   outline-offset: 1px;
+}
+
+.landing-search__label {
+  overflow: hidden;
+  color: var(--ps-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .landing-search__kbd {
@@ -176,30 +182,6 @@
   font-family: var(--ps-font-mono);
   font-size: 0.65rem;
   line-height: 1.4;
-}
-
-.landing-lang {
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--ps-border);
-  border-radius: var(--ps-radius-md);
-  background: var(--ps-bg-muted);
-}
-
-.landing-lang__btn {
-  padding: var(--ps-space-1) var(--ps-space-2);
-  border: none;
-  border-radius: calc(var(--ps-radius-md) - 2px);
-  background: transparent;
-  color: var(--ps-text-muted);
-  font-family: inherit;
-  font-size: var(--ps-text-xs);
-  cursor: pointer;
-}
-
-.landing-lang__btn--active {
-  background: var(--ps-bg-elevated);
-  color: var(--ps-text-primary);
 }
 
 .landing-header__cta {
@@ -263,42 +245,76 @@
   text-decoration: none;
 }
 
-/* Matrix rain */
+/* Search dialog */
 
-.matrix-rain {
-  position: absolute;
+.search-dialog {
+  position: fixed;
   inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), transparent 85%);
+  z-index: 40;
+  display: grid;
+  place-items: start center;
+  padding: 10vh var(--ps-space-4) var(--ps-space-4);
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(4px);
 }
 
-.matrix-rain__column {
-  position: absolute;
-  top: -20%;
-  width: 1.25rem;
-  color: var(--ps-accent-bright);
-  font-family: var(--ps-font-mono);
-  font-size: 0.75rem;
-  line-height: 1.35;
-  letter-spacing: 0.08em;
-  opacity: 0.18;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  animation-name: matrix-fall;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
-  user-select: none;
+.search-dialog__panel {
+  width: min(100%, 32rem);
+  padding: var(--ps-space-5);
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius-lg);
+  background: var(--ps-bg-surface);
+  box-shadow: var(--ps-shadow-lg);
 }
 
-@keyframes matrix-fall {
-  from {
-    transform: translateY(-10%);
-  }
+.search-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ps-space-3);
+  margin-bottom: var(--ps-space-4);
+}
 
-  to {
-    transform: translateY(110%);
-  }
+.search-dialog__title {
+  margin: 0;
+  font-size: var(--ps-text-lg);
+}
+
+.search-dialog__field {
+  display: block;
+  margin-bottom: var(--ps-space-4);
+}
+
+.search-dialog__field .ps-input {
+  width: 100%;
+  margin-top: 0;
+}
+
+.search-dialog__results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.search-dialog__result {
+  display: block;
+  padding: var(--ps-space-3);
+  border-radius: var(--ps-radius-md);
+  color: var(--ps-text-primary);
+  text-decoration: none;
+}
+
+.search-dialog__result:hover,
+.search-dialog__result:focus-visible {
+  background: var(--ps-bg-muted);
+  outline: 2px solid var(--ps-accent-bright);
+  outline-offset: 1px;
+}
+
+.search-dialog__empty {
+  padding: var(--ps-space-3);
+  color: var(--ps-text-muted);
+  font-size: var(--ps-text-sm);
 }
 
 /* Footer */
@@ -440,7 +456,7 @@
     align-items: stretch;
   }
 
-  .landing-search input {
+  .landing-search {
     width: 100%;
   }
 
@@ -482,12 +498,5 @@
   .landing-footer__bottom {
     flex-direction: column;
     align-items: flex-start;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .matrix-rain__column {
-    animation: none;
-    opacity: 0.08;
   }
 }

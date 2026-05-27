@@ -1,31 +1,39 @@
+import { useI18n } from "../../../shared/i18n/I18nProvider";
+import type { MessageKey } from "../../../shared/i18n/index";
+
+type FooterLink = {
+  labelKey: MessageKey;
+  href: string;
+};
+
 type FooterColumn = {
-  title: string;
-  links: { label: string; href: string }[];
+  titleKey: MessageKey;
+  links: FooterLink[];
 };
 
 const FOOTER_COLUMNS: FooterColumn[] = [
   {
-    title: "Product",
+    titleKey: "footer.product",
     links: [
-      { label: "パスワードボックス", href: "#" },
-      { label: "ダウンロード", href: "#download" },
-      { label: "機能一覧", href: "#features" },
+      { labelKey: "footer.passwordBox", href: "#" },
+      { labelKey: "footer.download", href: "#download" },
+      { labelKey: "footer.features", href: "#features" },
     ],
   },
   {
-    title: "Resources",
+    titleKey: "footer.resources",
     links: [
-      { label: "ドキュメント", href: "#docs" },
-      { label: "サポート", href: "#" },
-      { label: "よくある質問", href: "#" },
+      { labelKey: "footer.documentation", href: "#docs" },
+      { labelKey: "footer.support", href: "#" },
+      { labelKey: "footer.faq", href: "#" },
     ],
   },
   {
-    title: "Legal",
+    titleKey: "footer.legal",
     links: [
-      { label: "利用規約", href: "#" },
-      { label: "プライバシーポリシー", href: "#" },
-      { label: "ライセンス", href: "#" },
+      { labelKey: "footer.terms", href: "#" },
+      { labelKey: "footer.privacy", href: "#" },
+      { labelKey: "footer.license", href: "#" },
     ],
   },
 ];
@@ -36,17 +44,19 @@ const SOCIAL_LINKS = [
 ];
 
 export function Footer() {
+  const { t } = useI18n();
+
   return (
     <footer className="landing-footer" id="docs">
       <div className="landing-footer__inner">
         <div className="landing-footer__grid">
           {FOOTER_COLUMNS.map((column) => (
-            <div key={column.title} className="landing-footer__column">
-              <h2 className="landing-footer__heading">{column.title}</h2>
+            <div key={column.titleKey} className="landing-footer__column">
+              <h2 className="landing-footer__heading">{t(column.titleKey)}</h2>
               <ul className="landing-footer__links">
                 {column.links.map((link) => (
-                  <li key={link.label}>
-                    <a href={link.href}>{link.label}</a>
+                  <li key={link.labelKey}>
+                    <a href={link.href}>{t(link.labelKey)}</a>
                   </li>
                 ))}
               </ul>
@@ -56,14 +66,17 @@ export function Footer() {
           <div className="landing-footer__brand">
             <p className="landing-footer__logo">PassShare</p>
             <p className="landing-footer__tagline">
-              非 IT 向けパスワードマネージャー。Tauri デスクトップアプリと Web ポータルで、
-              パスワードボックスをどこからでも扱えます。
+              {t("footer.tagline.prefix")}
+              {t("footer.tagline.box")}
+              {t("footer.tagline.suffix")}
             </p>
           </div>
         </div>
 
         <div className="landing-footer__bottom">
-          <p className="landing-footer__copy">© {new Date().getFullYear()} PassShare. All rights reserved.</p>
+          <p className="landing-footer__copy">
+            © {new Date().getFullYear()} PassShare. {t("footer.rights")}
+          </p>
           <ul className="landing-footer__social">
             {SOCIAL_LINKS.map((link) => (
               <li key={link.label}>
