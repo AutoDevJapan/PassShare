@@ -64,7 +64,8 @@ cd apps/desktop && npm install && cargo tauri dev
 
 ## xDD
 
-Spec: `documents/spec/feature-passshare-mvp.md`
+Spec: `documents/spec/feature-passshare-mvp.md`, `documents/spec/production-v2.md`
+ADR: `documents/adr/003-multi-client-architecture.md`（4 クライアント・データ経路）
 Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/ui-polish.md`
 Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
 Infra: `documents/spec/infrastructure.md`
