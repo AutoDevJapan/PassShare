@@ -72,6 +72,17 @@ Verify credentials and issue a session.
 |--------|------|-----------|
 | 400 | PS020 / PS021 | Validation failure |
 | 401 | PS026 | Invalid email or password |
+| 429 | PS028 | Account temporarily locked (too many failed logins) |
+| 429 | PS029 | IP rate limit exceeded |
+
+### Brute-force protection (Issue [#45](https://github.com/AutoDevJapan/PassShare/issues/45))
+
+| Policy | Value |
+|--------|-------|
+| Failed login threshold | 5 consecutive failures per email |
+| Lockout duration | 15 minutes |
+| IP window | 30 requests / 15 minutes per IP on `/login` |
+| Response | `429` with `Retry-After` header |
 
 ### POST `/logout`
 

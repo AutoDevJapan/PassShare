@@ -2,6 +2,7 @@ import { Router } from "express";
 import { generateConnectId } from "../lib/connect.js";
 import { clearCsrfCookie, issueCsrfToken, requireCsrf } from "./csrf.js";
 import { authHttpError, sendAuthError } from "./errors.js";
+import { createLoginGuard, resolveClientIp } from "./login-guard.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { clearSessionCookie, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
@@ -15,6 +16,7 @@ import { parseEmail, parsePassword } from "./validation.js";
 export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) {
   const router = Router();
   const sessionGuard = requireSession(authStore);
+  const loginGuard = createLoginGuard();
 
   router.get("/csrf", (_req, res) => {
     const csrfToken = issueCsrfToken(res, appEnv);
@@ -50,17 +52,25 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
 
   router.post("/login", requireCsrf, async (req, res) => {
     try {
+      const clientIp = resolveClientIp(req);
+      loginGuard.assertIpAllowed(clientIp);
+      loginGuard.recordIpRequest(clientIp);
+
       const email = parseEmail(req.body?.email);
+      loginGuard.assertNotLocked(email);
       const password = parsePassword(req.body?.password);
       const user = await authStore.findUserByEmail(email);
       if (!user) {
+        loginGuard.recordFailure(email);
         throw authHttpError(401, "PS026", "Invalid email or password");
       }
       const valid = await verifyPassword(user.password_hash, password);
       if (!valid) {
+        loginGuard.recordFailure(email);
         throw authHttpError(401, "PS026", "Invalid email or password");
       }
 
+      loginGuard.clearFailures(email);
       const session = await authStore.createSession(user.id);
       setSessionCookie(res, session.sessionToken, appEnv);
       const csrfToken = issueCsrfToken(res, appEnv);
