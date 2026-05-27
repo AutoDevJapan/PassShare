@@ -130,7 +130,9 @@ Mint a Connect API bearer token scoped to the user's password boxes.
 }
 ```
 
-Token is stored hashed in `connect_tokens`. Plaintext is returned once. `/v1` middleware multi-user validation is Issue [#43](https://github.com/AutoDevJapan/PassShare/issues/43).
+Token is stored hashed in `connect_tokens`. Plaintext is returned once. `/v1` middleware resolves the bearer token via `connect_tokens` and scopes vault access to `vault_ids` (Issue [#43](https://github.com/AutoDevJapan/PassShare/issues/43)).
+
+**Legacy (local/dev/stg only):** `OP_CONNECT_TOKEN` remains as a deprecated fallback for CLI/SDK migration. Disabled in `prd`.
 
 ## Session Cookie
 
