@@ -5,6 +5,7 @@ import { createConnectRouter } from "./connect/router.js";
 import { connectErrorHandler } from "./middleware/connect-errors.js";
 import { createRequireConnectAuth } from "./middleware/require-connect-auth.js";
 import { requireVaultAccess } from "./middleware/require-vault-access.js";
+import { createSecurityHeadersMiddleware } from "./middleware/security-headers.js";
 import { createWebCorsMiddleware } from "./middleware/web-cors.js";
 import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
 
@@ -32,6 +33,9 @@ export async function createApp(options = {}) {
 
   const connectStore = options.store ?? (await createStore(pool));
   const authStore = options.authStore ?? (await createAuthStore(pool));
+
+  app.use(createSecurityHeadersMiddleware(appEnv));
+  app.use(createWebCorsMiddleware(appEnv));
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -70,7 +74,6 @@ export async function createApp(options = {}) {
     }
   });
 
-  app.use(createWebCorsMiddleware(appEnv));
   app.use(
     express.json({
       limit: "2mb",
