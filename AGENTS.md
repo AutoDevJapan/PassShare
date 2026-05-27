@@ -16,7 +16,7 @@ UI・エラーメッセージ・ドキュメントでは **「パスワードボ
 | Layer | Tech |
 |-------|------|
 | Core | Rust (passshare-core) |
-| Desktop | Tauri v2 |
+| Desktop | Tauri v2 + React (Vite) |
 | Web | Vite (frontend/) |
 | API | Node.js + Express (backend/) |
 | DB | PostgreSQL (Railway) |
@@ -45,14 +45,14 @@ docker compose -f docker/docker-compose.test.yml run --rm test
 # ローカル（開発時のみ）
 cargo test -p passshare-core
 
-# デスクトップ
-cd apps/desktop && cargo tauri dev
+# デスクトップ（Tauri + React）
+cd apps/desktop && npm install && cargo tauri dev
 ```
 
 ## xDD
 
 Spec: `documents/spec/feature-passshare-mvp.md`
-Design: `documents/spec/design-system.md`
+Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`
 Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
 Infra: `documents/spec/infrastructure.md`
 

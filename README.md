@@ -23,13 +23,18 @@ docker compose -f docker/docker-compose.test.yml run --rm test
 
 # コアのテスト（ローカル）
 cargo test -p passshare-core
+
+# デスクトップ UI（React + Tauri）
+cd apps/desktop
+npm install
+cargo tauri dev
 ```
 
 ## モノレポ構成
 
 ```
 crates/passshare-core/   — 暗号・ドメイン・ストレージ
-apps/desktop/            — Tauri デスクトップ（src-tauri + ui/）
+apps/desktop/            — Tauri デスクトップ（React + src-tauri）
 frontend/                — Web ポータル（Vercel）
 backend/                 — API（Railway）
 documents/spec/          — 仕様（SSOT）
@@ -62,6 +67,7 @@ scripts/                 — Vercel / Railway セットアップ
 
 - [MVP 仕様](documents/spec/feature-passshare-mvp.md)
 - [デザインシステム](documents/spec/design-system.md)
+- [デスクトップ UI](documents/spec/desktop-ui.md)
 - [ランディングページ UI](documents/spec/landing-page-shell.md)
 - [ランディングコンテンツ](documents/spec/landing-page-content.md)
 - [インフラ仕様](documents/spec/infrastructure.md)
