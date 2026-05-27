@@ -52,5 +52,16 @@
   "desktop.badge": "Free forever",
   "desktop.eyebrow": "PassShare",
   "desktop.title": "Password box",
-  "desktop.lead": "Passwords, simple and secure."
+  "desktop.lead": "Passwords, simple and secure.",
+  "item.category.login": "Login",
+  "item.category.password": "Password",
+  "item.category.secureNote": "Secure note",
+  "item.field.title": "Title",
+  "item.field.url": "URL",
+  "item.field.username": "Username",
+  "item.field.password": "Password",
+  "item.field.body": "Body",
+  "item.field.notes": "Notes",
+  "item.field.tags": "Tags",
+  "item.field.favorite": "Favorite"
 }

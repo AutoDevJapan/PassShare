@@ -52,5 +52,16 @@
   "desktop.badge": "完全無料",
   "desktop.eyebrow": "PassShare",
   "desktop.title": "パスワードボックス",
-  "desktop.lead": "パスワードを、かんたんに、安全に。"
+  "desktop.lead": "パスワードを、かんたんに、安全に。",
+  "item.category.login": "ログイン情報",
+  "item.category.password": "パスワード",
+  "item.category.secureNote": "セキュアメモ",
+  "item.field.title": "タイトル",
+  "item.field.url": "URL",
+  "item.field.username": "ユーザー名",
+  "item.field.password": "パスワード",
+  "item.field.body": "本文",
+  "item.field.notes": "メモ",
+  "item.field.tags": "タグ",
+  "item.field.favorite": "お気に入り"
 }

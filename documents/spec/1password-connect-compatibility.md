@@ -243,6 +243,19 @@ SDK は Connect API の薄いラッパー。暗号操作は Rust core 経由（F
 - category 別 Item 編集フォーム（1Password テンプレート準拠）
 - 既存 UI Issues: #3–#8
 
+### 実装（Phase 4 — Desktop MVP）
+
+| コンポーネント | パス | 状態 |
+|---------------|------|------|
+| 共有型 | `shared/types/item.ts` | LOGIN / PASSWORD / SECURE_NOTE |
+| CategoryPicker | `shared/ui/CategoryPicker.tsx` | カテゴリ切替 |
+| ItemForm | `shared/ui/ItemForm.tsx` | 追加 / 編集フォーム |
+| ConnectItemList | `shared/ui/ConnectItemList.tsx` | tags / favorite / category 表示 |
+| Desktop 統合 | `apps/desktop/src/components/MainPanel.tsx` | Tauri CRUD + CSV インポート |
+| Tauri API | `apps/desktop/src-tauri/src/lib.rs` | `ItemDto`, update / import |
+
+Web ポータル（Connect API 経由 CRUD）は後続。Desktop はローカル `.pbox` 経路で Phase 4 受入基準を満たす。
+
 ---
 
 ## 受入基準（Phase 別）
@@ -280,6 +293,18 @@ Then  パスワードが標準出力またはクリップボードに渡る
 Given TypeScript SDK
 When  client.getItem(vaultId, itemId) を呼ぶ
 Then  1Password Connect SDK と同じメソッドシグネチャで動作する
+```
+
+### Phase 4
+
+```gherkin
+Given パスワードボックスが開いている
+When  ログイン情報 / パスワード / セキュアメモを追加・編集・削除する
+Then  category 別フォームで CRUD できる
+
+Given 1Password CSV ファイル
+When  デスクトップ UI からインポートする
+Then  LOGIN 項目が一覧に表示される
 ```
 
 ---
