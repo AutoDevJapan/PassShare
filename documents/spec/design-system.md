@@ -80,7 +80,7 @@ UI ラベルは [MVP 仕様](./feature-passshare-mvp.md) の用語表に従う�
 ## 受入基準（Issue #3）
 
 - [x] CSS 変数としてトークンが定義されている（`shared/styles/tokens.css`）
-- [x] Primary / Secondary ボタン、見出し、バッジのサンプルで確認できる（`frontend/src/main.ts`）
+- [x] Primary / Secondary ボタン、見出し、バッジのサンプルで確認できる（`frontend/src/components/Hero.tsx`）
 - [x] MVP 用語に沿ったラベル例が含まれる
 - [x] 参照サイト同等のダークテーマがデフォルト
 

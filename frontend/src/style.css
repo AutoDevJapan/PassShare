@@ -1,3 +1,2 @@
 @import "../../shared/styles/index.css";
-
-/* Web portal page-specific layout (uses shared .ps-* classes) */
+@import "./styles/landing.css";
