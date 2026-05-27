@@ -1,8 +1,20 @@
-import { useEffect, useState } from "react";
-import type { LoginItem } from "../types";
-import { addItem, deleteItem, generatePassword, listItems, lockPasswordBox, searchItems } from "../tauri";
+import { useEffect, useRef, useState } from "react";
+import { ConnectItemList } from "@shared/ui/ConnectItemList";
+import { ItemForm } from "@shared/ui/ItemForm";
+import type { ConnectItem, ItemFormValues } from "@shared/types/item";
+import { emptyFormValues, formValuesFromItem } from "@shared/types/item";
+import { ITEM_LABELS } from "../labels";
+import {
+  addItem,
+  deleteItem,
+  generatePassword,
+  importOnepasswordCsv,
+  listItems,
+  lockPasswordBox,
+  searchItems,
+  updateItem,
+} from "../tauri";
 import { formatTauriError } from "../errors";
-import { ItemList } from "./ItemList";
 import { StatusMessage } from "./StatusMessage";
 
 type MainPanelProps = {
@@ -10,27 +22,16 @@ type MainPanelProps = {
   onLocked: () => void;
 };
 
-type AddFormState = {
-  title: string;
-  url: string;
-  username: string;
-  password: string;
-};
-
-const EMPTY_FORM: AddFormState = {
-  title: "",
-  url: "",
-  username: "",
-  password: "",
-};
-
 export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [items, setItems] = useState<LoginItem[]>([]);
-  const [form, setForm] = useState<AddFormState>(EMPTY_FORM);
+  const [items, setItems] = useState<ConnectItem[]>([]);
+  const [formValues, setFormValues] = useState<ItemFormValues>(emptyFormValues());
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [formError, setFormError] = useState("");
   const [listError, setListError] = useState("");
+  const [importMessage, setImportMessage] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function refreshItems(query = searchQuery.trim()) {
     try {
@@ -83,24 +84,25 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
 
   async function handleGenerate() {
     const password = await generatePassword(16);
-    setForm((current) => ({ ...current, password }));
+    setFormValues((current) => ({ ...current, password }));
     setFormError("");
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function resetForm() {
+    setFormValues(emptyFormValues());
+    setEditingId(null);
     setFormError("");
+  }
 
+  async function handleSubmit(values: ItemFormValues) {
+    setFormError("");
     try {
-      await addItem({
-        title: form.title.trim(),
-        password: form.password,
-        url: form.url.trim() || null,
-        username: form.username.trim() || null,
-        notes: null,
-        masterPassword,
-      });
-      setForm(EMPTY_FORM);
+      if (editingId) {
+        await updateItem({ id: editingId, values, masterPassword });
+      } else {
+        await addItem({ values, masterPassword });
+      }
+      resetForm();
       await refreshItems();
     } catch (err) {
       setFormError(formatTauriError(err));
@@ -108,22 +110,41 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm("このログイン情報を削除しますか？")) {
+    if (!window.confirm(ITEM_LABELS.confirmDelete)) {
       return;
     }
 
     try {
       await deleteItem(id, masterPassword);
+      if (editingId === id) {
+        resetForm();
+      }
       await refreshItems();
     } catch (err) {
       setListError(formatTauriError(err));
     }
   }
 
-  function updateFormField(field: keyof AddFormState, value: string) {
-    setForm((current) => ({ ...current, [field]: value }));
-    if (formError) {
-      setFormError("");
+  function handleEdit(item: ConnectItem) {
+    setEditingId(item.id);
+    setFormValues(formValuesFromItem(item));
+    setFormError("");
+  }
+
+  async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const csvData = await file.text();
+      const count = await importOnepasswordCsv(csvData, masterPassword);
+      setImportMessage(`${count}${ITEM_LABELS.importSuccess}`);
+      await refreshItems();
+    } catch (err) {
+      setListError(formatTauriError(err));
     }
   }
 
@@ -131,92 +152,59 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
     <section className="ps-main" aria-labelledby="main-heading">
       <div className="ps-card ps-card--toolbar">
         <h2 className="visually-hidden" id="main-heading">
-          ログイン情報
+          パスワードボックス
         </h2>
         <div className="ps-toolbar">
           <input
             className="ps-input"
             type="search"
-            placeholder="サイト名・URL・ユーザー名で検索"
+            placeholder={ITEM_LABELS.searchPlaceholder}
             value={searchQuery}
             onChange={(event) => void handleSearchChange(event.target.value)}
           />
+          <button type="button" className="ps-button ps-button--secondary" onClick={() => fileInputRef.current?.click()}>
+            {ITEM_LABELS.importCsv}
+          </button>
+          <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={(event) => void handleImportFile(event)} />
           <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleLock()}>
-            閉じる
+            {ITEM_LABELS.lock}
           </button>
         </div>
       </div>
 
-      <form className="ps-card ps-card--form" onSubmit={(event) => void handleSubmit(event)}>
-        <h3 className="ps-heading-3">ログイン情報を追加</h3>
-        <div className="ps-grid">
-          <label className="ps-label">
-            サイト名
-            <input
-              className="ps-input"
-              required
-              value={form.title}
-              onChange={(event) => updateFormField("title", event.target.value)}
-            />
-          </label>
-          <label className="ps-label">
-            URL
-            <input
-              className="ps-input"
-              type="url"
-              value={form.url}
-              onChange={(event) => updateFormField("url", event.target.value)}
-            />
-          </label>
-          <label className="ps-label">
-            ユーザー名
-            <input
-              className="ps-input"
-              value={form.username}
-              onChange={(event) => updateFormField("username", event.target.value)}
-            />
-          </label>
-          <label className="ps-label">
-            パスワード
-            <span className="ps-inline">
-              <input
-                className="ps-input"
-                required
-                value={form.password}
-                onChange={(event) => updateFormField("password", event.target.value)}
-              />
-              <button
-                type="button"
-                className="ps-button ps-button--secondary"
-                onClick={() => void handleGenerate()}
-              >
-                生成
-              </button>
-            </span>
-          </label>
-        </div>
-        <div className="ps-actions">
-          <button type="submit" className="ps-button ps-button--primary">
-            追加する
-          </button>
-        </div>
-        {formError ? <StatusMessage message={formError} variant="error" /> : null}
-      </form>
+      <ItemForm
+        mode={editingId ? "edit" : "create"}
+        values={formValues}
+        labels={ITEM_LABELS}
+        error={formError}
+        onChange={setFormValues}
+        onSubmit={(values) => void handleSubmit(values)}
+        onCancel={editingId ? resetForm : undefined}
+        onGeneratePassword={() => void handleGenerate()}
+      />
 
       <section className="ps-card ps-card--list" aria-labelledby="item-list-heading">
         <div className="ps-card__header">
           <h3 className="ps-heading-3" id="item-list-heading">
-            ログイン情報一覧
+            {ITEM_LABELS.listHeading}
           </h3>
-          <span className="ps-badge">{items.length} 件</span>
+          <span className="ps-badge">
+            {items.length} {ITEM_LABELS.countSuffix}
+          </span>
         </div>
 
+        {importMessage ? <StatusMessage message={importMessage} variant="success" /> : null}
         {listError ? <StatusMessage message={listError} variant="error" /> : null}
 
         {loading ? (
           <p className="ps-text-muted">読み込み中…</p>
         ) : (
-          <ItemList items={items} onDelete={(id) => void handleDelete(id)} />
+          <ConnectItemList
+            items={items}
+            labels={ITEM_LABELS}
+            onEdit={handleEdit}
+            onDelete={(id) => void handleDelete(id)}
+          />
         )}
       </section>
     </section>

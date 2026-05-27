@@ -38,7 +38,7 @@ frontend/                  — Web ポータル (Vercel)
 backend/                   — API (Railway)
 shared/styles/             — 共通デザインシステム (Web / Desktop 共有)
 shared/i18n/               — 共通 i18n (ja / en)
-shared/ui/                 — 共通 React UI (MatrixBackground 等)
+shared/ui/                 — 共通 React UI (MatrixBackground, ItemForm 等)
 documents/spec/            — 仕様 SSOT
 scripts/                   — インフラセットアップ
 ```

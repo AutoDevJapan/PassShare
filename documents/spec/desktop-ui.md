@@ -1,7 +1,7 @@
 # Tauri デスクトップ UI (SSOT)
 
 > 最終更新: 2026-05-27  
-> 関連 Issue: #6, #7
+> 関連 Issue: #6, #7, #13 (Phase 4)
 
 ## 概要
 
@@ -20,14 +20,19 @@ apps/desktop/
     style.css             — shared/styles import + desktop shell
     errors.ts             — PS001〜PS005 エラー表示ヘルパー
     tauri.ts              — invoke ラッパー
-    types.ts              — LoginItem 等
+    types.ts              — ConnectItem 型 re-export
+    labels.ts             — Item UI ラベル（日本語）
     components/
       AppHeader.tsx
       SetupPanel.tsx      — 新規作成 / 開く
       RecoveryKitPanel.tsx — 初回作成時の緊急キット表示
-      MainPanel.tsx       — 検索 / 追加 / 一覧
-      ItemList.tsx
+      MainPanel.tsx       — 検索 / category CRUD / CSV インポート
       StatusMessage.tsx   — エラー / 成功メッセージ
+shared/ui/
+  CategoryPicker.tsx      — LOGIN / PASSWORD / SECURE_NOTE 切替
+  ItemForm.tsx            — category 別追加・編集フォーム
+  ConnectItemList.tsx     — tags / favorite / category 一覧
+shared/types/item.ts      — ConnectItem / ItemFormValues 型
   src-tauri/
     tauri.conf.json       — frontendDist: ../dist
   dist/                   — Vite ビルド出力（gitignore）
@@ -45,14 +50,15 @@ apps/desktop/
 | エラー | PS001〜PS005 をユーザー向け文言で表示 |
 | 緊急キット | 初回作成後、RecoveryKitPanel で表示 → 確認後にメインへ |
 
-### 2. メイン（MainPanel）
+### 2. メイン（MainPanel — Issue #13 Phase 4）
 
 | 要素 | 説明 |
 |------|------|
-| 検索バー | タイトル / URL / ユーザー名 |
+| 検索バー | タイトル / URL / ユーザー名 / タグ |
+| CSV インポート | 1Password CSV → `import_onepassword_csv` |
 | 閉じる | `lock_password_box` → SetupPanel |
-| 追加フォーム | サイト名・URL・ユーザー名・パスワード + 生成 |
-| 一覧 | カード形式、コピー / 削除 |
+| 追加 / 編集フォーム | category 別（ログイン情報 / パスワード / セキュアメモ） |
+| 一覧 | category チップ、tags、お気に入り、コピー / 編集 / 削除 |
 
 ## エラーコード（UI 表示）
 
@@ -79,9 +85,20 @@ Rust 側 `PassShareError` が `PS00N: メッセージ` 形式で返す。`errors
 ### 利用コマンド
 
 - `get_state`, `create_password_box`, `open_password_box`, `lock_password_box`
-- `list_items`, `search_items`, `add_item`, `delete_item`, `generate_password`
+- `list_items`, `search_items`, `add_item`, `update_item`, `delete_item`
+- `import_onepassword_csv`, `generate_password`
+
+`list_items` / `add_item` は Connect 互換 `ItemDto`（category, tags, favorite 含む）を返す。
 
 ## 受入基準
+
+### Issue #13 (Phase 4)
+
+- [x] LOGIN / PASSWORD / SECURE_NOTE の CRUD（Desktop）
+- [x] tags / favorite 表示
+- [x] 1Password CSV インポート UI
+- [x] 共有 UI コンポーネント（`shared/ui/`）
+- [ ] Web ポータル Connect API 連携（後続）
 
 ### Issue #6
 

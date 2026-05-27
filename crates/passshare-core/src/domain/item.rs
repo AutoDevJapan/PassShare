@@ -96,6 +96,72 @@ impl Item {
         })
     }
 
+    pub fn new_password(
+        vault_id: ConnectId,
+        title: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Result<Self, PassShareError> {
+        let title = title.into();
+        let password = password.into();
+        if title.trim().is_empty() {
+            return Err(PassShareError::TitleRequired);
+        }
+        if password.is_empty() {
+            return Err(PassShareError::PasswordRequired);
+        }
+
+        let now = Utc::now();
+        let fields = vec![
+            Field::new("password", FieldType::Concealed, password)?.with_purpose(FieldPurpose::Password),
+            Field::new("notes", FieldType::String, "")?.with_purpose(FieldPurpose::Notes),
+        ];
+
+        Ok(Self {
+            id: ConnectId::generate()?,
+            title,
+            category: ItemCategory::Password,
+            vault: VaultReference { id: vault_id },
+            fields,
+            sections: Vec::new(),
+            urls: Vec::new(),
+            tags: Vec::new(),
+            favorite: false,
+            created_at: now,
+            updated_at: now,
+            last_edited_by: None,
+        })
+    }
+
+    pub fn new_secure_note(
+        vault_id: ConnectId,
+        title: impl Into<String>,
+        body: impl Into<String>,
+    ) -> Result<Self, PassShareError> {
+        let title = title.into();
+        let body = body.into();
+        if title.trim().is_empty() {
+            return Err(PassShareError::TitleRequired);
+        }
+
+        let now = Utc::now();
+        let fields = vec![Field::new("notesPlain", FieldType::String, body)?.with_purpose(FieldPurpose::Notes)];
+
+        Ok(Self {
+            id: ConnectId::generate()?,
+            title,
+            category: ItemCategory::SecureNote,
+            vault: VaultReference { id: vault_id },
+            fields,
+            sections: Vec::new(),
+            urls: Vec::new(),
+            tags: Vec::new(),
+            favorite: false,
+            created_at: now,
+            updated_at: now,
+            last_edited_by: None,
+        })
+    }
+
     pub fn with_optional_fields(
         mut self,
         url: Option<String>,
@@ -191,29 +257,63 @@ impl Item {
             .map(|f| f.value.clone())
     }
 
-    fn set_field_by_purpose(&mut self, purpose: FieldPurpose, value: &str) -> Result<(), PassShareError> {
+    pub fn set_title(&mut self, title: impl Into<String>) -> Result<(), PassShareError> {
+        let title = title.into();
+        if title.trim().is_empty() {
+            return Err(PassShareError::TitleRequired);
+        }
+        self.title = title;
+        self.touch();
+        Ok(())
+    }
+
+    pub fn set_favorite(&mut self, favorite: bool) {
+        self.favorite = favorite;
+        self.touch();
+    }
+
+    pub fn set_tags(&mut self, tags: Vec<String>) {
+        self.tags = tags;
+        self.touch();
+    }
+
+    pub fn set_field_by_purpose(&mut self, purpose: FieldPurpose, value: &str) -> Result<(), PassShareError> {
         if let Some(field) = self.fields.iter_mut().find(|f| f.purpose == Some(purpose)) {
             field.value = value.to_string();
+            self.touch();
             return Ok(());
         }
         Err(PassShareError::Internal(format!("missing field purpose {:?}", purpose)))
     }
 
-    fn set_field_by_label(&mut self, label: &str, value: &str) -> Result<(), PassShareError> {
+    pub fn set_field_by_label(&mut self, label: &str, value: &str) -> Result<(), PassShareError> {
         if let Some(field) = self.fields.iter_mut().find(|f| f.label.eq_ignore_ascii_case(label)) {
             field.value = value.to_string();
+            self.touch();
             return Ok(());
         }
         Err(PassShareError::Internal(format!("missing field label {label}")))
     }
 
+    fn touch(&mut self) {
+        self.updated_at = Utc::now();
+    }
+
     pub fn matches_search(&self, query: &str) -> bool {
         let q = query.to_lowercase();
         self.title.to_lowercase().contains(&q)
+            || self.tags.iter().any(|tag| tag.to_lowercase().contains(&q))
             || self.urls.iter().any(|u| u.href.to_lowercase().contains(&q))
             || self
                 .field_value_by_purpose(FieldPurpose::Username)
                 .is_some_and(|v| v.to_lowercase().contains(&q))
+            || self
+                .field_value_by_purpose(FieldPurpose::Password)
+                .is_some_and(|v| v.to_lowercase().contains(&q))
+            || self
+                .field_value_by_purpose(FieldPurpose::Notes)
+                .is_some_and(|v| v.to_lowercase().contains(&q))
+            || self.fields.iter().any(|f| f.value.to_lowercase().contains(&q))
     }
 }
 
@@ -238,5 +338,20 @@ mod tests {
         assert_eq!(back.url, login.url);
         assert_eq!(back.username, login.username);
         assert_eq!(back.notes, login.notes);
+    }
+
+    #[test]
+    fn password_and_secure_note_factories() {
+        let vault = Vault::new("Work").unwrap();
+        let password_item = Item::new_password(vault.id.clone(), "Wi-Fi", "secret").unwrap();
+        assert_eq!(password_item.category, ItemCategory::Password);
+        assert_eq!(
+            password_item.field_value_by_purpose(FieldPurpose::Password),
+            Some("secret".into())
+        );
+
+        let note = Item::new_secure_note(vault.id, "Memo", "hello").unwrap();
+        assert_eq!(note.category, ItemCategory::SecureNote);
+        assert_eq!(note.field_value_by_label("notesPlain"), Some("hello".into()));
     }
 }

@@ -2,9 +2,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use passshare_core::{
-    generator::PasswordGeneratorOptions, Item, LoginItemView, PassShareError, PasswordBox,
+    generator::PasswordGeneratorOptions, Item, ItemCategory, PassShareError, PasswordBox,
     PasswordBoxState,
 };
+use passshare_core::domain::field::FieldPurpose;
 use serde::Serialize;
 use tauri::State;
 
@@ -15,25 +16,68 @@ struct AppState {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct LoginItemDto {
+struct ItemDto {
     id: String,
     title: String,
-    url: String,
-    username: String,
-    password: String,
-    notes: String,
+    category: String,
+    tags: Vec<String>,
+    favorite: bool,
+    url: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    body: Option<String>,
+    notes: Option<String>,
 }
 
-impl From<&LoginItemView> for LoginItemDto {
-    fn from(item: &LoginItemView) -> Self {
+impl From<&Item> for ItemDto {
+    fn from(item: &Item) -> Self {
+        let url = item
+            .urls
+            .iter()
+            .find(|u| u.primary)
+            .map(|u| u.href.clone())
+            .or_else(|| item.urls.first().map(|u| u.href.clone()));
+
+        let body = if item.category == ItemCategory::SecureNote {
+            item.field_value_by_label("notesPlain")
+                .or_else(|| item.field_value_by_purpose(FieldPurpose::Notes))
+        } else {
+            None
+        };
+
         Self {
-            id: item.id.clone(),
+            id: item.id.to_string(),
             title: item.title.clone(),
-            url: item.url.clone(),
-            username: item.username.clone(),
-            password: item.password.clone(),
-            notes: item.notes.clone(),
+            category: category_to_api(&item.category),
+            tags: item.tags.clone(),
+            favorite: item.favorite,
+            url,
+            username: item.field_value_by_purpose(FieldPurpose::Username),
+            password: item.field_value_by_purpose(FieldPurpose::Password),
+            body,
+            notes: item.field_value_by_label("notes"),
         }
+    }
+}
+
+fn category_to_api(category: &ItemCategory) -> String {
+    match category {
+        ItemCategory::Login => "LOGIN".into(),
+        ItemCategory::Password => "PASSWORD".into(),
+        ItemCategory::SecureNote => "SECURE_NOTE".into(),
+        ItemCategory::CreditCard => "CREDIT_CARD".into(),
+        ItemCategory::Identity => "IDENTITY".into(),
+        ItemCategory::SshKey => "SSH_KEY".into(),
+        ItemCategory::Custom => "CUSTOM".into(),
+    }
+}
+
+fn parse_category(category: &str) -> Result<ItemCategory, PassShareError> {
+    match category.to_ascii_uppercase().as_str() {
+        "LOGIN" => Ok(ItemCategory::Login),
+        "PASSWORD" => Ok(ItemCategory::Password),
+        "SECURE_NOTE" => Ok(ItemCategory::SecureNote),
+        _ => Err(PassShareError::Internal(format!("unsupported category: {category}"))),
     }
 }
 
@@ -78,53 +122,154 @@ fn open_password_box(
 }
 
 #[tauri::command]
-fn list_items(state: State<'_, AppState>) -> Result<Vec<LoginItemDto>, String> {
+fn list_items(state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
     let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
     let pb = pb.as_ref().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     Ok(pb
-        .list_items()
+        .list_connect_items()
         .map_err(map_error)?
         .iter()
-        .map(Into::into)
+        .map(ItemDto::from)
         .collect())
 }
 
 #[tauri::command]
-fn search_items(query: String, state: State<'_, AppState>) -> Result<Vec<LoginItemDto>, String> {
+fn search_items(query: String, state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
     let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
     let pb = pb.as_ref().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     Ok(pb
-        .search(&query)
+        .search_connect_items(&query)
         .map_err(map_error)?
         .iter()
-        .map(Into::into)
+        .map(ItemDto::from)
         .collect())
 }
 
 #[tauri::command]
 fn add_item(
+    category: String,
     title: String,
-    password: String,
+    password: Option<String>,
     url: Option<String>,
     username: Option<String>,
     notes: Option<String>,
+    body: Option<String>,
+    tags: Option<Vec<String>>,
+    favorite: Option<bool>,
     master_password: String,
     state: State<'_, AppState>,
-) -> Result<LoginItemDto, String> {
+) -> Result<ItemDto, String> {
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
     let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     let vault_id = pb.vault().map_err(map_error)?.id.clone();
-    let item = Item::new_login(vault_id, title, password)
-        .map_err(map_error)?
-        .with_optional_fields(url, username, notes)
-        .map_err(map_error)?;
+    let parsed = parse_category(&category).map_err(map_error)?;
+
+    let mut item = match parsed {
+        ItemCategory::Login => {
+            let password = password.ok_or_else(|| PassShareError::PasswordRequired.to_string())?;
+            Item::new_login(vault_id, title, password)
+                .map_err(map_error)?
+                .with_optional_fields(url, username, notes)
+                .map_err(map_error)?
+        }
+        ItemCategory::Password => {
+            let password = password.ok_or_else(|| PassShareError::PasswordRequired.to_string())?;
+            let mut created = Item::new_password(vault_id, title, password).map_err(map_error)?;
+            if let Some(notes) = notes {
+                created.set_field_by_purpose(FieldPurpose::Notes, &notes).map_err(map_error)?;
+            }
+            created
+        }
+        ItemCategory::SecureNote => {
+            Item::new_secure_note(vault_id, title, body.unwrap_or_default()).map_err(map_error)?
+        }
+        _ => return Err(PassShareError::Internal("unsupported category".into()).to_string()),
+    };
+
+    if let Some(tags) = tags {
+        item.set_tags(tags);
+    }
+    if let Some(favorite) = favorite {
+        item.set_favorite(favorite);
+    }
+
     pb.add_item(item.clone()).map_err(map_error)?;
     pb.save(&master_password).map_err(map_error)?;
-    Ok(LoginItemDto::from(
-        &item
-            .to_login_view()
-            .ok_or_else(|| PassShareError::Internal("login view".into()).to_string())?,
-    ))
+    Ok(ItemDto::from(&item))
+}
+
+#[tauri::command]
+fn update_item(
+    id: String,
+    title: String,
+    password: Option<String>,
+    url: Option<String>,
+    username: Option<String>,
+    notes: Option<String>,
+    body: Option<String>,
+    tags: Option<Vec<String>>,
+    favorite: Option<bool>,
+    master_password: String,
+    state: State<'_, AppState>,
+) -> Result<ItemDto, String> {
+    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let existing = pb.get_item(&id).map_err(map_error)?.clone();
+
+    let mut item = existing;
+    item.set_title(title).map_err(map_error)?;
+
+    match item.category {
+        ItemCategory::Login => {
+            if let Some(password) = password {
+                item.set_field_by_purpose(FieldPurpose::Password, &password)
+                    .map_err(map_error)?;
+            }
+            if let Some(username) = username {
+                item.set_field_by_purpose(FieldPurpose::Username, &username)
+                    .map_err(map_error)?;
+            }
+            if let Some(notes) = notes {
+                item.set_field_by_label("notes", &notes).map_err(map_error)?;
+            }
+            item.urls.clear();
+            if let Some(url) = url.filter(|value| !value.is_empty()) {
+                item.urls.push(passshare_core::domain::item::ItemUrl {
+                    label: String::new(),
+                    primary: true,
+                    href: url,
+                });
+            }
+        }
+        ItemCategory::Password => {
+            if let Some(password) = password {
+                item.set_field_by_purpose(FieldPurpose::Password, &password)
+                    .map_err(map_error)?;
+            }
+            if let Some(notes) = notes {
+                item.set_field_by_purpose(FieldPurpose::Notes, &notes)
+                    .map_err(map_error)?;
+            }
+        }
+        ItemCategory::SecureNote => {
+            if let Some(body) = body {
+                item.set_field_by_label("notesPlain", &body)
+                    .map_err(map_error)?;
+            }
+        }
+        _ => {}
+    }
+
+    if let Some(tags) = tags {
+        item.set_tags(tags);
+    }
+    if let Some(favorite) = favorite {
+        item.set_favorite(favorite);
+    }
+
+    pb.update_item(item.clone()).map_err(map_error)?;
+    pb.save(&master_password).map_err(map_error)?;
+    Ok(ItemDto::from(&item))
 }
 
 #[tauri::command]
@@ -134,6 +279,15 @@ fn delete_item(id: String, master_password: String, state: State<'_, AppState>) 
     pb.delete_item(&id).map_err(map_error)?;
     pb.save(&master_password).map_err(map_error)?;
     Ok(())
+}
+
+#[tauri::command]
+fn import_onepassword_csv(csv_data: String, master_password: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let count = pb.import_onepassword_csv(&csv_data).map_err(map_error)?;
+    pb.save(&master_password).map_err(map_error)?;
+    Ok(count)
 }
 
 #[tauri::command]
@@ -167,7 +321,9 @@ pub fn run() {
             list_items,
             search_items,
             add_item,
+            update_item,
             delete_item,
+            import_onepassword_csv,
             generate_password,
             lock_password_box,
         ])
