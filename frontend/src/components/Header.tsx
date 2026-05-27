@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useI18n } from "../../../shared/i18n/I18nProvider";
 import { isApplePlatform, useSearchShortcut } from "../hooks/useSearchShortcut";
-import { SearchDialog } from "./SearchDialog";
+import { SessionControls } from "./SessionControls";
 
 type NavItem = {
   id: string;
@@ -139,6 +139,8 @@ export function Header() {
                   {t("header.lang.en")}
                 </button>
               </div>
+
+              <SessionControls />
 
               <a className="ps-button ps-button--primary landing-header__cta" href="#download">
                 {t("header.cta.download")}

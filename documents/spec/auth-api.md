@@ -114,6 +114,22 @@ Return the authenticated user.
 }
 ```
 
+### GET `/csrf`
+
+Issue a CSRF token for double-submit validation.
+
+**Auth:** none
+
+**Response `200`**
+
+```json
+{
+  "csrfToken": "base64url-token"
+}
+```
+
+**Headers:** sets `passshare_csrf` cookie (not HttpOnly).
+
 ### GET `/connect-token`
 
 Mint a Connect API bearer token scoped to the user's password boxes.
@@ -144,7 +160,36 @@ Token is stored hashed in `connect_tokens`. Plaintext is returned once. `/v1` mi
 | Secure | yes in `prd` / `stg` |
 | TTL | 7 days (sliding on `/refresh`) |
 
-CSRF protection for state-changing Web requests: Issue [#44](https://github.com/AutoDevJapan/PassShare/issues/44).
+CSRF protection for state-changing Web requests (Issue [#44](https://github.com/AutoDevJapan/PassShare/issues/44)):
+
+| Item | Value |
+|------|-------|
+| Cookie | `passshare_csrf` (readable by JS, **not** HttpOnly) |
+| Header | `X-CSRF-Token` must match cookie (double-submit) |
+| Protected routes | `POST /signup`, `/login`, `/logout`, `/refresh` |
+| Bootstrap | `GET /api/auth/csrf` before first state-changing call |
+
+**Errors:** `403 PS027` when CSRF validation fails.
+
+**Web CORS:** `WEB_ORIGIN` env (default `http://localhost:5173`) with `Access-Control-Allow-Credentials: true`.
+
+Frontend uses `credentials: "include"` via `frontend/src/lib/auth-api.ts` and `AuthSessionProvider`.
+
+## Acceptance Criteria (Issue #44)
+
+```gherkin
+Given a Web client
+When the user logs in
+Then the session cookie is HttpOnly
+
+Given a POST without CSRF token
+When the auth API is called
+Then the response status is 403
+
+Given an authenticated session
+When the user logs out
+Then the session is invalidated
+```
 
 ## Database Tables
 

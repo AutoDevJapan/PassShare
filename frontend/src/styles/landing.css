@@ -500,3 +500,42 @@
     align-items: flex-start;
   }
 }
+
+.landing-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ps-space-2);
+  min-width: 12rem;
+}
+
+.landing-session--form {
+  padding: var(--ps-space-3);
+  border: 1px solid var(--ps-color-border);
+  border-radius: var(--ps-radius-md);
+  background: var(--ps-color-surface);
+}
+
+.landing-session__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ps-space-1);
+  font-size: 0.875rem;
+}
+
+.landing-session__field input {
+  padding: var(--ps-space-2);
+  border: 1px solid var(--ps-color-border);
+  border-radius: var(--ps-radius-sm);
+}
+
+.landing-session__status {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ps-color-text-muted);
+}
+
+.landing-session__error {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ps-color-danger, #b42318);
+}
