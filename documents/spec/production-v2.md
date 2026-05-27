@@ -23,6 +23,7 @@ PassShare v2.0 は **本番公開可能な完全版** を定義する。MVP（v0
 | [design-system.md](./design-system.md) | デザイントークン・コンポーネント |
 | [ui-polish.md](./ui-polish.md) | i18n 骨格・A11y |
 | [infrastructure.md](./infrastructure.md) | Vercel / Railway 環境 |
+| [runbooks/secret-rotation.md](../runbooks/secret-rotation.md) | 秘密情報ローテーション |
 | [ADR 003: マルチクライアント](../adr/003-multi-client-architecture.md) | 4 クライアント・データ経路・拡張接続 |
 | [ADR 004: 認証・認可](../adr/004-auth-authorization-model.md) | ユーザー / セッション / Connect トークン |
 | [auth-api.md](./auth-api.md) | L1 認証 API（`/api/auth/*`） |
@@ -53,6 +54,7 @@ PassShare v2.0 は **本番公開可能な完全版** を定義する。MVP（v0
 | 多ユーザー Connect 認可（共有トークン廃止） | M | M | M | M | [#43](https://github.com/AutoDevJapan/PassShare/issues/43) |
 | レート制限・ブルートフォース対策 | M | — | — | — | [#45](https://github.com/AutoDevJapan/PassShare/issues/45) |
 | CSP / CORS / セキュリティヘッダー | M | — | — | — | [#46](https://github.com/AutoDevJapan/PassShare/issues/46) |
+| 秘密情報ローテーション Runbook | M | — | — | — | [#47](https://github.com/AutoDevJapan/PassShare/issues/47) |
 | クリップボード自動消去 | S | M | M | M | [#48](https://github.com/AutoDevJapan/PassShare/issues/48) |
 | 生体認証アンロック | — | S | M | — | [#49](https://github.com/AutoDevJapan/PassShare/issues/49) |
 
