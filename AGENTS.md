@@ -32,6 +32,8 @@ apps/desktop/            — Tauri デスクトップ
 frontend/                — Web ポータル (Vercel)
 backend/                 — API (Railway)
 shared/styles/           — 共通デザインシステム (Web / Desktop 共有)
+shared/i18n/             — 共通 i18n (ja / en)
+shared/ui/               — 共通 React UI (MatrixBackground 等)
 documents/spec/          — 仕様 SSOT
 scripts/                 — インフラセットアップ
 ```
@@ -52,7 +54,7 @@ cd apps/desktop && npm install && cargo tauri dev
 ## xDD
 
 Spec: `documents/spec/feature-passshare-mvp.md`
-Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`
+Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/ui-polish.md`
 Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
 Infra: `documents/spec/infrastructure.md`
 

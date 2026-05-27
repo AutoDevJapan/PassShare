@@ -4,9 +4,21 @@
 
 .ps-body {
   min-height: 100vh;
+  background: var(--ps-bg-base);
+}
+
+.ps-app-shell {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
   background:
     radial-gradient(circle at top, rgba(74, 222, 128, 0.08), transparent 45%),
     var(--ps-bg-base);
+}
+
+.ps-app-shell .ps-app {
+  position: relative;
+  z-index: 1;
 }
 
 .ps-app {
@@ -25,6 +37,10 @@
   align-items: center;
   gap: var(--ps-space-3);
   margin-bottom: var(--ps-space-2);
+}
+
+.ps-app__lang {
+  margin-left: auto;
 }
 
 .ps-app__header .ps-heading-2 {

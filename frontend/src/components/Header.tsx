@@ -1,16 +1,19 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useI18n } from "../../../shared/i18n/I18nProvider";
+import { isApplePlatform, useSearchShortcut } from "../hooks/useSearchShortcut";
+import { SearchDialog } from "./SearchDialog";
 
 type NavItem = {
   id: string;
-  label: string;
+  labelKey: "header.nav.home" | "header.nav.download" | "header.nav.docs";
   href: string;
   active?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "home", label: "Home", href: "#", active: true },
-  { id: "download", label: "Download", href: "#download" },
-  { id: "docs", label: "Docs", href: "#docs" },
+  { id: "home", labelKey: "header.nav.home", href: "#", active: true },
+  { id: "download", labelKey: "header.nav.download", href: "#download" },
+  { id: "docs", labelKey: "header.nav.docs", href: "#docs" },
 ];
 
 function LogoMark() {
@@ -45,69 +48,112 @@ function LogoMark() {
 }
 
 export function Header() {
+  const { locale, setLocale, t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+  }, []);
+
+  useSearchShortcut(openSearch);
+
+  const shortcutLabel = isApplePlatform()
+    ? t("header.search.shortcutMac")
+    : t("header.search.shortcutWin");
 
   return (
-    <header className="landing-header">
-      <div className="landing-header__inner">
-        <a className="landing-logo" href="#" aria-label="PassShare ホーム">
-          <LogoMark />
-          <span>PassShare</span>
-        </a>
+    <>
+      <header className="landing-header">
+        <div className="landing-header__inner">
+          <a className="landing-logo" href="#" aria-label={t("header.logoAria")}>
+            <LogoMark />
+            <span>PassShare</span>
+          </a>
 
-        <button
-          type="button"
-          className="landing-header__menu-toggle"
-          aria-expanded={menuOpen}
-          aria-controls="landing-nav"
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          <span className="landing-header__menu-icon" aria-hidden="true" />
-          <span className="visually-hidden">メニュー</span>
-        </button>
+          <button
+            type="button"
+            className="landing-header__menu-toggle"
+            aria-expanded={menuOpen}
+            aria-controls="landing-nav"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <span className="landing-header__menu-icon" aria-hidden="true" />
+            <span className="visually-hidden">{t("header.menu")}</span>
+          </button>
 
-        <nav
-          id="landing-nav"
-          className={`landing-nav${menuOpen ? " landing-nav--open" : ""}`}
-          aria-label="メインナビゲーション"
-        >
-          <ul className="landing-nav__list">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.id}>
-                <a
-                  className={`landing-nav__link${item.active ? " landing-nav__link--active" : ""}`}
-                  href={item.href}
-                  aria-current={item.active ? "page" : undefined}
-                  onClick={() => setMenuOpen(false)}
+          <nav
+            id="landing-nav"
+            className={`landing-nav${menuOpen ? " landing-nav--open" : ""}`}
+            aria-label={t("header.nav.label")}
+          >
+            <ul className="landing-nav__list">
+              {NAV_ITEMS.map((item) => (
+                <li key={item.id}>
+                  <a
+                    className={`landing-nav__link${item.active ? " landing-nav__link--active" : ""}`}
+                    href={item.href}
+                    aria-current={item.active ? "page" : undefined}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    {t(item.labelKey)}
+                  </a>
+                </li>
+              ))}
+            </ul>
+
+            <div className="landing-header__tools">
+              <button
+                type="button"
+                className="landing-search"
+                aria-haspopup="dialog"
+                aria-expanded={searchOpen}
+                onClick={openSearch}
+              >
+                <span className="visually-hidden">{t("header.search.label")}</span>
+                <span className="landing-search__label">{t("header.search.placeholder")}</span>
+                <kbd className="landing-search__kbd">{shortcutLabel}</kbd>
+              </button>
+
+              <div className="landing-lang" role="group" aria-label={t("header.lang.label")}>
+                <button
+                  type="button"
+                  className={`landing-lang__btn${locale === "ja" ? " landing-lang__btn--active" : ""}`}
+                  aria-pressed={locale === "ja"}
+                  onClick={() => setLocale("ja")}
                 >
-                  {item.label}
-                </a>
-              </li>
-            ))}
-          </ul>
+                  {t("header.lang.ja")}
+                </button>
+                <button
+                  type="button"
+                  className={`landing-lang__btn${locale === "en" ? " landing-lang__btn--active" : ""}`}
+                  aria-pressed={locale === "en"}
+                  onClick={() => setLocale("en")}
+                >
+                  {t("header.lang.en")}
+                </button>
+              </div>
 
-          <div className="landing-header__tools">
-            <label className="landing-search">
-              <span className="visually-hidden">検索</span>
-              <input type="search" placeholder="Search..." readOnly aria-label="Search" />
-              <kbd className="landing-search__kbd">⌘K</kbd>
-            </label>
-
-            <div className="landing-lang" role="group" aria-label="言語切替">
-              <button type="button" className="landing-lang__btn landing-lang__btn--active">
-                日本語
-              </button>
-              <button type="button" className="landing-lang__btn">
-                EN
-              </button>
+              <a className="ps-button ps-button--primary landing-header__cta" href="#download">
+                {t("header.cta.download")}
+              </a>
             </div>
+          </nav>
+        </div>
+      </header>
 
-            <a className="ps-button ps-button--primary landing-header__cta" href="#download">
-              Download
-            </a>
-          </div>
-        </nav>
-      </div>
-    </header>
+      <SearchDialog
+        open={searchOpen}
+        query={searchQuery}
+        onQueryChange={setSearchQuery}
+        onClose={closeSearch}
+      />
+    </>
   );
 }
