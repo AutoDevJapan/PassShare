@@ -1,0 +1,31 @@
+name: Deploy Preview Backend
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: deploy-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-backend-preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy backend to Railway (preview)
+        working-directory: backend
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          railway up \
+            --project "${{ secrets.RAILWAY_PROJECT_ID }}" \
+            --service "${{ secrets.RAILWAY_SERVICE_ID }}" \
+            --environment "${{ secrets.RAILWAY_PREVIEW_ENV_ID }}" \
+            --detach

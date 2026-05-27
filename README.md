@@ -25,9 +25,43 @@ docker compose -f docker/docker-compose.test.yml run --rm test
 cargo test -p passshare-core
 ```
 
+## モノレポ構成
+
+```
+crates/passshare-core/   — 暗号・ドメイン・ストレージ
+apps/desktop/            — Tauri デスクトップ（src-tauri + ui/）
+frontend/                — Web ポータル（Vercel）
+backend/                 — API（Railway）
+documents/spec/          — 仕様（SSOT）
+docker/                  — テスト用 Docker 環境
+scripts/                 — Vercel / Railway セットアップ
+```
+
+## インフラ
+
+| 環境 | Frontend (Vercel) | Backend (Railway) | DB |
+|------|-------------------|-------------------|-----|
+| prd | Production / `main` | production | postgres-prd |
+| stg | Staging / `stg` | staging | postgres-stg |
+| preview | Preview / PR | preview | postgres-dev |
+| dev | Development / `develop` | development | postgres-dev |
+
+詳細: [インフラ仕様](documents/spec/infrastructure.md)
+
+### 初回セットアップ
+
+```powershell
+# Railway（要 railway login）
+.\scripts\setup-railway.ps1
+
+# Vercel（要 npx vercel login）
+.\scripts\setup-vercel.ps1
+```
+
 ## ドキュメント
 
 - [MVP 仕様](documents/spec/feature-passshare-mvp.md)
+- [インフラ仕様](documents/spec/infrastructure.md)
 - [質問リスト](質問リスト.md)
 
 ## ライセンス

@@ -1,11 +1,30 @@
 display_language: ja
 main_language: ja
-
-stack:
-  programming_languages:
-    - rust
-  infra:
-    - docker
-
-design:
-  ui_term_password_container: パスワードボックス
+sub_languages: [en, ru]
+programming_languages: [typescript, rust]
+frontend: [react, vite, tauri, liftkit]
+backend: [axum]
+database: [postgresql]
+orm: [diesel]
+infra: [docker, terraform, vercel, github-actions, railway]
+game: []
+mobile: []
+other: [tauri mobile]
+tools:
+  vcs: gh
+  browser_automation: browser-use
+  secret_scanning: gitleaks
+  e2e_testing: playwright
+  unit_testing: vitest
+  linting: biome
+  formatting: biome
+  type_checking: typescript
+  coverage: @vitest/coverage-v8
+  unused_code: knip
+  dependency_analysis: dependency-cruiser
+  documentation: typedoc
+  security_analysis: cargo-audit
+godd_files:
+  docs_dir: documents
+  generate_gitattributes: true
+  generate_dependabot: true
