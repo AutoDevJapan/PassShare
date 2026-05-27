@@ -16,11 +16,20 @@ function ItemRow({ item, onDelete }: { item: LoginItem; onDelete: (id: string) =
   }
 
   return (
-    <li>
-      <h4>{item.title}</h4>
-      <p>
-        {item.url || "URL 未設定"} / {item.username || "ユーザー名未設定"}
-      </p>
+    <li className="ps-item-card">
+      <div className="ps-item-card__body">
+        <h4 className="ps-item-card__title">{item.title}</h4>
+        <dl className="ps-meta ps-meta--compact">
+          <div>
+            <dt>URL</dt>
+            <dd>{item.url || "未設定"}</dd>
+          </div>
+          <div>
+            <dt>ユーザー名</dt>
+            <dd>{item.username || "未設定"}</dd>
+          </div>
+        </dl>
+      </div>
       <div className="ps-item-actions">
         <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleCopy()}>
           {copied ? "コピーしました" : "パスワードをコピー"}
@@ -35,7 +44,7 @@ function ItemRow({ item, onDelete }: { item: LoginItem; onDelete: (id: string) =
 
 export function ItemList({ items, onDelete }: ItemListProps) {
   if (items.length === 0) {
-    return <p className="ps-text-muted">ログイン情報がありません。</p>;
+    return <p className="ps-text-muted">ログイン情報がありません。上のフォームから追加してください。</p>;
   }
 
   return (

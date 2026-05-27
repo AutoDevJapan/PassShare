@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { createPasswordBox, openPasswordBox } from "../tauri";
+import { formatTauriError } from "../errors";
+import { RecoveryKitPanel } from "./RecoveryKitPanel";
+import { StatusMessage } from "./StatusMessage";
 
 type SetupPanelProps = {
   boxPath: string;
@@ -17,46 +20,83 @@ export function SetupPanel({
   onUnlocked,
 }: SetupPanelProps) {
   const [message, setMessage] = useState("");
-  const [isError, setIsError] = useState(false);
+  const [messageVariant, setMessageVariant] = useState<"info" | "error" | "success">("info");
   const [busy, setBusy] = useState(false);
+  const [recoverySecret, setRecoverySecret] = useState<string | null>(null);
 
-  function showMessage(text: string, error = false) {
+  function showMessage(text: string, variant: "info" | "error" | "success" = "info") {
     setMessage(text);
-    setIsError(error);
+    setMessageVariant(variant);
+  }
+
+  function clearMessage() {
+    setMessage("");
   }
 
   async function handleCreate() {
+    if (!boxPath.trim()) {
+      showMessage("ファイルの場所を入力してください。", "error");
+      return;
+    }
+    if (!masterPassword) {
+      showMessage("マスターパスワードを入力してください。", "error");
+      return;
+    }
+
     setBusy(true);
+    clearMessage();
     try {
       const recovery = await createPasswordBox(boxPath.trim(), masterPassword);
-      showMessage(
-        recovery
-          ? `パスワードボックスを作成しました。緊急キット: ${recovery}（必ず控えてください）`
-          : "パスワードボックスを作成しました。",
-      );
+      if (recovery) {
+        setRecoverySecret(recovery);
+        return;
+      }
+      showMessage("パスワードボックスを作成しました。", "success");
       onUnlocked();
     } catch (err) {
-      showMessage(String(err), true);
+      showMessage(formatTauriError(err), "error");
     } finally {
       setBusy(false);
     }
   }
 
   async function handleOpen() {
+    if (!boxPath.trim()) {
+      showMessage("ファイルの場所を入力してください。", "error");
+      return;
+    }
+    if (!masterPassword) {
+      showMessage("マスターパスワードを入力してください。", "error");
+      return;
+    }
+
     setBusy(true);
+    clearMessage();
     try {
       await openPasswordBox(boxPath.trim(), masterPassword);
-      showMessage("パスワードボックスを開きました。");
+      showMessage("パスワードボックスを開きました。", "success");
       onUnlocked();
     } catch (err) {
-      showMessage(String(err), true);
+      showMessage(formatTauriError(err), "error");
     } finally {
       setBusy(false);
     }
   }
 
+  if (recoverySecret) {
+    return (
+      <RecoveryKitPanel
+        secret={recoverySecret}
+        onConfirm={() => {
+          setRecoverySecret(null);
+          onUnlocked();
+        }}
+      />
+    );
+  }
+
   return (
-    <section className="ps-panel ps-panel-spaced" aria-labelledby="setup-heading">
+    <section className="ps-card" aria-labelledby="setup-heading">
       <h2 className="ps-heading-3" id="setup-heading">
         パスワードボックスを開く
       </h2>
@@ -72,6 +112,7 @@ export function SetupPanel({
           value={boxPath}
           onChange={(event) => onBoxPathChange(event.target.value)}
           placeholder="例: C:\Users\あなた\Documents\mypasswords.pbox"
+          disabled={busy}
         />
       </label>
 
@@ -83,6 +124,7 @@ export function SetupPanel({
           autoComplete="new-password"
           value={masterPassword}
           onChange={(event) => onMasterPasswordChange(event.target.value)}
+          disabled={busy}
         />
       </label>
 
@@ -90,7 +132,7 @@ export function SetupPanel({
         <button
           type="button"
           className="ps-button ps-button--primary"
-          onClick={handleCreate}
+          onClick={() => void handleCreate()}
           disabled={busy}
         >
           新規作成
@@ -98,18 +140,14 @@ export function SetupPanel({
         <button
           type="button"
           className="ps-button ps-button--secondary"
-          onClick={handleOpen}
+          onClick={() => void handleOpen()}
           disabled={busy}
         >
           開く
         </button>
       </div>
 
-      {message ? (
-        <p className={`ps-message${isError ? " ps-message--error" : ""}`} role="status">
-          {message}
-        </p>
-      ) : null}
+      {message ? <StatusMessage message={message} variant={messageVariant} /> : null}
     </section>
   );
 }
