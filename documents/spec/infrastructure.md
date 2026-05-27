@@ -55,6 +55,18 @@
 | `VITE_APP_ENV` | `prd` | `stg`（stg ブランチ） | `preview` | `dev` |
 | `VITE_API_BASE_URL` | Railway prd API URL | Railway stg API URL | Railway dev API URL | Railway dev API URL |
 
+### Preview 環境変数の自動同期
+
+CLI の Preview 向け `vercel env add` はブランチ指定を要求するため、REST API 経由で同期する。
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR 作成 / 更新 | `sync-vercel-env.yml` | head ブランチ向け Preview env を upsert |
+| `stg` / `develop` push | 同上 | 該当ブランチ向け Preview env を upsert |
+| 手動 (`workflow_dispatch`) | 同上 | baseline + 全 Preview デフォルト + 全 remote ブランチ |
+
+スクリプト: `scripts/sync-vercel-env.mjs`（`VERCEL_TOKEN` 必須、`upsert=true` + `gitBranch: null` で全 Preview ブランチにも対応）
+
 ## Railway 構成
 
 ```
