@@ -1,19 +1,19 @@
+import { isAllowedWebOrigin } from "./web-origin.js";
+
 /**
  * CORS for Web session cookies (credentials).
  * @param {string} appEnv
  */
 export function createWebCorsMiddleware(appEnv = "local") {
   const configuredOrigin = process.env.WEB_ORIGIN?.trim();
-  const defaultOrigin =
-    appEnv === "prd" || appEnv === "stg"
-      ? "https://pass-share-frontend.vercel.app"
-      : "http://localhost:5173";
-  const allowedOrigin = configuredOrigin || defaultOrigin;
 
   /** @type {import('express').RequestHandler} */
   return (req, res, next) => {
     const requestOrigin = req.headers.origin;
-    if (requestOrigin === allowedOrigin) {
+    if (
+      typeof requestOrigin === "string" &&
+      isAllowedWebOrigin(requestOrigin, appEnv, configuredOrigin)
+    ) {
       res.setHeader("Access-Control-Allow-Origin", requestOrigin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Vary", "Origin");

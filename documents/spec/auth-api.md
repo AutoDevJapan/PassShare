@@ -182,7 +182,16 @@ CSRF protection for state-changing Web requests (Issue [#44](https://github.com/
 
 **Errors:** `403 PS027` when CSRF validation fails.
 
-**Web CORS:** `WEB_ORIGIN` env (default `http://localhost:5173`) with `Access-Control-Allow-Credentials: true`.
+**Web CORS:** `WEB_ORIGIN` env (default `http://localhost:5173` in local) with `Access-Control-Allow-Credentials: true`.
+
+In `prd` / `stg` / `preview` / `dev`, only **HTTPS Vercel origins** (`pass-share-frontend.vercel.app` and `*.vercel.app` preview URLs) are reflected. Set `WEB_ORIGIN` on Railway when using a custom frontend domain (e.g. `https://pass-share.bm1314.net`).
+
+**Security headers (Issue [#46](https://github.com/AutoDevJapan/PassShare/issues/46)):**
+
+| Layer | Headers |
+|-------|---------|
+| Backend API | `Content-Security-Policy` (API-safe), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security` (prd/stg) |
+| Vercel Web | CSP for SPA (`frontend/vercel.json`), same baseline headers + HSTS |
 
 Frontend uses `credentials: "include"` via `frontend/src/lib/auth-api.ts` and `AuthSessionProvider`.
 
@@ -200,6 +209,22 @@ Then the response status is 403
 Given an authenticated session
 When the user logs out
 Then the session is invalidated
+```
+
+## Acceptance Criteria (Issue #46)
+
+```gherkin
+Given production Web on Vercel
+When the page loads
+Then CSP headers are present
+
+Given a browser request from a non-Vercel origin
+When the auth API is called with credentials
+Then Access-Control-Allow-Origin is not reflected
+
+Given a browser request from *.vercel.app
+When the auth API is called with credentials
+Then Access-Control-Allow-Origin matches the request origin
 ```
 
 ## Database Tables
