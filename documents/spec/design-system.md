@@ -5,7 +5,7 @@
 
 ## 概要
 
-[参照 UI](https://pass-share.bm1314.net/) に合わせたダークテーマ + ネオングリーンアクセントのデザインシステム。Web ポータル（`frontend/`）とデスクトップ UI（`apps/desktop/ui/`）で共有する。
+[参照 UI](https://pass-share.bm1314.net/) に合わせたダークテーマ + ネオングリーンアクセントのデザインシステム。Web ポータル（`frontend/`）とデスクトップ UI（`apps/desktop/`）で共有する。
 
 ## 配置
 
@@ -22,7 +22,7 @@ shared/styles/
 | アプリ | 参照元 |
 |--------|--------|
 | Web | `frontend/src/style.css` → `../../shared/styles/index.css` |
-| Desktop | `apps/desktop/ui/styles.css` → `../../../shared/styles/index.css` |
+| Desktop | `apps/desktop/src/style.css` → `../../../shared/styles/index.css` |
 
 ## デザイントークン
 
