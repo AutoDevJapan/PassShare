@@ -1,0 +1,18 @@
+[package]
+name = "op-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "1Password op-compatible CLI for PassShare Connect API"
+
+[[bin]]
+name = "op"
+path = "src/main.rs"
+
+[dependencies]
+passshare-connect = { path = "../passshare-connect" }
+passshare-core = { path = "../passshare-core" }
+clap.workspace = true
+tokio.workspace = true
+serde_json = { workspace = true }

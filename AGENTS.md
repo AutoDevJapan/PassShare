@@ -27,22 +27,33 @@ UI・エラーメッセージ・ドキュメントでは **「パスワードボ
 ## モノレポ構成
 
 ```
-crates/passshare-core/   — 暗号・ドメイン・ストレージ
-apps/desktop/            — Tauri デスクトップ
-frontend/                — Web ポータル (Vercel)
-backend/                 — API (Railway)
-shared/styles/           — 共通デザインシステム (Web / Desktop 共有)
-shared/i18n/             — 共通 i18n (ja / en)
-shared/ui/               — 共通 React UI (MatrixBackground 等)
-documents/spec/          — 仕様 SSOT
-scripts/                 — インフラセットアップ
+crates/passshare-core/     — 暗号・ドメイン・ストレージ
+crates/passshare-connect/  — Connect API Rust SDK
+crates/op-cli/             — `op` 互換 CLI
+packages/connect-js/       — TypeScript Connect SDK
+packages/connect-python/   — Python Connect SDK
+packages/connect-go/       — Go Connect SDK
+apps/desktop/              — Tauri デスクトップ
+frontend/                  — Web ポータル (Vercel)
+backend/                   — API (Railway)
+shared/styles/             — 共通デザインシステム (Web / Desktop 共有)
+shared/i18n/               — 共通 i18n (ja / en)
+shared/ui/                 — 共通 React UI (MatrixBackground 等)
+documents/spec/            — 仕様 SSOT
+scripts/                   — インフラセットアップ
 ```
 
 ## 開発コマンド
 
 ```bash
-# テスト（Docker）
+# テスト（Docker — passshare-core + Connect SDK + op CLI）
 docker compose -f docker/docker-compose.test.yml run --rm test
+
+# op CLI ビルド（ローカル）
+cargo build -p op-cli --release
+
+# Connect SDK（TypeScript）
+cd packages/connect-js && npm install && npm test
 
 # ローカル（開発時のみ）
 cargo test -p passshare-core

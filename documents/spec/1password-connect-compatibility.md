@@ -205,6 +205,18 @@ Railway `pass-share-backend` が Connect Server 互換 API を提供（[infrastr
 
 環境変数: `OP_CONNECT_HOST`, `OP_CONNECT_TOKEN`（1Password 互換）
 
+### 実装（Phase 3）
+
+| コンポーネント | パス |
+|---------------|------|
+| Rust SDK | `crates/passshare-connect/` |
+| `op` CLI | `crates/op-cli/`（バイナリ名 `op`） |
+| TypeScript SDK | `packages/connect-js/`（`@passshare/connect`） |
+| Python SDK | `packages/connect-python/` |
+| Go SDK | `packages/connect-go/` |
+
+環境変数: `OP_CONNECT_HOST`, `OP_CONNECT_TOKEN`（1Password 互換）
+
 ### シークレット参照
 
 ```
@@ -216,7 +228,7 @@ op://{vault}/{item}/password
 
 | 言語 | パッケージ | 方針 |
 |------|-----------|------|
-| **TypeScript / Node** | `@passshare/connect` | Connect API 互換、型は OpenAPI 生成 |
+| **TypeScript / Node** | `@passshare/connect` | Connect API 互換、型は手書き（OpenAPI 生成は後続） |
 | **Python** | `passshare-connect` | `onepasswordconnectsdk` 互換 API |
 | **Go** | `github.com/autodevjapan/passshare-connect` | 公式 Connect Go SDK 互換 |
 | **Rust** | `passshare-connect` crate | `passshare-core` + HTTP クライアント |
