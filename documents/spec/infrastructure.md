@@ -123,6 +123,10 @@ railway login
 | `VERCEL_ORG_ID` | `masashi-matsumotos-projects-c5830f3d` |
 | `VERCEL_PROJECT_ID` | `prj_itSKGa2HAEj3UNHnsCdPQEF5nziE` |
 
+### 秘密情報ローテーション
+
+Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テストは [secret-rotation Runbook](../runbooks/secret-rotation.md)（Issue [#47](https://github.com/AutoDevJapan/PassShare/issues/47)）を参照。
+
 ### GitHub Actions デプロイ
 
 - `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
