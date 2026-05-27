@@ -173,6 +173,18 @@ Connect 形式 `{ "status": 404, "message": "..." }` + PassShare コード `PS00
 
 Railway `pass-share-backend` が Connect Server 互換 API を提供（[infrastructure](./infrastructure.md)）。
 
+**実装（Phase 2）:** `backend/src/connect/` — Express `/v1` ルーター、PostgreSQL 永続化、`OP_CONNECT_TOKEN` Bearer 認証。
+
+### エラーコード（Connect API 追加分）
+
+| コード | 意味 |
+|--------|------|
+| PS011 | Bearer トークン無効 |
+| PS012 | Vault / リソース未検出 |
+| PS013 | JSON Patch 不正 |
+| PS014 | ファイル未検出 |
+| PS015 | PATCH Content-Type 不正 |
+
 ---
 
 ## Phase 3: CLI / SDK

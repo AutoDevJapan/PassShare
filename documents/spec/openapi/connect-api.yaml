@@ -155,5 +155,66 @@ paths:
       responses:
         "204":
           description: Deleted
+  /vaults/{vaultUuid}/items/{itemUuid}/files/{fileUuid}:
+    get:
+      summary: Get file metadata
+      operationId: getFile
+      tags: [Files]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z0-9]{26}$"
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z0-9]{26}$"
+        - name: fileUuid
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z0-9]{26}$"
+      responses:
+        "200":
+          description: File metadata
+        "404":
+          description: File not found
+  /vaults/{vaultUuid}/items/{itemUuid}/files/{fileUuid}/content:
+    get:
+      summary: Get file content
+      operationId: getFileContent
+      tags: [Files]
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: fileUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Binary file content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
 
-# TODO: Full schema fork from 1Password Connect OpenAPI — Phase 2 implementation
+x-passshare-implementation:
+  backend: backend/src/connect/
+  authEnv: OP_CONNECT_TOKEN
+  storage: PostgreSQL (connect_vaults, connect_items, connect_item_files)

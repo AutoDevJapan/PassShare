@@ -31,7 +31,7 @@
 | レイヤー | プラットフォーム | 役割 |
 |---------|----------------|------|
 | Frontend | Vercel (`pass-share-frontend`) | Web ポータル（Vite） |
-| Backend API | Railway (`pass-share-backend`) | ヘルスチェック / 将来の API |
+| Backend API | Railway (`pass-share-backend`) | Connect API `/v1` + ヘルスチェック |
 | Database | Railway PostgreSQL | 環境別 DB |
 
 ## 環境マッピング
@@ -87,6 +87,7 @@ PassShare (project)
 |------|-----|
 | `APP_ENV` | `prd` / `stg` / `preview` / `dev` |
 | `DATABASE_URL` | 対応する Postgres の Variable Reference |
+| `OP_CONNECT_TOKEN` | Connect API Bearer トークン（`/v1/*` 必須） |
 | `PORT` | Railway が自動設定（省略可） |
 
 ## セットアップ手順
