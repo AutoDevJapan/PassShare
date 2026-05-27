@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { LoginItem } from "../types";
 import { addItem, deleteItem, generatePassword, listItems, lockPasswordBox, searchItems } from "../tauri";
+import { formatTauriError } from "../errors";
 import { ItemList } from "./ItemList";
+import { StatusMessage } from "./StatusMessage";
 
 type MainPanelProps = {
   masterPassword: string;
@@ -27,10 +29,17 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
   const [items, setItems] = useState<LoginItem[]>([]);
   const [form, setForm] = useState<AddFormState>(EMPTY_FORM);
   const [loading, setLoading] = useState(true);
+  const [formError, setFormError] = useState("");
+  const [listError, setListError] = useState("");
 
   async function refreshItems(query = searchQuery.trim()) {
-    const nextItems = query ? await searchItems(query) : await listItems();
-    setItems(nextItems);
+    try {
+      const nextItems = query ? await searchItems(query) : await listItems();
+      setItems(nextItems);
+      setListError("");
+    } catch (err) {
+      setListError(formatTauriError(err));
+    }
   }
 
   useEffect(() => {
@@ -42,6 +51,11 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
         const nextItems = await listItems();
         if (!cancelled) {
           setItems(nextItems);
+          setListError("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setListError(formatTauriError(err));
         }
       } finally {
         if (!cancelled) {
@@ -70,10 +84,13 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
   async function handleGenerate() {
     const password = await generatePassword(16);
     setForm((current) => ({ ...current, password }));
+    setFormError("");
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setFormError("");
+
     try {
       await addItem({
         title: form.title.trim(),
@@ -86,7 +103,7 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
       setForm(EMPTY_FORM);
       await refreshItems();
     } catch (err) {
-      window.alert(String(err));
+      setFormError(formatTauriError(err));
     }
   }
 
@@ -99,34 +116,38 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
       await deleteItem(id, masterPassword);
       await refreshItems();
     } catch (err) {
-      window.alert(String(err));
+      setListError(formatTauriError(err));
     }
   }
 
   function updateFormField(field: keyof AddFormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
+    if (formError) {
+      setFormError("");
+    }
   }
 
   return (
-    <section className="ps-panel ps-panel-spaced" aria-labelledby="main-heading">
-      <h2 className="visually-hidden" id="main-heading">
-        ログイン情報
-      </h2>
-
-      <div className="ps-toolbar">
-        <input
-          className="ps-input"
-          type="search"
-          placeholder="サイト名・URL・ユーザー名で検索"
-          value={searchQuery}
-          onChange={(event) => void handleSearchChange(event.target.value)}
-        />
-        <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleLock()}>
-          閉じる
-        </button>
+    <section className="ps-main" aria-labelledby="main-heading">
+      <div className="ps-card ps-card--toolbar">
+        <h2 className="visually-hidden" id="main-heading">
+          ログイン情報
+        </h2>
+        <div className="ps-toolbar">
+          <input
+            className="ps-input"
+            type="search"
+            placeholder="サイト名・URL・ユーザー名で検索"
+            value={searchQuery}
+            onChange={(event) => void handleSearchChange(event.target.value)}
+          />
+          <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleLock()}>
+            閉じる
+          </button>
+        </div>
       </div>
 
-      <form className="ps-form-divider" onSubmit={(event) => void handleSubmit(event)}>
+      <form className="ps-card ps-card--form" onSubmit={(event) => void handleSubmit(event)}>
         <h3 className="ps-heading-3">ログイン情報を追加</h3>
         <div className="ps-grid">
           <label className="ps-label">
@@ -174,16 +195,30 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
             </span>
           </label>
         </div>
-        <button type="submit" className="ps-button ps-button--primary">
-          追加する
-        </button>
+        <div className="ps-actions">
+          <button type="submit" className="ps-button ps-button--primary">
+            追加する
+          </button>
+        </div>
+        {formError ? <StatusMessage message={formError} variant="error" /> : null}
       </form>
 
-      {loading ? (
-        <p className="ps-text-muted">読み込み中…</p>
-      ) : (
-        <ItemList items={items} onDelete={(id) => void handleDelete(id)} />
-      )}
+      <section className="ps-card ps-card--list" aria-labelledby="item-list-heading">
+        <div className="ps-card__header">
+          <h3 className="ps-heading-3" id="item-list-heading">
+            ログイン情報一覧
+          </h3>
+          <span className="ps-badge">{items.length} 件</span>
+        </div>
+
+        {listError ? <StatusMessage message={listError} variant="error" /> : null}
+
+        {loading ? (
+          <p className="ps-text-muted">読み込み中…</p>
+        ) : (
+          <ItemList items={items} onDelete={(id) => void handleDelete(id)} />
+        )}
+      </section>
     </section>
   );
 }
