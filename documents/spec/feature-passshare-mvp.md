@@ -53,9 +53,19 @@ crates/passshare-core
 | 乱数 | OS CSPRNG (`getrandom`) |
 | 秘密情報 | `zeroize` でメモリ消去 |
 
+### v1（1Password Connect 互換 — Epic #9）
+
+- Vault / Item / Field ドメインモデル（Connect スキーマ準拠）
+- ペイロード version 2（`.pbox` 暗号ラッパー version は 1 のまま）
+- v0.1 LoginItem → Item マイグレーション（open 時自動）
+- 1Password CSV インポート
+- 詳細: [1Password Connect 互換仕様](./1password-connect-compatibility.md)
+
 ## データモデル
 
-### LoginItem
+> v1 以降の SSOT は [1Password Connect 互換仕様](./1password-connect-compatibility.md)。以下は v0.1 レガシー参考。
+
+### LoginItem（v0.1 レガシー）
 
 | フィールド | 型 | 必須 |
 |-----------|-----|------|
@@ -117,6 +127,8 @@ Then  一致するログイン情報のみ返る
 | `PS003` | ファイルが壊れているか、別のパスワードボックスです |
 | `PS004` | タイトルは必須です |
 | `PS005` | パスワードは必須です |
+| `PS009` | ID 形式が正しくありません |
+| `PS010` | インポートに失敗しました |
 
 ## 完了条件
 
