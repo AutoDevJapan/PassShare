@@ -2,11 +2,11 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use passshare_core::{
-    generator::PasswordGeneratorOptions, LoginItem, PassShareError, PasswordBox, PasswordBoxState,
+    generator::PasswordGeneratorOptions, Item, LoginItemView, PassShareError, PasswordBox,
+    PasswordBoxState,
 };
 use serde::Serialize;
 use tauri::State;
-use uuid::Uuid;
 
 struct AppState {
     box_path: Mutex<Option<PathBuf>>,
@@ -24,10 +24,10 @@ struct LoginItemDto {
     notes: String,
 }
 
-impl From<&LoginItem> for LoginItemDto {
-    fn from(item: &LoginItem) -> Self {
+impl From<&LoginItemView> for LoginItemDto {
+    fn from(item: &LoginItemView) -> Self {
         Self {
-            id: item.id.to_string(),
+            id: item.id.clone(),
             title: item.title.clone(),
             url: item.url.clone(),
             username: item.username.clone(),
@@ -81,7 +81,12 @@ fn open_password_box(
 fn list_items(state: State<'_, AppState>) -> Result<Vec<LoginItemDto>, String> {
     let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
     let pb = pb.as_ref().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
-    Ok(pb.list_items().map_err(map_error)?.iter().map(Into::into).collect())
+    Ok(pb
+        .list_items()
+        .map_err(map_error)?
+        .iter()
+        .map(Into::into)
+        .collect())
 }
 
 #[tauri::command]
@@ -108,20 +113,25 @@ fn add_item(
 ) -> Result<LoginItemDto, String> {
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
     let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
-    let item = LoginItem::new(title, password)
+    let vault_id = pb.vault().map_err(map_error)?.id.clone();
+    let item = Item::new_login(vault_id, title, password)
         .map_err(map_error)?
-        .with_optional_fields(url, username, notes);
+        .with_optional_fields(url, username, notes)
+        .map_err(map_error)?;
     pb.add_item(item.clone()).map_err(map_error)?;
     pb.save(&master_password).map_err(map_error)?;
-    Ok((&item).into())
+    Ok(LoginItemDto::from(
+        &item
+            .to_login_view()
+            .ok_or_else(|| PassShareError::Internal("login view".into()).to_string())?,
+    ))
 }
 
 #[tauri::command]
 fn delete_item(id: String, master_password: String, state: State<'_, AppState>) -> Result<(), String> {
-    let uuid = Uuid::parse_str(&id).map_err(|_| PassShareError::ItemNotFound.to_string())?;
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
     let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
-    pb.delete_item(uuid).map_err(map_error)?;
+    pb.delete_item(&id).map_err(map_error)?;
     pb.save(&master_password).map_err(map_error)?;
     Ok(())
 }

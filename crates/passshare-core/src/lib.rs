@@ -2,10 +2,17 @@ pub mod crypto;
 pub mod domain;
 pub mod error;
 pub mod generator;
+pub mod import;
+pub mod migration;
 pub mod password_box;
 pub mod storage;
 
+pub use domain::connect_id::ConnectId;
+pub use domain::item::Item;
 pub use domain::login_item::LoginItem;
+pub use domain::login_view::LoginItemView;
+pub use domain::vault::Vault;
 pub use error::PassShareError;
+pub use import::import_onepassword_csv;
 pub use password_box::PasswordBox;
 pub use password_box::PasswordBoxState;

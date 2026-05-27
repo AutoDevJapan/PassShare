@@ -25,6 +25,12 @@ pub enum PassShareError {
 
     #[error("PS008: 内部エラー: {0}")]
     Internal(String),
+
+    #[error("PS009: ID 形式が正しくありません")]
+    InvalidConnectId,
+
+    #[error("PS010: インポートに失敗しました: {0}")]
+    ImportError(String),
 }
 
 impl From<argon2::Error> for PassShareError {

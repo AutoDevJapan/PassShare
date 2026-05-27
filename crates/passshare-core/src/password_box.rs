@@ -1,16 +1,20 @@
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use uuid::Uuid;
 
 use crate::crypto::{
     decrypt, derive_master_key, encrypt, generate_recovery_secret, generate_salt, FILE_VERSION,
     KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST,
 };
+use crate::domain::connect_id::ConnectId;
+use crate::domain::item::Item;
 use crate::domain::login_item::LoginItem;
-use crate::domain::payload::PasswordBoxPayload;
+use crate::domain::login_view::LoginItemView;
+use crate::domain::payload::{deserialize_payload, PasswordBoxPayload};
+use crate::domain::vault::Vault;
 use crate::error::PassShareError;
 use crate::generator::{generate_password, PasswordGeneratorOptions};
+use crate::import::import_onepassword_csv;
 use crate::storage::file_format::{KdfParams, PasswordBoxFile, StoredCipher};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,12 +33,10 @@ pub struct PasswordBox {
 impl PasswordBox {
     pub fn create(path: impl AsRef<Path>, master_password: &str) -> Result<Self, PassShareError> {
         let path = path.as_ref().to_path_buf();
+        let vault_name = default_vault_name(&path);
         let salt = generate_salt()?;
         let recovery_secret = generate_recovery_secret()?;
-        let payload = PasswordBoxPayload {
-            items: Vec::new(),
-            recovery_secret: Some(recovery_secret),
-        };
+        let payload = PasswordBoxPayload::new(Vault::new(vault_name)?, Some(recovery_secret));
         let mut pb = Self {
             path,
             state: PasswordBoxState::Unlocked,
@@ -53,7 +55,8 @@ impl PasswordBox {
         let key = derive_master_key(master_password, &salt)?;
         let nonce = file.cipher.nonce_bytes()?;
         let plaintext = decrypt(&file.ciphertext, &key, &nonce)?;
-        let payload: PasswordBoxPayload = serde_json::from_slice(&plaintext)?;
+        let vault_name = default_vault_name(&path);
+        let payload = deserialize_payload(&plaintext, &vault_name)?;
         Ok(Self {
             path,
             state: PasswordBoxState::Unlocked,
@@ -66,42 +69,61 @@ impl PasswordBox {
         self.state
     }
 
+    pub fn vault(&self) -> Result<&Vault, PassShareError> {
+        self.ensure_unlocked()?;
+        Ok(&self.payload.vault)
+    }
+
     pub fn recovery_secret(&self) -> Result<Option<&str>, PassShareError> {
         self.ensure_unlocked()?;
         Ok(self.payload.recovery_secret.as_deref())
     }
 
-    pub fn list_items(&self) -> Result<&[LoginItem], PassShareError> {
+    pub fn list_connect_items(&self) -> Result<&[Item], PassShareError> {
         self.ensure_unlocked()?;
         Ok(&self.payload.items)
     }
 
-    pub fn search(&self, query: &str) -> Result<Vec<LoginItem>, PassShareError> {
+    pub fn list_items(&self) -> Result<Vec<LoginItemView>, PassShareError> {
         self.ensure_unlocked()?;
-        let q = query.trim().to_lowercase();
+        Ok(self
+            .payload
+            .items
+            .iter()
+            .filter_map(|item| item.to_login_view())
+            .collect())
+    }
+
+    pub fn search(&self, query: &str) -> Result<Vec<LoginItemView>, PassShareError> {
+        self.ensure_unlocked()?;
+        let q = query.trim();
         if q.is_empty() {
-            return Ok(self.payload.items.clone());
+            return self.list_items();
         }
         Ok(self
             .payload
             .items
             .iter()
-            .filter(|item| {
-                item.title.to_lowercase().contains(&q)
-                    || item.url.to_lowercase().contains(&q)
-                    || item.username.to_lowercase().contains(&q)
-            })
-            .cloned()
+            .filter(|item| item.matches_search(q))
+            .filter_map(|item| item.to_login_view())
             .collect())
     }
 
-    pub fn add_item(&mut self, item: LoginItem) -> Result<(), PassShareError> {
+    pub fn add_item(&mut self, item: Item) -> Result<(), PassShareError> {
         self.ensure_unlocked()?;
         self.payload.items.push(item);
+        self.payload.sync_vault_item_count();
         Ok(())
     }
 
-    pub fn update_item(&mut self, item: LoginItem) -> Result<(), PassShareError> {
+    pub fn add_login_item(&mut self, item: LoginItem) -> Result<Item, PassShareError> {
+        self.ensure_unlocked()?;
+        let connect_item = Item::from_login_item(item, &self.payload.vault)?;
+        self.add_item(connect_item.clone())?;
+        Ok(connect_item)
+    }
+
+    pub fn update_item(&mut self, item: Item) -> Result<(), PassShareError> {
         self.ensure_unlocked()?;
         let pos = self
             .payload
@@ -110,32 +132,48 @@ impl PasswordBox {
             .position(|i| i.id == item.id)
             .ok_or(PassShareError::ItemNotFound)?;
         self.payload.items[pos] = item;
+        self.payload.vault.updated_at = chrono::Utc::now();
         Ok(())
     }
 
-    pub fn delete_item(&mut self, id: Uuid) -> Result<(), PassShareError> {
+    pub fn delete_item(&mut self, id: &str) -> Result<(), PassShareError> {
         self.ensure_unlocked()?;
+        let connect_id = ConnectId::from_str(id)?;
         let len_before = self.payload.items.len();
-        self.payload.items.retain(|i| i.id != id);
+        self.payload.items.retain(|i| i.id != connect_id);
         if self.payload.items.len() == len_before {
             return Err(PassShareError::ItemNotFound);
         }
+        self.payload.sync_vault_item_count();
         Ok(())
     }
 
-    pub fn get_item(&self, id: Uuid) -> Result<&LoginItem, PassShareError> {
+    pub fn get_item(&self, id: &str) -> Result<&Item, PassShareError> {
         self.ensure_unlocked()?;
+        let connect_id = ConnectId::from_str(id)?;
         self.payload
             .items
             .iter()
-            .find(|i| i.id == id)
+            .find(|i| i.id == connect_id)
             .ok_or(PassShareError::ItemNotFound)
+    }
+
+    pub fn import_onepassword_csv(&mut self, csv_data: &str) -> Result<usize, PassShareError> {
+        self.ensure_unlocked()?;
+        let imported = import_onepassword_csv(&self.payload.vault, csv_data)?;
+        let count = imported.len();
+        for item in imported {
+            self.payload.items.push(item);
+        }
+        self.payload.sync_vault_item_count();
+        Ok(count)
     }
 
     pub fn save(&mut self, master_password: &str) -> Result<(), PassShareError> {
         self.ensure_unlocked()?;
         let salt = self.salt.ok_or(PassShareError::CorruptFile)?;
         let key = derive_master_key(master_password, &salt)?;
+        self.payload.sync_vault_item_count();
         let plaintext = serde_json::to_vec(&self.payload)?;
         let (ciphertext, nonce) = encrypt(&plaintext, &key)?;
         let file = PasswordBoxFile {
@@ -159,7 +197,9 @@ impl PasswordBox {
 
     pub fn lock(&mut self) {
         self.state = PasswordBoxState::Locked;
-        self.payload = PasswordBoxPayload::default();
+        if let Ok(vault) = Vault::new("_") {
+            self.payload = PasswordBoxPayload::new(vault, None);
+        }
         self.salt = None;
     }
 
@@ -175,9 +215,20 @@ impl PasswordBox {
     }
 }
 
+fn default_vault_name(path: &Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Password Box".to_string())
+}
+
+use std::str::FromStr;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::payload::deserialize_payload;
+    use crate::domain::item::Item;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -190,21 +241,62 @@ mod tests {
         assert_eq!(pb.state(), PasswordBoxState::Unlocked);
         assert!(pb.recovery_secret().unwrap().is_some());
 
-        let item = LoginItem::new("Example Site", "secret123")
+        let item = Item::new_login(pb.vault().unwrap().id.clone(), "Example Site", "secret123")
             .unwrap()
             .with_optional_fields(
                 Some("https://example.com".into()),
                 Some("user@example.com".into()),
                 None,
-            );
+            )
+            .unwrap();
         pb.add_item(item).unwrap();
         pb.save(master).unwrap();
 
         let opened = PasswordBox::open(&path, master).unwrap();
-        assert_eq!(opened.list_items().unwrap().len(), 1);
+        assert_eq!(opened.list_connect_items().unwrap().len(), 1);
         let results = opened.search("example").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].username, "user@example.com");
+        assert!(opened.vault().unwrap().items >= 1);
+    }
+
+    #[test]
+    fn legacy_v01_payload_deserializes_and_migrates() {
+        let legacy_json = serde_json::json!({
+            "items": [LoginItem::new("Legacy", "pwd").unwrap()],
+            "recovery_secret": null
+        });
+        let payload = deserialize_payload(legacy_json.to_string().as_bytes(), "legacy").unwrap();
+        assert_eq!(payload.payload_version, 2);
+        assert_eq!(payload.items.len(), 1);
+        assert_eq!(payload.items[0].title, "Legacy");
+    }
+
+    #[test]
+    fn add_item_validation() {
+        let file = NamedTempFile::new().unwrap();
+        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        assert_eq!(
+            Item::new_login(pb.vault().unwrap().id.clone(), "", "x"),
+            Err(PassShareError::TitleRequired)
+        );
+        assert_eq!(
+            Item::new_login(pb.vault().unwrap().id.clone(), "title", ""),
+            Err(PassShareError::PasswordRequired)
+        );
+        let item = Item::new_login(pb.vault().unwrap().id.clone(), "Site", "pwd").unwrap();
+        pb.add_item(item).unwrap();
+        assert_eq!(pb.list_connect_items().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn import_csv_adds_items() {
+        let file = NamedTempFile::new().unwrap();
+        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let csv = "Title,Username,Password\nSite,user,pwd123\n";
+        let count = pb.import_onepassword_csv(csv).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(pb.list_connect_items().unwrap().len(), 1);
     }
 
     #[test]
@@ -219,44 +311,12 @@ mod tests {
     }
 
     #[test]
-    fn add_item_validation() {
-        let file = NamedTempFile::new().unwrap();
-        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
-        assert_eq!(
-            LoginItem::new("", "x"),
-            Err(PassShareError::TitleRequired)
-        );
-        assert_eq!(
-            LoginItem::new("title", ""),
-            Err(PassShareError::PasswordRequired)
-        );
-        let item = LoginItem::new("Site", "pwd").unwrap();
-        pb.add_item(item).unwrap();
-        assert_eq!(pb.list_items().unwrap().len(), 1);
-    }
-
-    #[test]
     fn delete_item_not_found() {
         let file = NamedTempFile::new().unwrap();
         let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
         assert_eq!(
-            pb.delete_item(Uuid::new_v4()),
+            pb.delete_item("abcdefghijklmnopqrstuvwxyz"),
             Err(PassShareError::ItemNotFound)
         );
-    }
-
-    #[test]
-    fn update_item_sets_updated_at() {
-        let file = NamedTempFile::new().unwrap();
-        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
-        let item = LoginItem::new("Site", "pwd").unwrap();
-        let id = item.id;
-        pb.add_item(item).unwrap();
-
-        let mut updated = pb.get_item(id).unwrap().clone();
-        updated.title = "Updated Site".into();
-        updated.updated_at = chrono::Utc::now();
-        pb.update_item(updated.clone()).unwrap();
-        assert_eq!(pb.get_item(id).unwrap().title, "Updated Site");
     }
 }

@@ -2,8 +2,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::connect_id::ConnectId;
 use crate::error::PassShareError;
 
+/// Legacy v0.1 login item (UUID-based). Kept for migration and desktop DTO compatibility.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginItem {
     pub id: Uuid,
@@ -42,6 +44,20 @@ impl LoginItem {
         })
     }
 
+    pub fn from_connect(_id: ConnectId, title: String, password: String) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            title,
+            url: String::new(),
+            username: String::new(),
+            password,
+            notes: String::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     pub fn with_optional_fields(
         mut self,
         url: Option<String>,
@@ -58,5 +74,10 @@ impl LoginItem {
             self.notes = notes;
         }
         self
+    }
+
+    /// Stable string ID for Tauri/desktop layer (Connect ID when available via Item conversion).
+    pub fn connect_id_placeholder(&self) -> String {
+        self.id.to_string()
     }
 }
