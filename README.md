@@ -67,6 +67,7 @@ scripts/                 — Vercel / Railway セットアップ
 
 - [v2.0 本番完全版仕様](documents/spec/production-v2.md)
 - [ADR 003: マルチクライアント](documents/adr/003-multi-client-architecture.md)
+- [ADR 004: 認証・認可](documents/adr/004-auth-authorization-model.md)
 - [MVP 仕様](documents/spec/feature-passshare-mvp.md)
 - [デザインシステム](documents/spec/design-system.md)
 - [デスクトップ UI](documents/spec/desktop-ui.md)

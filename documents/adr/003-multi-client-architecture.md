@@ -141,7 +141,7 @@ backend/                                  ←  Connect API サーバー
 v2.0 までの移行:
 
 - v1 の共有 `OP_CONNECT_TOKEN` は **v2.0 ブロッカーとして廃止**（Issue [#43](https://github.com/AutoDevJapan/PassShare/issues/43)）
-- Web / Mobile / Extension は **ユーザー JWT セッション → Connect トークン** の間接参照とする
+- Web / Mobile / Extension は **ユーザー JWT セッション → Connect トークン** の間接参照とする（[ADR 004](../adr/004-auth-authorization-model.md)）
 
 ## Consequences
 
