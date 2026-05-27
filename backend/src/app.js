@@ -5,6 +5,7 @@ import { createConnectRouter } from "./connect/router.js";
 import { connectErrorHandler } from "./middleware/connect-errors.js";
 import { createRequireConnectAuth } from "./middleware/require-connect-auth.js";
 import { requireVaultAccess } from "./middleware/require-vault-access.js";
+import { createWebCorsMiddleware } from "./middleware/web-cors.js";
 import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
 
 /**
@@ -69,6 +70,7 @@ export async function createApp(options = {}) {
     }
   });
 
+  app.use(createWebCorsMiddleware(appEnv));
   app.use(
     express.json({
       limit: "2mb",

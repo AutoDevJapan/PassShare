@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { generateConnectId } from "../lib/connect.js";
+import { clearCsrfCookie, issueCsrfToken, requireCsrf } from "./csrf.js";
 import { authHttpError, sendAuthError } from "./errors.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { clearSessionCookie, requireSession, setSessionCookie } from "./session.js";
@@ -15,7 +16,12 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
   const router = Router();
   const sessionGuard = requireSession(authStore);
 
-  router.post("/signup", async (req, res) => {
+  router.get("/csrf", (_req, res) => {
+    const csrfToken = issueCsrfToken(res, appEnv);
+    res.json({ csrfToken });
+  });
+
+  router.post("/signup", requireCsrf, async (req, res) => {
     try {
       const email = parseEmail(req.body?.email);
       const password = parsePassword(req.body?.password);
@@ -31,16 +37,18 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
 
       const session = await authStore.createSession(user.id);
       setSessionCookie(res, session.sessionToken, appEnv);
+      const csrfToken = issueCsrfToken(res, appEnv);
       res.status(201).json({
         user: toPublicUser(user),
         sessionExpiresAt: session.expiresAt,
+        csrfToken,
       });
     } catch (error) {
       sendAuthError(res, error);
     }
   });
 
-  router.post("/login", async (req, res) => {
+  router.post("/login", requireCsrf, async (req, res) => {
     try {
       const email = parseEmail(req.body?.email);
       const password = parsePassword(req.body?.password);
@@ -55,26 +63,29 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
 
       const session = await authStore.createSession(user.id);
       setSessionCookie(res, session.sessionToken, appEnv);
+      const csrfToken = issueCsrfToken(res, appEnv);
       res.json({
         user: toPublicUser(user),
         sessionExpiresAt: session.expiresAt,
+        csrfToken,
       });
     } catch (error) {
       sendAuthError(res, error);
     }
   });
 
-  router.post("/logout", sessionGuard, async (req, res) => {
+  router.post("/logout", sessionGuard, requireCsrf, async (req, res) => {
     try {
       await authStore.deleteSession(req.auth.sessionId);
       clearSessionCookie(res, appEnv);
+      clearCsrfCookie(res, appEnv);
       res.status(204).end();
     } catch (error) {
       sendAuthError(res, error);
     }
   });
 
-  router.post("/refresh", sessionGuard, async (req, res) => {
+  router.post("/refresh", sessionGuard, requireCsrf, async (req, res) => {
     try {
       const expiresAt = await authStore.refreshSession(req.auth.sessionId);
       res.json({ sessionExpiresAt: expiresAt });
