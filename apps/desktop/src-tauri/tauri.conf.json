@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.passshare.app",
   "build": {
-    "frontendDist": "../ui"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5174",
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [

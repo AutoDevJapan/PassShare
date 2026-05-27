@@ -1,0 +1,40 @@
+@import "../../../shared/styles/index.css";
+
+/* Desktop app shell — dark + neon green accent via shared tokens */
+
+.ps-body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(74, 222, 128, 0.08), transparent 45%),
+    var(--ps-bg-base);
+}
+
+.ps-app {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: var(--ps-space-8) var(--ps-space-6);
+}
+
+.ps-app__header {
+  margin-bottom: var(--ps-space-6);
+}
+
+.ps-app__header .ps-heading-2 {
+  text-shadow: var(--ps-shadow-glow-heading);
+}
+
+.ps-panel-spaced {
+  margin-top: var(--ps-space-6);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
