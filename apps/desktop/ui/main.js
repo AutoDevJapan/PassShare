@@ -10,17 +10,17 @@ const searchInput = document.getElementById("search");
 
 function showMessage(text, isError = false) {
   setupMessage.textContent = text;
-  setupMessage.classList.toggle("error", isError);
+  setupMessage.classList.toggle("ps-message--error", isError);
 }
 
 function showMain() {
-  setupPanel.classList.add("hidden");
-  mainPanel.classList.remove("hidden");
+  setupPanel.classList.add("ps-hidden");
+  mainPanel.classList.remove("ps-hidden");
 }
 
 function showSetup() {
-  mainPanel.classList.add("hidden");
-  setupPanel.classList.remove("hidden");
+  mainPanel.classList.add("ps-hidden");
+  setupPanel.classList.remove("ps-hidden");
   masterPasswordInput.value = "";
 }
 
@@ -34,9 +34,9 @@ async function refreshItems(query = "") {
     li.innerHTML = `
       <h4>${escapeHtml(item.title)}</h4>
       <p>${escapeHtml(item.url || "URL 未設定")} / ${escapeHtml(item.username || "ユーザー名未設定")}</p>
-      <div class="item-actions">
-        <button type="button" data-copy="${escapeAttr(item.password)}">パスワードをコピー</button>
-        <button type="button" class="secondary" data-delete="${escapeAttr(item.id)}">削除</button>
+      <div class="ps-item-actions">
+        <button type="button" class="ps-button ps-button--secondary" data-copy="${escapeAttr(item.password)}">パスワードをコピー</button>
+        <button type="button" class="ps-button ps-button--secondary" data-delete="${escapeAttr(item.id)}">削除</button>
       </div>
     `;
     itemList.appendChild(li);

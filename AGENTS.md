@@ -31,6 +31,7 @@ crates/passshare-core/   — 暗号・ドメイン・ストレージ
 apps/desktop/            — Tauri デスクトップ
 frontend/                — Web ポータル (Vercel)
 backend/                 — API (Railway)
+shared/styles/           — 共通デザインシステム (Web / Desktop 共有)
 documents/spec/          — 仕様 SSOT
 scripts/                 — インフラセットアップ
 ```
@@ -51,6 +52,7 @@ cd apps/desktop && cargo tauri dev
 ## xDD
 
 Spec: `documents/spec/feature-passshare-mvp.md`
+Design: `documents/spec/design-system.md`
 Infra: `documents/spec/infrastructure.md`
 
 <!-- GoDD:start -->

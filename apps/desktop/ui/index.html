@@ -6,55 +6,56 @@
     <title>PassShare</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
-    <main class="app">
+  <body class="ps-body">
+    <main class="ps-app">
       <header>
-        <h1>PassShare</h1>
-        <p class="subtitle">パスワードを、かんたんに、安全に。</p>
+        <p class="ps-eyebrow">PassShare</p>
+        <h1 class="ps-heading-2">パスワードボックス</h1>
+        <p class="ps-text-muted">パスワードを、かんたんに、安全に。</p>
       </header>
 
-      <section id="setup-panel" class="panel">
-        <h2>パスワードボックスを開く</h2>
-        <p class="hint">初めての方は、保存先のファイルパスを決めて「新規作成」を押してください。</p>
-        <label>
+      <section id="setup-panel" class="ps-panel" style="margin-top: var(--ps-space-6);">
+        <h2 class="ps-heading-3">パスワードボックスを開く</h2>
+        <p class="ps-text-muted">初めての方は、保存先のファイルパスを決めて「新規作成」を押してください。</p>
+        <label class="ps-label">
           ファイルの場所
-          <input id="box-path" type="text" placeholder="例: C:\Users\あなた\Documents\mypasswords.pbox" />
+          <input id="box-path" class="ps-input" type="text" placeholder="例: C:\Users\あなた\Documents\mypasswords.pbox" />
         </label>
-        <label>
+        <label class="ps-label">
           マスターパスワード
-          <input id="master-password" type="password" autocomplete="new-password" />
+          <input id="master-password" class="ps-input" type="password" autocomplete="new-password" />
         </label>
-        <div class="actions">
-          <button id="btn-create" type="button">新規作成</button>
-          <button id="btn-open" type="button" class="secondary">開く</button>
+        <div class="ps-actions">
+          <button id="btn-create" type="button" class="ps-button ps-button--primary">新規作成</button>
+          <button id="btn-open" type="button" class="ps-button ps-button--secondary">開く</button>
         </div>
-        <p id="setup-message" class="message" role="status"></p>
+        <p id="setup-message" class="ps-message" role="status"></p>
       </section>
 
-      <section id="main-panel" class="panel hidden">
-        <div class="toolbar">
-          <input id="search" type="search" placeholder="サイト名・URL・ユーザー名で検索" />
-          <button id="btn-lock" type="button" class="secondary">閉じる</button>
+      <section id="main-panel" class="ps-panel ps-hidden" style="margin-top: var(--ps-space-6);">
+        <div class="ps-toolbar">
+          <input id="search" class="ps-input" type="search" placeholder="サイト名・URL・ユーザー名で検索" />
+          <button id="btn-lock" type="button" class="ps-button ps-button--secondary">閉じる</button>
         </div>
 
-        <form id="add-form" class="add-form">
-          <h3>ログイン情報を追加</h3>
-          <div class="grid">
-            <label>サイト名<input id="add-title" required /></label>
-            <label>URL<input id="add-url" type="url" /></label>
-            <label>ユーザー名<input id="add-username" /></label>
-            <label>
+        <form id="add-form" class="ps-form-divider">
+          <h3 class="ps-heading-3">ログイン情報を追加</h3>
+          <div class="ps-grid">
+            <label class="ps-label">サイト名<input id="add-title" class="ps-input" required /></label>
+            <label class="ps-label">URL<input id="add-url" class="ps-input" type="url" /></label>
+            <label class="ps-label">ユーザー名<input id="add-username" class="ps-input" /></label>
+            <label class="ps-label">
               パスワード
-              <span class="inline">
-                <input id="add-password" required />
-                <button id="btn-generate" type="button" class="secondary">生成</button>
+              <span class="ps-inline">
+                <input id="add-password" class="ps-input" required />
+                <button id="btn-generate" type="button" class="ps-button ps-button--secondary">生成</button>
               </span>
             </label>
           </div>
-          <button type="submit">追加する</button>
+          <button type="submit" class="ps-button ps-button--primary">追加する</button>
         </form>
 
-        <ul id="item-list" class="item-list"></ul>
+        <ul id="item-list" class="ps-item-list"></ul>
       </section>
     </main>
     <script type="module" src="main.js"></script>

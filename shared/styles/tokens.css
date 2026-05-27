@@ -1,0 +1,78 @@
+/**
+ * PassShare design tokens — shared between Web (Vite) and Desktop (Tauri UI).
+ * Dark theme is the default; tokens use the --ps-* prefix.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Background */
+  --ps-bg-base: #0f172a;
+  --ps-bg-surface: #111827;
+  --ps-bg-elevated: #1e293b;
+  --ps-bg-muted: #0b1220;
+
+  /* Accent — neon green */
+  --ps-accent: #22c55e;
+  --ps-accent-bright: #4ade80;
+  --ps-accent-dim: #16a34a;
+  --ps-accent-subtle: rgba(34, 197, 94, 0.12);
+  --ps-accent-glow: rgba(74, 222, 128, 0.45);
+  --ps-accent-glow-strong: rgba(74, 222, 128, 0.65);
+
+  /* Text hierarchy */
+  --ps-text-primary: #e2e8f0;
+  --ps-text-secondary: #cbd5e1;
+  --ps-text-muted: #94a3b8;
+  --ps-text-inverse: #052e16;
+
+  /* Border */
+  --ps-border: #334155;
+  --ps-border-subtle: #1e293b;
+  --ps-border-accent: rgba(74, 222, 128, 0.35);
+
+  /* Typography */
+  --ps-font-sans: "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --ps-font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --ps-text-xs: 0.75rem;
+  --ps-text-sm: 0.875rem;
+  --ps-text-base: 1rem;
+  --ps-text-lg: 1.125rem;
+  --ps-text-xl: 1.25rem;
+  --ps-text-2xl: 1.5rem;
+  --ps-text-3xl: clamp(2rem, 5vw, 3rem);
+  --ps-leading-tight: 1.25;
+  --ps-leading-normal: 1.5;
+  --ps-leading-relaxed: 1.65;
+  --ps-tracking-wide: 0.08em;
+
+  /* Spacing scale */
+  --ps-space-1: 0.25rem;
+  --ps-space-2: 0.5rem;
+  --ps-space-3: 0.75rem;
+  --ps-space-4: 1rem;
+  --ps-space-5: 1.25rem;
+  --ps-space-6: 1.5rem;
+  --ps-space-8: 2rem;
+  --ps-space-10: 2.5rem;
+  --ps-space-12: 3rem;
+  --ps-space-16: 4rem;
+
+  /* Radius */
+  --ps-radius-sm: 0.375rem;
+  --ps-radius-md: 0.5rem;
+  --ps-radius-lg: 0.75rem;
+  --ps-radius-xl: 1rem;
+  --ps-radius-pill: 9999px;
+
+  /* Shadow */
+  --ps-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --ps-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --ps-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.4);
+  --ps-shadow-glow: 0 0 24px var(--ps-accent-glow);
+  --ps-shadow-glow-heading: 0 0 32px var(--ps-accent-glow), 0 0 8px var(--ps-accent-glow-strong);
+
+  /* Component sizing */
+  --ps-shell-max: 42rem;
+  --ps-shell-wide: 55rem;
+  --ps-button-height: 2.75rem;
+}

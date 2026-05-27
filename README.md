@@ -61,6 +61,7 @@ scripts/                 — Vercel / Railway セットアップ
 ## ドキュメント
 
 - [MVP 仕様](documents/spec/feature-passshare-mvp.md)
+- [デザインシステム](documents/spec/design-system.md)
 - [インフラ仕様](documents/spec/infrastructure.md)
 - [質問リスト](質問リスト.md)
 
