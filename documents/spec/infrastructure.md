@@ -10,7 +10,8 @@
 | Backend Service | `29539998-d8d9-4e41-82a5-f71ca223f96c` |
 | postgres-dev | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
 | postgres-stg | `7234bbc3-c482-4009-9c88-03063521ffd1` |
-| postgres-prd | `610efe3e-86cf-4537-b4f6-4417b34bc229` |
+| postgres-prd-v2 | `1509c487-cf03-4c50-8c9d-8781d53ee19a`（production 用） |
+| postgres-prd（旧・未使用） | `610efe3e-86cf-4537-b4f6-4417b34bc229` — API トークンでは削除不可。Railway UI から手動削除可 |
 | production env | `c1a3cdfc-9aa3-420d-b101-e6497714ccb9` |
 | staging env | `c807d209-0624-4e13-aff6-61332cd0bb29` |
 | preview env | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
@@ -37,7 +38,7 @@
 
 | 論理環境 | Vercel | Git ブランチ | Railway Environment | DB |
 |---------|--------|-------------|---------------------|-----|
-| **prd** | Production | `main` | `production` | `postgres-prd`（独立） |
+| **prd** | Production | `main` | `production` | `postgres-prd-v2`（独立） |
 | **stg** | Preview (`stg` ブランチ) | `stg` | `staging` | `postgres-stg`（独立） |
 | **preview** | Preview | PR / feature ブランチ | `preview` | `postgres-dev`（dev と共有） |
 | **dev** | Development | `develop` | `development` | `postgres-dev`（preview と共有） |
@@ -59,13 +60,13 @@
 ```
 PassShare (project)
 ├── pass-share-backend (service)
-│   ├── production  → postgres-prd
+│   ├── production  → postgres-prd-v2
 │   ├── staging     → postgres-stg
 │   ├── preview     → postgres-dev  (Variable Reference)
 │   └── development → postgres-dev  (Variable Reference)
 ├── postgres-dev   (shared by preview + development)
 ├── postgres-stg
-└── postgres-prd
+└── postgres-prd-v2
 ```
 
 各 backend 環境の Variables:
@@ -108,6 +109,11 @@ railway login
 | `VERCEL_ORG_ID` | `masashi-matsumotos-projects-c5830f3d` |
 | `VERCEL_PROJECT_ID` | `prj_itSKGa2HAEj3UNHnsCdPQEF5nziE` |
 
+### GitHub Actions デプロイ
+
+- `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
+- Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
+
 ## 受入基準 (ATDD)
 
 ```gherkin
@@ -115,7 +121,7 @@ Given Vercel プロジェクト pass-share-frontend が GitHub main と連携し
 When main ブランチに push する
 Then frontend/ の Vite ビルドが成功し Production デプロイが完了する
 
-Given Railway に postgres-dev / postgres-stg / postgres-prd が存在する
+Given Railway に postgres-dev / postgres-stg / postgres-prd-v2 が存在する
 When preview 環境と development 環境の backend を起動する
 Then 両方とも postgres-dev に接続できる
 
