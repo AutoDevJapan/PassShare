@@ -309,6 +309,32 @@ Then  LOGIN 項目が一覧に表示される
 
 ---
 
+## Epic #9 完了サマリー
+
+| Phase | Issue | PR | 内容 |
+|-------|-------|-----|------|
+| 1 | #10 | #23 | Vault / Item / Field、payload v2、マイグレーション、CSV インポート |
+| 2 | #11 | #24 | Connect API REST `/v1`、Bearer 認証、JSON Patch |
+| 3 | #12 | #25 | `op` CLI、`passshare-connect`、TS / Python / Go SDK |
+| 4 | #13 | #26 | Desktop category UI（LOGIN / PASSWORD / SECURE_NOTE）、共有コンポーネント |
+
+### 検証（ATDD）
+
+| テスト | コマンド | 結果 |
+|--------|---------|------|
+| Rust core + Connect + op-cli | `docker compose -f docker/docker-compose.test.yml run --rm test` | 18 pass |
+| Connect API | `cd backend && npm test` | 3 pass |
+| TypeScript SDK | `cd packages/connect-js && npm test` | 1 pass |
+| Desktop UI build | `cd apps/desktop && npm run build` | pass |
+
+### 後続（Epic 外）
+
+- Web ポータル Connect API 経由 CRUD（`frontend/` app セクション）
+- OpenAPI からの SDK 型自動生成
+- Railway 各環境への `OP_CONNECT_HOST` / `OP_CONNECT_TOKEN` 手動設定
+
+---
+
 ## 関連ドキュメント
 
 - [MVP 機能仕様](./feature-passshare-mvp.md)

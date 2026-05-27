@@ -36,12 +36,13 @@ PassShare は非 IT エンジニア向けのパスワードマネージャー。
 ## アーキテクチャ
 
 ```
-apps/desktop (Tauri v2 + React)
-    ↓ invoke
-crates/passshare-core
-    ├── crypto (Argon2id + XChaCha20-Poly1305)
-    ├── domain (PasswordBox, LoginItem)
-    └── storage (暗号化ファイル)
+apps/desktop (Tauri v2 + React)     frontend/ (Web ランディング)
+    ↓ invoke                            ↓ (将来: ConnectClient)
+crates/passshare-core               packages/connect-js
+    ├── crypto                          backend/ (Connect API /v1)
+    ├── domain (Vault, Item, Field)
+    └── storage (.pbox)
+crates/passshare-connect + op-cli   packages/connect-python, connect-go
 ```
 
 ## 暗号仕様
@@ -53,12 +54,13 @@ crates/passshare-core
 | 乱数 | OS CSPRNG (`getrandom`) |
 | 秘密情報 | `zeroize` でメモリ消去 |
 
-### v1（1Password Connect 互換 — Epic #9）
+### v1（1Password Connect 互換 — Epic #9）✅ 完了
 
 - Vault / Item / Field ドメインモデル（Connect スキーマ準拠）
 - ペイロード version 2（`.pbox` 暗号ラッパー version は 1 のまま）
 - v0.1 LoginItem → Item マイグレーション（open 時自動）
 - 1Password CSV インポート
+- Connect API REST（`backend/`）、`op` CLI + SDK 4 言語、Desktop category UI
 - 詳細: [1Password Connect 互換仕様](./1password-connect-compatibility.md)
 
 ## データモデル

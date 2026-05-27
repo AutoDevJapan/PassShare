@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-05-27)
+Implemented (2026-05-27) — Epic #9 完了（Phase 1–4: PR #23–#26）
 
 ## Context
 
