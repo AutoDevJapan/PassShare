@@ -125,6 +125,18 @@ railway login
 
 - `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
+- **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
+
+### 旧 Railway プロジェクト（profound-growth）
+
+| 項目 | 値 |
+|------|-----|
+| Project ID | `123ba0fb-eac6-479e-bd7e-79210bfbd968`（**未使用・削除候補**） |
+| 症状 | main push 時に `profound-growth - PassShare` チェックが `Deployment failed` になる |
+| 原因 | `rootDirectory` 未設定のままモノレポ全体をビルドしようとする |
+| 対応 | 2026-05-27: サービス `7f409e25-...` の GitHub 連携を `serviceDisconnect` で解除済み |
+
+Railway UI から旧プロジェクト自体を削除してよい（現行は `82730a82-...` の PassShare プロジェクト）。
 
 ## 受入基準 (ATDD)
 
