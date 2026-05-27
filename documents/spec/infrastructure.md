@@ -1,6 +1,29 @@
 # PassShare インフラ構成 (SSOT)
 
-> 最終更新: 2026-05-27
+> 最終更新: 2026-05-27（Railway プロジェクト再作成済み）
+
+## Railway プロジェクト ID
+
+| リソース | ID / URL |
+|---------|----------|
+| Project | `82730a82-b4d4-47d0-b578-f951465465fc` |
+| Backend Service | `29539998-d8d9-4e41-82a5-f71ca223f96c` |
+| postgres-dev | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
+| postgres-stg | `7234bbc3-c482-4009-9c88-03063521ffd1` |
+| postgres-prd | `610efe3e-86cf-4537-b4f6-4417b34bc229` |
+| production env | `c1a3cdfc-9aa3-420d-b101-e6497714ccb9` |
+| staging env | `c807d209-0624-4e13-aff6-61332cd0bb29` |
+| preview env | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
+| development env | `0951c467-6bc3-418f-af75-a96e810f4946` |
+
+### Backend URL
+
+| 環境 | URL |
+|------|-----|
+| prd | https://pass-share-backend-production.up.railway.app |
+| stg | https://pass-share-backend-staging.up.railway.app |
+| preview | https://pass-share-backend-preview.up.railway.app |
+| dev | https://pass-share-backend-development.up.railway.app |
 
 ## 概要
 

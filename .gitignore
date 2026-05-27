@@ -6,5 +6,12 @@ target/
 node_modules/
 dist/
 .godd/state/
+secrets.txt
+
+# GoDD (local only — do not commit)
+AGENTS.md
+config.godd
+GoDD-MCP-alpha.md
+.cursor/rules/godd-stack.mdc
 
 .vercel
