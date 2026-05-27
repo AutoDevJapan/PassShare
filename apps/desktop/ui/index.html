@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PassShare</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>PassShare</h1>
+        <p class="subtitle">パスワードを、かんたんに、安全に。</p>
+      </header>
+
+      <section id="setup-panel" class="panel">
+        <h2>パスワードボックスを開く</h2>
+        <p class="hint">初めての方は、保存先のファイルパスを決めて「新規作成」を押してください。</p>
+        <label>
+          ファイルの場所
+          <input id="box-path" type="text" placeholder="例: C:\Users\あなた\Documents\mypasswords.pbox" />
+        </label>
+        <label>
+          マスターパスワード
+          <input id="master-password" type="password" autocomplete="new-password" />
+        </label>
+        <div class="actions">
+          <button id="btn-create" type="button">新規作成</button>
+          <button id="btn-open" type="button" class="secondary">開く</button>
+        </div>
+        <p id="setup-message" class="message" role="status"></p>
+      </section>
+
+      <section id="main-panel" class="panel hidden">
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="サイト名・URL・ユーザー名で検索" />
+          <button id="btn-lock" type="button" class="secondary">閉じる</button>
+        </div>
+
+        <form id="add-form" class="add-form">
+          <h3>ログイン情報を追加</h3>
+          <div class="grid">
+            <label>サイト名<input id="add-title" required /></label>
+            <label>URL<input id="add-url" type="url" /></label>
+            <label>ユーザー名<input id="add-username" /></label>
+            <label>
+              パスワード
+              <span class="inline">
+                <input id="add-password" required />
+                <button id="btn-generate" type="button" class="secondary">生成</button>
+              </span>
+            </label>
+          </div>
+          <button type="submit">追加する</button>
+        </form>
+
+        <ul id="item-list" class="item-list"></ul>
+      </section>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

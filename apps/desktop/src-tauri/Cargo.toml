@@ -1,0 +1,23 @@
+[package]
+name = "passshare-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PassShare desktop application"
+default-run = "passshare-desktop"
+
+[lib]
+name = "passshare_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+passshare-core = { path = "../../../crates/passshare-core" }
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }

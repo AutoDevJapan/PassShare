@@ -1,0 +1,11 @@
+display_language: ja
+main_language: ja
+
+stack:
+  programming_languages:
+    - rust
+  infra:
+    - docker
+
+design:
+  ui_term_password_container: パスワードボックス

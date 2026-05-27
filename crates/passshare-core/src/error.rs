@@ -1,0 +1,56 @@
+use thiserror::Error;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum PassShareError {
+    #[error("PS001: マスターパスワードが正しくありません")]
+    InvalidMasterPassword,
+
+    #[error("PS002: パスワードボックスファイルが見つかりません")]
+    FileNotFound,
+
+    #[error("PS003: ファイルが壊れているか、別のパスワードボックスです")]
+    CorruptFile,
+
+    #[error("PS004: タイトルは必須です")]
+    TitleRequired,
+
+    #[error("PS005: パスワードは必須です")]
+    PasswordRequired,
+
+    #[error("PS006: パスワードボックスは閉じています")]
+    BoxLocked,
+
+    #[error("PS007: ログイン情報が見つかりません")]
+    ItemNotFound,
+
+    #[error("PS008: 内部エラー: {0}")]
+    Internal(String),
+}
+
+impl From<argon2::Error> for PassShareError {
+    fn from(value: argon2::Error) -> Self {
+        Self::Internal(value.to_string())
+    }
+}
+
+impl From<chacha20poly1305::Error> for PassShareError {
+    fn from(value: chacha20poly1305::Error) -> Self {
+        Self::Internal(value.to_string())
+    }
+}
+
+impl From<std::io::Error> for PassShareError {
+    fn from(value: std::io::Error) -> Self {
+        if value.kind() == std::io::ErrorKind::NotFound {
+            Self::FileNotFound
+        } else {
+            Self::Internal(value.to_string())
+        }
+    }
+}
+
+impl From<serde_json::Error> for PassShareError {
+    fn from(_value: serde_json::Error) -> Self {
+        Self::CorruptFile
+    }
+}

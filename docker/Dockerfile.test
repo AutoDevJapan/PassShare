@@ -1,0 +1,13 @@
+FROM rust:1.85-bookworm
+
+WORKDIR /app
+
+# Cache dependencies
+COPY Cargo.toml Cargo.lock* ./
+COPY crates/passshare-core/Cargo.toml crates/passshare-core/Cargo.toml
+RUN mkdir -p crates/passshare-core/src && echo "fn main(){}" > crates/passshare-core/src/lib.rs
+RUN cargo fetch -p passshare-core 2>/dev/null || true
+
+COPY . .
+
+CMD ["cargo", "test", "-p", "passshare-core", "--", "--nocapture"]

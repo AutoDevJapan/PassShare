@@ -1,0 +1,8 @@
+target/
+**/*.pbox
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.godd/state/
