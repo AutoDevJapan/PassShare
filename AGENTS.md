@@ -53,7 +53,7 @@ cd apps/desktop && cargo tauri dev
 
 Spec: `documents/spec/feature-passshare-mvp.md`
 Design: `documents/spec/design-system.md`
-Web UI: `documents/spec/landing-page-shell.md`
+Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
 Infra: `documents/spec/infrastructure.md`
 
 <!-- GoDD:start -->
