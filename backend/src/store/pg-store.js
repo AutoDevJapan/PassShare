@@ -174,6 +174,17 @@ export function createPgStore(pool) {
       }
       return result.rows[0].content ?? Buffer.alloc(0);
     },
+
+    async createVault({ id, name, description = "", type = "USER_CREATED" }) {
+      const vaultId = id ?? generateConnectId();
+      const now = nowIso();
+      await pool.query(
+        `INSERT INTO connect_vaults (id, name, description, type, content_version, attribute_version, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 1, 1, $5::timestamptz, $6::timestamptz)`,
+        [vaultId, name, description, type, now, now],
+      );
+      return vaultId;
+    },
   };
 }
 

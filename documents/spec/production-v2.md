@@ -25,6 +25,7 @@ PassShare v2.0 は **本番公開可能な完全版** を定義する。MVP（v0
 | [infrastructure.md](./infrastructure.md) | Vercel / Railway 環境 |
 | [ADR 003: マルチクライアント](../adr/003-multi-client-architecture.md) | 4 クライアント・データ経路・拡張接続 |
 | [ADR 004: 認証・認可](../adr/004-auth-authorization-model.md) | ユーザー / セッション / Connect トークン |
+| [auth-api.md](./auth-api.md) | L1 認証 API（`/api/auth/*`） |
 | production-i18n.md | 多言語 SSOT（[#117](https://github.com/AutoDevJapan/PassShare/issues/117) で策定予定） |
 
 ## クライアント一覧

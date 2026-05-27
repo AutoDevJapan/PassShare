@@ -15,6 +15,7 @@ import { connectHttpError } from "../middleware/connect-errors.js";
  * @property {(vaultId: string, itemId: string) => Promise<void>} deleteItem
  * @property {(vaultId: string, itemId: string, fileId: string) => Promise<object|null>} getFileMeta
  * @property {(vaultId: string, itemId: string, fileId: string) => Promise<Buffer|null>} getFileContent
+ * @property {(input: { id?: string, name: string, description?: string, type?: string }) => Promise<string>} createVault
  */
 
 /** @returns {ConnectStore} */
@@ -178,6 +179,22 @@ export function createMemoryStore() {
         throw connectHttpError(404, "PS014: File not found");
       }
       return file.content ?? Buffer.alloc(0);
+    },
+
+    async createVault({ id, name, description = "", type = "USER_CREATED" }) {
+      const vaultId = id ?? generateConnectId();
+      const now = nowIso();
+      vaults.set(vaultId, {
+        id: vaultId,
+        name,
+        description,
+        type,
+        content_version: 1,
+        attribute_version: 1,
+        created_at: now,
+        updated_at: now,
+      });
+      return vaultId;
     },
 
     /** Test helper */
