@@ -1,16 +1,50 @@
+import { hashToken } from "../auth/tokens.js";
 import { getBearerToken, resolveConnectToken, sendConnectError } from "./connect-auth.js";
 
-/** @type {import('express').RequestHandler} */
-export function requireConnectAuth(req, res, next) {
-  const expected = resolveConnectToken();
-  if (!expected) {
-    sendConnectError(res, 503, "PS008: Connect token is not configured on server");
-    return;
-  }
-  const token = getBearerToken(req);
-  if (!token || token !== expected) {
+/**
+ * @typedef {object} ConnectAuthContext
+ * @property {string|null} userId
+ * @property {string[]|null} vaultIds
+ * @property {boolean} legacy
+ */
+
+/**
+ * @param {{ authStore: import('../auth/index.js').AuthStore, appEnv?: string }} deps
+ */
+export function createRequireConnectAuth({ authStore, appEnv = "local" }) {
+  /** @type {import('express').RequestHandler} */
+  return async function requireConnectAuth(req, res, next) {
+    const token = getBearerToken(req);
+    if (!token) {
+      sendConnectError(res, 401, "PS011: Invalid or missing Connect bearer token");
+      return;
+    }
+
+    const connectToken = await authStore.findConnectTokenByHash(hashToken(token));
+    if (connectToken) {
+      /** @type {ConnectAuthContext} */
+      req.connectAuth = {
+        userId: connectToken.user_id,
+        vaultIds: connectToken.vault_ids,
+        legacy: false,
+      };
+      next();
+      return;
+    }
+
+    const legacyAllowed = appEnv === "local" || appEnv === "dev" || appEnv === "stg";
+    const expected = resolveConnectToken();
+    if (legacyAllowed && expected && token === expected) {
+      /** @type {ConnectAuthContext} */
+      req.connectAuth = {
+        userId: null,
+        vaultIds: null,
+        legacy: true,
+      };
+      next();
+      return;
+    }
+
     sendConnectError(res, 401, "PS011: Invalid or missing Connect bearer token");
-    return;
-  }
-  next();
+  };
 }

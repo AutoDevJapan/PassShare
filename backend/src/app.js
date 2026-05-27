@@ -3,7 +3,8 @@ import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
 import { createConnectRouter } from "./connect/router.js";
 import { connectErrorHandler } from "./middleware/connect-errors.js";
-import { requireConnectAuth } from "./middleware/require-connect-auth.js";
+import { createRequireConnectAuth } from "./middleware/require-connect-auth.js";
+import { requireVaultAccess } from "./middleware/require-vault-access.js";
 import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
 
 /**
@@ -75,7 +76,12 @@ export async function createApp(options = {}) {
     }),
   );
   app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv }));
-  app.use("/v1", requireConnectAuth, createConnectRouter(connectStore));
+  const requireConnectAuth = createRequireConnectAuth({ authStore, appEnv });
+  app.use(
+    "/v1",
+    requireConnectAuth,
+    createConnectRouter(connectStore, { requireVaultAccess }),
+  );
   app.use(connectErrorHandler);
 
   return { app, store: connectStore, authStore, pool };

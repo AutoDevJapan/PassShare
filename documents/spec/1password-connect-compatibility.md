@@ -173,7 +173,9 @@ Connect 形式 `{ "status": 404, "message": "..." }` + PassShare コード `PS00
 
 Railway `pass-share-backend` が Connect Server 互換 API を提供（[infrastructure](./infrastructure.md)）。
 
-**実装（Phase 2）:** `backend/src/connect/` — Express `/v1` ルーター、PostgreSQL 永続化、`OP_CONNECT_TOKEN` Bearer 認証。
+**実装（Phase 2）:** `backend/src/connect/` — Express `/v1` ルーター、PostgreSQL 永続化。
+
+**認証（v2 / Issue [#43](https://github.com/AutoDevJapan/PassShare/issues/43)）:** per-user Connect トークン（`connect_tokens` テーブル、`/api/auth/connect-token` で発行）。Bearer 検証後 `vault_ids` で ACL を適用。`OP_CONNECT_TOKEN` は **local/dev/stg のみ** 非推奨フォールバック（`prd` では無効）。
 
 ### エラーコード（Connect API 追加分）
 
@@ -184,6 +186,7 @@ Railway `pass-share-backend` が Connect Server 互換 API を提供（[infrastr
 | PS013 | JSON Patch 不正 |
 | PS014 | ファイル未検出 |
 | PS015 | PATCH Content-Type 不正 |
+| PS016 | パスワードボックスへのアクセス拒否（403） |
 
 ---
 

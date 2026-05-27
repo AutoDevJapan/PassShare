@@ -3,19 +3,25 @@ import { isValidConnectId } from "../lib/connect.js";
 import { connectHttpError } from "../middleware/connect-errors.js";
 
 /** @param {import('../store/memory-store.js').ConnectStore} store */
-export function createVaultRoutes(store) {
+export function createVaultRoutes(store, options = {}) {
+  const { requireVaultAccess = (_req, _res, next) => next() } = options;
   const router = Router();
 
-  router.get("/", async (_req, res, next) => {
+  router.get("/", async (req, res, next) => {
     try {
-      const vaults = await store.listVaults();
+      let vaults = await store.listVaults();
+      const auth = req.connectAuth;
+      if (auth && !auth.legacy && auth.vaultIds) {
+        const allowed = new Set(auth.vaultIds);
+        vaults = vaults.filter((vault) => allowed.has(vault.id));
+      }
       res.json(vaults);
     } catch (err) {
       next(err);
     }
   });
 
-  router.get("/:vaultUuid", async (req, res, next) => {
+  router.get("/:vaultUuid", requireVaultAccess, async (req, res, next) => {
     try {
       const { vaultUuid } = req.params;
       if (!isValidConnectId(vaultUuid)) {
@@ -142,13 +148,19 @@ export function createFileRoutes(store) {
   return router;
 }
 
-/** @param {import('../store/memory-store.js').ConnectStore} store */
-export function createConnectRouter(store) {
+/** @param {import('../store/memory-store.js').ConnectStore} store @param {object} [options] */
+export function createConnectRouter(store, options = {}) {
+  const { requireVaultAccess = (_req, _res, next) => next() } = options;
   const router = Router();
-  router.use("/vaults", createVaultRoutes(store));
-  router.use("/vaults/:vaultUuid/items", createItemRoutes(store));
+  router.use("/vaults", createVaultRoutes(store, { requireVaultAccess }));
+  router.use(
+    "/vaults/:vaultUuid/items",
+    requireVaultAccess,
+    createItemRoutes(store),
+  );
   router.use(
     "/vaults/:vaultUuid/items/:itemUuid/files",
+    requireVaultAccess,
     createFileRoutes(store),
   );
   return router;
