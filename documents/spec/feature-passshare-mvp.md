@@ -1,7 +1,7 @@
 # PassShare MVP 機能仕様 (SSOT)
 
-> 最終更新: 2026-05-27  
-> 本番完全版: [production-v2.md](./production-v2.md)（v2.0 / Epic #28）
+> 最終更新: 2026-05-28  
+> 本番完全版: [production-v2.md](./production-v2.md)（v2.0 / Epic [#28](https://github.com/AutoDevJapan/PassShare/issues/28) ✅ SSOT 完了）
 
 ## 概要
 

@@ -1,8 +1,8 @@
 # PassShare v2.0 本番完全版仕様 (SSOT)
 
-> 最終更新: 2026-05-27  
-> 関連 Epic: [#28](https://github.com/AutoDevJapan/PassShare/issues/28)  
-> 関連 Issue: [#39](https://github.com/AutoDevJapan/PassShare/issues/39)
+> 最終更新: 2026-05-28  
+> 関連 Epic: [#28](https://github.com/AutoDevJapan/PassShare/issues/28) ✅ 完了  
+> 関連 Issue: [#39](https://github.com/AutoDevJapan/PassShare/issues/39)–[#41](https://github.com/AutoDevJapan/PassShare/issues/41)
 
 ## 概要
 
@@ -161,7 +161,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 
 | Epic | # | 子 Issue 範囲 | 完了条件 |
 |------|---|--------------|---------|
-| v2.0 SSOT / ADR | [#28](https://github.com/AutoDevJapan/PassShare/issues/28) | #39–#41 | 本 SSOT + [ADR 003](../adr/003-multi-client-architecture.md) + [ADR 004](../adr/004-auth-authorization-model.md) Accepted |
+| v2.0 SSOT / ADR | [#28](https://github.com/AutoDevJapan/PassShare/issues/28) ✅ | #39–#41 | 本 SSOT + [ADR 003](../adr/003-multi-client-architecture.md) + [ADR 004](../adr/004-auth-authorization-model.md) Accepted |
 | 認証・セキュリティ | [#29](https://github.com/AutoDevJapan/PassShare/issues/29) | #42–#50 | 多ユーザー認可 + セッション |
 | Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) | #51–#59 | OpenAPI Must ギャップ 0 |
 | Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) | #60–#69 | 320px レスポンシブ + E2E |
@@ -211,6 +211,32 @@ flowchart TD
 - [ ] ja / en / ru 切替 + 表示崩れ Visual Regression pass
 - [ ] stg 受入 smoke pass（[#106](https://github.com/AutoDevJapan/PassShare/issues/106)）
 - [ ] 利用規約・プライバシーポリシー Web 公開（[#113](https://github.com/AutoDevJapan/PassShare/issues/113)）
+
+---
+
+## Epic #28 完了サマリー
+
+Epic [#28](https://github.com/AutoDevJapan/PassShare/issues/28)（v2.0 本番ロードマップ SSOT）の子 Issue はすべて main にマージ済み。
+
+| 子 Issue | PR | 内容 |
+|----------|-----|------|
+| [#39](https://github.com/AutoDevJapan/PassShare/issues/39) | [#132](https://github.com/AutoDevJapan/PassShare/pull/132) | 本 SSOT（`production-v2.md`）— Must/Should 機能マトリクス、320px レスポンシブ、Epic トレーサビリティ |
+| [#40](https://github.com/AutoDevJapan/PassShare/issues/40) | [#133](https://github.com/AutoDevJapan/PassShare/pull/133) | [ADR 003](../adr/003-multi-client-architecture.md) — 4 クライアント・二層ストレージ・拡張 Connect 直結 |
+| [#41](https://github.com/AutoDevJapan/PassShare/issues/41) | [#134](https://github.com/AutoDevJapan/PassShare/pull/134) | [ADR 004](../adr/004-auth-authorization-model.md) — L1/L2 認証、per-user Connect トークン |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| v2.0 本番仕様 SSOT が `documents/spec/` に存在 | ✅ `production-v2.md` |
+| ADR 003（マルチクライアント）が Accepted | ✅ 2026-05-27 |
+| ADR 004（認証・認可）が Accepted | ✅ 2026-05-27 |
+
+### 後続（Epic 外）
+
+- Epic [#29](https://github.com/AutoDevJapan/PassShare/issues/29) 認証・セキュリティ実装（#42–#50）— 一部 main 済み（#42–#47）
+- Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) i18n SSOT + `ru` ロケール
+- Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)–[#37](https://github.com/AutoDevJapan/PassShare/issues/37) 各クライアント本番化
 
 ---
 
