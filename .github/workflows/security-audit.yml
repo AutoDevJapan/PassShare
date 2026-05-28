@@ -49,14 +49,14 @@ jobs:
         with:
           version: 10.11.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         if: steps.pm.outputs.manager == 'pnpm'
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: ${{ matrix.directory }}/pnpm-lock.yaml
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         if: steps.pm.outputs.manager == 'npm'
         with:
           node-version: "22"
