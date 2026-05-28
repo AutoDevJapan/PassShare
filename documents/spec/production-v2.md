@@ -165,7 +165,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 | 認証・セキュリティ | [#29](https://github.com/AutoDevJapan/PassShare/issues/29) ✅ | #42–#50 | 多ユーザー認可 + セッション + クリップボード / 監査 |
 | Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) ✅ | #51–#59 | OpenAPI Must ギャップ 0 |
 | Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) ✅ | #60–#69 | 320px レスポンシブ + E2E |
-| Desktop 本番化 | [#32](https://github.com/AutoDevJapan/PassShare/issues/32) | #70–#77 | 署名 + 自動更新 |
+| Desktop 本番化 | [#32](https://github.com/AutoDevJapan/PassShare/issues/32) ✅ | #70–#77 | 署名 + 自動更新 |
 | スマホアプリ | [#33](https://github.com/AutoDevJapan/PassShare/issues/33) | #78–#86 | ストア提出 |
 | ブラウザ拡張 | [#34](https://github.com/AutoDevJapan/PassShare/issues/34) | #87–#97 | 4 ブラウザ + オートフィル |
 | 同期・共有 | [#35](https://github.com/AutoDevJapan/PassShare/issues/35) | #98–#103 | 同期 MVP（Should） |
@@ -323,6 +323,36 @@ Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)（Web アプリ�
 
 - メールパスワードリセット API: 法務・メール基盤（Epic [#37](https://github.com/AutoDevJapan/PassShare/issues/37)）後
 - Service Worker オフライン閲覧: P2 拡張
+
+---
+
+## Epic #32 完了サマリー
+
+Epic [#32](https://github.com/AutoDevJapan/PassShare/issues/32)（デスクトップ本番化）の子 Issue #70–#77 を main にマージ。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#70](https://github.com/AutoDevJapan/PassShare/issues/70) | `desktop-build.yml` — 3 OS Tauri ビルド + artifact |
+| [#71](https://github.com/AutoDevJapan/PassShare/issues/71) | 署名 CI シークレット + [desktop-release.md](../runbooks/desktop-release.md) |
+| [#72](https://github.com/AutoDevJapan/PassShare/issues/72) | `tauri-plugin-updater` + GitHub Releases endpoint |
+| [#73](https://github.com/AutoDevJapan/PassShare/issues/73) | bundle `targets: all` + Tauri icon 生成 |
+| [#74](https://github.com/AutoDevJapan/PassShare/issues/74) | `labels.ts` 廃止 → `shared/i18n` + ja/en 切替 |
+| [#75](https://github.com/AutoDevJapan/PassShare/issues/75) | 7 種 category UI + Rust `parse_category` 拡張 |
+| [#76](https://github.com/AutoDevJapan/PassShare/issues/76) | [desktop-cloud-sync.md](./desktop-cloud-sync.md) + 競合通知 UI |
+| [#77](https://github.com/AutoDevJapan/PassShare/issues/77) | `cargo test -p passshare-desktop smoke_` CI |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| Win/macOS/Linux ビルド CI | ✅ `desktop-build.yml` |
+| 自動更新設定 | ✅ updater plugin + runbook smoke 手順 |
+| Desktop smoke pass | ✅ Rust smoke tests in CI |
+
+### 後続（Epic 外）
+
+- 本番署名シークレット投入（GitHub Secrets）— 未設定時は未署名 artifact
+- 双方向同期マージ: Epic [#35](https://github.com/AutoDevJapan/PassShare/issues/35)
 
 ---
 

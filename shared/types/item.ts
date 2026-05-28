@@ -1,4 +1,11 @@
-export type ItemCategory = "LOGIN" | "PASSWORD" | "SECURE_NOTE";
+export type ItemCategory =
+  | "LOGIN"
+  | "PASSWORD"
+  | "SECURE_NOTE"
+  | "CREDIT_CARD"
+  | "IDENTITY"
+  | "SSH_KEY"
+  | "CUSTOM";
 
 export type ConnectItem = {
   id: string;
@@ -29,6 +36,10 @@ export type ItemUiLabels = {
   categoryLogin: string;
   categoryPassword: string;
   categorySecureNote: string;
+  categoryCreditCard: string;
+  categoryIdentity: string;
+  categorySshKey: string;
+  categoryCustom: string;
   fieldTitle: string;
   fieldUrl: string;
   fieldUsername: string;
@@ -46,6 +57,7 @@ export type ItemUiLabels = {
   submitSave: string;
   cancelEdit: string;
   copyPassword: string;
+  copyBody: string;
   copied: string;
   delete: string;
   edit: string;
@@ -58,7 +70,25 @@ export type ItemUiLabels = {
   notSet: string;
 };
 
-export const ITEM_CATEGORIES: ItemCategory[] = ["LOGIN", "PASSWORD", "SECURE_NOTE"];
+export const ITEM_CATEGORIES: ItemCategory[] = [
+  "LOGIN",
+  "PASSWORD",
+  "SECURE_NOTE",
+  "CREDIT_CARD",
+  "IDENTITY",
+  "SSH_KEY",
+  "CUSTOM",
+];
+
+export function isBodyCategory(category: ItemCategory): boolean {
+  return (
+    category === "SECURE_NOTE" ||
+    category === "CREDIT_CARD" ||
+    category === "IDENTITY" ||
+    category === "SSH_KEY" ||
+    category === "CUSTOM"
+  );
+}
 
 export function categoryLabel(category: ItemCategory, labels: ItemUiLabels): string {
   switch (category) {
@@ -68,6 +98,14 @@ export function categoryLabel(category: ItemCategory, labels: ItemUiLabels): str
       return labels.categoryPassword;
     case "SECURE_NOTE":
       return labels.categorySecureNote;
+    case "CREDIT_CARD":
+      return labels.categoryCreditCard;
+    case "IDENTITY":
+      return labels.categoryIdentity;
+    case "SSH_KEY":
+      return labels.categorySshKey;
+    case "CUSTOM":
+      return labels.categoryCustom;
   }
 }
 

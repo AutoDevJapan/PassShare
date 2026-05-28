@@ -71,7 +71,10 @@ cd backend && pnpm run generate:types
 cargo test -p passshare-core
 
 # デスクトップ（Tauri + React）
-cd apps/desktop && npm install && cargo tauri dev
+cd apps/desktop && pnpm install && pnpm --dir ../../packages/connect-js run build && cargo tauri dev
+
+# デスクトップ smoke（Rust）
+cargo test -p passshare-desktop smoke_
 ```
 
 ## xDD

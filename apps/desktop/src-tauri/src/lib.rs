@@ -2,11 +2,17 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use passshare_core::{
-    domain::item::ItemCategory,
-    generator::PasswordGeneratorOptions, Item, PassShareError, PasswordBox,
+    domain::connect_id::ConnectId,
+    domain::field::{Field, FieldType},
+    domain::item::{ItemCategory, ItemUrl, VaultReference},
+    generator::PasswordGeneratorOptions,
+    Item,
+    PassShareError,
+    PasswordBox,
     PasswordBoxState,
 };
 use passshare_core::domain::field::FieldPurpose;
+use chrono::Utc;
 use serde::Serialize;
 use tauri::State;
 
@@ -39,11 +45,15 @@ impl From<&Item> for ItemDto {
             .map(|u| u.href.clone())
             .or_else(|| item.urls.first().map(|u| u.href.clone()));
 
-        let body = if item.category == ItemCategory::SecureNote {
-            item.field_value_by_label("notesPlain")
-                .or_else(|| item.field_value_by_purpose(FieldPurpose::Notes))
-        } else {
-            None
+        let body = match item.category {
+            ItemCategory::SecureNote
+            | ItemCategory::CreditCard
+            | ItemCategory::Identity
+            | ItemCategory::SshKey
+            | ItemCategory::Custom => item
+                .field_value_by_label("notesPlain")
+                .or_else(|| item.field_value_by_purpose(FieldPurpose::Notes)),
+            _ => None,
         };
 
         Self {
@@ -78,8 +88,39 @@ fn parse_category(category: &str) -> Result<ItemCategory, PassShareError> {
         "LOGIN" => Ok(ItemCategory::Login),
         "PASSWORD" => Ok(ItemCategory::Password),
         "SECURE_NOTE" => Ok(ItemCategory::SecureNote),
+        "CREDIT_CARD" => Ok(ItemCategory::CreditCard),
+        "IDENTITY" => Ok(ItemCategory::Identity),
+        "SSH_KEY" => Ok(ItemCategory::SshKey),
+        "CUSTOM" => Ok(ItemCategory::Custom),
         _ => Err(PassShareError::Internal(format!("unsupported category: {category}"))),
     }
+}
+
+fn new_body_item(
+    vault_id: ConnectId,
+    category: ItemCategory,
+    title: String,
+    body: String,
+) -> Result<Item, PassShareError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(PassShareError::TitleRequired);
+    }
+    let now = Utc::now();
+    Ok(Item {
+        id: ConnectId::generate()?,
+        title: title.to_string(),
+        category,
+        vault: VaultReference { id: vault_id },
+        fields: vec![Field::new("notesPlain", FieldType::String, body)?],
+        sections: vec![],
+        urls: vec![],
+        tags: vec![],
+        favorite: false,
+        created_at: now,
+        updated_at: now,
+        last_edited_by: None,
+    })
 }
 
 fn map_error(err: PassShareError) -> String {
@@ -184,7 +225,9 @@ fn add_item(
         ItemCategory::SecureNote => {
             Item::new_secure_note(vault_id, title, body.unwrap_or_default()).map_err(map_error)?
         }
-        _ => return Err(PassShareError::Internal("unsupported category".into()).to_string()),
+        ItemCategory::CreditCard | ItemCategory::Identity | ItemCategory::SshKey | ItemCategory::Custom => {
+            new_body_item(vault_id, parsed, title, body.unwrap_or_default()).map_err(map_error)?
+        }
     };
 
     if let Some(tags) = tags {
@@ -235,7 +278,7 @@ fn update_item(
             }
             item.urls.clear();
             if let Some(url) = url.filter(|value| !value.is_empty()) {
-                item.urls.push(passshare_core::domain::item::ItemUrl {
+                item.urls.push(ItemUrl {
                     label: String::new(),
                     primary: true,
                     href: url,
@@ -252,13 +295,12 @@ fn update_item(
                     .map_err(map_error)?;
             }
         }
-        ItemCategory::SecureNote => {
+        ItemCategory::SecureNote | ItemCategory::CreditCard | ItemCategory::Identity | ItemCategory::SshKey | ItemCategory::Custom => {
             if let Some(body) = body {
                 item.set_field_by_label("notesPlain", &body)
                     .map_err(map_error)?;
             }
         }
-        _ => {}
     }
 
     if let Some(tags) = tags {
@@ -312,6 +354,7 @@ fn lock_password_box(state: State<'_, AppState>) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_biometry::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             box_path: Mutex::new(None),
             password_box: Mutex::new(None),
@@ -331,4 +374,48 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("PassShare desktop failed to start");
+}
+
+#[cfg(test)]
+mod smoke_tests {
+    use super::*;
+    use passshare_core::domain::item::ItemCategory;
+    use std::path::PathBuf;
+
+    #[test]
+    fn smoke_create_open_add_list_lock() {
+        let dir = std::env::temp_dir().join(format!("passshare-desktop-smoke-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path: PathBuf = dir.join("smoke.pbox");
+        let password = "TestPass123!";
+
+        let mut pb = PasswordBox::create(&path, password).expect("create");
+        let vault_id = pb.vault().expect("vault").id.clone();
+        let item = Item::new_login(vault_id, "Smoke Login", "secret").expect("item");
+        pb.add_item(item).expect("add");
+        pb.save(password).expect("save");
+
+        let pb = PasswordBox::open(&path, password).expect("open");
+        let items = pb.list_connect_items().expect("list");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Smoke Login");
+        assert_eq!(items[0].category, ItemCategory::Login);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parse_all_connect_categories() {
+        for category in [
+            "LOGIN",
+            "PASSWORD",
+            "SECURE_NOTE",
+            "CREDIT_CARD",
+            "IDENTITY",
+            "SSH_KEY",
+            "CUSTOM",
+        ] {
+            parse_category(category).expect(category);
+        }
+    }
 }

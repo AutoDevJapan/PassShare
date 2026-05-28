@@ -21,7 +21,7 @@ apps/desktop/
     errors.ts             — PS001〜PS005 エラー表示ヘルパー
     tauri.ts              — invoke ラッパー
     types.ts              — ConnectItem 型 re-export
-    labels.ts             — Item UI ラベル（日本語）
+    labels.ts             — （廃止 #74）shared/i18n を使用
     components/
       AppHeader.tsx
       SetupPanel.tsx      — 新規作成 / 開く
@@ -29,7 +29,7 @@ apps/desktop/
       MainPanel.tsx       — 検索 / category CRUD / CSV インポート
       StatusMessage.tsx   — エラー / 成功メッセージ
 shared/ui/
-  CategoryPicker.tsx      — LOGIN / PASSWORD / SECURE_NOTE 切替
+  CategoryPicker.tsx      — 7 種 category（LOGIN … CUSTOM）
   ItemForm.tsx            — category 別追加・編集フォーム
   ConnectItemList.tsx     — tags / favorite / category 一覧
 shared/types/item.ts      — ConnectItem / ItemFormValues 型
@@ -77,8 +77,8 @@ Rust 側 `PassShareError` が `PS00N: メッセージ` 形式で返す。`errors
 | 項目 | 値 |
 |------|-----|
 | `devUrl` | `http://localhost:5174` |
-| `beforeDevCommand` | `npm run dev` |
-| `beforeBuildCommand` | `npm run build` |
+| `beforeDevCommand` | `pnpm run dev` |
+| `beforeBuildCommand` | `pnpm run build` |
 | `frontendDist` | `../dist` |
 | invoke API | `@tauri-apps/api/core` |
 
@@ -119,11 +119,19 @@ Rust 側 `PassShareError` が `PS00N: メッセージ` 形式で返す。`errors
 
 ```bash
 cd apps/desktop
-npm install
-npm run dev          # Vite のみ（ブラウザでは invoke 不可）
+pnpm install
+pnpm run dev          # Vite のみ（ブラウザでは invoke 不可）
 cargo tauri dev      # Tauri + Vite（apps/desktop から）
-cargo tauri build    # 本番ビルド
+cargo tauri build    # 本番ビルド（MSI/DMG/AppImage）
 ```
+
+## Epic #32（本番化）
+
+- i18n: `shared/i18n` + `useItemLabels` / `useDesktopLabels`（ja/en）
+- 追加 category: CREDIT_CARD / IDENTITY / SSH_KEY / CUSTOM
+- CI: `.github/workflows/desktop-build.yml`
+- 自動更新: `tauri-plugin-updater` — [desktop-release.md](../runbooks/desktop-release.md)
+- クラウド同期（Should）: [desktop-cloud-sync.md](./desktop-cloud-sync.md)
 
 ## 関連
 

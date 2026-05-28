@@ -4,7 +4,8 @@ import { ItemForm } from "@shared/ui/ItemForm";
 import { ClipboardClearSettings } from "@shared/ui/ClipboardClearSettings";
 import type { ConnectItem, ItemFormValues } from "@shared/types/item";
 import { emptyFormValues, formValuesFromItem } from "@shared/types/item";
-import { ITEM_LABELS } from "../labels";
+import { useDesktopLabels } from "../hooks/useDesktopLabels";
+import { useItemLabels } from "../hooks/useItemLabels";
 import {
   addItem,
   deleteItem,
@@ -18,15 +19,7 @@ import {
 import { formatTauriError } from "../errors";
 import { StatusMessage } from "./StatusMessage";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
-
-const CLIPBOARD_SETTINGS_LABELS = {
-  heading: "クリップボード自動消去",
-  description: "コピーしたパスワードやシークレットを、指定秒数後にクリップボードから消去します。",
-  secondsLabel: "消去までの秒数",
-  secondsSuffix: "秒",
-  save: "保存",
-  saved: "保存しました",
-};
+import { CloudSyncSettings } from "./CloudSyncSettings";
 
 type MainPanelProps = {
   boxPath: string;
@@ -35,6 +28,8 @@ type MainPanelProps = {
 };
 
 export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps) {
+  const itemLabels = useItemLabels();
+  const desktopLabels = useDesktopLabels();
   const [searchQuery, setSearchQuery] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
   const [formValues, setFormValues] = useState<ItemFormValues>(emptyFormValues());
@@ -122,7 +117,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm(ITEM_LABELS.confirmDelete)) {
+    if (!window.confirm(itemLabels.confirmDelete)) {
       return;
     }
 
@@ -153,7 +148,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
     try {
       const csvData = await file.text();
       const count = await importOnepasswordCsv(csvData, masterPassword);
-      setImportMessage(`${count}${ITEM_LABELS.importSuccess}`);
+      setImportMessage(itemLabels.importSuccess.replace("{count}", String(count)));
       await refreshItems();
     } catch (err) {
       setListError(formatTauriError(err));
@@ -164,22 +159,22 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
     <section className="ps-main" aria-labelledby="main-heading">
       <div className="ps-card ps-card--toolbar">
         <h2 className="visually-hidden" id="main-heading">
-          パスワードボックス
+          {desktopLabels.mainHiddenTitle}
         </h2>
         <div className="ps-toolbar">
           <input
             className="ps-input"
             type="search"
-            placeholder={ITEM_LABELS.searchPlaceholder}
+            placeholder={itemLabels.searchPlaceholder}
             value={searchQuery}
             onChange={(event) => void handleSearchChange(event.target.value)}
           />
           <button type="button" className="ps-button ps-button--secondary" onClick={() => fileInputRef.current?.click()}>
-            {ITEM_LABELS.importCsv}
+            {itemLabels.importCsv}
           </button>
           <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={(event) => void handleImportFile(event)} />
           <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleLock()}>
-            {ITEM_LABELS.lock}
+            {itemLabels.lock}
           </button>
         </div>
       </div>
@@ -187,7 +182,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
       <ItemForm
         mode={editingId ? "edit" : "create"}
         values={formValues}
-        labels={ITEM_LABELS}
+        labels={itemLabels}
         error={formError}
         onChange={setFormValues}
         onSubmit={(values) => void handleSubmit(values)}
@@ -196,17 +191,18 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
       />
 
       <div className="ps-settings-grid">
-        <ClipboardClearSettings labels={CLIPBOARD_SETTINGS_LABELS} />
+        <ClipboardClearSettings labels={desktopLabels.clipboard} />
         <BiometricUnlockSettings boxPath={boxPath} masterPassword={masterPassword} />
+        <CloudSyncSettings localItems={items} />
       </div>
 
       <section className="ps-card ps-card--list" aria-labelledby="item-list-heading">
         <div className="ps-card__header">
           <h3 className="ps-heading-3" id="item-list-heading">
-            {ITEM_LABELS.listHeading}
+            {itemLabels.listHeading}
           </h3>
           <span className="ps-badge">
-            {items.length} {ITEM_LABELS.countSuffix}
+            {items.length} {itemLabels.countSuffix}
           </span>
         </div>
 
@@ -214,11 +210,11 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
         {listError ? <StatusMessage message={listError} variant="error" /> : null}
 
         {loading ? (
-          <p className="ps-text-muted">読み込み中…</p>
+          <p className="ps-text-muted">{desktopLabels.loading}</p>
         ) : (
           <ConnectItemList
             items={items}
-            labels={ITEM_LABELS}
+            labels={itemLabels}
             onEdit={handleEdit}
             onDelete={(id) => void handleDelete(id)}
           />

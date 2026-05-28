@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDesktopLabels } from "../hooks/useDesktopLabels";
 import { createPasswordBox, openPasswordBox } from "../tauri";
 import { formatTauriError } from "../errors";
 import { hasBiometricUnlock, isBiometricAvailable, unlockWithBiometric } from "../biometric-unlock";
@@ -20,6 +21,7 @@ export function SetupPanel({
   onMasterPasswordChange,
   onUnlocked,
 }: SetupPanelProps) {
+  const labels = useDesktopLabels();
   const [message, setMessage] = useState("");
   const [messageVariant, setMessageVariant] = useState<"info" | "error" | "success">("info");
   const [busy, setBusy] = useState(false);
@@ -65,11 +67,11 @@ export function SetupPanel({
 
   async function handleCreate() {
     if (!boxPath.trim()) {
-      showMessage("ファイルの場所を入力してください。", "error");
+      showMessage(labels.setup.errorPathRequired, "error");
       return;
     }
     if (!masterPassword) {
-      showMessage("マスターパスワードを入力してください。", "error");
+      showMessage(labels.setup.errorPasswordRequired, "error");
       return;
     }
 
@@ -81,7 +83,7 @@ export function SetupPanel({
         setRecoverySecret(recovery);
         return;
       }
-      showMessage("パスワードボックスを作成しました。", "success");
+      showMessage(labels.setup.successCreated, "success");
       onUnlocked();
     } catch (err) {
       showMessage(formatTauriError(err), "error");
@@ -92,7 +94,7 @@ export function SetupPanel({
 
   async function handleBiometricOpen() {
     if (!boxPath.trim()) {
-      showMessage("ファイルの場所を入力してください。", "error");
+      showMessage(labels.setup.errorPathRequired, "error");
       return;
     }
 
@@ -102,7 +104,7 @@ export function SetupPanel({
       const password = await unlockWithBiometric(boxPath.trim());
       onMasterPasswordChange(password);
       await openPasswordBox(boxPath.trim(), password);
-      showMessage("生体認証でパスワードボックスを開きました。", "success");
+      showMessage(labels.setup.successBiometricOpened, "success");
       onUnlocked();
     } catch (err) {
       showMessage(formatTauriError(err), "error");
@@ -113,11 +115,11 @@ export function SetupPanel({
 
   async function handleOpen() {
     if (!boxPath.trim()) {
-      showMessage("ファイルの場所を入力してください。", "error");
+      showMessage(labels.setup.errorPathRequired, "error");
       return;
     }
     if (!masterPassword) {
-      showMessage("マスターパスワードを入力してください。", "error");
+      showMessage(labels.setup.errorPasswordRequired, "error");
       return;
     }
 
@@ -125,7 +127,7 @@ export function SetupPanel({
     clearMessage();
     try {
       await openPasswordBox(boxPath.trim(), masterPassword);
-      showMessage("パスワードボックスを開きました。", "success");
+      showMessage(labels.setup.successOpened, "success");
       onUnlocked();
     } catch (err) {
       showMessage(formatTauriError(err), "error");
@@ -149,26 +151,24 @@ export function SetupPanel({
   return (
     <section className="ps-card" aria-labelledby="setup-heading">
       <h2 className="ps-heading-3" id="setup-heading">
-        パスワードボックスを開く
+        {labels.setup.title}
       </h2>
-      <p className="ps-text-muted">
-        初めての方は、保存先のファイルパスを決めて「新規作成」を押してください。
-      </p>
+      <p className="ps-text-muted">{labels.setup.lead}</p>
 
       <label className="ps-label">
-        ファイルの場所
+        {labels.setup.pathLabel}
         <input
           className="ps-input"
           type="text"
           value={boxPath}
           onChange={(event) => onBoxPathChange(event.target.value)}
-          placeholder="例: C:\Users\あなた\Documents\mypasswords.pbox"
+          placeholder={labels.setup.pathPlaceholder}
           disabled={busy}
         />
       </label>
 
       <label className="ps-label">
-        マスターパスワード
+        {labels.setup.masterPassword}
         <input
           className="ps-input"
           type="password"
@@ -187,7 +187,7 @@ export function SetupPanel({
             onClick={() => void handleBiometricOpen()}
             disabled={busy}
           >
-            生体認証で開く
+            {labels.setup.biometricOpen}
           </button>
         ) : null}
         <button
@@ -196,7 +196,7 @@ export function SetupPanel({
           onClick={() => void handleCreate()}
           disabled={busy}
         >
-          新規作成
+          {labels.setup.create}
         </button>
         <button
           type="button"
@@ -204,7 +204,7 @@ export function SetupPanel({
           onClick={() => void handleOpen()}
           disabled={busy}
         >
-          開く
+          {labels.setup.open}
         </button>
       </div>
 

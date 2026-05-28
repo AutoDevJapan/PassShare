@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDesktopLabels } from "../hooks/useDesktopLabels";
 import {
   disableBiometricUnlock,
   enableBiometricUnlock,
@@ -12,6 +13,7 @@ type BiometricUnlockSettingsProps = {
 };
 
 export function BiometricUnlockSettings({ boxPath, masterPassword }: BiometricUnlockSettingsProps) {
+  const labels = useDesktopLabels();
   const [available, setAvailable] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [message, setMessage] = useState("");
@@ -44,7 +46,7 @@ export function BiometricUnlockSettings({ boxPath, masterPassword }: BiometricUn
 
   async function handleEnable() {
     if (!boxPath.trim() || !masterPassword) {
-      setMessage("パスワードボックスを開いた状態でのみ有効化できます。");
+      setMessage(labels.biometric.errorLocked);
       return;
     }
 
@@ -53,9 +55,9 @@ export function BiometricUnlockSettings({ boxPath, masterPassword }: BiometricUn
     try {
       await enableBiometricUnlock(boxPath, masterPassword);
       setEnabled(true);
-      setMessage("生体認証で開くを有効にしました。");
+      setMessage(labels.biometric.successEnabled);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "生体認証の有効化に失敗しました。");
+      setMessage(err instanceof Error ? err.message : labels.biometric.errorEnable);
     } finally {
       setBusy(false);
     }
@@ -67,9 +69,9 @@ export function BiometricUnlockSettings({ boxPath, masterPassword }: BiometricUn
     try {
       await disableBiometricUnlock(boxPath);
       setEnabled(false);
-      setMessage("生体認証で開くを無効にしました。");
+      setMessage(labels.biometric.successDisabled);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "生体認証の無効化に失敗しました。");
+      setMessage(err instanceof Error ? err.message : labels.biometric.errorDisable);
     } finally {
       setBusy(false);
     }
@@ -78,19 +80,17 @@ export function BiometricUnlockSettings({ boxPath, masterPassword }: BiometricUn
   return (
     <section className="ps-card ps-card--compact" aria-labelledby="biometric-unlock-heading">
       <h3 className="ps-heading-3" id="biometric-unlock-heading">
-        生体認証で開く
+        {labels.biometric.title}
       </h3>
-      <p className="ps-text-muted">
-        Windows Hello / Touch ID / Face ID / 指紋で、次回からマスターパスワード入力を省略できます。
-      </p>
+      <p className="ps-text-muted">{labels.biometric.lead}</p>
       <div className="ps-actions">
         {enabled ? (
           <button type="button" className="ps-button ps-button--secondary" disabled={busy} onClick={() => void handleDisable()}>
-            無効にする
+            {labels.biometric.disable}
           </button>
         ) : (
           <button type="button" className="ps-button ps-button--secondary" disabled={busy} onClick={() => void handleEnable()}>
-            有効にする
+            {labels.biometric.enable}
           </button>
         )}
       </div>
