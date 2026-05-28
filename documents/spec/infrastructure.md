@@ -81,6 +81,12 @@ CLI の Preview 向け `vercel env add` はブランチ指定を要求するた�
 
 SSOT: [audit-checklist.md](../security/audit-checklist.md), [connect-api-gap-analysis.md](./connect-api-gap-analysis.md)
 
+### Frontend E2E（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `frontend-e2e.yml` | Playwright signup → CRUD → logout + frontend build |
+
 ## Railway 構成
 
 ```
