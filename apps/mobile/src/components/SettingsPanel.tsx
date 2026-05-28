@@ -1,4 +1,5 @@
 import { useI18n } from "@shared/i18n/I18nProvider";
+import { LanguageSwitcher } from "@shared/ui/LanguageSwitcher";
 import { clearAppPin } from "../lib/app-lock";
 import { isBiometricAvailable } from "../lib/secure-storage";
 import { useAuthSession } from "../hooks/useAuthSession";
@@ -32,6 +33,7 @@ export function SettingsPanel() {
       </header>
 
       <div className="mobile-settings ps-card">
+        <LanguageSwitcher variant="select" />
         <p>
           {labels.settingsBiometric}: {biometric ? "✓" : "—"}
         </p>

@@ -214,5 +214,15 @@
   "extension.settings.title": "Settings",
   "extension.settings.logout": "Sign out",
   "extension.settings.nativeMessaging": "Desktop Native Messaging ships in a follow-up phase (Issue #96).",
-  "extension.password.generate": "Generate password"
+  "extension.password.generate": "Generate password",
+  "header.lang.ru": "RU",
+  "header.lang.de": "Deutsch",
+  "header.lang.fr": "Français",
+  "header.lang.es": "Español",
+  "header.lang.zh-CN": "简体中文",
+  "header.lang.zh-TW": "繁體中文",
+  "header.lang.ko": "한국어",
+  "header.lang.pt-BR": "Português",
+  "mobile.settings.language": "Language",
+  "extension.settings.language": "Language"
 }

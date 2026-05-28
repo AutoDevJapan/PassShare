@@ -119,7 +119,8 @@ body,
 .ext-generated {
   margin: 0;
   font-size: 0.8125rem;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .ext-nav {

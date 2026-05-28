@@ -140,7 +140,8 @@
   color: var(--ps-accent-bright);
   font-weight: 600;
   letter-spacing: 0.04em;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .ps-message--success {

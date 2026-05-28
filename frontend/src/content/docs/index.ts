@@ -3,13 +3,13 @@ import { docsEn } from "./en";
 import { docsJa } from "./ja";
 import type { DocPageContent, DocsHubContent, LocaleDocs } from "./types";
 
-const catalogs: Record<Locale, LocaleDocs> = {
+const catalogs: Partial<Record<Locale, LocaleDocs>> = {
   ja: docsJa,
   en: docsEn,
 };
 
 export function getDocsContent(locale: Locale): LocaleDocs {
-  return catalogs[locale] ?? catalogs.ja;
+  return catalogs[locale] ?? catalogs.en ?? docsJa;
 }
 
 export function getDocsHub(locale: Locale): DocsHubContent {

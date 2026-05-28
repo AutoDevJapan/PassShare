@@ -1,9 +1,9 @@
 import { useI18n } from "@shared/i18n/I18nProvider";
+import { LanguageSwitcher } from "@shared/ui/LanguageSwitcher";
 import { useAuthSession } from "../hooks/useAuthSession";
 import { useExtensionLabels } from "../hooks/useExtensionLabels";
 
 export function SettingsPanel() {
-  const { locale, setLocale } = useI18n();
   const labels = useExtensionLabels();
   const { logout, user } = useAuthSession();
 
@@ -15,17 +15,7 @@ export function SettingsPanel() {
       </header>
 
       <div className="ext-settings ps-card">
-        <label className="ps-label ps-label--full">
-          Language
-          <select
-            className="ps-input"
-            value={locale}
-            onChange={(event) => setLocale(event.target.value as "ja" | "en")}
-          >
-            <option value="ja">日本語</option>
-            <option value="en">English</option>
-          </select>
-        </label>
+        <LanguageSwitcher variant="select" />
 
         <p className="ext-muted">{labels.settingsNativeMessaging}</p>
 

@@ -30,8 +30,11 @@
   --ps-border-subtle: #1e293b;
   --ps-border-accent: rgba(74, 222, 128, 0.35);
 
-  /* Typography */
-  --ps-font-sans: "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  /* Typography — script-specific stacks via locale.css */
+  --ps-font-sans-latin: "Segoe UI", "Noto Sans", system-ui, sans-serif;
+  --ps-font-sans-cjk: "Hiragino Sans", "Noto Sans JP", "PingFang SC", sans-serif;
+  --ps-font-sans-cyrillic: "Segoe UI", "Noto Sans", "Noto Sans Cyrillic", sans-serif;
+  --ps-font-sans: var(--ps-font-sans-latin), var(--ps-font-sans-cjk), var(--ps-font-sans-cyrillic), sans-serif;
   --ps-font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   --ps-text-xs: 0.75rem;
   --ps-text-sm: 0.875rem;
@@ -43,6 +46,11 @@
   --ps-leading-tight: 1.25;
   --ps-leading-normal: 1.5;
   --ps-leading-relaxed: 1.65;
+  --ps-leading-ja: 1.75;
+  --ps-leading-cjk: 1.8;
+  --ps-leading-latin: 1.5;
+  --ps-leading-cyrillic: 1.55;
+  --ps-leading-form: 1.5;
   --ps-tracking-wide: 0.08em;
 
   /* Spacing scale */

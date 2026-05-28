@@ -10,28 +10,42 @@ export default defineConfig({
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5173",
     trace: "on-first-retry",
   },
-  webServer: process.env.PLAYWRIGHT_SKIP_WEBSERVER
-    ? undefined
-    : [
-        {
-          command: "node backend/src/index.js",
-          url: "http://127.0.0.1:8080/health",
-          reuseExistingServer: !process.env.CI,
-          env: {
-            APP_ENV: "local",
-            PORT: "8080",
-          },
-        },
-        {
-          command: "pnpm --dir frontend dev --host 127.0.0.1 --port 5173",
-          url: "http://127.0.0.1:5173",
-          reuseExistingServer: !process.env.CI,
-        },
-      ],
   projects: [
     {
       name: "chromium",
+      testIgnore: "i18n-visual.spec.ts",
       use: { ...devices["Desktop Chrome"] },
+      webServer: process.env.PLAYWRIGHT_SKIP_WEBSERVER
+        ? undefined
+        : [
+            {
+              command: "node backend/src/index.js",
+              url: "http://127.0.0.1:8080/health",
+              reuseExistingServer: !process.env.CI,
+              env: {
+                APP_ENV: "local",
+                PORT: "8080",
+              },
+            },
+            {
+              command: "pnpm --dir frontend dev --host 127.0.0.1 --port 5173",
+              url: "http://127.0.0.1:5173",
+              reuseExistingServer: !process.env.CI,
+            },
+          ],
+    },
+    {
+      name: "i18n-visual",
+      testMatch: "i18n-visual.spec.ts",
+      use: { ...devices["Desktop Chrome"] },
+      webServer: process.env.PLAYWRIGHT_SKIP_WEBSERVER
+        ? undefined
+        : {
+            command: "pnpm --dir frontend preview --host 127.0.0.1 --port 5173",
+            url: "http://127.0.0.1:5173",
+            reuseExistingServer: !process.env.CI,
+            timeout: 120_000,
+          },
     },
   ],
 });

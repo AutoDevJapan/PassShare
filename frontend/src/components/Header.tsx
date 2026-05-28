@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useCallback, useState } from "react";
 import { useI18n } from "../../../shared/i18n/I18nProvider";
+import { LanguageSwitcher } from "../../../shared/ui/LanguageSwitcher";
 import { isApplePlatform, useSearchShortcut } from "../hooks/useSearchShortcut";
 import { SearchDialog } from "./SearchDialog";
 import { SessionControls } from "./SessionControls";
@@ -51,7 +52,7 @@ function LogoMark() {
 }
 
 export function Header() {
-  const { locale, setLocale, t } = useI18n();
+  const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -124,24 +125,7 @@ export function Header() {
                 <kbd className="landing-search__kbd">{shortcutLabel}</kbd>
               </button>
 
-              <div className="landing-lang" role="group" aria-label={t("header.lang.label")}>
-                <button
-                  type="button"
-                  className={`landing-lang__btn${locale === "ja" ? " landing-lang__btn--active" : ""}`}
-                  aria-pressed={locale === "ja"}
-                  onClick={() => setLocale("ja")}
-                >
-                  {t("header.lang.ja")}
-                </button>
-                <button
-                  type="button"
-                  className={`landing-lang__btn${locale === "en" ? " landing-lang__btn--active" : ""}`}
-                  aria-pressed={locale === "en"}
-                  onClick={() => setLocale("en")}
-                >
-                  {t("header.lang.en")}
-                </button>
-              </div>
+              <LanguageSwitcher />
 
               <SessionControls />
 

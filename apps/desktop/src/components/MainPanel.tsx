@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { formatListItemCount } from "@shared/i18n/index";
+import { useI18n } from "@shared/i18n/I18nProvider";
 import { ConnectItemList } from "@shared/ui/ConnectItemList";
 import { ItemForm } from "@shared/ui/ItemForm";
 import { ClipboardClearSettings } from "@shared/ui/ClipboardClearSettings";
@@ -30,6 +32,7 @@ type MainPanelProps = {
 };
 
 export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps) {
+  const { locale } = useI18n();
   const itemLabels = useItemLabels();
   const desktopLabels = useDesktopLabels();
   const [searchQuery, setSearchQuery] = useState("");
@@ -222,9 +225,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
           <h3 className="ps-heading-3" id="item-list-heading">
             {itemLabels.listHeading}
           </h3>
-          <span className="ps-badge">
-            {items.length} {itemLabels.countSuffix}
-          </span>
+          <span className="ps-badge">{formatListItemCount(items.length, locale)}</span>
         </div>
 
         {importMessage ? <StatusMessage message={importMessage} variant="success" /> : null}

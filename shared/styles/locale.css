@@ -1,0 +1,86 @@
+/**
+ * Locale-aware typography, line-breaking, and density profiles.
+ * See documents/spec/production-i18n.md and design-system.md.
+ */
+
+/* Japanese — jp-ui-contracts: body line-height 1.7–2.0 */
+html:lang(ja) .ps-body,
+html:lang(ja) .ps-lead {
+  line-height: var(--ps-leading-ja);
+}
+
+html:lang(ja) .ps-label {
+  line-height: var(--ps-leading-form);
+}
+
+/* Cyrillic */
+html:lang(ru) .ps-body {
+  font-family: var(--ps-font-sans-cyrillic), var(--ps-font-sans);
+  line-height: var(--ps-leading-cyrillic);
+}
+
+/* CJK (Simplified / Traditional / Korean) */
+html:lang(zh-CN) .ps-body,
+html:lang(zh-TW) .ps-body,
+html:lang(ko) .ps-body {
+  line-height: var(--ps-leading-cjk);
+}
+
+/* Latin-heavy locales */
+html:lang(en) .ps-body,
+html:lang(de) .ps-body,
+html:lang(fr) .ps-body,
+html:lang(es) .ps-body,
+html:lang(pt-BR) .ps-body {
+  line-height: var(--ps-leading-latin);
+}
+
+/* jp-ui-contracts: no global word-break: break-all */
+.ps-break-word {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.ps-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Form density (saas profile) */
+.ps-label {
+  line-height: var(--ps-leading-form);
+}
+
+.ps-input,
+.ps-button {
+  min-height: var(--ps-button-height);
+}
+
+/* Table / list row height for long translations */
+.ps-card--list .ps-card__header,
+.app-vault-card,
+.mobile-vault-card {
+  min-height: 3.25rem;
+}
+
+/* Extension popup 320px — compact density */
+.ext-panel .ps-label,
+.ext-panel .ps-input {
+  line-height: 1.45;
+}
+
+.ext-panel .ps-button {
+  min-height: 2.5rem;
+}
+
+/* Mixed-script inline spans */
+.ps-mixed-script {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+html:lang(ja) .ps-mixed-script {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
