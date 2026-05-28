@@ -118,7 +118,7 @@ jobs:
           node-version: "22"
 
       - name: Check locale key parity
-        run: pnpm run i18n:check
+        run: node scripts/i18n-check.mjs
 
   frontend:
     name: Web (Playwright + build)
