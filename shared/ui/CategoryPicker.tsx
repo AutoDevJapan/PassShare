@@ -1,19 +1,24 @@
 import type { ItemCategory, ItemUiLabels } from "../types/item.js";
-import { categoryLabel } from "../types/item.js";
+import { categoryLabel, ITEM_CATEGORIES } from "../types/item.js";
 
 type CategoryPickerProps = {
   value: ItemCategory;
   labels: ItemUiLabels;
   onChange: (category: ItemCategory) => void;
   disabled?: boolean;
+  ariaLabel?: string;
 };
 
-const CATEGORIES: ItemCategory[] = ["LOGIN", "PASSWORD", "SECURE_NOTE"];
-
-export function CategoryPicker({ value, labels, onChange, disabled = false }: CategoryPickerProps) {
+export function CategoryPicker({
+  value,
+  labels,
+  onChange,
+  disabled = false,
+  ariaLabel = "Category",
+}: CategoryPickerProps) {
   return (
-    <div className="ps-category-picker" role="tablist" aria-label="カテゴリ">
-      {CATEGORIES.map((category) => (
+    <div className="ps-category-picker" role="tablist" aria-label={ariaLabel}>
+      {ITEM_CATEGORIES.map((category) => (
         <button
           key={category}
           type="button"

@@ -1,5 +1,6 @@
 import type { FormEvent } from "react";
 import type { ItemCategory, ItemFormValues, ItemUiLabels } from "../types/item.js";
+import { isBodyCategory } from "../types/item.js";
 import { CategoryPicker } from "./CategoryPicker.js";
 
 type ItemFormProps = {
@@ -34,8 +35,8 @@ export function ItemForm({
 
   const showLoginFields = values.category === "LOGIN";
   const showPasswordField = values.category === "LOGIN" || values.category === "PASSWORD";
-  const showBodyField = values.category === "SECURE_NOTE";
-  const showNotesField = values.category !== "SECURE_NOTE";
+  const showBodyField = isBodyCategory(values.category);
+  const showNotesField = !isBodyCategory(values.category);
 
   return (
     <form className="ps-card ps-card--form" onSubmit={handleSubmit}>

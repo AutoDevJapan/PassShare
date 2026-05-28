@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ConnectItem, ItemUiLabels } from "../types/item.js";
-import { categoryLabel } from "../types/item.js";
+import { categoryLabel, isBodyCategory } from "../types/item.js";
 import { copyTextWithAutoClear } from "./clipboard-auto-clear.js";
 
 type ConnectItemListProps = {
@@ -33,14 +33,13 @@ function ItemRow({
     window.setTimeout(() => setCopied(false), 2000);
   }
 
-  const copyLabel =
-    item.category === "SECURE_NOTE"
-      ? item.body
-        ? "本文をコピー"
-        : null
-      : item.password
-        ? labels.copyPassword
-        : null;
+  const copyLabel = isBodyCategory(item.category)
+    ? item.body
+      ? labels.copyBody
+      : null
+    : item.password
+      ? labels.copyPassword
+      : null;
 
   return (
     <li className="ps-item-card">
