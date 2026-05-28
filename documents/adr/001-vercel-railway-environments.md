@@ -17,7 +17,7 @@ MVP 再構築時に当該ディレクトリが存在しなかった。
 3. **Database**: Railway PostgreSQL を 3 インスタンス構成
    - `postgres-dev`: preview + dev で共有
    - `postgres-stg`: staging 専用
-   - `postgres-prd`: production 専用
+   - `postgres-prd-v2`: production 専用
 4. **環境名**: Preview / dev / stg / prd の 4 論理環境を Vercel + Railway の標準環境にマッピング
 
 ## Consequences
