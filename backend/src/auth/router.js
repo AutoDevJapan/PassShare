@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { generateConnectId } from "../lib/connect.js";
-import { isMobileClient } from "./client.js";
+import { isTokenAuthClient } from "./client.js";
 import { clearCsrfCookie, issueCsrfToken, requireCsrf } from "./csrf.js";
 import { authHttpError, sendAuthError } from "./errors.js";
 import { createLoginGuard, resolveClientIp } from "./login-guard.js";
@@ -42,7 +42,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
       const session = await authStore.createSession(user.id);
       const connectToken = await authStore.createConnectToken(user.id);
 
-      if (isMobileClient(req)) {
+      if (isTokenAuthClient(req)) {
         res.status(201).json(toMobileAuthResponse({ user, session, connectToken }));
         return;
       }
@@ -83,7 +83,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
       const session = await authStore.createSession(user.id);
       const connectToken = await authStore.createConnectToken(user.id);
 
-      if (isMobileClient(req)) {
+      if (isTokenAuthClient(req)) {
         res.json(toMobileAuthResponse({ user, session, connectToken }));
         return;
       }
