@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ConnectItem, ItemUiLabels } from "../types/item.js";
 import { categoryLabel } from "../types/item.js";
+import { copyTextWithAutoClear } from "./clipboard-auto-clear.js";
 
 type ConnectItemListProps = {
   items: ConnectItem[];
@@ -27,7 +28,7 @@ function ItemRow({
     if (!secret) {
       return;
     }
-    await navigator.clipboard.writeText(secret);
+    await copyTextWithAutoClear(secret);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { copyTextWithAutoClear } from "@shared/ui/clipboard-auto-clear";
 
 type RecoveryKitPanelProps = {
   secret: string;
@@ -9,7 +10,7 @@ export function RecoveryKitPanel({ secret, onConfirm }: RecoveryKitPanelProps) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(secret);
+    await copyTextWithAutoClear(secret);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   }

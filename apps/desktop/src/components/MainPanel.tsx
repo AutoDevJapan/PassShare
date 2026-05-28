@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ConnectItemList } from "@shared/ui/ConnectItemList";
 import { ItemForm } from "@shared/ui/ItemForm";
+import { ClipboardClearSettings } from "@shared/ui/ClipboardClearSettings";
 import type { ConnectItem, ItemFormValues } from "@shared/types/item";
 import { emptyFormValues, formValuesFromItem } from "@shared/types/item";
 import { ITEM_LABELS } from "../labels";
@@ -16,13 +17,24 @@ import {
 } from "../tauri";
 import { formatTauriError } from "../errors";
 import { StatusMessage } from "./StatusMessage";
+import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
+
+const CLIPBOARD_SETTINGS_LABELS = {
+  heading: "クリップボード自動消去",
+  description: "コピーしたパスワードやシークレットを、指定秒数後にクリップボードから消去します。",
+  secondsLabel: "消去までの秒数",
+  secondsSuffix: "秒",
+  save: "保存",
+  saved: "保存しました",
+};
 
 type MainPanelProps = {
+  boxPath: string;
   masterPassword: string;
   onLocked: () => void;
 };
 
-export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
+export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
   const [formValues, setFormValues] = useState<ItemFormValues>(emptyFormValues());
@@ -182,6 +194,11 @@ export function MainPanel({ masterPassword, onLocked }: MainPanelProps) {
         onCancel={editingId ? resetForm : undefined}
         onGeneratePassword={() => void handleGenerate()}
       />
+
+      <div className="ps-settings-grid">
+        <ClipboardClearSettings labels={CLIPBOARD_SETTINGS_LABELS} />
+        <BiometricUnlockSettings boxPath={boxPath} masterPassword={masterPassword} />
+      </div>
 
       <section className="ps-card ps-card--list" aria-labelledby="item-list-heading">
         <div className="ps-card__header">
