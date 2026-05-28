@@ -99,6 +99,14 @@ SSOT: [audit-checklist.md](../security/audit-checklist.md), [connect-api-gap-ana
 
 SSOT: [desktop-release.md](../runbooks/desktop-release.md)
 
+### Mobile ビルド（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `mobile-build.yml` | Rust smoke + mobile frontend build + mobile auth API tests |
+
+SSOT: [mobile-store-release.md](../runbooks/mobile-store-release.md)
+
 ## Railway 構成
 
 ```

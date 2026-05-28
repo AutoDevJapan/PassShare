@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { generateConnectId } from "../lib/connect.js";
+import { isMobileClient } from "./client.js";
 import { clearCsrfCookie, issueCsrfToken, requireCsrf } from "./csrf.js";
 import { authHttpError, sendAuthError } from "./errors.js";
 import { createLoginGuard, resolveClientIp } from "./login-guard.js";
+import { toMobileAuthResponse } from "./mobile-response.js";
 import { hashPassword, verifyPassword } from "./password.js";
-import { clearSessionCookie, requireSession, setSessionCookie } from "./session.js";
+import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
 
 /**
@@ -38,6 +40,13 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
       await authStore.addVaultMembership(user.id, vaultId, "owner");
 
       const session = await authStore.createSession(user.id);
+      const connectToken = await authStore.createConnectToken(user.id);
+
+      if (isMobileClient(req)) {
+        res.status(201).json(toMobileAuthResponse({ user, session, connectToken }));
+        return;
+      }
+
       setSessionCookie(res, session.sessionToken, appEnv);
       const csrfToken = issueCsrfToken(res, appEnv);
       res.status(201).json({
@@ -72,6 +81,13 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
 
       loginGuard.clearFailures(email);
       const session = await authStore.createSession(user.id);
+      const connectToken = await authStore.createConnectToken(user.id);
+
+      if (isMobileClient(req)) {
+        res.json(toMobileAuthResponse({ user, session, connectToken }));
+        return;
+      }
+
       setSessionCookie(res, session.sessionToken, appEnv);
       const csrfToken = issueCsrfToken(res, appEnv);
       res.json({
@@ -84,11 +100,39 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
     }
   });
 
+  router.post("/token/refresh", async (req, res) => {
+    try {
+      const refreshToken =
+        typeof req.body?.refreshToken === "string" ? req.body.refreshToken.trim() : "";
+      if (!refreshToken) {
+        throw authHttpError(400, "PS030", "refreshToken is required");
+      }
+
+      const session = await authStore.findSessionByToken(refreshToken);
+      if (!session) {
+        throw authHttpError(401, "PS024", "Session is invalid or expired");
+      }
+
+      const expiresAt = await authStore.refreshSession(session.id);
+      const connectToken = await authStore.createConnectToken(session.user_id);
+      res.json({
+        sessionExpiresAt: expiresAt,
+        connectAccessToken: connectToken.accessToken,
+        connectExpiresIn: connectToken.expiresIn,
+        connectExpiresAt: connectToken.expiresAt,
+      });
+    } catch (error) {
+      sendAuthError(res, error);
+    }
+  });
+
   router.post("/logout", sessionGuard, requireCsrf, async (req, res) => {
     try {
       await authStore.deleteSession(req.auth.sessionId);
-      clearSessionCookie(res, appEnv);
-      clearCsrfCookie(res, appEnv);
+      if (!parseBearerToken(req)) {
+        clearSessionCookie(res, appEnv);
+        clearCsrfCookie(res, appEnv);
+      }
       res.status(204).end();
     } catch (error) {
       sendAuthError(res, error);

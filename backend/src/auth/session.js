@@ -57,6 +57,48 @@ export function clearSessionCookie(res, appEnv) {
   res.setHeader("Set-Cookie", parts.join("; "));
 }
 
+/** @param {import('express').Request} req */
+export function parseBearerToken(req) {
+  const header = req.headers.authorization;
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) {
+    return null;
+  }
+  const token = header.slice("Bearer ".length).trim();
+  return token || null;
+}
+
+/**
+ * @param {import('express').Request} req
+ * @param {import('./index.js').AuthStore} authStore
+ */
+export async function resolveSessionAuth(req, authStore) {
+  const bearerToken = parseBearerToken(req);
+  if (bearerToken) {
+    const session = await authStore.findSessionByToken(bearerToken);
+    if (!session) {
+      throw authHttpError(401, "PS024", "Session is invalid or expired");
+    }
+    return {
+      userId: session.user_id,
+      sessionId: session.id,
+    };
+  }
+
+  const cookies = parseCookies(req);
+  const sessionToken = cookies[SESSION_COOKIE];
+  if (!sessionToken) {
+    throw authHttpError(401, "PS025", "Session is required");
+  }
+  const session = await authStore.findSessionByToken(sessionToken);
+  if (!session) {
+    throw authHttpError(401, "PS024", "Session is invalid or expired");
+  }
+  return {
+    userId: session.user_id,
+    sessionId: session.id,
+  };
+}
+
 /**
  * @param {import('./index.js').AuthStore} authStore
  * @returns {import('express').RequestHandler}
@@ -64,19 +106,7 @@ export function clearSessionCookie(res, appEnv) {
 export function requireSession(authStore) {
   return async (req, res, next) => {
     try {
-      const cookies = parseCookies(req);
-      const sessionToken = cookies[SESSION_COOKIE];
-      if (!sessionToken) {
-        throw authHttpError(401, "PS025", "Session is required");
-      }
-      const session = await authStore.findSessionByToken(sessionToken);
-      if (!session) {
-        throw authHttpError(401, "PS024", "Session is invalid or expired");
-      }
-      req.auth = {
-        userId: session.user_id,
-        sessionId: session.id,
-      };
+      req.auth = await resolveSessionAuth(req, authStore);
       next();
     } catch (error) {
       next(error);

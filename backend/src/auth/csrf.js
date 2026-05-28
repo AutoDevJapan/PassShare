@@ -2,7 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { generateToken } from "./tokens.js";
 import { CSRF_COOKIE, CSRF_HEADER } from "./constants.js";
 import { authHttpError } from "./errors.js";
-import { parseCookies } from "./session.js";
+import { isMobileClient } from "./client.js";
+import { parseBearerToken, parseCookies } from "./session.js";
 
 /**
  * @param {import('express').Response} res
@@ -45,6 +46,11 @@ export function clearCsrfCookie(res, appEnv) {
 
 /** @type {import('express').RequestHandler} */
 export function requireCsrf(req, _res, next) {
+  if (parseBearerToken(req) || isMobileClient(req)) {
+    next();
+    return;
+  }
+
   const cookies = parseCookies(req);
   const cookieToken = cookies[CSRF_COOKIE];
   const headerToken = req.headers[CSRF_HEADER];

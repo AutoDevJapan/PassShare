@@ -30,6 +30,7 @@ jobs:
           - backend
           - frontend
           - apps/desktop
+          - apps/mobile
           - packages/connect-js
     steps:
       - uses: actions/checkout@v6
