@@ -189,5 +189,21 @@
   "mobile.settings.biometric": "生体認証",
   "mobile.settings.logout": "ログアウト",
   "mobile.share.stub": "共有シート連携は次フェーズで有効化されます（Issue #84）。",
-  "mobile.autofill.stub": "OS オートフィル連携は次フェーズで有効化されます（Issue #83）。"
+  "mobile.autofill.stub": "OS オートフィル連携は次フェーズで有効化されます（Issue #83）。",
+  "extension.app.title": "PassShare",
+  "extension.login.title": "ログイン",
+  "extension.login.lead": "パスワードボックスにアクセスしてコピー・オートフィルします。",
+  "extension.login.submit": "ログイン",
+  "extension.login.signup": "アカウント作成",
+  "extension.nav.items": "項目",
+  "extension.nav.settings": "設定",
+  "extension.search.placeholder": "検索…",
+  "extension.copy.username": "ユーザー名",
+  "extension.copy.password": "パスワード",
+  "extension.copy.done": "コピー済み",
+  "extension.items.empty": "項目がありません",
+  "extension.settings.title": "設定",
+  "extension.settings.logout": "ログアウト",
+  "extension.settings.nativeMessaging": "Desktop Native Messaging は次フェーズで有効化されます（Issue #96）。",
+  "extension.password.generate": "パスワード生成"
 }

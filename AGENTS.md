@@ -31,6 +31,7 @@ crates/passshare-core/     — 暗号・ドメイン・ストレージ
 crates/passshare-connect/  — Connect API Rust SDK
 crates/op-cli/             — `op` 互換 CLI
 packages/connect-js/       — TypeScript Connect SDK
+packages/extension/        — Browser extension (MV3)
 packages/connect-python/   — Python Connect SDK
 packages/connect-go/       — Go Connect SDK
 apps/desktop/              — Tauri デスクトップ
@@ -82,13 +83,20 @@ cd apps/mobile && pnpm install && pnpm --dir ../../packages/connect-js run build
 
 # モバイル smoke（Rust + mobile auth API）
 cargo test -p passshare-mobile smoke_
+
+# ブラウザ拡張（MV3 + React）
+cd packages/extension && pnpm install && pnpm --dir ../connect-js run build && pnpm run build
+
+# 拡張 smoke（ユニット + extension auth API）
+pnpm --dir packages/extension test
+node --test backend/test/extension-auth.test.js
 ```
 
 ## xDD
 
 Spec: `documents/spec/feature-passshare-mvp.md`, `documents/spec/production-v2.md`
-ADR: `documents/adr/003-multi-client-architecture.md`, `documents/adr/004-auth-authorization-model.md`, `documents/adr/005-mobile-platform-tauri.md`
-Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/mobile-ui.md`, `documents/spec/ui-polish.md`
+ADR: `documents/adr/003-multi-client-architecture.md`, `documents/adr/004-auth-authorization-model.md`, `documents/adr/005-mobile-platform-tauri.md`, `documents/adr/006-browser-extension-mv3.md`
+Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/mobile-ui.md`, `documents/spec/extension-ui.md`, `documents/spec/ui-polish.md`
 Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
 Infra: `documents/spec/infrastructure.md`
 

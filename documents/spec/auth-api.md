@@ -183,7 +183,7 @@ Creates `connect_vaults` row and `vault_memberships` (`owner`).
 
 ## Mobile client flow (Issue [#80](https://github.com/AutoDevJapan/PassShare/issues/80))
 
-Mobile / Extension clients send `X-PassShare-Client: mobile` on signup/login. The API returns JSON tokens instead of HttpOnly cookies.
+Mobile / Extension clients send `X-PassShare-Client: mobile` or `X-PassShare-Client: extension` on signup/login. The API returns JSON tokens instead of HttpOnly cookies.
 
 ### POST `/login` (mobile)
 

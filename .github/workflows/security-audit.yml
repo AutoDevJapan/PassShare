@@ -32,6 +32,7 @@ jobs:
           - apps/desktop
           - apps/mobile
           - packages/connect-js
+          - packages/extension
     steps:
       - uses: actions/checkout@v6
 

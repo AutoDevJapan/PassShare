@@ -104,8 +104,17 @@ SSOT: [desktop-release.md](../runbooks/desktop-release.md)
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
 | PR / main push | `mobile-build.yml` | Rust smoke + mobile frontend build + mobile auth API tests |
+| PR / main push | `extension-build.yml` | Extension unit tests + MV3 build + extension auth API + Playwright popup smoke |
 
 SSOT: [mobile-store-release.md](../runbooks/mobile-store-release.md)
+
+### Extension ビルド（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `extension-build.yml` | Extension unit tests + MV3 build + extension auth API + Playwright popup smoke |
+
+SSOT: [extension-store-release.md](../runbooks/extension-store-release.md)
 
 ## Railway 構成
 
