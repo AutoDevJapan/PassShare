@@ -1,4 +1,5 @@
 {
+  "installCommand": "pnpm --dir ../packages/connect-js install --frozen-lockfile && pnpm --dir ../packages/connect-js run build && pnpm install --frozen-lockfile",
   "headers": [
     {
       "source": "/(.*)",

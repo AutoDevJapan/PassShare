@@ -24,12 +24,14 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: |
+            pnpm-lock.yaml
             backend/pnpm-lock.yaml
             frontend/pnpm-lock.yaml
             packages/connect-js/pnpm-lock.yaml
 
       - name: Install dependencies
         run: |
+          pnpm install --frozen-lockfile
           pnpm --dir backend install --frozen-lockfile
           pnpm --dir packages/connect-js install --frozen-lockfile
           pnpm --dir packages/connect-js run build
