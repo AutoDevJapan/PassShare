@@ -15,6 +15,8 @@ import { connectHttpError } from "../middleware/connect-errors.js";
  * @property {(vaultId: string, itemId: string) => Promise<void>} deleteItem
  * @property {(vaultId: string, itemId: string, fileId: string) => Promise<object|null>} getFileMeta
  * @property {(vaultId: string, itemId: string, fileId: string) => Promise<Buffer|null>} getFileContent
+ * @property {(vaultId: string, itemId: string, input: { name?: string, content?: Buffer }) => Promise<object>} createFile
+ * @property {(vaultId: string, itemId: string, fileId: string) => Promise<void>} deleteFile
  * @property {(input: { id?: string, name: string, description?: string, type?: string }) => Promise<string>} createVault
  */
 
@@ -179,6 +181,35 @@ export function createMemoryStore() {
         throw connectHttpError(404, "PS014: File not found");
       }
       return file.content ?? Buffer.alloc(0);
+    },
+
+    async createFile(vaultId, itemId, input = {}) {
+      await requireItem(vaultId, itemId);
+      const fileId = generateConnectId();
+      const now = nowIso();
+      const content = input.content ?? Buffer.alloc(0);
+      const meta = {
+        id: fileId,
+        item_id: itemId,
+        name: input.name ?? "attachment",
+        size: content.length,
+        createdAt: now,
+        updatedAt: now,
+      };
+      files.set(fileId, { meta, content });
+      return meta;
+    },
+
+    async deleteFile(vaultId, itemId, fileId) {
+      await requireItem(vaultId, itemId);
+      if (!isValidConnectId(fileId)) {
+        throw connectHttpError(400, "PS009: Invalid file id format");
+      }
+      const file = files.get(fileId);
+      if (!file || file.meta.item_id !== itemId) {
+        throw connectHttpError(404, "PS014: File not found");
+      }
+      files.delete(fileId);
     },
 
     async createVault({ id, name, description = "", type = "USER_CREATED" }) {

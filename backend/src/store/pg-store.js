@@ -175,6 +175,40 @@ export function createPgStore(pool) {
       return result.rows[0].content ?? Buffer.alloc(0);
     },
 
+    async createFile(vaultId, itemId, input = {}) {
+      await requireItem(vaultId, itemId);
+      const fileId = generateConnectId();
+      const now = nowIso();
+      const content = input.content ?? Buffer.alloc(0);
+      const name = input.name ?? "attachment";
+      await pool.query(
+        `INSERT INTO connect_item_files (id, item_id, name, size, content, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz)`,
+        [fileId, itemId, name, content.length, content, now, now],
+      );
+      return {
+        id: fileId,
+        name,
+        size: content.length,
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
+
+    async deleteFile(vaultId, itemId, fileId) {
+      await requireItem(vaultId, itemId);
+      if (!isValidConnectId(fileId)) {
+        throw connectHttpError(400, "PS009: Invalid file id format");
+      }
+      const result = await pool.query(
+        "DELETE FROM connect_item_files WHERE id = $1 AND item_id = $2 RETURNING id",
+        [fileId, itemId],
+      );
+      if (result.rowCount === 0) {
+        throw connectHttpError(404, "PS014: File not found");
+      }
+    },
+
     async createVault({ id, name, description = "", type = "USER_CREATED" }) {
       const vaultId = id ?? generateConnectId();
       const now = nowIso();

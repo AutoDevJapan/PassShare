@@ -1,5 +1,11 @@
 import { Router } from "express";
 import { isValidConnectId } from "../lib/connect.js";
+import {
+  map1puxItemToConnectBody,
+  parse1puxBuffer,
+  readRequestBodyBuffer,
+} from "../lib/1pux-import.js";
+import { normalizeItemBody } from "../lib/categories.js";
 import { connectHttpError } from "../middleware/connect-errors.js";
 
 /** @param {import('../store/memory-store.js').ConnectStore} store */
@@ -34,6 +40,47 @@ export function createVaultRoutes(store, options = {}) {
     }
   });
 
+  router.post("/:vaultUuid/imports/1pux", requireVaultAccess, async (req, res, next) => {
+    try {
+      const { vaultUuid } = req.params;
+      if (!isValidConnectId(vaultUuid)) {
+        throw connectHttpError(400, "PS009: Invalid vault id format");
+      }
+
+      const contentType = req.headers["content-type"] ?? "";
+      let zipBuffer;
+      if (contentType.includes("application/zip") || contentType.includes("application/octet-stream")) {
+        zipBuffer = await readRequestBodyBuffer(req);
+      } else if (contentType.includes("application/json")) {
+        const payload = req.body ?? {};
+        if (typeof payload.base64 !== "string") {
+          throw connectHttpError(400, "PS017: Invalid 1PUX — expected base64 payload");
+        }
+        zipBuffer = Buffer.from(payload.base64, "base64");
+      } else {
+        throw connectHttpError(
+          415,
+          "PS017: Invalid 1PUX — use application/zip or application/json with base64",
+        );
+      }
+
+      const sourceItems = await parse1puxBuffer(zipBuffer);
+      const created = [];
+      for (const sourceItem of sourceItems) {
+        const body = map1puxItemToConnectBody(sourceItem);
+        const item = await store.createItem(vaultUuid, body);
+        created.push(item);
+      }
+
+      res.status(201).json({
+        imported: created.length,
+        items: created,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   return router;
 }
 
@@ -52,7 +99,8 @@ export function createItemRoutes(store) {
 
   router.post("/", async (req, res, next) => {
     try {
-      const item = await store.createItem(req.params.vaultUuid, req.body ?? {});
+      const body = normalizeItemBody(req.body ?? {});
+      const item = await store.createItem(req.params.vaultUuid, body);
       res.status(201).json(item);
     } catch (err) {
       next(err);
@@ -70,10 +118,11 @@ export function createItemRoutes(store) {
 
   router.put("/:itemUuid", async (req, res, next) => {
     try {
+      const body = normalizeItemBody(req.body ?? {});
       const item = await store.replaceItem(
         req.params.vaultUuid,
         req.params.itemUuid,
-        req.body ?? {},
+        body,
       );
       res.json(item);
     } catch (err) {
@@ -118,6 +167,28 @@ export function createItemRoutes(store) {
 export function createFileRoutes(store) {
   const router = Router({ mergeParams: true });
 
+  router.post("/", async (req, res, next) => {
+    try {
+      const name =
+        typeof req.body?.name === "string" && req.body.name.trim() !== ""
+          ? req.body.name
+          : "attachment";
+      let content = Buffer.alloc(0);
+      if (typeof req.body?.contentBase64 === "string") {
+        content = Buffer.from(req.body.contentBase64, "base64");
+      } else if (typeof req.body?.content === "string") {
+        content = Buffer.from(req.body.content, "utf8");
+      }
+      const meta = await store.createFile(req.params.vaultUuid, req.params.itemUuid, {
+        name,
+        content,
+      });
+      res.status(201).json(meta);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.get("/:fileUuid", async (req, res, next) => {
     try {
       const meta = await store.getFileMeta(
@@ -140,6 +211,19 @@ export function createFileRoutes(store) {
       );
       res.setHeader("Content-Type", "application/octet-stream");
       res.send(content);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.delete("/:fileUuid", async (req, res, next) => {
+    try {
+      await store.deleteFile(
+        req.params.vaultUuid,
+        req.params.itemUuid,
+        req.params.fileUuid,
+      );
+      res.status(204).send();
     } catch (err) {
       next(err);
     }
