@@ -1,8 +1,10 @@
 import {
+  COMPACT_LOCALE_LABELS,
   LOCALE_LABEL_KEYS,
   PRIMARY_SWITCHER_LOCALES,
   UI_LOCALES,
   type Locale,
+  type MustLocale,
 } from "../i18n/index";
 import { useI18n } from "../i18n/I18nProvider";
 
@@ -13,6 +15,10 @@ type LanguageSwitcherProps = {
   locales?: readonly Locale[];
   className?: string;
 };
+
+function isMustLocale(code: Locale): code is MustLocale {
+  return (PRIMARY_SWITCHER_LOCALES as readonly string[]).includes(code);
+}
 
 export function LanguageSwitcher({
   variant = "buttons",
@@ -53,9 +59,10 @@ export function LanguageSwitcher({
           type="button"
           className={`landing-lang__btn${locale === code ? " landing-lang__btn--active" : ""}`}
           aria-pressed={locale === code}
+          aria-label={t(LOCALE_LABEL_KEYS[code])}
           onClick={() => setLocale(code)}
         >
-          {t(LOCALE_LABEL_KEYS[code])}
+          {isMustLocale(code) ? COMPACT_LOCALE_LABELS[code] : t(LOCALE_LABEL_KEYS[code])}
         </button>
       ))}
     </div>

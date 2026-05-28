@@ -19,6 +19,35 @@ html:lang(ru) .ps-body {
   line-height: var(--ps-leading-cyrillic);
 }
 
+/* RU header density — prevent horizontal overflow at 1280px CI viewport */
+html:lang(ru) .landing-nav {
+  gap: var(--ps-space-3);
+  min-width: 0;
+}
+
+html:lang(ru) .landing-nav__list {
+  gap: 0.125rem;
+}
+
+html:lang(ru) .landing-nav__link {
+  padding: var(--ps-space-1) var(--ps-space-2);
+  font-size: 0.75rem;
+}
+
+html:lang(ru) .landing-header__tools {
+  gap: var(--ps-space-2);
+  flex-shrink: 0;
+}
+
+html:lang(ru) .landing-search {
+  width: 7.5rem;
+}
+
+html:lang(ru) .landing-header__cta {
+  padding-inline: var(--ps-space-3);
+  font-size: var(--ps-text-sm);
+}
+
 /* CJK (Simplified / Traditional / Korean) */
 html:lang(zh-CN) .ps-body,
 html:lang(zh-TW) .ps-body,

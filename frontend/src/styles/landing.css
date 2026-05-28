@@ -2,6 +2,8 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  overflow-x: clip;
+  max-width: 100%;
 }
 
 .landing > main {
@@ -40,7 +42,9 @@
   max-width: 72rem;
   margin: 0 auto;
   padding: var(--ps-space-4) var(--ps-space-6);
+  overflow-x: clip;
 }
+
 
 .landing-logo {
   display: inline-flex;
@@ -101,6 +105,8 @@
   display: flex;
   align-items: center;
   gap: var(--ps-space-6);
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .landing-nav__list {

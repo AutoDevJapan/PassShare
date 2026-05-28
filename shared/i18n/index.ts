@@ -30,6 +30,13 @@ export const LOCALE_STORAGE_KEY = "passshare.locale";
 /** Locales shown in compact button switchers (Must only) */
 export const PRIMARY_SWITCHER_LOCALES: MustLocale[] = ["ja", "en", "ru"];
 
+/** Short button labels for dense header toolbars (avoids Cyrillic overflow) */
+export const COMPACT_LOCALE_LABELS: Record<MustLocale, string> = {
+  ja: "JA",
+  en: "EN",
+  ru: "RU",
+};
+
 /** Label i18n key for each locale in language pickers */
 export const LOCALE_LABEL_KEYS: Record<Locale, MessageKey> = {
   ja: "header.lang.ja",

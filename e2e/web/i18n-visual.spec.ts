@@ -35,7 +35,7 @@ test("language switcher exposes ja, en, ru", async ({ page }) => {
   const langGroup = page.locator(".landing-lang");
   await expect(langGroup.getByRole("button", { name: /日本語/i })).toBeVisible();
   await expect(langGroup.getByRole("button", { name: /^EN$/i })).toBeVisible();
-  await expect(langGroup.getByRole("button", { name: /^RU$|Русский/i })).toBeVisible();
+  await expect(langGroup.getByRole("button", { name: /^RU$/i })).toBeVisible();
 });
 
 test("ru locale keeps header within viewport", async ({ page }) => {
