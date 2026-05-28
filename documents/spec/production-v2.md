@@ -27,7 +27,7 @@ PassShare v2.0 は **本番公開可能な完全版** を定義する。MVP（v0
 | [ADR 003: マルチクライアント](../adr/003-multi-client-architecture.md) | 4 クライアント・データ経路・拡張接続 |
 | [ADR 004: 認証・認可](../adr/004-auth-authorization-model.md) | ユーザー / セッション / Connect トークン |
 | [auth-api.md](./auth-api.md) | L1 認証 API（`/api/auth/*`） |
-| production-i18n.md | 多言語 SSOT（[#117](https://github.com/AutoDevJapan/PassShare/issues/117) で策定予定） |
+| [production-i18n.md](./production-i18n.md) | 多言語 SSOT（[#117](https://github.com/AutoDevJapan/PassShare/issues/117) ✅） |
 
 ## クライアント一覧
 
@@ -171,7 +171,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 | 同期・共有 | [#35](https://github.com/AutoDevJapan/PassShare/issues/35) | #98–#103 | 同期 MVP（Should） |
 | CI/CD | [#36](https://github.com/AutoDevJapan/PassShare/issues/36) | #104–#110 | main CI green |
 | 法務・運用 | [#37](https://github.com/AutoDevJapan/PassShare/issues/37) | #111–#116 | 法務文書公開 |
-| i18n / l10n | [#38](https://github.com/AutoDevJapan/PassShare/issues/38) | #117–#131 | ja/en/ru + 表示保全 |
+| i18n / l10n | [#38](https://github.com/AutoDevJapan/PassShare/issues/38) ✅ | #117–#131 | ja/en/ru + 表示保全 |
 
 ---
 
@@ -508,6 +508,47 @@ Epic [#37](https://github.com/AutoDevJapan/PassShare/issues/37)（ドキュメ�
 - 法務レビュー完了後、terms/privacy 本文を確定版に更新
 - Safari 拡張 App Store 公開後、extension-install ガイド更新
 - Typedoc 自動生成 CI（任意）
+
+---
+
+## Epic #38 完了サマリー
+
+Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38)（多言語 i18n/l10n）の子 Issue #117–#131 を実装。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#117](https://github.com/AutoDevJapan/PassShare/issues/117) | [production-i18n.md](./production-i18n.md) — i18n SSOT |
+| [#118](https://github.com/AutoDevJapan/PassShare/issues/118) | `ru.json` + Web/Desktop/Mobile/Extension 切替 |
+| [#119](https://github.com/AutoDevJapan/PassShare/issues/119) | Should 言語 locale（de/fr/es/zh-CN/zh-TW/ko/pt-BR） |
+| [#120](https://github.com/AutoDevJapan/PassShare/issues/120) | スクリプト別タイポグラフィ SSOT（design-system.md） |
+| [#121](https://github.com/AutoDevJapan/PassShare/issues/121) | font-stack CSS（tokens.css + locale.css） |
+| [#122](https://github.com/AutoDevJapan/PassShare/issues/122) | 行分割・オーバーフロー規約（jp-ui-contracts） |
+| [#123](https://github.com/AutoDevJapan/PassShare/issues/123) | 混合スクリプト CSS（`.ps-mixed-script`） |
+| [#124](https://github.com/AutoDevJapan/PassShare/issues/124) | Intl フォーマット（intl.ts） |
+| [#125](https://github.com/AutoDevJapan/PassShare/issues/125) | 複数形（plural.ts — ru 対応） |
+| [#126](https://github.com/AutoDevJapan/PassShare/issues/126) | `pnpm run i18n:check` + quality-gate CI |
+| [#127](https://github.com/AutoDevJapan/PassShare/issues/127) | 疑似ロケール（pseudo.ts） |
+| [#128](https://github.com/AutoDevJapan/PassShare/issues/128) | Visual Regression（Playwright per locale） |
+| [#129](https://github.com/AutoDevJapan/PassShare/issues/129) | LanguageSwitcher 統一（4 クライアント） |
+| [#130](https://github.com/AutoDevJapan/PassShare/issues/130) | Pencil 多言語検証 — **手動**（手順は production-i18n.md） |
+| [#131](https://github.com/AutoDevJapan/PassShare/issues/131) | 密度プロファイル（locale.css saas ルール） |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| ja / en / ru 全クライアント切替 | ✅ LanguageSwitcher |
+| 翻訳キー CI | ✅ `i18n:check` in quality-gate |
+| jp-ui-contracts（break-all 禁止） | ✅ components.css / desktop / extension |
+| locale 別 Visual Regression | ✅ `e2e/web/i18n-visual.spec.ts` |
+| タイポグラフィ SSOT | ✅ design-system.md + locale.css |
+
+### 後続（Epic 外）
+
+- Should 言語のネイティブ翻訳（現状 en fallback）
+- `/docs` 長文の ru ローカライズ
+- Pencil デザインファイル手動検証（#130）
+- ランディング中腹セクション（QuickStart 等）の i18n キー化
 
 ---
 

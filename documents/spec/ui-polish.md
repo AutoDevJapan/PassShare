@@ -44,10 +44,12 @@ shared/
 | 項目 | 内容 |
 |------|------|
 | デフォルト | `ja` |
-| 対応 | `en` |
+| Must | `ja`, `en`, `ru` |
+| Should | `de`, `fr`, `es`, `zh-CN`, `zh-TW`, `ko`, `pt-BR` |
 | 永続化 | `localStorage` key: `passshare.locale` |
-| 対象（MVP） | Header / Hero / Footer / Desktop AppHeader |
-| 拡張 | `shared/i18n/locales/*.json` にキー追加 |
+| SSOT | [production-i18n.md](../spec/production-i18n.md) |
+| 切替 UI | `shared/ui/LanguageSwitcher.tsx`（Web / Desktop / Mobile / Extension） |
+| 拡張 | `shared/i18n/locales/*.json` にキー追加 + `pnpm run i18n:check` |
 
 ## アクセシビリティ
 

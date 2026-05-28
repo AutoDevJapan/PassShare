@@ -39,8 +39,8 @@ apps/mobile/               — Tauri Mobile（iOS / Android）
 frontend/                  — Web ポータル (Vercel)
 backend/                   — API (Railway)
 shared/styles/             — 共通デザインシステム (Web / Desktop 共有)
-shared/i18n/               — 共通 i18n (ja / en)
-shared/ui/                 — 共通 React UI (MatrixBackground, ItemForm 等)
+shared/i18n/               — 共通 i18n (ja / en / ru + Should)
+shared/ui/                 — 共通 React UI (MatrixBackground, LanguageSwitcher, ItemForm 等)
 documents/spec/            — 仕様 SSOT
 scripts/                   — インフラセットアップ
 ```
@@ -75,6 +75,9 @@ cd backend && pnpm install && pnpm test
 
 # Web ポータル
 cd frontend && pnpm install && pnpm run build
+
+# i18n キー完全性
+pnpm run i18n:check
 
 # Web E2E（Playwright — backend + frontend dev server）
 pnpm exec playwright test

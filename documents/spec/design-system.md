@@ -68,6 +68,36 @@ shared/styles/
 | `.ps-panel` | 汎用パネル |
 | `.ps-meta` | キー・値の定義リスト |
 
+## i18n / タイポグラフィ
+
+Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) — 詳細は [production-i18n.md](./production-i18n.md)。
+
+### スクリプト別 font-stack
+
+| スクリプト | CSS 変数 | フォント例 |
+|-----------|---------|-----------|
+| Latin | `--ps-font-sans-latin` | Segoe UI, Noto Sans |
+| CJK | `--ps-font-sans-cjk` | Hiragino Sans, Noto Sans JP, PingFang SC |
+| Cyrillic | `--ps-font-sans-cyrillic` | Noto Sans, Noto Sans Cyrillic |
+
+### line-height（jp-ui-contracts）
+
+| ロケール | body line-height | 根拠 |
+|---------|-----------------|------|
+| `ja` | 1.75 (`--ps-leading-ja`) | jp-ui-contracts 1.7–2.0 |
+| `ru` | 1.55 | Cyrillic 可読性 |
+| CJK | 1.8 | 混植 CJK |
+| Latin | 1.5 | 標準 |
+
+### 行分割・オーバーフロー（MUST）
+
+- **`word-break: break-all` のグローバル適用禁止**
+- 長いトークン: `overflow-wrap: anywhere` + `word-break: normal`
+- 日本語: `word-break: keep-all`（`.ps-mixed-script`）
+- ユーティリティ: `.ps-break-word`, `.ps-truncate`
+
+実装: `shared/styles/locale.css`, `shared/styles/components.css`。
+
 ## ユーザー向け用語（MUST）
 
 UI ラベルは [MVP 仕様](./feature-passshare-mvp.md) の用語表に従う。
