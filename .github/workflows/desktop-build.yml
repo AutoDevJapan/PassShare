@@ -25,6 +25,21 @@ jobs:
       - name: Run desktop smoke tests
         run: cargo test -p passshare-desktop smoke_
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run cloud sync unit tests
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir apps/desktop install --frozen-lockfile
+          pnpm --dir apps/desktop run test
+
   build:
     needs: smoke
     strategy:

@@ -62,7 +62,11 @@ export type ItemUiLabels = {
   delete: string;
   edit: string;
   importCsv: string;
+  import1pux: string;
+  exportCsv: string;
   importSuccess: string;
+  import1puxSuccess: string;
+  exportSuccess: string;
   emptyList: string;
   lock: string;
   countSuffix: string;

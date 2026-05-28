@@ -1,31 +1,32 @@
-# Desktop クラウド同期（Should #76）
+# Desktop クラウド同期（Should #76 / Epic #35）
 
 > 最終更新: 2026-05-28  
-> 親 Epic: [#32](https://github.com/AutoDevJapan/PassShare/issues/32) / Issue [#76](https://github.com/AutoDevJapan/PassShare/issues/76)
+> ADR: [007-sync-migration-architecture.md](../adr/007-sync-migration-architecture.md)  
+> 親 Epic: [#35](https://github.com/AutoDevJapan/PassShare/issues/35) / [#32](https://github.com/AutoDevJapan/PassShare/issues/32)
 
-## 方針（ADR 003 / 004 準拠）
+## 方針
 
 - Desktop は **ローカル `.pbox` ファースト**。クラウド同期は **オプション**（設定で有効化）。
 - マスターパスワードは端末内に保持し、Connect API 認証は **Web セッション + Connect トークン**（L2）を使用する。
-- 完全な双方向マージは Epic [#35](https://github.com/AutoDevJapan/PassShare/issues/35) で詳細化。本 Issue では **競合検出 + 通知** を MVP とする。
+- 双方向同期・競合解決は [sync-migration.md](./sync-migration.md) / ADR 007 に準拠。
 
-## UI
+## UI（`CloudSyncSettings`）
 
-| 要素 | 場所 |
+| 要素 | 説明 |
 |------|------|
-| 同期有効化トグル | `CloudSyncSettings`（MainPanel） |
-| API URL / 認証 / vaultId | 同上 |
-| 競合一覧 | 「同期を確認」実行後 |
+| 同期有効化トグル | オプション同期の ON/OFF |
+| API URL / 認証 / vaultId | Connect API 接続情報 |
+| 同期を確認 | 競合検出のみ |
+| **同期を実行** | push + pull（#99） |
+| 競合解決 | ローカル優先 / クラウド優先（#103） |
+| 1PUX インポート | クラウド vault へ投入（#101） |
 
 ## 競合検出
 
-同一 `item.id` がローカルと Connect API の両方に存在し、`title` または `category` が異なる場合に競合とみなす。
+同一 `item.id` が両方に存在し、内容フィンガープリント（title / category / フィールド / tags）が異なる場合に競合。
 
 ## 受入基準
 
-- [x] ADR 003/004 に沿ったオプション同期 UI
-- [x] 競合検出時にユーザーへ通知（リスト表示）
-
-## 後続（Epic #35）
-
-- 双方向マージ / last-write-wins / 手動解決フロー
+- [x] ADR 007 に沿った双方向同期 MVP
+- [x] 競合検出 + 手動解決 UI
+- [x] 1PUX インポート（クラウド経由）

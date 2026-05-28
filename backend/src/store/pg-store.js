@@ -79,7 +79,17 @@ export function createPgStore(pool) {
 
     async createItem(vaultId, body) {
       await requireVault(vaultId);
-      const id = generateConnectId();
+      const requestedId = typeof body.id === "string" && isValidConnectId(body.id) ? body.id : null;
+      if (requestedId) {
+        const existing = await pool.query(
+          `SELECT id FROM connect_items WHERE id = $1 LIMIT 1`,
+          [requestedId],
+        );
+        if (existing.rowCount > 0) {
+          throw new Error("PS010: Item already exists");
+        }
+      }
+      const id = requestedId ?? generateConnectId();
       const now = nowIso();
       const document = {
         ...body,

@@ -75,6 +75,31 @@ export async function importOnepasswordCsv(csvData: string, masterPassword: stri
   return invoke("import_onepassword_csv", { csvData, masterPassword });
 }
 
+export async function exportOnepasswordCsv(): Promise<string> {
+  return invoke("export_onepassword_csv");
+}
+
+export async function upsertSyncItem(input: {
+  id: string;
+  values: ItemFormValues;
+  masterPassword: string;
+}): Promise<ConnectItem> {
+  const { id, values, masterPassword } = input;
+  return invoke("upsert_sync_item", {
+    id,
+    category: values.category,
+    title: values.title,
+    password: values.password || null,
+    url: values.url || null,
+    username: values.username || null,
+    notes: values.notes || null,
+    body: values.body || null,
+    tags: parseTagsInput(values.tags),
+    favorite: values.favorite,
+    masterPassword,
+  });
+}
+
 export async function generatePassword(length = 16): Promise<string> {
   return invoke("generate_password", { length });
 }

@@ -14,6 +14,7 @@ use crate::domain::payload::{deserialize_payload, PasswordBoxPayload};
 use crate::domain::vault::Vault;
 use crate::error::PassShareError;
 use crate::generator::{generate_password, PasswordGeneratorOptions};
+use crate::export::export_onepassword_csv;
 use crate::import::import_onepassword_csv;
 use crate::storage::file_format::{KdfParams, PasswordBoxFile, StoredCipher};
 
@@ -184,6 +185,27 @@ impl PasswordBox {
         Ok(count)
     }
 
+    pub fn export_onepassword_csv(&self) -> Result<String, PassShareError> {
+        self.ensure_unlocked()?;
+        Ok(export_onepassword_csv(&self.payload.items))
+    }
+
+    pub fn upsert_sync_item(&mut self, item: Item) -> Result<(), PassShareError> {
+        self.ensure_unlocked()?;
+        if let Some(pos) = self
+            .payload
+            .items
+            .iter()
+            .position(|existing| existing.id == item.id)
+        {
+            self.payload.items[pos] = item;
+        } else {
+            self.payload.items.push(item);
+        }
+        self.payload.sync_vault_item_count();
+        Ok(())
+    }
+
     pub fn save(&mut self, master_password: &str) -> Result<(), PassShareError> {
         self.ensure_unlocked()?;
         let salt = self.salt.ok_or(PassShareError::CorruptFile)?;
@@ -333,5 +355,34 @@ mod tests {
             pb.delete_item("abcdefghijklmnopqrstuvwxyz"),
             Err(PassShareError::ItemNotFound)
         );
+    }
+
+    #[test]
+    fn export_csv_contains_items() {
+        let file = NamedTempFile::new().unwrap();
+        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let vault_id = pb.vault().unwrap().id.clone();
+        let item = Item::new_login(vault_id, "Export Me", "secret").unwrap();
+        pb.add_item(item).unwrap();
+        let csv = pb.export_onepassword_csv().unwrap();
+        assert!(csv.contains("Export Me"));
+        assert!(csv.contains("secret"));
+    }
+
+    #[test]
+    fn upsert_sync_item_updates_existing() {
+        let file = NamedTempFile::new().unwrap();
+        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let vault_id = pb.vault().unwrap().id.clone();
+        let item = Item::new_login(vault_id.clone(), "Original", "secret").unwrap();
+        let id = item.id.clone();
+        pb.add_item(item).unwrap();
+
+        let mut updated = Item::new_login(vault_id, "Updated", "secret").unwrap();
+        updated.id = id.clone();
+        pb.upsert_sync_item(updated).unwrap();
+
+        let stored = pb.get_item(id.to_string().as_str()).unwrap();
+        assert_eq!(stored.title, "Updated");
     }
 }
