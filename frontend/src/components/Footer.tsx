@@ -1,9 +1,11 @@
+import { Link } from "react-router-dom";
 import { useI18n } from "../../../shared/i18n/I18nProvider";
 import type { MessageKey } from "../../../shared/i18n/index";
 
 type FooterLink = {
   labelKey: MessageKey;
   href: string;
+  internal?: boolean;
 };
 
 type FooterColumn = {
@@ -23,17 +25,17 @@ const FOOTER_COLUMNS: FooterColumn[] = [
   {
     titleKey: "footer.resources",
     links: [
-      { labelKey: "footer.documentation", href: "#docs" },
-      { labelKey: "footer.support", href: "#" },
-      { labelKey: "footer.faq", href: "#" },
+      { labelKey: "footer.documentation", href: "/docs", internal: true },
+      { labelKey: "footer.support", href: "/faq", internal: true },
+      { labelKey: "footer.faq", href: "/faq", internal: true },
     ],
   },
   {
     titleKey: "footer.legal",
     links: [
-      { labelKey: "footer.terms", href: "#" },
-      { labelKey: "footer.privacy", href: "#" },
-      { labelKey: "footer.license", href: "#" },
+      { labelKey: "footer.terms", href: "/terms", internal: true },
+      { labelKey: "footer.privacy", href: "/privacy", internal: true },
+      { labelKey: "footer.license", href: "https://github.com/AutoDevJapan/PassShare" },
     ],
   },
 ];
@@ -47,7 +49,7 @@ export function Footer() {
   const { t } = useI18n();
 
   return (
-    <footer className="landing-footer" id="docs">
+    <footer className="landing-footer">
       <div className="landing-footer__inner">
         <div className="landing-footer__grid">
           {FOOTER_COLUMNS.map((column) => (
@@ -56,7 +58,13 @@ export function Footer() {
               <ul className="landing-footer__links">
                 {column.links.map((link) => (
                   <li key={link.labelKey}>
-                    <a href={link.href}>{t(link.labelKey)}</a>
+                    {link.internal ? (
+                      <Link to={link.href}>{t(link.labelKey)}</Link>
+                    ) : (
+                      <a href={link.href} target={link.href.startsWith("http") ? "_blank" : undefined} rel="noreferrer">
+                        {t(link.labelKey)}
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>

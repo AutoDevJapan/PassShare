@@ -24,7 +24,7 @@ export function Hero() {
           <a className="ps-button ps-button--primary" href="#download">
             {t("hero.cta.download")}
           </a>
-          <a className="ps-button ps-button--secondary" href="#docs">
+          <a className="ps-button ps-button--secondary" href="/docs">
             {t("hero.cta.docs")}
           </a>
         </div>

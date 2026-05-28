@@ -9,7 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Unified quality gate CI workflow (Rust Docker, backend, Web E2E, Desktop/Mobile/Extension smoke)
+- Web documentation hub (`/docs`) with user guide, extension install, FAQ, terms, and privacy pages
+- Legal documents (draft) with footer links and legal review table
+- Operations runbook for incidents and DB backup verification
+- Developer SDK documentation and expanded Connect SDK READMEs
 - Docker E2E: PostgreSQL + Connect API integration tests
 - Staging acceptance checklist and smoke script
 - Production release runbook (promote / rollback / hotfix)

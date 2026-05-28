@@ -13,7 +13,7 @@ export function GetStartedSection() {
           <a className="ps-button ps-button--primary" href="#download">
             Free Download
           </a>
-          <a className="ps-button ps-button--secondary" href="#docs">
+          <a className="ps-button ps-button--secondary" href="/docs">
             View Documentation
           </a>
         </div>

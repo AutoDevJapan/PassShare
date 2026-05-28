@@ -60,6 +60,10 @@ node scripts/bench/run.mjs
 # ステージング smoke
 node scripts/stg-smoke.mjs
 
+# Web ドキュメント（ローカル）
+cd frontend && pnpm run dev
+# /docs, /terms, /privacy, /faq
+
 # op CLI ビルド（ローカル）
 cargo build -p op-cli --release
 
@@ -108,7 +112,8 @@ ADR: `documents/adr/003-multi-client-architecture.md`, `documents/adr/004-auth-a
 Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/mobile-ui.md`, `documents/spec/extension-ui.md`, `documents/spec/ui-polish.md`
 Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
 Infra: `documents/spec/infrastructure.md`, `documents/spec/release-versioning.md`, `documents/spec/performance-benchmarks.md`
-Runbooks: `documents/runbooks/production-release.md`, `documents/runbooks/staging-acceptance.md`
+Runbooks: `documents/runbooks/production-release.md`, `documents/runbooks/staging-acceptance.md`, `documents/runbooks/operations.md`
+Guides: `documents/guides/`, `documents/legal/`
 
 <!-- GoDD:start -->
 ### GoDD stack snapshot
