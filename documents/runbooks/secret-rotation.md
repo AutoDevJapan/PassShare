@@ -175,6 +175,38 @@ curl -sS -H "Authorization: Bearer $TOKEN" "$BASE/v1/vaults"
 
 ---
 
+## 全環境 OP_CONNECT 設定（Issue #59）
+
+`OP_CONNECT_HOST` はクライアント向け Backend URL。`OP_CONNECT_TOKEN` は **local / dev / preview / stg** のレガシー Bearer（`prd` では per-user トークンのみ）。
+
+| 環境 | `OP_CONNECT_HOST` | `OP_CONNECT_TOKEN` | Smoke |
+|------|-------------------|--------------------|-------|
+| prd | https://pass-share-backend-production.up.railway.app | 未使用（per-user） | `/health` + Web ログイン → Connect |
+| stg | https://pass-share-backend-staging.up.railway.app | Railway Variables | `/v1/vaults` 200 |
+| preview | https://pass-share-backend-preview.up.railway.app | Railway Variables | 同上 |
+| dev | https://pass-share-backend-development.up.railway.app | Railway Variables | 同上 |
+| local | `http://127.0.0.1:3000` | `.env` または shell export | 同上 |
+
+### 一括 Smoke（PowerShell）
+
+```powershell
+$envs = @{
+  stg = "https://pass-share-backend-staging.up.railway.app"
+  preview = "https://pass-share-backend-preview.up.railway.app"
+  dev = "https://pass-share-backend-development.up.railway.app"
+}
+foreach ($name in $envs.Keys) {
+  $base = $envs[$name]
+  Write-Host "=== $name ==="
+  curl -sS "$base/health" | ConvertFrom-Json | Select-Object status, environment
+  curl -sS "$base/metrics" | ConvertFrom-Json | Select-Object database, uptimeSeconds
+}
+```
+
+`OP_CONNECT_TOKEN` 付き Connect smoke は環境ごとの Railway Variables から取得し、[ローテーション後 Smoke 手順](#ローテーション後-smoke-手順) を実行する。
+
+---
+
 ## 受入基準 (Issue #47)
 
 ```gherkin

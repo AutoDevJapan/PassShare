@@ -53,7 +53,13 @@ docker compose -f docker/docker-compose.test.yml run --rm test
 cargo build -p op-cli --release
 
 # Connect SDK（TypeScript）
-cd packages/connect-js && npm install && npm test
+cd packages/connect-js && pnpm install && pnpm test
+
+# Backend API（Connect / Auth）
+cd backend && pnpm install && pnpm test
+
+# OpenAPI → SDK 型生成
+cd backend && pnpm run generate:types
 
 # ローカル（開発時のみ）
 cargo test -p passshare-core
