@@ -1,35 +1,28 @@
-export type Vault = {
-  id: string;
-  name: string;
-  description?: string;
-  type: string;
-  items: number;
-  createdAt: string;
-  updatedAt: string;
-  contentVersion?: number;
-  attributeVersion?: number;
-};
+import {
+  CONNECT_API_VERSION,
+  CONNECT_ITEM_CATEGORIES,
+  CONNECT_OPENAPI_PATHS,
+  CONNECT_OPERATION_IDS,
+  PASSSHARE_EXTENSION_PATHS,
+} from "./generated/connect-api.js";
 
-export type ItemOverview = {
-  id: string;
-  title: string;
-  version: number;
-  vault: { id: string };
-  category: string;
-  createdAt?: string;
-  updatedAt?: string;
-  tags?: string[];
-};
+export type {
+  ConnectErrorResponse,
+  ConnectOpenApiPath,
+  ConnectOperationId,
+  FileMeta,
+  Item,
+  ItemCategory,
+  ItemOverview,
+  Vault,
+} from "./generated/connect-api.js";
 
-export type Item = ItemOverview & {
-  fields?: Array<{
-    id?: string;
-    label: string;
-    type: string;
-    purpose?: string;
-    value: string;
-  }>;
-  urls?: Array<{ href: string; primary?: boolean; label?: string }>;
+export {
+  CONNECT_API_VERSION,
+  CONNECT_ITEM_CATEGORIES,
+  CONNECT_OPENAPI_PATHS,
+  CONNECT_OPERATION_IDS,
+  PASSSHARE_EXTENSION_PATHS,
 };
 
 export type ConnectClientOptions = {
@@ -43,3 +36,6 @@ export type JsonPatchOperation = {
   value?: unknown;
   from?: string;
 };
+
+/** Alias for SDK consumers. */
+export const ITEM_CATEGORIES = CONNECT_ITEM_CATEGORIES;
