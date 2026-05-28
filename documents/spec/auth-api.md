@@ -161,6 +161,26 @@ Token is stored hashed in `connect_tokens`. Plaintext is returned once. `/v1` mi
 
 **Legacy (local/dev/stg only):** `OP_CONNECT_TOKEN` remains as a deprecated fallback for CLI/SDK migration. Disabled in `prd`.
 
+### POST `/vaults`
+
+Create an additional password box for the authenticated user.
+
+**Auth:** session cookie + CSRF
+
+**Request**
+
+```json
+{ "name": "Work" }
+```
+
+**Response `201`**
+
+```json
+{ "vaultId": "abcdefghijklmnopqrstuvwxyz", "name": "Work" }
+```
+
+Creates `connect_vaults` row and `vault_memberships` (`owner`).
+
 ## Session Cookie
 
 | Attribute | Value |

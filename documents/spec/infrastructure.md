@@ -67,6 +67,10 @@ CLI の Preview 向け `vercel env add` はブランチ指定を要求するた�
 
 スクリプト: `scripts/sync-vercel-env.mjs`（`VERCEL_TOKEN` 必須、`upsert=true` + `gitBranch: null` で全 Preview ブランチにも対応）
 
+### Vercel ビルド（monorepo）
+
+Root Directory は `frontend`。`@passshare/connect`（`file:../packages/connect-js`）を解決するため、`frontend/vercel.json` の `installCommand` で connect-js を先に install + build してから frontend を install する。
+
 ### セキュリティ監査（CI）
 
 | トリガー | ワークフロー | 動作 |
@@ -80,6 +84,12 @@ CLI の Preview 向け `vercel env add` はブランチ指定を要求するた�
 | PR / main push | `backend-test.yml` | pnpm test + migrate:verify + Connect 型 drift チェック |
 
 SSOT: [audit-checklist.md](../security/audit-checklist.md), [connect-api-gap-analysis.md](./connect-api-gap-analysis.md)
+
+### Frontend E2E（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `frontend-e2e.yml` | Playwright signup → CRUD → logout + frontend build |
 
 ## Railway 構成
 

@@ -58,6 +58,12 @@ cd packages/connect-js && pnpm install && pnpm test
 # Backend API（Connect / Auth）
 cd backend && pnpm install && pnpm test
 
+# Web ポータル
+cd frontend && pnpm install && pnpm run build
+
+# Web E2E（Playwright — backend + frontend dev server）
+pnpm exec playwright test
+
 # OpenAPI → SDK 型生成
 cd backend && pnpm run generate:types
 

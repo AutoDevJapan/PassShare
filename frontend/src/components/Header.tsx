@@ -1,17 +1,19 @@
 import { useCallback, useState } from "react";
 import { useI18n } from "../../../shared/i18n/I18nProvider";
 import { isApplePlatform, useSearchShortcut } from "../hooks/useSearchShortcut";
+import { SearchDialog } from "./SearchDialog";
 import { SessionControls } from "./SessionControls";
 
 type NavItem = {
   id: string;
-  labelKey: "header.nav.home" | "header.nav.download" | "header.nav.docs";
+  labelKey: "header.nav.home" | "header.nav.download" | "header.nav.docs" | "header.nav.app";
   href: string;
   active?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
   { id: "home", labelKey: "header.nav.home", href: "#", active: true },
+  { id: "app", labelKey: "header.nav.app", href: "/app/vaults" },
   { id: "download", labelKey: "header.nav.download", href: "#download" },
   { id: "docs", labelKey: "header.nav.docs", href: "#docs" },
 ];

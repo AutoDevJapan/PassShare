@@ -129,6 +129,21 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
     }
   });
 
+  router.post("/vaults", sessionGuard, requireCsrf, async (req, res) => {
+    try {
+      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      if (!name) {
+        throw authHttpError(400, "PS023", "Password box name is required");
+      }
+      const vaultId = generateConnectId();
+      await connectStore.createVault({ id: vaultId, name });
+      await authStore.addVaultMembership(req.auth.userId, vaultId, "owner");
+      res.status(201).json({ vaultId, name });
+    } catch (error) {
+      sendAuthError(res, error);
+    }
+  });
+
   router.use((err, _req, res, _next) => {
     sendAuthError(res, err);
   });

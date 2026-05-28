@@ -164,7 +164,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 | v2.0 SSOT / ADR | [#28](https://github.com/AutoDevJapan/PassShare/issues/28) ✅ | #39–#41 | 本 SSOT + [ADR 003](../adr/003-multi-client-architecture.md) + [ADR 004](../adr/004-auth-authorization-model.md) Accepted |
 | 認証・セキュリティ | [#29](https://github.com/AutoDevJapan/PassShare/issues/29) ✅ | #42–#50 | 多ユーザー認可 + セッション + クリップボード / 監査 |
 | Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) ✅ | #51–#59 | OpenAPI Must ギャップ 0 |
-| Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) | #60–#69 | 320px レスポンシブ + E2E |
+| Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) ✅ | #60–#69 | 320px レスポンシブ + E2E |
 | Desktop 本番化 | [#32](https://github.com/AutoDevJapan/PassShare/issues/32) | #70–#77 | 署名 + 自動更新 |
 | スマホアプリ | [#33](https://github.com/AutoDevJapan/PassShare/issues/33) | #78–#86 | ストア提出 |
 | ブラウザ拡張 | [#34](https://github.com/AutoDevJapan/PassShare/issues/34) | #87–#97 | 4 ブラウザ + オートフィル |
@@ -266,7 +266,6 @@ Epic [#29](https://github.com/AutoDevJapan/PassShare/issues/29)（認証・セ�
 ### 後続（Epic 外）
 
 - Mobile 生体認証 E2E: Epic [#33](https://github.com/AutoDevJapan/PassShare/issues/33) scaffold 後
-- Web Signup UI / セッション refresh: Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)
 
 ---
 
@@ -293,6 +292,37 @@ Epic [#30](https://github.com/AutoDevJapan/PassShare/issues/30)（Connect API �
 | OpenAPI Must ギャップ 0 | ✅ [gap analysis](./connect-api-gap-analysis.md) |
 | 全環境 Connect トークン Runbook | ✅ [secret-rotation.md](../runbooks/secret-rotation.md) § OP_CONNECT |
 | backend 統合テスト CI | ✅ `backend-test.yml`（pnpm） |
+
+---
+
+## Epic #31 完了サマリー
+
+Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)（Web アプリ完全版）の子 Issue #60–#69 を main にマージ。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#60](https://github.com/AutoDevJapan/PassShare/issues/60) | React Router — `/` ランディング + `/app/*` 管理 UI |
+| [#61](https://github.com/AutoDevJapan/PassShare/issues/61) | ログイン / 登録 / リセット案内 UI |
+| [#62](https://github.com/AutoDevJapan/PassShare/issues/62) | パスワードボックス一覧・作成（`POST /api/auth/vaults`） |
+| [#63](https://github.com/AutoDevJapan/PassShare/issues/63) | `shared/ui` ItemForm + ConnectItemList + Connect CRUD |
+| [#64](https://github.com/AutoDevJapan/PassShare/issues/64) | 320–1440px レスポンシブ（`app-layout.css`） |
+| [#65](https://github.com/AutoDevJapan/PassShare/issues/65) | ボトムナビ + 44px タップターゲット |
+| [#66](https://github.com/AutoDevJapan/PassShare/issues/66) | 1Password CSV インポート UI |
+| [#67](https://github.com/AutoDevJapan/PassShare/issues/67) | `manifest.webmanifest` + PWA メタ |
+| [#68](https://github.com/AutoDevJapan/PassShare/issues/68) | Playwright E2E + `frontend-e2e.yml` |
+| [#69](https://github.com/AutoDevJapan/PassShare/issues/69) | A11y ラベル + Lighthouse 手順（CI build gate） |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| 320px〜1440px UI 崩れなし | ✅ レスポンシブ CSS + E2E |
+| Connect CRUD E2E pass | ✅ `e2e/web/auth-crud.spec.ts` |
+
+### 後続（Epic 外）
+
+- メールパスワードリセット API: 法務・メール基盤（Epic [#37](https://github.com/AutoDevJapan/PassShare/issues/37)）後
+- Service Worker オフライン閲覧: P2 拡張
 
 ---
 
