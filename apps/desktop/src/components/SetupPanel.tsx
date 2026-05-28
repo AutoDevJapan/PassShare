@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPasswordBox, openPasswordBox } from "../tauri";
 import { formatTauriError } from "../errors";
+import { hasBiometricUnlock, isBiometricAvailable, unlockWithBiometric } from "../biometric-unlock";
 import { RecoveryKitPanel } from "./RecoveryKitPanel";
 import { StatusMessage } from "./StatusMessage";
 
@@ -23,6 +24,35 @@ export function SetupPanel({
   const [messageVariant, setMessageVariant] = useState<"info" | "error" | "success">("info");
   const [busy, setBusy] = useState(false);
   const [recoverySecret, setRecoverySecret] = useState<string | null>(null);
+  const [biometricReady, setBiometricReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBiometricState() {
+      if (!boxPath.trim()) {
+        if (!cancelled) {
+          setBiometricReady(false);
+        }
+        return;
+      }
+
+      const [available, enabled] = await Promise.all([
+        isBiometricAvailable(),
+        hasBiometricUnlock(boxPath),
+      ]);
+
+      if (!cancelled) {
+        setBiometricReady(available && enabled);
+      }
+    }
+
+    void loadBiometricState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [boxPath]);
 
   function showMessage(text: string, variant: "info" | "error" | "success" = "info") {
     setMessage(text);
@@ -52,6 +82,27 @@ export function SetupPanel({
         return;
       }
       showMessage("パスワードボックスを作成しました。", "success");
+      onUnlocked();
+    } catch (err) {
+      showMessage(formatTauriError(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBiometricOpen() {
+    if (!boxPath.trim()) {
+      showMessage("ファイルの場所を入力してください。", "error");
+      return;
+    }
+
+    setBusy(true);
+    clearMessage();
+    try {
+      const password = await unlockWithBiometric(boxPath.trim());
+      onMasterPasswordChange(password);
+      await openPasswordBox(boxPath.trim(), password);
+      showMessage("生体認証でパスワードボックスを開きました。", "success");
       onUnlocked();
     } catch (err) {
       showMessage(formatTauriError(err), "error");
@@ -129,6 +180,16 @@ export function SetupPanel({
       </label>
 
       <div className="ps-actions">
+        {biometricReady ? (
+          <button
+            type="button"
+            className="ps-button ps-button--primary"
+            onClick={() => void handleBiometricOpen()}
+            disabled={busy}
+          >
+            生体認証で開く
+          </button>
+        ) : null}
         <button
           type="button"
           className="ps-button ps-button--primary"
