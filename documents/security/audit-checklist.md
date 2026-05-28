@@ -14,9 +14,10 @@ PassShare v2.0 本番公開前に、OWASP Top 10・依存関係脆弱性・ペ�
 |------|---------------------|------|
 | Rust 依存関係 | `cargo audit` | PR / main push |
 | npm 依存関係 | `npm audit --audit-level=high` | PR / main push（backend, frontend, desktop, connect-js） |
-| Dependabot | `.github/dependabot.yml` | 日次 / 週次 |
+| Dependabot | `.github/dependabot.yml` | 日次 (npm) / 週次 (cargo, actions) |
 
-Workflow: `.github/workflows/security-audit.yml`
+Workflow: `.github/workflows/security-audit.yml`  
+SLA: [vulnerability-sla.md](./vulnerability-sla.md)
 
 ## OWASP Top 10 (2021) — PassShare マッピング
 

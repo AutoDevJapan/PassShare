@@ -76,6 +76,35 @@ Root Directory は `frontend`。`@passshare/connect`（`file:../packages/connect
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
 | PR / main push | `security-audit.yml` | `cargo audit` + 各パッケージ `pnpm audit --audit-level=high`（pnpm-lock がある場合） |
+| PR / main push | `quality-gate.yml` | 上記 + 統合ゲート（job `security`） |
+
+SSOT: [vulnerability-sla.md](../security/vulnerability-sla.md), [audit-checklist.md](../security/audit-checklist.md)
+
+### 統合 Quality Gate（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `quality-gate.yml` | Rust Docker + Docker E2E (PG) + Backend + Connect SDK + Web E2E + Extension + Desktop/Mobile smoke + Security + Benchmark → job `gate` |
+
+個別ワークフロー（`backend-test.yml`, `frontend-e2e.yml`, `desktop-build.yml` 等）は引き続き並行実行。Quality Gate が Epic #36 の完了条件 SSOT。
+
+### Docker E2E（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `quality-gate.yml` | `docker compose run backend-e2e` — PostgreSQL + Connect API 統合 |
+
+```bash
+docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
+```
+
+### ステージング smoke
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| 手動 | `stg-smoke.yml` | `scripts/stg-smoke.mjs` — stg Backend health + Connect |
+
+SSOT: [staging-acceptance.md](../runbooks/staging-acceptance.md)
 
 ### Backend テスト（CI）
 

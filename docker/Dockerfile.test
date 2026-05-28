@@ -5,8 +5,13 @@ WORKDIR /app
 # Cache dependencies
 COPY Cargo.toml Cargo.lock* ./
 COPY crates/passshare-core/Cargo.toml crates/passshare-core/Cargo.toml
-RUN mkdir -p crates/passshare-core/src && echo "fn main(){}" > crates/passshare-core/src/lib.rs
-RUN cargo fetch -p passshare-core 2>/dev/null || true
+COPY crates/passshare-connect/Cargo.toml crates/passshare-connect/Cargo.toml
+COPY crates/op-cli/Cargo.toml crates/op-cli/Cargo.toml
+RUN mkdir -p crates/passshare-core/src crates/passshare-connect/src crates/op-cli/src \
+    && echo "fn main(){}" > crates/passshare-core/src/lib.rs \
+    && echo "fn main(){}" > crates/passshare-connect/src/lib.rs \
+    && echo "fn main(){}" > crates/op-cli/src/main.rs
+RUN cargo fetch 2>/dev/null || true
 
 COPY . .
 

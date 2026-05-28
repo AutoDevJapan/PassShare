@@ -446,6 +446,40 @@ Epic [#35](https://github.com/AutoDevJapan/PassShare/issues/35)（同期・共�
 
 ---
 
+## Epic #36 完了サマリー
+
+Epic [#36](https://github.com/AutoDevJapan/PassShare/issues/36)（品質・CI/CD・リリース）の子 Issue #104–#110 を実装。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#104](https://github.com/AutoDevJapan/PassShare/issues/104) | `quality-gate.yml` — Rust + Node + Web + Extension + Desktop/Mobile 統合 CI |
+| [#105](https://github.com/AutoDevJapan/PassShare/issues/105) | Docker E2E — PostgreSQL + Connect API (`backend-e2e`) |
+| [#106](https://github.com/AutoDevJapan/PassShare/issues/106) | [staging-acceptance.md](../runbooks/staging-acceptance.md) + `stg-smoke.yml` |
+| [#107](https://github.com/AutoDevJapan/PassShare/issues/107) | [production-release.md](../runbooks/production-release.md) |
+| [#108](https://github.com/AutoDevJapan/PassShare/issues/108) | `.github/dependabot.yml` + [vulnerability-sla.md](../security/vulnerability-sla.md) |
+| [#109](https://github.com/AutoDevJapan/PassShare/issues/109) | [performance-benchmarks.md](./performance-benchmarks.md) + `scripts/bench/run.mjs` |
+| [#110](https://github.com/AutoDevJapan/PassShare/issues/110) | [CHANGELOG.md](../../CHANGELOG.md) + [release-versioning.md](./release-versioning.md) |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| main PR で Quality Gate 全 job green | ✅ `quality-gate.yml` |
+| Docker E2E 拡充 | ✅ `pg-integration.test.js` |
+| stg 受入チェックリスト | ✅ runbook + smoke script |
+| 本番 Runbook | ✅ promote / rollback / hotfix |
+| Dependabot + SLA | ✅ |
+| ベンチマーク CI | ✅ KDF + API p95 |
+| CHANGELOG / SemVer | ✅ |
+
+### 後続（Epic 外）
+
+- stg smoke の定期実行 — `STG_OP_CONNECT_TOKEN` Secret 設定後 `workflow_dispatch`
+- Web Lighthouse CI — [#69](https://github.com/AutoDevJapan/PassShare/issues/69)
+- 本番リリース演習の実地実施 — [production-release.md](../runbooks/production-release.md)
+
+---
+
 ## 関連
 
 - [MVP 機能仕様](./feature-passshare-mvp.md)

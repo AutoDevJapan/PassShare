@@ -106,4 +106,16 @@ mod tests {
             Err(PassShareError::InvalidMasterPassword)
         );
     }
+
+    #[test]
+    fn kdf_reference_timing() {
+        use std::time::Instant;
+        let salt = generate_salt().unwrap();
+        let start = Instant::now();
+        let _key = derive_master_key("benchmark-password", &salt).unwrap();
+        let ms = start.elapsed().as_millis();
+        println!("KDF_MS={ms}");
+        assert!(ms > 0);
+        assert!(ms < 5000, "KDF took {ms}ms, exceeds 5000ms ceiling");
+    }
 }

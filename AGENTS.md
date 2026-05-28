@@ -51,6 +51,15 @@ scripts/                   — インフラセットアップ
 # テスト（Docker — passshare-core + Connect SDK + op CLI）
 docker compose -f docker/docker-compose.test.yml run --rm test
 
+# Docker E2E（PostgreSQL + Connect API）
+docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
+
+# パフォーマンスベンチマーク
+node scripts/bench/run.mjs
+
+# ステージング smoke
+node scripts/stg-smoke.mjs
+
 # op CLI ビルド（ローカル）
 cargo build -p op-cli --release
 
@@ -98,7 +107,8 @@ Spec: `documents/spec/feature-passshare-mvp.md`, `documents/spec/production-v2.m
 ADR: `documents/adr/003-multi-client-architecture.md`, `documents/adr/004-auth-authorization-model.md`, `documents/adr/005-mobile-platform-tauri.md`, `documents/adr/006-browser-extension-mv3.md`
 Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/mobile-ui.md`, `documents/spec/extension-ui.md`, `documents/spec/ui-polish.md`
 Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
-Infra: `documents/spec/infrastructure.md`
+Infra: `documents/spec/infrastructure.md`, `documents/spec/release-versioning.md`, `documents/spec/performance-benchmarks.md`
+Runbooks: `documents/runbooks/production-release.md`, `documents/runbooks/staging-acceptance.md`
 
 <!-- GoDD:start -->
 ### GoDD stack snapshot
