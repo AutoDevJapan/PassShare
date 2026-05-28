@@ -1,0 +1,325 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-docker:
+    name: Rust (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Rust tests in Docker
+        run: docker compose -f docker/docker-compose.test.yml run --rm --build test
+
+  docker-e2e:
+    name: Docker E2E (API + PostgreSQL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run PostgreSQL integration tests
+        run: docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify DB migration script
+        working-directory: backend
+        run: pnpm run migrate:verify
+
+      - name: Run backend tests
+        working-directory: backend
+        run: pnpm test
+
+  connect-types:
+    name: Connect API types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Connect API types
+        working-directory: backend
+        run: pnpm run generate:types
+
+      - name: Fail on generated type drift
+        run: git diff --exit-code packages/connect-js/src/generated/connect-api.ts
+
+  connect-js:
+    name: Connect SDK (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: packages/connect-js/pnpm-lock.yaml
+
+      - name: Install connect-js dependencies
+        working-directory: packages/connect-js
+        run: pnpm install --frozen-lockfile
+
+      - name: Run connect-js tests
+        working-directory: packages/connect-js
+        run: pnpm test
+
+  frontend:
+    name: Web (Playwright + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            backend/pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+            packages/connect-js/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir backend install --frozen-lockfile
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir frontend install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Run Playwright E2E
+        env:
+          CI: "true"
+        run: pnpm exec playwright test
+
+      - name: Build frontend
+        run: pnpm --dir frontend run build
+
+  extension:
+    name: Extension (unit + E2E smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            packages/extension/pnpm-lock.yaml
+            packages/connect-js/pnpm-lock.yaml
+            backend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir packages/extension install --frozen-lockfile
+          pnpm --dir backend install --frozen-lockfile
+          pnpm install --frozen-lockfile
+
+      - name: Run extension unit tests
+        run: pnpm --dir packages/extension test
+
+      - name: Build extension
+        run: pnpm --dir packages/extension run build
+
+      - name: Run extension auth API tests
+        working-directory: backend
+        run: node --test test/extension-auth.test.js
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Run extension E2E smoke
+        env:
+          PLAYWRIGHT_SKIP_WEBSERVER: "true"
+          USE_XVFB: "1"
+        run: xvfb-run -a pnpm exec playwright test -c playwright.extension.config.ts
+
+  desktop-smoke:
+    name: Desktop smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Run desktop smoke tests
+        run: cargo test -p passshare-desktop smoke_
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run cloud sync unit tests
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir apps/desktop install --frozen-lockfile
+          pnpm --dir apps/desktop run test
+
+  mobile-smoke:
+    name: Mobile smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run mobile smoke tests
+        run: cargo test -p passshare-mobile smoke_
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            apps/mobile/pnpm-lock.yaml
+            packages/connect-js/pnpm-lock.yaml
+            backend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir apps/mobile install --frozen-lockfile
+          pnpm --dir backend install --frozen-lockfile
+
+      - name: Build mobile frontend
+        run: pnpm --dir apps/mobile run build
+
+      - name: Run mobile auth API tests
+        working-directory: backend
+        run: node --test test/mobile-auth.test.js
+
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo-audit
+        run: cargo audit
+
+  benchmark:
+    name: Performance benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Run benchmark suite
+        run: node scripts/bench/run.mjs
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: bench-results.json
+          if-no-files-found: error
+
+  gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    needs:
+      - rust-docker
+      - docker-e2e
+      - backend
+      - connect-types
+      - connect-js
+      - frontend
+      - extension
+      - desktop-smoke
+      - mobile-smoke
+      - security
+      - benchmark
+    steps:
+      - name: All quality checks passed
+        run: echo "Quality gate green"
