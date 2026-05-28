@@ -88,6 +88,8 @@ export function ItemForm({
             <span className="ps-inline">
               <input
                 className="ps-input"
+                type="password"
+                autoComplete="new-password"
                 required={values.category !== "LOGIN" || mode === "create"}
                 value={values.password}
                 onChange={(event) => updateField("password", event.target.value)}
