@@ -213,6 +213,73 @@ paths:
               schema:
                 type: string
                 format: binary
+    post:
+      summary: Upload file attachment (PassShare extension)
+      operationId: createFile
+      tags: [Files]
+      x-passshare-priority: Must
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created file metadata
+    delete:
+      summary: Delete file attachment (PassShare extension)
+      operationId: deleteFile
+      tags: [Files]
+      x-passshare-priority: Must
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: itemUuid
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: fileUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+  /vaults/{vaultUuid}/imports/1pux:
+    post:
+      summary: Import items from 1Password 1PUX export (PassShare extension)
+      operationId: import1pux
+      tags: [Imports]
+      x-passshare-priority: Should
+      parameters:
+        - name: vaultUuid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Imported items summary
+
+x-passshare-health:
+  paths:
+    - path: /health
+      description: Liveness probe (Railway healthcheckPath)
+    - path: /health/db
+      description: Database connectivity probe
+    - path: /metrics
+      description: JSON metrics for monitoring dashboards
 
 x-passshare-implementation:
   backend: backend/src/connect/

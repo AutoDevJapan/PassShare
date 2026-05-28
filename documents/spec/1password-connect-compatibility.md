@@ -187,6 +187,8 @@ Railway `pass-share-backend` が Connect Server 互換 API を提供（[infrastr
 | PS014 | ファイル未検出 |
 | PS015 | PATCH Content-Type 不正 |
 | PS016 | パスワードボックスへのアクセス拒否（403） |
+| PS017 | 1PUX インポート不正 |
+| PS018 | Item category 不正 |
 
 ---
 

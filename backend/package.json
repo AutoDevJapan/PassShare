@@ -6,12 +6,19 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/**/*.test.js"
+    "test": "node --test test/**/*.test.js",
+    "generate:types": "node scripts/generate-connect-types.mjs",
+    "migrate:verify": "node scripts/verify-schema.mjs"
   },
   "dependencies": {
     "argon2": "^0.41.1",
     "express": "^5.1.0",
     "fast-json-patch": "^3.1.1",
-    "pg": "^8.16.0"
-  }
+    "pg": "^8.16.0",
+    "unzipper": "^0.12.3"
+  },
+  "devDependencies": {
+    "yaml": "^2.8.0"
+  },
+  "packageManager": "pnpm@10.11.0"
 }

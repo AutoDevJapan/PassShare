@@ -1,0 +1,87 @@
+name: Backend Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: backend-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify DB migration script
+        working-directory: backend
+        run: pnpm run migrate:verify
+
+      - name: Run backend tests
+        working-directory: backend
+        run: pnpm test
+
+  connect-types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Connect API types
+        working-directory: backend
+        run: pnpm run generate:types
+
+      - name: Fail on generated type drift
+        run: git diff --exit-code packages/connect-js/src/generated/connect-api.ts
+
+  connect-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: packages/connect-js/pnpm-lock.yaml
+
+      - name: Install connect-js dependencies
+        working-directory: packages/connect-js
+        run: pnpm install --frozen-lockfile
+
+      - name: Run connect-js tests
+        working-directory: packages/connect-js
+        run: pnpm test

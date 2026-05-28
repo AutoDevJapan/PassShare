@@ -21,7 +21,7 @@ jobs:
       - name: Run cargo-audit
         run: cargo audit
 
-  npm-audit:
+  pnpm-audit:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -34,11 +34,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect package manager
+        id: pm
+        working-directory: ${{ matrix.directory }}
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+          else
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        if: steps.pm.outputs.manager == 'pnpm'
+        with:
+          version: 10.11.0
+
       - uses: actions/setup-node@v4
+        if: steps.pm.outputs.manager == 'pnpm'
         with:
           node-version: "22"
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.directory }}/pnpm-lock.yaml
+
+      - uses: actions/setup-node@v4
+        if: steps.pm.outputs.manager == 'npm'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ${{ matrix.directory }}/package-lock.json
+
+      - name: pnpm audit (${{ matrix.directory }})
+        if: steps.pm.outputs.manager == 'pnpm'
+        working-directory: ${{ matrix.directory }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm audit --audit-level=high
 
       - name: npm audit (${{ matrix.directory }})
+        if: steps.pm.outputs.manager == 'npm'
         working-directory: ${{ matrix.directory }}
         run: |
           npm install --ignore-scripts

@@ -163,7 +163,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 |------|---|--------------|---------|
 | v2.0 SSOT / ADR | [#28](https://github.com/AutoDevJapan/PassShare/issues/28) ✅ | #39–#41 | 本 SSOT + [ADR 003](../adr/003-multi-client-architecture.md) + [ADR 004](../adr/004-auth-authorization-model.md) Accepted |
 | 認証・セキュリティ | [#29](https://github.com/AutoDevJapan/PassShare/issues/29) ✅ | #42–#50 | 多ユーザー認可 + セッション + クリップボード / 監査 |
-| Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) | #51–#59 | OpenAPI Must ギャップ 0 |
+| Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) ✅ | #51–#59 | OpenAPI Must ギャップ 0 |
 | Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) | #60–#69 | 320px レスポンシブ + E2E |
 | Desktop 本番化 | [#32](https://github.com/AutoDevJapan/PassShare/issues/32) | #70–#77 | 署名 + 自動更新 |
 | スマホアプリ | [#33](https://github.com/AutoDevJapan/PassShare/issues/33) | #78–#86 | ストア提出 |
@@ -267,6 +267,32 @@ Epic [#29](https://github.com/AutoDevJapan/PassShare/issues/29)（認証・セ�
 
 - Mobile 生体認証 E2E: Epic [#33](https://github.com/AutoDevJapan/PassShare/issues/33) scaffold 後
 - Web Signup UI / セッション refresh: Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)
+
+---
+
+## Epic #30 完了サマリー
+
+Epic [#30](https://github.com/AutoDevJapan/PassShare/issues/30)（Connect API 本番化）の子 Issue #51–#59 を main にマージ。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#51](https://github.com/AutoDevJapan/PassShare/issues/51) | [connect-api-gap-analysis.md](./connect-api-gap-analysis.md) — Must/Should 分類 |
+| [#52](https://github.com/AutoDevJapan/PassShare/issues/52) | Files POST/DELETE + `/health` / `/metrics` |
+| [#53](https://github.com/AutoDevJapan/PassShare/issues/53) | category 7 種 API 検証（PS018） |
+| [#54](https://github.com/AutoDevJapan/PassShare/issues/54) | `POST /v1/vaults/{id}/imports/1pux` |
+| [#55](https://github.com/AutoDevJapan/PassShare/issues/55) | OpenAPI → `packages/connect-js/src/generated/` + CI drift |
+| [#56](https://github.com/AutoDevJapan/PassShare/issues/56) | [db-migration.md](../runbooks/db-migration.md) + CI `migrate:verify` |
+| [#57](https://github.com/AutoDevJapan/PassShare/issues/57) | [connect-api-monitoring.md](../runbooks/connect-api-monitoring.md) |
+| [#58](https://github.com/AutoDevJapan/PassShare/issues/58) | `connect-api-extended.test.js` — PS012–PS018 |
+| [#59](https://github.com/AutoDevJapan/PassShare/issues/59) | 全環境 Connect smoke Runbook（本書 + secret-rotation） |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| OpenAPI Must ギャップ 0 | ✅ [gap analysis](./connect-api-gap-analysis.md) |
+| 全環境 Connect トークン Runbook | ✅ [secret-rotation.md](../runbooks/secret-rotation.md) § OP_CONNECT |
+| backend 統合テスト CI | ✅ `backend-test.yml`（pnpm） |
 
 ---
 

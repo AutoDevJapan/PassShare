@@ -74,6 +74,28 @@ export async function createApp(options = {}) {
     }
   });
 
+  app.get("/metrics", async (_req, res) => {
+    const metrics = {
+      service: "pass-share-backend",
+      environment: appEnv,
+      uptimeSeconds: Math.floor(process.uptime()),
+      memoryRssBytes: process.memoryUsage().rss,
+      timestamp: new Date().toISOString(),
+      database: pool ? "configured" : "not_configured",
+    };
+
+    if (pool) {
+      try {
+        const result = await pool.query("SELECT 1 AS ok");
+        metrics.database = result.rows[0]?.ok === 1 ? "connected" : "degraded";
+      } catch {
+        metrics.database = "unreachable";
+      }
+    }
+
+    res.json(metrics);
+  });
+
   app.use(
     express.json({
       limit: "2mb",

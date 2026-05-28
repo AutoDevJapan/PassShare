@@ -71,9 +71,15 @@ CLI の Preview 向け `vercel env add` はブランチ指定を要求するた�
 
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
-| PR / main push | `security-audit.yml` | `cargo audit` + 各 npm パッケージ `npm audit --audit-level=high` |
+| PR / main push | `security-audit.yml` | `cargo audit` + 各パッケージ `pnpm audit --audit-level=high`（pnpm-lock がある場合） |
 
-SSOT: [audit-checklist.md](../security/audit-checklist.md)
+### Backend テスト（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `backend-test.yml` | pnpm test + migrate:verify + Connect 型 drift チェック |
+
+SSOT: [audit-checklist.md](../security/audit-checklist.md), [connect-api-gap-analysis.md](./connect-api-gap-analysis.md)
 
 ## Railway 構成
 
