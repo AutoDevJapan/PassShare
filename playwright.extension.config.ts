@@ -1,7 +1,4 @@
-import path from "node:path";
 import { defineConfig } from "@playwright/test";
-
-const extensionPath = path.resolve("packages/extension/dist");
 
 export default defineConfig({
   testDir: "e2e/extension",
@@ -16,13 +13,8 @@ export default defineConfig({
     {
       name: "chromium-extension",
       use: {
-        headless: false,
-        launchOptions: {
-          args: [
-            `--disable-extensions-except=${extensionPath}`,
-            `--load-extension=${extensionPath}`,
-          ],
-        },
+        headless: true,
+        trace: "on-first-retry",
       },
     },
   ],

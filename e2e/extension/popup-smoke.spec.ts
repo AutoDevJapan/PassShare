@@ -5,7 +5,7 @@ const extensionPath = path.resolve("packages/extension/dist");
 
 test("extension popup renders login UI", async () => {
   const context = await chromium.launchPersistentContext("", {
-    headless: false,
+    headless: Boolean(process.env.CI),
     args: [
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
