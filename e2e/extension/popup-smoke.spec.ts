@@ -5,7 +5,7 @@ const extensionPath = path.resolve("packages/extension/dist");
 
 test("extension popup renders login UI", async () => {
   const context = await chromium.launchPersistentContext("", {
-    headless: Boolean(process.env.CI),
+    headless: !process.env.USE_XVFB,
     args: [
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
@@ -14,7 +14,7 @@ test("extension popup renders login UI", async () => {
 
   try {
     let extensionId = "";
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
       const worker = context.serviceWorkers()[0];
       if (worker) {
         const match = worker.url().match(/chrome-extension:\/\/([^/]+)/);
@@ -23,7 +23,7 @@ test("extension popup renders login UI", async () => {
           break;
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await context.waitForEvent("serviceworker", { timeout: 500 }).catch(() => undefined);
     }
 
     expect(extensionId).not.toEqual("");

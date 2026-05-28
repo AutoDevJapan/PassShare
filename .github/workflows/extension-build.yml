@@ -55,6 +55,6 @@ jobs:
 
       - name: Run extension E2E smoke
         env:
-          CI: "true"
           PLAYWRIGHT_SKIP_WEBSERVER: "true"
-        run: pnpm exec playwright test -c playwright.extension.config.ts
+          USE_XVFB: "1"
+        run: xvfb-run -a pnpm exec playwright test -c playwright.extension.config.ts
