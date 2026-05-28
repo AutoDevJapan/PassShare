@@ -29,6 +29,8 @@ cargo tauri build
 
 - `tauri.conf.json` の `plugins.updater.endpoints` が GitHub Releases `latest.json` を参照
 - 本番公開時は `TAURI_SIGNING_PRIVATE_KEY` で updater 成果物に署名
+- CI / ローカル検証では `tauri.conf.json` の `createUpdaterArtifacts: false`（未署名ビルド）
+- リリース時は `createUpdaterArtifacts: true` にし、GitHub Secrets（下表）を release ワークフローに渡す
 - smoke: アプリ起動 → 設定 → 更新確認（ネットワーク接続時）
 
 ## CI
