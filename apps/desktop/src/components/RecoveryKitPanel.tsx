@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { copyTextWithAutoClear } from "@shared/ui/clipboard-auto-clear";
+import { useDesktopLabels } from "../hooks/useDesktopLabels";
 
 type RecoveryKitPanelProps = {
   secret: string;
@@ -7,6 +8,7 @@ type RecoveryKitPanelProps = {
 };
 
 export function RecoveryKitPanel({ secret, onConfirm }: RecoveryKitPanelProps) {
+  const labels = useDesktopLabels();
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
@@ -18,24 +20,21 @@ export function RecoveryKitPanel({ secret, onConfirm }: RecoveryKitPanelProps) {
   return (
     <section className="ps-card ps-card--accent" aria-labelledby="recovery-kit-heading">
       <div className="ps-card__header">
-        <span className="ps-badge">重要</span>
+        <span className="ps-badge">{labels.recovery.badge}</span>
         <h2 className="ps-heading-3" id="recovery-kit-heading">
-          緊急キット
+          {labels.recovery.title}
         </h2>
       </div>
-      <p className="ps-text-muted">
-        パスワードボックスを作成しました。以下のリカバリ用シークレットキーを必ず安全な場所に控えてください。
-        マスターパスワードを忘れた場合の復旧に使います。
-      </p>
+      <p className="ps-text-muted">{labels.recovery.lead}</p>
       <pre className="ps-code-block ps-recovery-secret">
         <code>{secret}</code>
       </pre>
       <div className="ps-actions">
         <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleCopy()}>
-          {copied ? "コピーしました" : "緊急キットをコピー"}
+          {copied ? labels.recovery.copied : labels.recovery.copy}
         </button>
         <button type="button" className="ps-button ps-button--primary" onClick={onConfirm}>
-          控えました — 続ける
+          {labels.recovery.confirm}
         </button>
       </div>
     </section>
