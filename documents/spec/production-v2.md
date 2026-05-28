@@ -162,7 +162,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 | Epic | # | 子 Issue 範囲 | 完了条件 |
 |------|---|--------------|---------|
 | v2.0 SSOT / ADR | [#28](https://github.com/AutoDevJapan/PassShare/issues/28) ✅ | #39–#41 | 本 SSOT + [ADR 003](../adr/003-multi-client-architecture.md) + [ADR 004](../adr/004-auth-authorization-model.md) Accepted |
-| 認証・セキュリティ | [#29](https://github.com/AutoDevJapan/PassShare/issues/29) | #42–#50 | 多ユーザー認可 + セッション |
+| 認証・セキュリティ | [#29](https://github.com/AutoDevJapan/PassShare/issues/29) ✅ | #42–#50 | 多ユーザー認可 + セッション + クリップボード / 監査 |
 | Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) | #51–#59 | OpenAPI Must ギャップ 0 |
 | Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) | #60–#69 | 320px レスポンシブ + E2E |
 | Desktop 本番化 | [#32](https://github.com/AutoDevJapan/PassShare/issues/32) | #70–#77 | 署名 + 自動更新 |
@@ -237,6 +237,36 @@ Epic [#28](https://github.com/AutoDevJapan/PassShare/issues/28)（v2.0 本番ロ
 - Epic [#29](https://github.com/AutoDevJapan/PassShare/issues/29) 認証・セキュリティ実装（#42–#50）— 一部 main 済み（#42–#47）
 - Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) i18n SSOT + `ru` ロケール
 - Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)–[#37](https://github.com/AutoDevJapan/PassShare/issues/37) 各クライアント本番化
+
+---
+
+## Epic #29 完了サマリー
+
+Epic [#29](https://github.com/AutoDevJapan/PassShare/issues/29)（認証・セキュリティ）の子 Issue #42–#50 は main にマージ済み。
+
+| 子 Issue | PR 例 | 内容 |
+|----------|-------|------|
+| [#42](https://github.com/AutoDevJapan/PassShare/issues/42) | #135 | ユーザー認証 API（`/api/auth/*`） |
+| [#43](https://github.com/AutoDevJapan/PassShare/issues/43) | #138 | Connect API 多ユーザー認可 |
+| [#44](https://github.com/AutoDevJapan/PassShare/issues/44) | #139 | Web セッション + CSRF |
+| [#45](https://github.com/AutoDevJapan/PassShare/issues/45) | #140 | ログインレート制限 |
+| [#46](https://github.com/AutoDevJapan/PassShare/issues/46) | #141 | CSP / CORS / セキュリティヘッダー |
+| [#47](https://github.com/AutoDevJapan/PassShare/issues/47) | #142 | 秘密ローテーション Runbook |
+| [#48](https://github.com/AutoDevJapan/PassShare/issues/48) | （本 PR） | クリップボード自動消去（`shared/ui/clipboard-auto-clear.ts`） |
+| [#49](https://github.com/AutoDevJapan/PassShare/issues/49) | （本 PR） | 生体認証アンロック（Desktop + Tauri Mobile 向けプラグイン） |
+| [#50](https://github.com/AutoDevJapan/PassShare/issues/50) | （本 PR） | [監査チェックリスト](../security/audit-checklist.md) + CI security-audit |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| 子 Issue #42–#50 Close | ✅ |
+| 脅威モデル受入テスト | ✅ backend 統合テスト + [audit-checklist.md](../security/audit-checklist.md) |
+
+### 後続（Epic 外）
+
+- Mobile 生体認証 E2E: Epic [#33](https://github.com/AutoDevJapan/PassShare/issues/33) scaffold 後
+- Web Signup UI / セッション refresh: Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)
 
 ---
 
