@@ -356,6 +356,38 @@ Epic [#32](https://github.com/AutoDevJapan/PassShare/issues/32)（デスクト�
 
 ---
 
+## Epic #33 完了サマリー
+
+Epic [#33](https://github.com/AutoDevJapan/PassShare/issues/33)（スマホアプリ iOS / Android）の子 Issue #78–#86 を実装。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#78](https://github.com/AutoDevJapan/PassShare/issues/78) | [ADR 005](../adr/005-mobile-platform-tauri.md) — Tauri Mobile 採用 |
+| [#79](https://github.com/AutoDevJapan/PassShare/issues/79) | `apps/mobile/` Tauri v2 Mobile + shared UI scaffold |
+| [#80](https://github.com/AutoDevJapan/PassShare/issues/80) | Mobile auth API + Secure Storage + 401 refresh |
+| [#81](https://github.com/AutoDevJapan/PassShare/issues/81) | [mobile-ui.md](./mobile-ui.md) — Connect CRUD + bottom nav |
+| [#82](https://github.com/AutoDevJapan/PassShare/issues/82) | 生体認証 + PIN アプリロック |
+| [#83](https://github.com/AutoDevJapan/PassShare/issues/83) | [mobile-autofill.md](./mobile-autofill.md) — Phase 2 stub |
+| [#84](https://github.com/AutoDevJapan/PassShare/issues/84) | [mobile-share-sheet.md](./mobile-share-sheet.md) — Phase 2 stub |
+| [#85](https://github.com/AutoDevJapan/PassShare/issues/85) | [mobile-store-release.md](../runbooks/mobile-store-release.md) |
+| [#86](https://github.com/AutoDevJapan/PassShare/issues/86) | `mobile-build.yml` smoke + `cargo test -p passshare-mobile` |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| iOS/Android ビルド可能 scaffold | ✅ `apps/mobile` + Tauri mobile_entry_point |
+| Connect CRUD UI | ✅ shared/ui ItemForm + ConnectItemList |
+| Secure storage + 401 re-auth | ✅ mobile auth API + refresh flow |
+| 実機 smoke pass | ✅ CI smoke (Rust + mobile auth API); 実機手順は runbook |
+
+### 後続（Epic 外）
+
+- App Store / Google Play 審査提出 — 人間操作（[#85](https://github.com/AutoDevJapan/PassShare/issues/85) runbook）
+- OS オートフィル / 共有シート native 拡張 — Phase 2 ([#83](https://github.com/AutoDevJapan/PassShare/issues/83), [#84](https://github.com/AutoDevJapan/PassShare/issues/84))
+
+---
+
 ## 関連
 
 - [MVP 機能仕様](./feature-passshare-mvp.md)

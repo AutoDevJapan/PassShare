@@ -34,6 +34,7 @@ packages/connect-js/       — TypeScript Connect SDK
 packages/connect-python/   — Python Connect SDK
 packages/connect-go/       — Go Connect SDK
 apps/desktop/              — Tauri デスクトップ
+apps/mobile/               — Tauri Mobile（iOS / Android）
 frontend/                  — Web ポータル (Vercel)
 backend/                   — API (Railway)
 shared/styles/             — 共通デザインシステム (Web / Desktop 共有)
@@ -75,13 +76,19 @@ cd apps/desktop && pnpm install && pnpm --dir ../../packages/connect-js run buil
 
 # デスクトップ smoke（Rust）
 cargo test -p passshare-desktop smoke_
+
+# モバイル（Tauri Mobile + React）
+cd apps/mobile && pnpm install && pnpm --dir ../../packages/connect-js run build && cargo tauri android dev
+
+# モバイル smoke（Rust + mobile auth API）
+cargo test -p passshare-mobile smoke_
 ```
 
 ## xDD
 
 Spec: `documents/spec/feature-passshare-mvp.md`, `documents/spec/production-v2.md`
-ADR: `documents/adr/003-multi-client-architecture.md`, `documents/adr/004-auth-authorization-model.md`
-Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/ui-polish.md`
+ADR: `documents/adr/003-multi-client-architecture.md`, `documents/adr/004-auth-authorization-model.md`, `documents/adr/005-mobile-platform-tauri.md`
+Design: `documents/spec/design-system.md`, `documents/spec/desktop-ui.md`, `documents/spec/mobile-ui.md`, `documents/spec/ui-polish.md`
 Web UI: `documents/spec/landing-page-shell.md`, `documents/spec/landing-page-content.md`
 Infra: `documents/spec/infrastructure.md`
 

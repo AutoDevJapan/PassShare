@@ -1,0 +1,43 @@
+name: Mobile Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: mobile-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            apps/mobile/pnpm-lock.yaml
+            packages/connect-js/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir apps/mobile install --frozen-lockfile
+          pnpm --dir apps/mobile run build
+
+      - name: Run mobile smoke tests
+        run: cargo test -p passshare-mobile smoke_
+
+      - name: Run mobile auth API tests
+        run: npm test --prefix backend -- test/mobile-auth.test.js

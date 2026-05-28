@@ -181,6 +181,62 @@ Create an additional password box for the authenticated user.
 
 Creates `connect_vaults` row and `vault_memberships` (`owner`).
 
+## Mobile client flow (Issue [#80](https://github.com/AutoDevJapan/PassShare/issues/80))
+
+Mobile / Extension clients send `X-PassShare-Client: mobile` on signup/login. The API returns JSON tokens instead of HttpOnly cookies.
+
+### POST `/login` (mobile)
+
+**Headers:** `X-PassShare-Client: mobile`
+
+**Response `200`**
+
+```json
+{
+  "user": { "id": "uuid", "email": "user@example.com", "createdAt": "..." },
+  "refreshToken": "session-token-plaintext",
+  "sessionExpiresAt": "2026-06-03T00:00:00.000Z",
+  "connectAccessToken": "connect-bearer-token",
+  "connectExpiresIn": 900,
+  "connectExpiresAt": "2026-05-27T00:15:00.000Z"
+}
+```
+
+Store `refreshToken` in OS Secure Storage (Keychain / Keystore). Keep `connectAccessToken` in memory when possible.
+
+### POST `/token/refresh`
+
+Refresh Connect access token using the mobile refresh token (session token).
+
+**Request**
+
+```json
+{ "refreshToken": "session-token-plaintext" }
+```
+
+**Response `200`**
+
+```json
+{
+  "sessionExpiresAt": "2026-06-03T00:00:00.000Z",
+  "connectAccessToken": "new-connect-bearer",
+  "connectExpiresIn": 900,
+  "connectExpiresAt": "2026-05-27T00:15:00.000Z"
+}
+```
+
+**Errors:** `401 PS024` when refresh token is invalid or expired; `400 PS030` when body is missing.
+
+### Bearer session auth
+
+Mobile clients authenticate stateful routes with:
+
+```
+Authorization: Bearer <refreshToken>
+```
+
+CSRF is skipped when a Bearer token is present. Applies to `/me`, `/logout`, `/vaults`, etc.
+
 ## Session Cookie
 
 | Attribute | Value |
