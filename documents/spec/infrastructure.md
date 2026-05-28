@@ -67,6 +67,14 @@ CLI の Preview 向け `vercel env add` はブランチ指定を要求するた�
 
 スクリプト: `scripts/sync-vercel-env.mjs`（`VERCEL_TOKEN` 必須、`upsert=true` + `gitBranch: null` で全 Preview ブランチにも対応）
 
+### セキュリティ監査（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `security-audit.yml` | `cargo audit` + 各 npm パッケージ `npm audit --audit-level=high` |
+
+SSOT: [audit-checklist.md](../security/audit-checklist.md)
+
 ## Railway 構成
 
 ```
