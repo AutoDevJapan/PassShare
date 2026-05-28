@@ -106,6 +106,19 @@ docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 
 SSOT: [staging-acceptance.md](../runbooks/staging-acceptance.md)
 
+### Web ドキュメント・法務（Epic #37）
+
+| パス | 内容 |
+|------|------|
+| `/docs` | ドキュメントハブ |
+| `/docs/user-guide` | ユーザーガイド |
+| `/docs/extension` | 拡張機能インストール |
+| `/faq` | FAQ |
+| `/terms` | 利用規約（草案） |
+| `/privacy` | プライバシーポリシー（草案） |
+
+SSOT: [documents/guides/](../guides/), [documents/legal/](../legal/)
+
 ### Backend テスト（CI）
 
 | トリガー | ワークフロー | 動作 |

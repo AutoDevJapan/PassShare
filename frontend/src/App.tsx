@@ -7,12 +7,24 @@ import { LoginPage } from "./pages/auth/LoginPage";
 import { ResetPasswordPage } from "./pages/auth/ResetPasswordPage";
 import { SignupPage } from "./pages/auth/SignupPage";
 import { LandingPage } from "./pages/LandingPage";
+import { DocsIndexPage } from "./pages/docs/DocsIndexPage";
+import { ExtensionInstallPage } from "./pages/docs/ExtensionInstallPage";
+import { FaqPage } from "./pages/docs/FaqPage";
+import { PrivacyPage } from "./pages/docs/PrivacyPage";
+import { TermsPage } from "./pages/docs/TermsPage";
+import { UserGuidePage } from "./pages/docs/UserGuidePage";
 
 export function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/docs" element={<DocsIndexPage />} />
+        <Route path="/docs/user-guide" element={<UserGuidePage />} />
+        <Route path="/docs/extension" element={<ExtensionInstallPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/faq" element={<FaqPage />} />
         <Route path="/app/login" element={<LoginPage />} />
         <Route path="/app/signup" element={<SignupPage />} />
         <Route path="/app/reset-password" element={<ResetPasswordPage />} />

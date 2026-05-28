@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useCallback, useState } from "react";
 import { useI18n } from "../../../shared/i18n/I18nProvider";
 import { isApplePlatform, useSearchShortcut } from "../hooks/useSearchShortcut";
@@ -15,7 +16,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "home", labelKey: "header.nav.home", href: "#", active: true },
   { id: "app", labelKey: "header.nav.app", href: "/app/vaults" },
   { id: "download", labelKey: "header.nav.download", href: "#download" },
-  { id: "docs", labelKey: "header.nav.docs", href: "#docs" },
+  { id: "docs", labelKey: "header.nav.docs", href: "/docs" },
 ];
 
 function LogoMark() {
@@ -74,10 +75,10 @@ export function Header() {
     <>
       <header className="landing-header">
         <div className="landing-header__inner">
-          <a className="landing-logo" href="#" aria-label={t("header.logoAria")}>
+          <Link className="landing-logo" to="/" aria-label={t("header.logoAria")}>
             <LogoMark />
             <span>PassShare</span>
-          </a>
+          </Link>
 
           <button
             type="button"

@@ -210,7 +210,7 @@ flowchart TD
 - [ ] Web 320px レスポンシブ受入基準 pass
 - [ ] ja / en / ru 切替 + 表示崩れ Visual Regression pass
 - [ ] stg 受入 smoke pass（[#106](https://github.com/AutoDevJapan/PassShare/issues/106)）
-- [ ] 利用規約・プライバシーポリシー Web 公開（[#113](https://github.com/AutoDevJapan/PassShare/issues/113)）
+- [ ] 利用規約・プライバシーポリシー Web 公開（[#113](https://github.com/AutoDevJapan/PassShare/issues/113)）— `/terms`, `/privacy`
 
 ---
 
@@ -477,6 +477,37 @@ Epic [#36](https://github.com/AutoDevJapan/PassShare/issues/36)（品質・CI/CD
 - stg smoke の定期実行 — `STG_OP_CONNECT_TOKEN` Secret 設定後 `workflow_dispatch`
 - Web Lighthouse CI — [#69](https://github.com/AutoDevJapan/PassShare/issues/69)
 - 本番リリース演習の実地実施 — [production-release.md](../runbooks/production-release.md)
+
+---
+
+## Epic #37 完了サマリー
+
+Epic [#37](https://github.com/AutoDevJapan/PassShare/issues/37)（ドキュメント・法務・運用）の子 Issue #111–#116 を実装。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#111](https://github.com/AutoDevJapan/PassShare/issues/111) | [user-guide.md](../guides/user-guide.md) + Web `/docs/user-guide` |
+| [#112](https://github.com/AutoDevJapan/PassShare/issues/112) | [extension-install.md](../guides/extension-install.md) + Web `/docs/extension` |
+| [#113](https://github.com/AutoDevJapan/PassShare/issues/113) | [terms.md](../legal/terms.md), [privacy.md](../legal/privacy.md) + Footer `/terms`, `/privacy` |
+| [#114](https://github.com/AutoDevJapan/PassShare/issues/114) | [faq.md](../guides/faq.md) + Web `/faq` |
+| [#115](https://github.com/AutoDevJapan/PassShare/issues/115) | [operations.md](../runbooks/operations.md) — 障害 + DB バックアップ |
+| [#116](https://github.com/AutoDevJapan/PassShare/issues/116) | [developer-sdk.md](../guides/developer-sdk.md) + SDK README 拡充 |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| Web から法務文書リンク可能 | ✅ Footer → `/terms`, `/privacy` |
+| ユーザーガイド Web 公開 | ✅ `/docs` ハブ + 各ページ |
+| 法務レビュー欄 | ✅ 草案 + レビュー表（本番前に法務確認要） |
+| 運用 Runbook | ✅ operations.md |
+| SDK ドキュメント | ✅ developer-sdk.md + README |
+
+### 後続（Epic 外）
+
+- 法務レビュー完了後、terms/privacy 本文を確定版に更新
+- Safari 拡張 App Store 公開後、extension-install ガイド更新
+- Typedoc 自動生成 CI（任意）
 
 ---
 

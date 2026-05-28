@@ -14,5 +14,5 @@ export const SEARCH_SECTIONS: SearchSection[] = [
   { id: "migration", href: "#migration", labelKey: "search.sections.migration" },
   { id: "comparison", href: "#comparison", labelKey: "search.sections.comparison" },
   { id: "get-started", href: "#get-started", labelKey: "search.sections.getStarted" },
-  { id: "docs", href: "#docs", labelKey: "search.sections.docs" },
+  { id: "docs", href: "/docs", labelKey: "search.sections.docs" },
 ];
