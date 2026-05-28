@@ -51,7 +51,7 @@ export function App() {
             onUnlocked={() => setView("main")}
           />
         ) : (
-          <MainPanel masterPassword={masterPassword} onLocked={handleLocked} />
+          <MainPanel boxPath={boxPath} masterPassword={masterPassword} onLocked={handleLocked} />
         )}
       </main>
     </div>

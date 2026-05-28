@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use passshare_core::{
-    generator::PasswordGeneratorOptions, Item, ItemCategory, PassShareError, PasswordBox,
+    domain::item::ItemCategory,
+    generator::PasswordGeneratorOptions, Item, PassShareError, PasswordBox,
     PasswordBoxState,
 };
 use passshare_core::domain::field::FieldPurpose;
@@ -310,6 +311,7 @@ fn lock_password_box(state: State<'_, AppState>) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_biometry::init())
         .manage(AppState {
             box_path: Mutex::new(None),
             password_box: Mutex::new(None),

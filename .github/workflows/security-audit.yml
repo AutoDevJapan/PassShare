@@ -1,0 +1,45 @@
+name: Security Audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo-audit
+        run: cargo audit
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        directory:
+          - backend
+          - frontend
+          - apps/desktop
+          - packages/connect-js
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: npm audit (${{ matrix.directory }})
+        working-directory: ${{ matrix.directory }}
+        run: |
+          npm install --ignore-scripts
+          npm audit --audit-level=high

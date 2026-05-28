@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@choochmeque/tauri-plugin-biometry-api": "^0.2.6",
     "@tauri-apps/api": "^2.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

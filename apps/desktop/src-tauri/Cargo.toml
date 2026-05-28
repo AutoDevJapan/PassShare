@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 passshare-core = { path = "../../../crates/passshare-core" }
 tauri = { version = "2", features = [] }
+tauri-plugin-biometry = "0.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

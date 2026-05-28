@@ -4,6 +4,7 @@
   "description": "PassShare default capabilities",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "biometry:default"
   ]
 }
