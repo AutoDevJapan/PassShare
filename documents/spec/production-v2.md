@@ -166,7 +166,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38) に詳細。v2.0
 | Connect API 本番化 | [#30](https://github.com/AutoDevJapan/PassShare/issues/30) ✅ | #51–#59 | OpenAPI Must ギャップ 0 |
 | Web 完全版 | [#31](https://github.com/AutoDevJapan/PassShare/issues/31) ✅ | #60–#69 | 320px レスポンシブ + E2E |
 | Desktop 本番化 | [#32](https://github.com/AutoDevJapan/PassShare/issues/32) ✅ | #70–#77 | 署名 + 自動更新 |
-| スマホアプリ | [#33](https://github.com/AutoDevJapan/PassShare/issues/33) | #78–#86 | ストア提出 |
+| スマホアプリ | [#33](https://github.com/AutoDevJapan/PassShare/issues/33) ✅ | #78–#86 | ストア提出 |
 | ブラウザ拡張 | [#34](https://github.com/AutoDevJapan/PassShare/issues/34) | #87–#97 | 4 ブラウザ + オートフィル |
 | 同期・共有 | [#35](https://github.com/AutoDevJapan/PassShare/issues/35) | #98–#103 | 同期 MVP（Should） |
 | CI/CD | [#36](https://github.com/AutoDevJapan/PassShare/issues/36) | #104–#110 | main CI green |
@@ -385,6 +385,36 @@ Epic [#33](https://github.com/AutoDevJapan/PassShare/issues/33)（スマホア�
 
 - App Store / Google Play 審査提出 — 人間操作（[#85](https://github.com/AutoDevJapan/PassShare/issues/85) runbook）
 - OS オートフィル / 共有シート native 拡張 — Phase 2 ([#83](https://github.com/AutoDevJapan/PassShare/issues/83), [#84](https://github.com/AutoDevJapan/PassShare/issues/84))
+
+---
+
+## Epic #34 完了サマリー
+
+Epic [#34](https://github.com/AutoDevJapan/PassShare/issues/34)（ブラウザ拡張 Chrome / Edge / Firefox / Safari）の子 Issue #87–#97 を実装。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#87](https://github.com/AutoDevJapan/PassShare/issues/87) | [ADR 006](../adr/006-browser-extension-mv3.md) — MV3 + Connect 直結 |
+| [#88](https://github.com/AutoDevJapan/PassShare/issues/88) | `packages/extension/` Vite + React + `@crxjs/vite-plugin` |
+| [#89](https://github.com/AutoDevJapan/PassShare/issues/89) | [extension-ui.md](./extension-ui.md) — 320px popup + i18n |
+| [#90](https://github.com/AutoDevJapan/PassShare/issues/90) | [extension-autofill.md](./extension-autofill.md) — content script |
+| [#91](https://github.com/AutoDevJapan/PassShare/issues/91) | 保存提案バナー + パスワード生成 |
+| [#92](https://github.com/AutoDevJapan/PassShare/issues/92)–[#95](https://github.com/AutoDevJapan/PassShare/issues/95) | [extension-store-release.md](../runbooks/extension-store-release.md) |
+| [#96](https://github.com/AutoDevJapan/PassShare/issues/96) | [extension-native-messaging.md](./extension-native-messaging.md) — stub |
+| [#97](https://github.com/AutoDevJapan/PassShare/issues/97) | Playwright extension popup smoke |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| MV3 ビルド + shared/ui | ✅ `packages/extension` |
+| オートフィル smoke | ✅ unit + E2E popup |
+| 4 ブラウザストア提出 | ⏳ runbook 整備済み（人間操作） |
+
+### 後続（Epic 外）
+
+- Chrome / Edge / Firefox / Safari ストア審査提出 — 人間操作（[#92](https://github.com/AutoDevJapan/PassShare/issues/92)–[#95](https://github.com/AutoDevJapan/PassShare/issues/95) runbook）
+- Desktop Native Messaging 実装 — Phase 2 ([#96](https://github.com/AutoDevJapan/PassShare/issues/96))
 
 ---
 
