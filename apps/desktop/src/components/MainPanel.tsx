@@ -9,6 +9,7 @@ import { useItemLabels } from "../hooks/useItemLabels";
 import {
   addItem,
   deleteItem,
+  exportOnepasswordCsv,
   generatePassword,
   importOnepasswordCsv,
   listItems,
@@ -16,6 +17,7 @@ import {
   searchItems,
   updateItem,
 } from "../tauri";
+import { downloadCsvFile } from "@shared/lib/csv-export";
 import { formatTauriError } from "../errors";
 import { StatusMessage } from "./StatusMessage";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
@@ -38,6 +40,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
   const [formError, setFormError] = useState("");
   const [listError, setListError] = useState("");
   const [importMessage, setImportMessage] = useState("");
+  const [exportMessage, setExportMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function refreshItems(query = searchQuery.trim()) {
@@ -138,6 +141,16 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
     setFormError("");
   }
 
+  async function handleExportCsv() {
+    try {
+      const csv = await exportOnepasswordCsv();
+      downloadCsvFile("passshare-export.csv", csv);
+      setExportMessage(itemLabels.exportSuccess);
+    } catch (err) {
+      setListError(formatTauriError(err));
+    }
+  }
+
   async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -172,6 +185,9 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
           <button type="button" className="ps-button ps-button--secondary" onClick={() => fileInputRef.current?.click()}>
             {itemLabels.importCsv}
           </button>
+          <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleExportCsv()}>
+            {itemLabels.exportCsv}
+          </button>
           <input ref={fileInputRef} type="file" accept=".csv,text/csv" hidden onChange={(event) => void handleImportFile(event)} />
           <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleLock()}>
             {itemLabels.lock}
@@ -193,7 +209,12 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
       <div className="ps-settings-grid">
         <ClipboardClearSettings labels={desktopLabels.clipboard} />
         <BiometricUnlockSettings boxPath={boxPath} masterPassword={masterPassword} />
-        <CloudSyncSettings localItems={items} />
+        <CloudSyncSettings
+          localItems={items}
+          masterPassword={masterPassword}
+          onSynced={() => refreshItems()}
+          import1puxSuccess={(count) => itemLabels.import1puxSuccess.replace("{count}", String(count))}
+        />
       </div>
 
       <section className="ps-card ps-card--list" aria-labelledby="item-list-heading">
@@ -207,6 +228,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
         </div>
 
         {importMessage ? <StatusMessage message={importMessage} variant="success" /> : null}
+        {exportMessage ? <StatusMessage message={exportMessage} variant="success" /> : null}
         {listError ? <StatusMessage message={listError} variant="error" /> : null}
 
         {loading ? (

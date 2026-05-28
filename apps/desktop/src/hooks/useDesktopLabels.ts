@@ -57,6 +57,12 @@ export function useDesktopLabels() {
         password: t("desktop.sync.password"),
         vaultId: t("desktop.sync.vaultId"),
         run: t("desktop.sync.run"),
+        runSync: t("desktop.sync.runSync"),
+        syncSuccess: (pushed: number, pulled: number) =>
+          t("desktop.sync.syncSuccess").replace("{pushed}", String(pushed)).replace("{pulled}", String(pulled)),
+        keepLocal: t("desktop.sync.keepLocal"),
+        keepRemote: t("desktop.sync.keepRemote"),
+        import1pux: t("desktop.sync.import1pux"),
         conflictTitle: t("desktop.sync.conflictTitle"),
         conflictItem: (title: string) => t("desktop.sync.conflictItem").replace("{title}", title),
         noConflict: t("desktop.sync.noConflict"),

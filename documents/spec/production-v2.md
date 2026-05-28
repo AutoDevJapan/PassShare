@@ -418,6 +418,34 @@ Epic [#34](https://github.com/AutoDevJapan/PassShare/issues/34)（ブラウザ�
 
 ---
 
+## Epic #35 完了サマリー
+
+Epic [#35](https://github.com/AutoDevJapan/PassShare/issues/35)（同期・共有・データ移行）の子 Issue #98–#103 を実装（#100 Share は v2.1 候補のため Epic 外）。
+
+| 子 Issue | 内容 |
+|----------|------|
+| [#98](https://github.com/AutoDevJapan/PassShare/issues/98) | [ADR 007](../adr/007-sync-migration-architecture.md) — .pbox ↔ Connect API |
+| [#99](https://github.com/AutoDevJapan/PassShare/issues/99) | Desktop 双方向同期 MVP（push / pull） |
+| [#101](https://github.com/AutoDevJapan/PassShare/issues/101) | 1PUX インポート UI（Desktop + Web） |
+| [#102](https://github.com/AutoDevJapan/PassShare/issues/102) | 1Password CSV エクスポート |
+| [#103](https://github.com/AutoDevJapan/PassShare/issues/103) | 競合解決 UI（ローカル / クラウド優先） |
+
+### Epic 完了条件（検証）
+
+| 条件 | 状態 |
+|------|------|
+| マルチデバイス同期 smoke | ✅ push/pull + 競合解決 + unit tests |
+| 1PUX / CSV 移行 | ✅ Desktop + Web UI |
+| ADR Accepted | ✅ ADR 007 |
+
+### 後続（Epic 外）
+
+- PassShare Share（チーム共有）— [#100](https://github.com/AutoDevJapan/PassShare/issues/100) v2.1
+- バックグラウンド自動同期
+- 1PUX エクスポート
+
+---
+
 ## 関連
 
 - [MVP 機能仕様](./feature-passshare-mvp.md)

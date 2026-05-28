@@ -238,6 +238,23 @@ describe("Connect API extended (#58)", () => {
     assert.match(badBody.message, /PS018/);
   });
 
+  it("creates item with client-provided id for sync (#99)", async () => {
+    const clientId = "abcdefghijklmnopqrstuvwxyz";
+    const createRes = await fetch(`${baseUrl}/v1/vaults/${VAULT_ID}/items`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        id: clientId,
+        title: "Synced Item",
+        category: "LOGIN",
+        fields: [{ label: "password", type: "CONCEALED", purpose: "PASSWORD", value: "secret" }],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const created = await createRes.json();
+    assert.equal(created.id, clientId);
+  });
+
   it("imports valid 1PUX JSON and rejects invalid payload (#54)", async () => {
     const validPayload = {
       items: [

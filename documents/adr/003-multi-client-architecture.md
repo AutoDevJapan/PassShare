@@ -36,7 +36,7 @@ PassShare は **ローカル暗号化ストレージ** と **Connect API クラ�
 | **Local** | `.pbox` ファイル | Argon2id + XChaCha20-Poly1305（`passshare-core`） | ゼロナレッジ・オフライン・Desktop 主経路 |
 | **Cloud** | PostgreSQL + Connect API | サーバー側は Connect 互換平文フィールド（v2.0 認可後） | Web / Mobile / 拡張の主経路、マルチデバイス |
 
-両層は **同一 Item ドメインモデル**（Connect スキーマ）を共有する。同期・競合解決の詳細は Epic [#35](https://github.com/AutoDevJapan/PassShare/issues/35) / Issue [#98](https://github.com/AutoDevJapan/PassShare/issues/98) で別途 ADR 化する。
+両層は **同一 Item ドメインモデル**（Connect スキーマ）を共有する。同期・競合解決は [ADR 007](./007-sync-migration-architecture.md)（Epic [#35](https://github.com/AutoDevJapan/PassShare/issues/35) / Issue [#98](https://github.com/AutoDevJapan/PassShare/issues/98)）で定義。
 
 ### 2. クライアント別データアクセス
 

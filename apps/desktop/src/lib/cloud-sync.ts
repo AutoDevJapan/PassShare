@@ -1,16 +1,22 @@
 import { ConnectClient } from "@passshare/connect";
 import type { ConnectItem } from "@shared/types/item.js";
+import { formValuesFromItem } from "@shared/types/item.js";
+import { connectItemFromApi, connectItemToCreateBody } from "./connect-items";
+import { detectSyncConflicts, type SyncConflict } from "@shared/lib/sync-conflicts";
 
-export type SyncConflict = {
-  itemId: string;
-  title: string;
-};
+export type { SyncConflict };
 
 export type CloudSyncConfig = {
   apiBaseUrl: string;
   email: string;
   password: string;
   vaultId: string;
+};
+
+export type SyncRunResult = {
+  pushed: number;
+  pulled: number;
+  conflicts: SyncConflict[];
 };
 
 const STORAGE_KEY = "passshare.desktop.cloudSync.enabled";
@@ -22,6 +28,8 @@ export function isCloudSyncEnabled(): boolean {
 export function setCloudSyncEnabled(enabled: boolean): void {
   localStorage.setItem(STORAGE_KEY, enabled ? "true" : "false");
 }
+
+export { detectSyncConflicts };
 
 async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient> {
   const csrfRes = await fetch(`${config.apiBaseUrl}/api/auth/csrf`, { credentials: "include" });
@@ -56,24 +64,82 @@ async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient
     token: tokenBody.accessToken,
   });
 }
-export async function detectSyncConflicts(
+
+async function fetchRemoteItems(client: ConnectClient, vaultId: string): Promise<ConnectItem[]> {
+  const overviews = await client.listItems(vaultId);
+  const details = await Promise.all(
+    overviews.map((overview) => client.getItem(vaultId, overview.id)),
+  );
+  return details.map(connectItemFromApi);
+}
+
+export async function checkSyncConflicts(
   config: CloudSyncConfig,
   localItems: ConnectItem[],
 ): Promise<SyncConflict[]> {
   const client = await loginAndGetClient(config);
-  const remoteItems = await client.listItems(config.vaultId);
-  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
-  const conflicts: SyncConflict[] = [];
+  const remoteItems = await fetchRemoteItems(client, config.vaultId);
+  return detectSyncConflicts(localItems, remoteItems);
+}
 
+export type SyncPullHandler = (item: ConnectItem) => Promise<void>;
+
+export async function runCloudSync(
+  config: CloudSyncConfig,
+  localItems: ConnectItem[],
+  onPull: SyncPullHandler,
+): Promise<SyncRunResult> {
+  const client = await loginAndGetClient(config);
+  const remoteItems = await fetchRemoteItems(client, config.vaultId);
+  const conflicts = detectSyncConflicts(localItems, remoteItems);
+  const conflictIds = new Set(conflicts.map((c) => c.itemId));
+
+  const localById = new Map(localItems.map((item) => [item.id, item]));
+  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+
+  let pushed = 0;
   for (const local of localItems) {
-    const remote = remoteById.get(local.id);
-    if (!remote) {
+    if (conflictIds.has(local.id)) {
       continue;
     }
-    if (remote.title !== local.title || remote.category !== local.category) {
-      conflicts.push({ itemId: local.id, title: local.title });
+    if (!remoteById.has(local.id)) {
+      await client.createItem(
+        config.vaultId,
+        connectItemToCreateBody(formValuesFromItem(local), { id: local.id }),
+      );
+      pushed += 1;
     }
   }
 
-  return conflicts;
+  let pulled = 0;
+  for (const remote of remoteItems) {
+    if (conflictIds.has(remote.id)) {
+      continue;
+    }
+    if (!localById.has(remote.id)) {
+      await onPull(remote);
+      pulled += 1;
+    }
+  }
+
+  return { pushed, pulled, conflicts };
+}
+
+export async function resolveConflictKeepLocal(
+  config: CloudSyncConfig,
+  local: ConnectItem,
+): Promise<void> {
+  const client = await loginAndGetClient(config);
+  await client.replaceItem(
+    config.vaultId,
+    local.id,
+    connectItemToCreateBody(formValuesFromItem(local)),
+  );
+}
+
+export async function resolveConflictKeepRemote(
+  remote: ConnectItem,
+  onPull: SyncPullHandler,
+): Promise<void> {
+  await onPull(remote);
 }

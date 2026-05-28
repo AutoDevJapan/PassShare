@@ -5,6 +5,8 @@ import { ItemForm } from "@shared/ui/ItemForm.js";
 import type { ConnectItem, ItemFormValues } from "@shared/types/item.js";
 import { emptyFormValues, formValuesFromItem } from "@shared/types/item.js";
 import { useI18n } from "@shared/i18n/I18nProvider";
+import { import1puxFile } from "@shared/lib/1pux-import";
+import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
 import { useAuthSession } from "../../hooks/useAuthSession";
@@ -29,7 +31,9 @@ export function ItemsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const puxInputRef = useRef<HTMLInputElement>(null);
 
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -120,6 +124,26 @@ export function ItemsPage() {
     }
   }
 
+  async function handle1puxImport(file: File) {
+    if (!connectClient) {
+      return;
+    }
+    setError(null);
+    setImportMessage(null);
+    try {
+      const result = await import1puxFile(connectClient, vaultId, file);
+      setImportMessage(labels.import1puxSuccess.replace("{count}", String(result.imported)));
+      await loadItems();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("app.item.importError"));
+    }
+  }
+
+  function handleExportCsv() {
+    downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(items));
+    setExportMessage(labels.exportSuccess);
+  }
+
   if (connectLoading) {
     return <div className="app-loading">{t("session.loading")}</div>;
   }
@@ -145,6 +169,12 @@ export function ItemsPage() {
         <button type="button" className="ps-button" onClick={() => fileInputRef.current?.click()}>
           {labels.importCsv}
         </button>
+        <button type="button" className="ps-button ps-button--secondary" onClick={() => puxInputRef.current?.click()}>
+          {labels.import1pux}
+        </button>
+        <button type="button" className="ps-button ps-button--secondary" onClick={handleExportCsv}>
+          {labels.exportCsv}
+        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -158,9 +188,23 @@ export function ItemsPage() {
             event.currentTarget.value = "";
           }}
         />
+        <input
+          ref={puxInputRef}
+          type="file"
+          accept=".1pux,.zip,application/zip"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) {
+              void handle1puxImport(file);
+            }
+            event.currentTarget.value = "";
+          }}
+        />
       </div>
 
       {importMessage ? <p className="app-success">{importMessage}</p> : null}
+      {exportMessage ? <p className="app-success">{exportMessage}</p> : null}
       {error ? (
         <p className="ps-error" role="alert">
           {error}

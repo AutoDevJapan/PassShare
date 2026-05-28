@@ -64,6 +64,13 @@ export class ConnectClient {
     await this.request<void>(`/vaults/${vaultId}/items/${itemId}`, { method: "DELETE" });
   }
 
+  async import1pux(vaultId: string, base64Payload: string): Promise<{ imported: number }> {
+    return this.request<{ imported: number }>(`/vaults/${vaultId}/imports/1pux`, {
+      method: "POST",
+      body: JSON.stringify({ base64: base64Payload }),
+    });
+  }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...init,

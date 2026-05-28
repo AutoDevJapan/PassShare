@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Mutex;
 
 use passshare_core::{
@@ -125,6 +126,51 @@ fn new_body_item(
 
 fn map_error(err: PassShareError) -> String {
     err.to_string()
+}
+
+fn build_item_from_fields(
+    id: ConnectId,
+    vault_id: ConnectId,
+    category: ItemCategory,
+    title: String,
+    password: Option<String>,
+    url: Option<String>,
+    username: Option<String>,
+    notes: Option<String>,
+    body: Option<String>,
+    tags: Option<Vec<String>>,
+    favorite: Option<bool>,
+) -> Result<Item, PassShareError> {
+    let mut item = match category {
+        ItemCategory::Login => {
+            let password = password.ok_or(PassShareError::PasswordRequired)?;
+            Item::new_login(vault_id, title, password)?
+                .with_optional_fields(url, username, notes)?
+        }
+        ItemCategory::Password => {
+            let password = password.ok_or(PassShareError::PasswordRequired)?;
+            let mut created = Item::new_password(vault_id, title, password)?;
+            if let Some(notes) = notes {
+                created.set_field_by_purpose(FieldPurpose::Notes, &notes)?;
+            }
+            created
+        }
+        ItemCategory::SecureNote => Item::new_secure_note(vault_id, title, body.unwrap_or_default())?,
+        ItemCategory::CreditCard | ItemCategory::Identity | ItemCategory::SshKey | ItemCategory::Custom => {
+            new_body_item(vault_id, category, title, body.unwrap_or_default())?
+        }
+    };
+
+    item.id = id;
+
+    if let Some(tags) = tags {
+        item.set_tags(tags);
+    }
+    if let Some(favorite) = favorite {
+        item.set_favorite(favorite);
+    }
+
+    Ok(item)
 }
 
 #[tauri::command]
@@ -334,6 +380,53 @@ fn import_onepassword_csv(csv_data: String, master_password: String, state: Stat
 }
 
 #[tauri::command]
+fn export_onepassword_csv(state: State<'_, AppState>) -> Result<String, String> {
+    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = pb.as_ref().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    pb.export_onepassword_csv().map_err(map_error)
+}
+
+#[tauri::command]
+fn upsert_sync_item(
+    id: String,
+    category: String,
+    title: String,
+    password: Option<String>,
+    url: Option<String>,
+    username: Option<String>,
+    notes: Option<String>,
+    body: Option<String>,
+    tags: Option<Vec<String>>,
+    favorite: Option<bool>,
+    master_password: String,
+    state: State<'_, AppState>,
+) -> Result<ItemDto, String> {
+    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let vault_id = pb.vault().map_err(map_error)?.id.clone();
+    let connect_id = ConnectId::from_str(&id).map_err(map_error)?;
+    let parsed = parse_category(&category).map_err(map_error)?;
+    let item = build_item_from_fields(
+        connect_id,
+        vault_id,
+        parsed,
+        title,
+        password,
+        url,
+        username,
+        notes,
+        body,
+        tags,
+        favorite,
+    )
+    .map_err(map_error)?;
+
+    pb.upsert_sync_item(item.clone()).map_err(map_error)?;
+    pb.save(&master_password).map_err(map_error)?;
+    Ok(ItemDto::from(&item))
+}
+
+#[tauri::command]
 fn generate_password(length: Option<usize>) -> String {
     PasswordBox::generate_password(PasswordGeneratorOptions {
         length: length.unwrap_or(16),
@@ -369,6 +462,8 @@ pub fn run() {
             update_item,
             delete_item,
             import_onepassword_csv,
+            export_onepassword_csv,
+            upsert_sync_item,
             generate_password,
             lock_password_box,
         ])
