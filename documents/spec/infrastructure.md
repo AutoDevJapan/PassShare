@@ -91,6 +91,14 @@ SSOT: [audit-checklist.md](../security/audit-checklist.md), [connect-api-gap-ana
 |---------|-------------|------|
 | PR / main push | `frontend-e2e.yml` | Playwright signup → CRUD → logout + frontend build |
 
+### Desktop ビルド（CI）
+
+| トリガー | ワークフロー | 動作 |
+|---------|-------------|------|
+| PR / main push | `desktop-build.yml` | Rust smoke + Tauri 3 OS ビルド（MSI/DMG/AppImage/deb） |
+
+SSOT: [desktop-release.md](../runbooks/desktop-release.md)
+
 ## Railway 構成
 
 ```
