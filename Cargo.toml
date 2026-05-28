@@ -4,6 +4,7 @@ members = [
     "crates/passshare-connect",
     "crates/op-cli",
     "apps/desktop/src-tauri",
+    "apps/mobile/src-tauri",
 ]
 resolver = "2"
 
