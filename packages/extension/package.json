@@ -23,5 +23,10 @@
     "tsx": "^4.19.4",
     "vite": "^6.3.5"
   },
-  "packageManager": "pnpm@10.11.0"
+  "packageManager": "pnpm@10.11.0",
+  "pnpm": {
+    "overrides": {
+      "@crxjs/vite-plugin>rollup": "^2.80.0"
+    }
+  }
 }
