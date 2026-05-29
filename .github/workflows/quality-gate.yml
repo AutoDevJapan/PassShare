@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -62,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -89,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -126,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -170,7 +170,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -226,7 +226,7 @@ jobs:
       - name: Run desktop smoke tests
         run: cargo test -p passshare-desktop smoke_
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -257,7 +257,7 @@ jobs:
       - name: Run mobile smoke tests
         run: cargo test -p passshare-mobile smoke_
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -304,7 +304,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -322,7 +322,7 @@ jobs:
         run: node scripts/bench/run.mjs
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: bench-results.json
