@@ -21,11 +21,13 @@ pnpm --dir backend run migrate:verify
 deploy_ok=0
 for i in $(seq 1 "$attempts"); do
   echo "Railway deploy attempt ${i}/${attempts}..."
+  # --detach uploads and returns without --ci's brittle post-export wait (Railway Metal builder
+  # often reports "Deploy failed" in CI mode even when the image build succeeds).
   if railway up \
     --project "${RAILWAY_PROJECT_ID}" \
     --service "${RAILWAY_SERVICE_ID}" \
     --environment "${RAILWAY_ENVIRONMENT_ID}" \
-    --ci; then
+    --detach; then
     deploy_ok=1
     break
   fi
