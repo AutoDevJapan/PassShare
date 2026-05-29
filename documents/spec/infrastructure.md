@@ -223,7 +223,7 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 - `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
 - **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
-- デプロイ CI は `scripts/railway-deploy-ci.sh` を使用する（`railway up` 最大 3 回リトライ + デプロイ後 `/health/db` smoke）
+- デプロイ CI は `scripts/railway-deploy-ci.sh` を使用する（`railway up --detach` でアップロード + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
 
 ### デプロイ失敗 vs DB 障害の切り分け
 
