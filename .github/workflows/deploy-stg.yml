@@ -1,8 +1,12 @@
 name: Deploy Staging Backend
 
 on:
-  push:
-    branches: [stg]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'deploy-stg' to confirm staging deploy (refreshes DB from prd replica)"
+        required: true
+        type: string
 
 concurrency:
   group: deploy-staging
@@ -10,6 +14,7 @@ concurrency:
 
 jobs:
   deploy-backend-staging:
+    if: github.event.inputs.confirm == 'deploy-stg'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -24,6 +29,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
 
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: Install backend dependencies
         working-directory: backend
         run: pnpm install --frozen-lockfile
@@ -31,11 +39,18 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy backend to Railway (staging)
+      - name: Refresh stg DB from prd replica, then deploy
         env:
+          DEPLOY_TARGET: stg
+          DB_REPLICA_MODE: refresh
+          DB_REPLICA_SOURCE: prd
+          DB_REPLICA_TARGET: stg
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_STAGING_ENV_ID }}
+          RAILWAY_PRODUCTION_ENV_ID: ${{ secrets.RAILWAY_PRODUCTION_ENV_ID }}
+          RAILWAY_STAGING_ENV_ID: ${{ secrets.RAILWAY_STAGING_ENV_ID }}
+          RAILWAY_DEVELOPMENT_ENV_ID: ${{ secrets.RAILWAY_DEVELOPMENT_ENV_ID }}
           RAILWAY_HEALTH_URL: https://pass-share-backend-staging.up.railway.app/health/db
-        run: bash scripts/railway-deploy-ci.sh
+        run: bash scripts/railway-deploy-with-replica.sh
