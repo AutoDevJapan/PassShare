@@ -105,6 +105,36 @@ pnpm --dir packages/extension test
 node --test backend/test/extension-auth.test.js
 ```
 
+## CI 完了報告ルール
+
+PR 作成・push・修正コミット後は、**CI が完了するまで「完了」と報告しない**。
+
+### 完了報告の条件
+
+1. 対象 PR / ブランチの **GitHub Checks がすべて terminal 状態**（pass または意図した skip のみ）
+2. **fail / pending が 0 件** であることを `gh pr checks` 等で確認済み
+3. 上記を満たした **後** に、変更内容・影響・テスト結果をユーザーへ報告する
+
+### CI が Fail した場合
+
+- **「完了」と報告しない。** 失敗チェック名・ログ・原因を特定し、修正に入る
+- 修正は **`/user-godd-a/dev` ワークフロー** に従って実施する（調査 → 修正 → ドキュメント同期 → push）
+- push 後、再度 CI 完了まで待機し、**すべて pass するまで上記を繰り返す**
+- 同一原因で 3 回以上失敗した場合は Blocker Detection（GoDD dev 共通ルール）に従い、方針を切り替える
+
+### 監視コマンド（例）
+
+```powershell
+gh pr checks <PR番号> --watch --interval 20
+gh run list --branch <ブランチ名> --limit 5
+gh run view <run-id> --log-failed
+```
+
+### 例外
+
+- ユーザーが「CI 待たずに報告して」と明示した場合のみ、pending 状態で中間報告可（その旨を明記する）
+- 外部サービス（Railway / Vercel 等）の手動操作が必要でエージェントが unblock できない場合は、**未解決の fail として報告**し、必要な手動手順を列挙する
+
 ## xDD
 
 Spec: `documents/spec/feature-passshare-mvp.md`, `documents/spec/production-v2.md`
