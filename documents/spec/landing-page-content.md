@@ -54,7 +54,7 @@ PassShare vs 主要 PM 一般の比較テーブル（MVP 機能に限定）。
 
 ### Get Started Now
 
-下部 CTA: Free Download（`#download`）/ View Documentation（`#docs`）。
+下部 CTA: View Documentation（Primary `/docs`）/ Download（Secondary `#download` — Hero へスクロール）。Primary Download は Hero のみ。
 
 ## 受入基準（Issue #5）
 
