@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useI18n } from "@shared/i18n/I18nProvider";
+import { LanguageSwitcher } from "@shared/ui/LanguageSwitcher";
 import { useAuthSession } from "../hooks/useAuthSession";
 
 export function AppShell() {
@@ -24,6 +25,7 @@ export function AppShell() {
           </NavLink>
         </nav>
         <div className="app-shell__session">
+          <LanguageSwitcher />
           <span className="app-shell__email">{user?.email}</span>
           <button type="button" className="ps-button ps-button--secondary" onClick={() => void handleLogout()}>
             {t("session.logout")}

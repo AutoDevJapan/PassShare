@@ -1,7 +1,8 @@
 {
   "private": true,
   "scripts": {
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "i18n:check": "node scripts/i18n-check.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",

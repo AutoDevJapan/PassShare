@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import {
   DEFAULT_LOCALE,
   LOCALE_STORAGE_KEY,
+  applyDocumentLocale,
   getMessages,
   resolveInitialLocale,
   type Locale,
@@ -26,7 +27,7 @@ export function I18nProvider({ children }: I18nProviderProps) {
   function setLocale(nextLocale: Locale) {
     setLocaleState(nextLocale);
     window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
-    document.documentElement.lang = nextLocale;
+    applyDocumentLocale(nextLocale);
   }
 
   const value = useMemo<I18nContextValue>(() => {

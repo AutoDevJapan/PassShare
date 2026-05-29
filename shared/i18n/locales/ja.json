@@ -214,5 +214,15 @@
   "extension.settings.title": "設定",
   "extension.settings.logout": "ログアウト",
   "extension.settings.nativeMessaging": "Desktop Native Messaging は次フェーズで有効化されます（Issue #96）。",
-  "extension.password.generate": "パスワード生成"
+  "extension.password.generate": "パスワード生成",
+  "header.lang.ru": "Русский",
+  "header.lang.de": "Deutsch",
+  "header.lang.fr": "Deutsch",
+  "header.lang.es": "Deutsch",
+  "header.lang.zh-CN": "Deutsch",
+  "header.lang.zh-TW": "Deutsch",
+  "header.lang.ko": "Deutsch",
+  "header.lang.pt-BR": "Deutsch",
+  "mobile.settings.language": "言語",
+  "extension.settings.language": "言語"
 }

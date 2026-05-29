@@ -107,6 +107,19 @@ jobs:
         working-directory: packages/connect-js
         run: pnpm test
 
+  i18n:
+    name: i18n key parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Check locale key parity
+        run: node scripts/i18n-check.mjs
+
   frontend:
     name: Web (Playwright + build)
     runs-on: ubuntu-latest
@@ -135,16 +148,21 @@ jobs:
           pnpm --dir packages/connect-js run build
           pnpm --dir frontend install --frozen-lockfile
 
+      - name: Build frontend
+        run: pnpm --dir frontend run build
+
       - name: Install Playwright browsers
         run: pnpm exec playwright install chromium --with-deps
 
       - name: Run Playwright E2E
         env:
           CI: "true"
-        run: pnpm exec playwright test
+        run: pnpm exec playwright test --project=chromium
 
-      - name: Build frontend
-        run: pnpm --dir frontend run build
+      - name: Run i18n visual regression
+        env:
+          CI: "true"
+        run: pnpm exec playwright test --project=i18n-visual
 
   extension:
     name: Extension (unit + E2E smoke)
@@ -319,6 +337,7 @@ jobs:
       - backend
       - connect-types
       - connect-js
+      - i18n
       - frontend
       - extension
       - desktop-smoke

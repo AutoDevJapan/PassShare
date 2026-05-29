@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@shared/i18n/I18nProvider";
+import { formatVaultItemCount } from "@shared/i18n/index";
 import type { Vault } from "@passshare/connect";
 import { AuthApiError, createPasswordBox } from "../../lib/auth-api";
 import { useAuthSession } from "../../hooks/useAuthSession";
 
 export function VaultsPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { connectClient, connectLoading, refreshConnect } = useAuthSession();
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -85,10 +86,7 @@ export function VaultsPage() {
           <li key={vault.id}>
             <Link className="app-vault-card ps-card" to={`/app/vaults/${vault.id}/items`}>
               <h2 className="ps-heading-3">{vault.name}</h2>
-              <p className="app-vault-card__meta">
-                {vault.items}
-                {t("app.vault.itemCountSuffix")}
-              </p>
+              <p className="app-vault-card__meta">{formatVaultItemCount(vault.items, locale)}</p>
             </Link>
           </li>
         ))}

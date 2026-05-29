@@ -37,13 +37,18 @@ jobs:
           pnpm --dir packages/connect-js run build
           pnpm --dir frontend install --frozen-lockfile
 
+      - name: Build frontend
+        run: pnpm --dir frontend run build
+
       - name: Install Playwright browsers
         run: pnpm exec playwright install chromium --with-deps
 
-      - name: Run Playwright E2E
+      - name: Run Playwright E2E (auth CRUD)
         env:
           CI: "true"
-        run: pnpm exec playwright test
+        run: pnpm exec playwright test --project=chromium
 
-      - name: Build frontend
-        run: pnpm --dir frontend run build
+      - name: Run i18n visual regression
+        env:
+          CI: "true"
+        run: pnpm exec playwright test --project=i18n-visual

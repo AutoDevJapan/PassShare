@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { Vault } from "@passshare/connect";
+import { formatVaultItemCount } from "@shared/i18n/index";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import { AuthApiError, createPasswordBox } from "../lib/auth-api";
 import { loadRefreshToken } from "../lib/secure-storage";
@@ -10,7 +11,7 @@ type Props = {
 };
 
 export function VaultListPanel({ onSelectVault }: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { connectClient, connectLoading, refreshConnect } = useAuthSession();
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [name, setName] = useState("");
@@ -93,10 +94,7 @@ export function VaultListPanel({ onSelectVault }: Props) {
           <li key={vault.id}>
             <button type="button" className="mobile-vault-card ps-card" onClick={() => onSelectVault(vault.id)}>
               <h2 className="ps-heading-3">{vault.name}</h2>
-              <p className="mobile-vault-card__meta">
-                {vault.items}
-                {t("app.vault.itemCountSuffix")}
-              </p>
+              <p className="mobile-vault-card__meta">{formatVaultItemCount(vault.items, locale)}</p>
             </button>
           </li>
         ))}

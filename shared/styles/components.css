@@ -31,7 +31,8 @@
   margin: 0;
   font-family: var(--ps-font-mono);
   font-size: var(--ps-text-sm);
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .ps-actions {
