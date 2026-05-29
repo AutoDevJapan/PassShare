@@ -33,19 +33,19 @@ pub fn generate_password(options: PasswordGeneratorOptions) -> String {
 
     if options.lowercase {
         charset.extend_from_slice(LOWERCASE);
-        required.push(LOWERCASE[rng.gen_range(0..LOWERCASE.len())] as char);
+        required.push(LOWERCASE[rng.random_range(0..LOWERCASE.len())] as char);
     }
     if options.uppercase {
         charset.extend_from_slice(UPPERCASE);
-        required.push(UPPERCASE[rng.gen_range(0..UPPERCASE.len())] as char);
+        required.push(UPPERCASE[rng.random_range(0..UPPERCASE.len())] as char);
     }
     if options.digits {
         charset.extend_from_slice(DIGITS);
-        required.push(DIGITS[rng.gen_range(0..DIGITS.len())] as char);
+        required.push(DIGITS[rng.random_range(0..DIGITS.len())] as char);
     }
     if options.symbols {
         charset.extend_from_slice(SYMBOLS);
-        required.push(SYMBOLS[rng.gen_range(0..SYMBOLS.len())] as char);
+        required.push(SYMBOLS[rng.random_range(0..SYMBOLS.len())] as char);
     }
 
     if charset.is_empty() {
@@ -55,13 +55,13 @@ pub fn generate_password(options: PasswordGeneratorOptions) -> String {
 
     let length = options.length.max(required.len());
     let mut chars: Vec<char> = (0..length - required.len())
-        .map(|_| charset[rng.gen_range(0..charset.len())] as char)
+        .map(|_| charset[rng.random_range(0..charset.len())] as char)
         .collect();
     chars.extend(required);
 
     // Fisher-Yates shuffle
     for i in (1..chars.len()).rev() {
-        let j = rng.gen_range(0..=i);
+        let j = rng.random_range(0..=i);
         chars.swap(i, j);
     }
 
