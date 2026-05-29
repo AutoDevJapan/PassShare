@@ -46,7 +46,7 @@ scripts/                 — Vercel / Railway セットアップ
 
 | 環境 | Frontend (Vercel) | Backend (Railway) | DB |
 |------|-------------------|-------------------|-----|
-| prd | Production / `main` | production | postgres-prd |
+| prd | Production / `main` | production | postgres-prd-v2 |
 | stg | Staging / `stg` | staging | postgres-stg |
 | preview | Preview / PR | preview | postgres-dev |
 | dev | Development / `develop` | development | postgres-dev |

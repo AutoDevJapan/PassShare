@@ -9,3 +9,4 @@ if (!SCHEMA_SQL.includes("connect_item_files")) {
 }
 
 console.log("DB schema migration script verified (CREATE IF NOT EXISTS)");
+console.log("Note: migrate:verify checks schema.js only; live DB connectivity is verified post-deploy via /health/db.");

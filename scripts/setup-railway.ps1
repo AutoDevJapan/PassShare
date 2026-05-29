@@ -53,7 +53,7 @@ try {
    - pass-share-backend (Empty Service, Root: backend/)
    - postgres-dev (PostgreSQL)
    - postgres-stg (PostgreSQL)
-   - postgres-prd (PostgreSQL)
+   - postgres-prd-v2 (PostgreSQL)
 
 2. 環境作成 (Settings > Environments)
    - production (default)
@@ -64,7 +64,7 @@ try {
 3. backend 各環境の Variables
    - APP_ENV: prd / stg / preview / dev
    - DATABASE_URL: Variable Reference
-     * production  -> postgres-prd
+     * production  -> postgres-prd-v2
      * staging     -> postgres-stg
      * preview     -> postgres-dev
      * development -> postgres-dev

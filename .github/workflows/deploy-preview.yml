@@ -36,10 +36,8 @@ jobs:
       - name: Deploy backend to Railway (preview)
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: |
-          pnpm --dir backend run migrate:verify
-          railway up \
-            --project "${{ secrets.RAILWAY_PROJECT_ID }}" \
-            --service "${{ secrets.RAILWAY_SERVICE_ID }}" \
-            --environment "${{ secrets.RAILWAY_PREVIEW_ENV_ID }}" \
-            --ci
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_PREVIEW_ENV_ID }}
+          RAILWAY_HEALTH_URL: https://pass-share-backend-preview.up.railway.app/health/db
+        run: bash scripts/railway-deploy-ci.sh
