@@ -1,8 +1,12 @@
 name: Deploy Production Backend
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'deploy-prd' to confirm production deploy"
+        required: true
+        type: string
 
 concurrency:
   group: deploy-production
@@ -10,6 +14,7 @@ concurrency:
 
 jobs:
   deploy-backend-production:
+    if: github.event.inputs.confirm == 'deploy-prd'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -24,6 +29,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
 
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: Install backend dependencies
         working-directory: backend
         run: pnpm install --frozen-lockfile
@@ -31,11 +39,24 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy backend to Railway (production)
+      - name: Snapshot prd DB, then deploy
         env:
+          DEPLOY_TARGET: prd
+          DB_REPLICA_MODE: snapshot
+          DB_REPLICA_SOURCE: prd
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_PRODUCTION_ENV_ID }}
+          RAILWAY_PRODUCTION_ENV_ID: ${{ secrets.RAILWAY_PRODUCTION_ENV_ID }}
+          RAILWAY_STAGING_ENV_ID: ${{ secrets.RAILWAY_STAGING_ENV_ID }}
+          RAILWAY_DEVELOPMENT_ENV_ID: ${{ secrets.RAILWAY_DEVELOPMENT_ENV_ID }}
           RAILWAY_HEALTH_URL: https://pass-share-backend-production.up.railway.app/health/db
-        run: bash scripts/railway-deploy-ci.sh
+        run: bash scripts/railway-deploy-with-replica.sh
+
+      - name: Upload prd DB snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prd-db-snapshot-${{ github.run_id }}
+          path: passshare-snapshot-replica-*.dump
+          if-no-files-found: warn

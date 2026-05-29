@@ -5,54 +5,74 @@
 
 ## 概要
 
-PassShare v2.0 の本番リリースは **stg 受入 pass → main マージ → 自動デプロイ → smoke → tag** の順で実施する。
+PassShare v2.0 のリリースフロー:
+
+1. **main マージ** → dev Backend 自動デプロイ（prd レプリカ refresh 付き）
+2. **dev 検証 OK** → stg 手動デプロイ
+3. **stg 受入 OK** → prd 手動デプロイ
+4. tag / Desktop / CHANGELOG
+
+SSOT: [ADR 005](../adr/005-deploy-pipeline-dev-first.md), [infrastructure.md](../spec/infrastructure.md)
 
 ## 環境マッピング
 
-| 論理環境 | Git ブランチ | Backend | Frontend |
-|---------|-------------|---------|----------|
-| stg | `stg` | Railway staging | Vercel Preview (stg) |
-| prd | `main` | Railway production | Vercel Production |
+| 論理環境 | Git ブランチ | Backend デプロイ | Frontend |
+|---------|-------------|-----------------|----------|
+| dev | `main`（検知） | 自動 `deploy-dev.yml` | Vercel Development |
+| stg | `stg` | 手動 `deploy-stg.yml` | Vercel Preview (stg) |
+| prd | — | 手動 `deploy-prd.yml` | Vercel Production (`main`) |
 
-SSOT: [infrastructure.md](../spec/infrastructure.md)
+## Promote（dev → stg → prd）
 
-## Promote（stg → prd）
+### 1. main マージ（dev）
 
-### 前提
+```powershell
+git checkout main
+git pull origin main
+# PR マージ後、deploy-dev.yml が自動実行される
+```
 
-1. [staging-acceptance.md](./staging-acceptance.md) のチェックリストがすべて ✅
-2. `main` 上の Quality Gate CI が green
-3. CHANGELOG の `[Unreleased]` セクションが更新済み
+- prd DB → dev (`postgres-dev`) refresh
+- Railway development backend デプロイ
+- smoke: `https://pass-share-backend-development.up.railway.app/health/db`
 
-### 手順
+### 2. stg 手動デプロイ
 
-1. **stg ブランチを main に fast-forward マージ**（または PR 経由）
+前提: [staging-acceptance.md](./staging-acceptance.md) の dev 検証 ✅
+
+1. GitHub → Actions → **Deploy Staging Backend** → Run workflow
+2. 確認入力: `deploy-stg`
+3. prd DB → stg (`postgres-stg`) refresh → staging backend デプロイ
+4. smoke:
    ```powershell
-   git checkout main
-   git pull origin main
-   git merge origin/stg
-   git push origin main
+   $env:STG_BACKEND_URL = "https://pass-share-backend-staging.up.railway.app"
+   node scripts/stg-smoke.mjs
    ```
-2. **Backend 自動デプロイ** — `deploy-prd.yml` が Railway production へ deploy
-3. **Frontend 自動デプロイ** — Vercel Production が `main` をビルド
-4. **Smoke（本番）**
+
+### 3. prd 手動デプロイ
+
+前提:
+
+1. stg 受入チェックリスト ✅
+2. CHANGELOG `[Unreleased]` 更新済み
+
+1. GitHub → Actions → **Deploy Production Backend** → Run workflow
+2. 確認入力: `deploy-prd`
+3. prd DB snapshot（artifact 保存）→ production backend デプロイ
+4. smoke:
    ```powershell
    $env:STG_BACKEND_URL = "https://pass-share-backend-production.up.railway.app"
    node scripts/stg-smoke.mjs
    ```
-5. **SemVer tag 作成** — [release-versioning.md](../spec/release-versioning.md) 参照
-   ```powershell
-   git tag -a v2.0.0 -m "PassShare v2.0.0"
-   git push origin v2.0.0
-   ```
-6. **Desktop リリース** — [desktop-release.md](./desktop-release.md)（GitHub Releases + updater 署名）
-7. **CHANGELOG 確定** — `[Unreleased]` を `[2.0.0] - YYYY-MM-DD` に移動
+5. SemVer tag — [release-versioning.md](../spec/release-versioning.md)
+6. Desktop — [desktop-release.md](./desktop-release.md)
+7. CHANGELOG 確定
 
 ## Rollback
 
 ### Backend（Railway）
 
-1. Railway Dashboard → production → Deployments
+1. Railway Dashboard → 対象環境 → Deployments
 2. 直前の green デプロイを **Redeploy**
 3. `/health` と `/health/db` を確認
 
@@ -61,31 +81,27 @@ SSOT: [infrastructure.md](../spec/infrastructure.md)
 1. Vercel Dashboard → Deployments → 直前の Production deployment
 2. **Promote to Production**
 
-### Desktop
-
-- 前バージョンの GitHub Release 成果物を再公開（updater が `latest.json` を参照）
-
 ### DB
 
-- 非破壊スキーマ: 旧バイナリ redeploy で十分 — [db-migration.md](./db-migration.md)
-- データ破損時: Railway PITR + [secret-rotation.md](./secret-rotation.md)
+- prd デプロイ artifact の snapshot から `pg_restore`（Run ID 付き dump）
+- PITR — Railway プラン依存 + [secret-rotation.md](./secret-rotation.md)
 
 ## Hotfix
 
-1. `main` から `hotfix/<summary>-YYYYMMDD` ブランチを作成
-2. 修正 + テスト + Quality Gate green
-3. PR → `main` へマージ（patch バージョン bump）
-4. 上記 Promote 手順 4–7 を省略版で実施
-5. 必要に応じて `stg` へ cherry-pick
+1. `main` から `hotfix/<summary>-YYYYMMDD` ブランチ
+2. 修正 + Quality Gate green → PR → `main` マージ
+3. dev 自動デプロイで検証
+4. 必要なら `deploy-stg.yml` / `deploy-prd.yml` を手動実行
 
 ## 演習記録
 
 | 日付 | 種別 | 実施者 | 結果 | 備考 |
 |------|------|--------|------|------|
-| 2026-05-28 | ドライラン（手順レビュー） | — | ✅ Runbook 作成 | Epic #36 |
+| 2026-05-28 | パイプライン変更 | — | ✅ ADR 005 | main → dev、stg/prd 手動 |
 
 ## 関連
 
 - [release-versioning.md](../spec/release-versioning.md)
 - [staging-acceptance.md](./staging-acceptance.md)
 - [secret-rotation.md](./secret-rotation.md)
+- [ADR 005](../adr/005-deploy-pipeline-dev-first.md)
