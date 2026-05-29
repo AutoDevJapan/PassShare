@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use getrandom::getrandom;
+use getrandom::fill;
 use serde::{Deserialize, Serialize};
 
 use crate::error::PassShareError;
@@ -17,7 +17,7 @@ pub struct ConnectId(String);
 impl ConnectId {
     pub fn generate() -> Result<Self, PassShareError> {
         let mut bytes = [0u8; ID_LEN];
-        getrandom(&mut bytes).map_err(|e| PassShareError::Internal(e.to_string()))?;
+        fill(&mut bytes).map_err(|e| PassShareError::Internal(e.to_string()))?;
         let id: String = bytes
             .iter()
             .map(|b| CHARSET[(*b as usize) % CHARSET.len()] as char)

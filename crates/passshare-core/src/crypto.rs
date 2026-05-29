@@ -7,7 +7,7 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit, OsRng},
     XChaCha20Poly1305, XNonce,
 };
-use getrandom::getrandom;
+use getrandom::fill;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::PassShareError;
@@ -37,13 +37,13 @@ pub fn derive_master_key(password: &str, salt: &[u8]) -> Result<MasterKey, PassS
 
 pub fn generate_salt() -> Result<[u8; 16], PassShareError> {
     let mut salt = [0u8; 16];
-    getrandom(&mut salt).map_err(|e| PassShareError::Internal(e.to_string()))?;
+    fill(&mut salt).map_err(|e| PassShareError::Internal(e.to_string()))?;
     Ok(salt)
 }
 
 pub fn generate_recovery_secret() -> Result<String, PassShareError> {
     let mut bytes = [0u8; RECOVERY_SECRET_BYTES];
-    getrandom(&mut bytes).map_err(|e| PassShareError::Internal(e.to_string()))?;
+    fill(&mut bytes).map_err(|e| PassShareError::Internal(e.to_string()))?;
     Ok(BASE64.encode(bytes))
 }
 
@@ -51,7 +51,7 @@ pub fn encrypt(plaintext: &[u8], key: &MasterKey) -> Result<(Vec<u8>, [u8; 24]),
     let cipher = XChaCha20Poly1305::new_from_slice(key.as_bytes())
         .map_err(|e| PassShareError::Internal(e.to_string()))?;
     let mut nonce = [0u8; 24];
-    getrandom(&mut nonce).map_err(|e| PassShareError::Internal(e.to_string()))?;
+    fill(&mut nonce).map_err(|e| PassShareError::Internal(e.to_string()))?;
     let ciphertext = cipher
         .encrypt(XNonce::from_slice(&nonce), plaintext)
         .map_err(|e| PassShareError::Internal(e.to_string()))?;
