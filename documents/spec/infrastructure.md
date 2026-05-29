@@ -50,6 +50,7 @@
 - `preview` と `dev` は **同一 PostgreSQL インスタンス** (`postgres-dev`) を参照する
 - `stg` / `prd` はそれぞれ独立した PostgreSQL インスタンスを使用する
 - **dev / stg デプロイ前**に `scripts/railway-db-replica.mjs` で prd DB を refresh する（レプリカブランチ `replica-{run_id}-{sha}`）
+- CI（GitHub Actions）からの `pg_dump` / `pg_restore` は **Postgres サービスの `DATABASE_PUBLIC_URL`（TCP proxy）** を使用する。backend の `DATABASE_URL`（`.railway.internal`）は CI から到達不可
 - **prd デプロイ前**に prd DB の snapshot を取得し GitHub artifact に保存する
 
 ## Vercel 環境変数
@@ -215,6 +216,9 @@ railway login
 | `RAILWAY_DEVELOPMENT_ENV_ID` | development 環境 ID（`deploy-dev.yml` 必須） |
 | `RAILWAY_STAGING_ENV_ID` | staging 環境 ID |
 | `RAILWAY_PRODUCTION_ENV_ID` | production 環境 ID |
+| `RAILWAY_DATABASE_PUBLIC_URL_PRD` | （任意）CI 用 prd Postgres TCP proxy URL — API 解決失敗時の override |
+| `RAILWAY_DATABASE_PUBLIC_URL_DEV` | （任意）CI 用 dev Postgres TCP proxy URL |
+| `RAILWAY_DATABASE_PUBLIC_URL_STG` | （任意）CI 用 stg Postgres TCP proxy URL |
 | `VERCEL_TOKEN` | Vercel トークン |
 | `VERCEL_ORG_ID` | `masashi-matsumotos-projects-c5830f3d` |
 | `VERCEL_PROJECT_ID` | `prj_itSKGa2HAEj3UNHnsCdPQEF5nziE` |
