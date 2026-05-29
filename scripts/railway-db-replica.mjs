@@ -7,7 +7,8 @@
  *   node scripts/railway-db-replica.mjs refresh --source prd --target dev|stg
  *   node scripts/railway-db-replica.mjs snapshot --source prd
  *
- * Env: RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID, RAILWAY_SERVICE_ID (backend)
+ * Env: RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID
+ * Optional: RAILWAY_DATABASE_PUBLIC_URL_PRD|DEV|STG (CI override)
  */
 
 import { spawnSync } from "node:child_process";
@@ -23,8 +24,71 @@ const ENV_IDS = {
   dev: process.env.RAILWAY_DEVELOPMENT_ENV_ID ?? "0951c467-6bc3-418f-af75-a96e810f4946",
 };
 
-const BACKEND_SERVICE_ID =
-  process.env.RAILWAY_SERVICE_ID ?? "29539998-d8d9-4e41-82a5-f71ca223f96c";
+/** Postgres plugin service IDs — SSOT: documents/spec/infrastructure.md */
+const POSTGRES_SERVICE_IDS = {
+  prd: process.env.RAILWAY_POSTGRES_PRD_SERVICE_ID ?? "1509c487-cf03-4c50-8c9d-8781d53ee19a",
+  stg: process.env.RAILWAY_POSTGRES_STG_SERVICE_ID ?? "7234bbc3-c482-4009-9c88-03063521ffd1",
+  dev: process.env.RAILWAY_POSTGRES_DEV_SERVICE_ID ?? "43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a",
+};
+
+function pickCiDatabaseUrl(variables, logicalEnv) {
+  const overrideKey = `RAILWAY_DATABASE_PUBLIC_URL_${logicalEnv.toUpperCase()}`;
+  const override = process.env[overrideKey];
+  if (override) {
+    return override;
+  }
+
+  const publicUrl = variables.DATABASE_PUBLIC_URL;
+  if (typeof publicUrl === "string" && publicUrl.length > 0 && !publicUrl.includes("${{")) {
+    return publicUrl;
+  }
+
+  const databaseUrl = variables.DATABASE_URL;
+  if (
+    typeof databaseUrl === "string" &&
+    databaseUrl.length > 0 &&
+    !databaseUrl.includes("${{") &&
+    !databaseUrl.includes(".railway.internal")
+  ) {
+    return databaseUrl;
+  }
+
+  throw new Error(
+    `No CI-reachable Postgres URL for ${logicalEnv}. ` +
+      `Enable TCP proxy on the postgres service (DATABASE_PUBLIC_URL) or set ${overrideKey}.`,
+  );
+}
+
+async function getServiceVariables(environmentId, serviceId) {
+  const query = `
+    query Variables($projectId: String!, $environmentId: String!, $serviceId: String!) {
+      variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
+    }
+  `;
+
+  const data = await railwayQuery(query, {
+    projectId: process.env.RAILWAY_PROJECT_ID,
+    environmentId,
+    serviceId,
+  });
+
+  return data?.variables ?? {};
+}
+
+async function getDatabaseUrl(logicalEnv) {
+  const environmentId = ENV_IDS[logicalEnv];
+  if (!environmentId) {
+    throw new Error(`Unknown logical environment: ${logicalEnv}`);
+  }
+
+  const postgresServiceId = POSTGRES_SERVICE_IDS[logicalEnv];
+  if (!postgresServiceId) {
+    throw new Error(`No postgres service ID mapped for ${logicalEnv}`);
+  }
+
+  const variables = await getServiceVariables(environmentId, postgresServiceId);
+  return pickCiDatabaseUrl(variables, logicalEnv);
+}
 
 function branchLabel() {
   const runId = process.env.GITHUB_RUN_ID ?? "local";
@@ -60,40 +124,6 @@ async function railwayQuery(query, variables = {}) {
   }
 
   return payload.data;
-}
-
-async function getDatabaseUrl(logicalEnv) {
-  const environmentId = ENV_IDS[logicalEnv];
-  if (!environmentId) {
-    throw new Error(`Unknown logical environment: ${logicalEnv}`);
-  }
-
-  const query = `
-    query Variables($projectId: String!, $environmentId: String!, $serviceId: String!) {
-      variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
-    }
-  `;
-
-  const data = await railwayQuery(query, {
-    projectId: process.env.RAILWAY_PROJECT_ID,
-    environmentId,
-    serviceId: BACKEND_SERVICE_ID,
-  });
-
-  const databaseUrl = data?.variables?.DATABASE_URL;
-  if (!databaseUrl || typeof databaseUrl !== "string") {
-    throw new Error(
-      `DATABASE_URL not resolved for ${logicalEnv} (env ${environmentId})`,
-    );
-  }
-
-  if (databaseUrl.includes("${{")) {
-    throw new Error(
-      `DATABASE_URL for ${logicalEnv} is unresolved reference: ${databaseUrl}`,
-    );
-  }
-
-  return databaseUrl;
 }
 
 function runCommand(command, args, env = {}) {
@@ -174,8 +204,9 @@ function printHelp() {
   node scripts/railway-db-replica.mjs snapshot --source prd
 
 Environment:
-  RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID, RAILWAY_SERVICE_ID
+  RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID
   RAILWAY_PRODUCTION_ENV_ID, RAILWAY_STAGING_ENV_ID, RAILWAY_DEVELOPMENT_ENV_ID
+  RAILWAY_DATABASE_PUBLIC_URL_PRD|DEV|STG (optional CI override)
 `);
 }
 
