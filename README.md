@@ -46,10 +46,10 @@ scripts/                 — Vercel / Railway セットアップ
 
 | 環境 | Frontend (Vercel) | Backend (Railway) | DB |
 |------|-------------------|-------------------|-----|
-| prd | Production / `main` | production | postgres-prd-v2 |
-| stg | Staging / `stg` | staging | postgres-stg |
+| prd | Production（手動 deploy） | production | postgres-prd-v2 |
+| stg | Staging（手動 deploy） | staging | postgres-stg |
 | preview | Preview / PR | preview | postgres-dev |
-| dev | Development / `develop` | development | postgres-dev |
+| dev | Development / **`main` push** | development | postgres-dev |
 
 詳細: [インフラ仕様](documents/spec/infrastructure.md)
 

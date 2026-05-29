@@ -1,6 +1,6 @@
 # PassShare インフラ構成 (SSOT)
 
-> 最終更新: 2026-05-27（Railway プロジェクト再作成済み）
+> 最終更新: 2026-05-28（デプロイパイプライン: main → dev、stg/prd 手動 — ADR 005）
 
 ## Railway プロジェクト ID
 
@@ -36,17 +36,21 @@
 
 ## 環境マッピング
 
-| 論理環境 | Vercel | Git ブランチ | Railway Environment | DB |
-|---------|--------|-------------|---------------------|-----|
-| **prd** | Production | `main` | `production` | `postgres-prd-v2`（独立） |
-| **stg** | Preview (`stg` ブランチ) | `stg` | `staging` | `postgres-stg`（独立） |
-| **preview** | Preview | PR / feature ブランチ | `preview` | `postgres-dev`（dev と共有） |
-| **dev** | Development | `develop` | `development` | `postgres-dev`（preview と共有） |
+| 論理環境 | Vercel | Git ブランチ | Railway Environment | DB | Backend デプロイ |
+|---------|--------|-------------|---------------------|-----|-----------------|
+| **prd** | Production | —（手動 promote） | `production` | `postgres-prd-v2`（独立） | **手動** `deploy-prd.yml` |
+| **stg** | Preview (`stg` ブランチ) | `stg` | `staging` | `postgres-stg`（デプロイ時 prd から refresh） | **手動** `deploy-stg.yml` |
+| **preview** | Preview | PR / feature ブランチ | `preview` | `postgres-dev`（dev と共有） | PR 時 `deploy-preview.yml` |
+| **dev** | Development | **`main`（検知）** | `development` | `postgres-dev`（デプロイ時 prd から refresh） | **`main` push 自動** `deploy-dev.yml` |
+
+> SSOT: [ADR 005](../adr/005-deploy-pipeline-dev-first.md) — `main` マージは dev Backend デプロイのみ。prd 自動デプロイは廃止。
 
 ### DB 共有ルール
 
 - `preview` と `dev` は **同一 PostgreSQL インスタンス** (`postgres-dev`) を参照する
 - `stg` / `prd` はそれぞれ独立した PostgreSQL インスタンスを使用する
+- **dev / stg デプロイ前**に `scripts/railway-db-replica.mjs` で prd DB を refresh する（レプリカブランチ `replica-{run_id}-{sha}`）
+- **prd デプロイ前**に prd DB の snapshot を取得し GitHub artifact に保存する
 
 ## Vercel 環境変数
 
@@ -208,6 +212,7 @@ railway login
 | `RAILWAY_PROJECT_ID` | PassShare Railway プロジェクト ID |
 | `RAILWAY_SERVICE_ID` | backend サービス ID |
 | `RAILWAY_PREVIEW_ENV_ID` | preview 環境 ID |
+| `RAILWAY_DEVELOPMENT_ENV_ID` | development 環境 ID（`deploy-dev.yml` 必須） |
 | `RAILWAY_STAGING_ENV_ID` | staging 環境 ID |
 | `RAILWAY_PRODUCTION_ENV_ID` | production 環境 ID |
 | `VERCEL_TOKEN` | Vercel トークン |
@@ -220,10 +225,17 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 
 ### GitHub Actions デプロイ
 
+| ワークフロー | トリガー | 先 | DB 前処理 |
+|-------------|---------|-----|----------|
+| `deploy-dev.yml` | `main` push | Railway development | prd → dev refresh |
+| `deploy-stg.yml` | 手動（`deploy-stg` 入力） | Railway staging | prd → stg refresh |
+| `deploy-prd.yml` | 手動（`deploy-prd` 入力） | Railway production | prd snapshot |
+| `deploy-preview.yml` | PR | Railway preview | なし |
+
 - `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
 - **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
-- デプロイ CI は `scripts/railway-deploy-ci.sh` を使用する（`railway up --detach` でアップロード + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
+- デプロイ CI は `scripts/railway-deploy-with-replica.sh` → `scripts/railway-deploy-ci.sh`（DB replica + `railway up --detach` + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
 
 ### デプロイ失敗 vs DB 障害の切り分け
 
@@ -267,9 +279,17 @@ Given Railway に postgres-dev / postgres-stg / postgres-prd-v2 が存在する
 When preview 環境と development 環境の backend を起動する
 Then 両方とも postgres-dev に接続できる
 
-Given stg ブランチに push する
-When Railway staging 環境にデプロイする
-Then postgres-stg のみを参照し postgres-dev には接続しない
+Given stg 受入が完了している
+When GitHub Actions で deploy-stg.yml を手動実行する
+Then postgres-stg が prd レプリカで refresh され staging backend がデプロイされる
+
+Given stg 受入と deploy-stg が完了している
+When GitHub Actions で deploy-prd.yml を手動実行する
+Then prd DB snapshot が作成され production backend がデプロイされる
+
+Given main ブランチに push する
+When deploy-dev.yml が実行される
+Then postgres-dev が prd レプリカで refresh され development backend がデプロイされる（production にはデプロイしない）
 ```
 
 ## 関連ドキュメント
