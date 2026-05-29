@@ -29,8 +29,20 @@
 - [x] Desktop / Web 1PUX インポート UI
 - [x] CSV エクスポート（1Password 互換列）
 
+## PassShare Share（#100）
+
+| 操作 | Web |
+|------|-----|
+| メンバー招待（email） | `/app/vaults/:id/share` |
+| 招待承諾 / 辞退 | `/app/invitations` |
+| メンバー削除 | owner の共有画面 |
+
+### 受入基準
+
+- [x] 招待フロー（owner → invitee accept）
+- [x] 権限管理（owner / member、メンバー削除）
+
 ## 後続（Epic 外）
 
-- PassShare Share（チーム共有）— [#100](https://github.com/AutoDevJapan/PassShare/issues/100) v2.1
 - バックグラウンド自動同期
 - 1PUX エクスポート
