@@ -25,7 +25,7 @@ jobs:
       - name: Run desktop smoke tests
         run: cargo test -p passshare-desktop smoke_
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
