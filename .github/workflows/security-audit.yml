@@ -46,7 +46,7 @@ jobs:
             echo "manager=npm" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.pm.outputs.manager == 'pnpm'
         with:
           version: 10.11.0

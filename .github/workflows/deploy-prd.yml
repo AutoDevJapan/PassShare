@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.11.0
 
@@ -55,7 +55,7 @@ jobs:
         run: bash scripts/railway-deploy-with-replica.sh
 
       - name: Upload prd DB snapshot artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prd-db-snapshot-${{ github.run_id }}
           path: passshare-snapshot-replica-*.dump
