@@ -1,4 +1,9 @@
 #Requires -Version 5.1
+<#
+  DEPRECATED for routine ops — prefer Railway Dashboard Variable References for DATABASE_URL.
+  SSOT: documents/spec/infrastructure.md (postgres-prd-v2, not legacy postgres-prd).
+  Only run when bootstrapping a fresh Railway project; never against production without review.
+#>
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -8,7 +13,7 @@ $ProjectId = "82730a82-b4d4-47d0-b578-f951465465fc"
 $BackendId = "29539998-d8d9-4e41-82a5-f71ca223f96c"
 $PostgresDevId = "43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a"
 $PostgresStgId = "7234bbc3-c482-4009-9c88-03063521ffd1"
-$PostgresPrdId = "610efe3e-86cf-4537-b4f6-4417b34bc229"
+$PostgresPrdId = "1509c487-cf03-4c50-8c9d-8781d53ee19a"  # postgres-prd-v2 (SSOT: infrastructure.md)
 $EnvProduction = "c1a3cdfc-9aa3-420d-b101-e6497714ccb9"
 $EnvStaging = "c807d209-0624-4e13-aff6-61332cd0bb29"
 $EnvPreview = "9bed9d58-203f-4bb5-bb17-858bcb3e2513"
@@ -95,12 +100,12 @@ Set-PostgresVars -EnvironmentId $EnvPreview -ServiceId $PostgresDevId -User "pas
 Write-Host "Configuring postgres-stg..."
 Set-PostgresVars -EnvironmentId $EnvStaging -ServiceId $PostgresStgId -User "passshare_stg" -Password $StgDbPassword -Database "passshare_stg"
 
-Write-Host "Configuring postgres-prd..."
+Write-Host "Configuring postgres-prd-v2..."
 Set-PostgresVars -EnvironmentId $EnvProduction -ServiceId $PostgresPrdId -User "passshare_prd" -Password $PrdDbPassword -Database "passshare_prd"
 
 $DevDatabaseUrl = "postgresql://passshare_dev:$DevDbPassword@postgres-dev.railway.internal:5432/passshare_dev"
 $StgDatabaseUrl = "postgresql://passshare_stg:$StgDbPassword@postgres-stg.railway.internal:5432/passshare_stg"
-$PrdDatabaseUrl = "postgresql://passshare_prd:$PrdDbPassword@postgres-prd.railway.internal:5432/passshare_prd"
+$PrdDatabaseUrl = "postgresql://passshare_prd:$PrdDbPassword@postgres-prd-v2.railway.internal:5432/passshare_prd"
 
 foreach ($envId in @($EnvProduction, $EnvStaging, $EnvPreview, $EnvDevelopment)) {
   Write-Host "Updating backend instance in $envId..."

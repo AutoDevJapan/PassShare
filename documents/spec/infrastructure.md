@@ -223,6 +223,27 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 - `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
 - **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
+- デプロイ CI は `scripts/railway-deploy-ci.sh` を使用する（`railway up --detach` でアップロード + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
+
+### デプロイ失敗 vs DB 障害の切り分け
+
+| 症状 | 原因 | 確認方法 |
+|------|------|----------|
+| CI で `load metadata for docker.io/...` 後に `Deploy failed` | Railway ビルド（Docker Hub メタデータ取得）の一時失敗 | Railway ビルドログ。`/health/db` はデプロイ前の旧リビジョンのまま 200 のことがある |
+| `/health` 200 だが `/health/db` 503 `database: unreachable` | `DATABASE_URL` 未設定・Variable Reference 切れ・Postgres 停止 | Railway Variables + Postgres サービス状態 |
+| `/health/db` 503 `database: not_configured` | backend に `DATABASE_URL` がない | preview/stg/prd 各環境の Variable Reference を確認 |
+| `migrate:verify` pass だが DB 不通 | **正常** — `migrate:verify` は `schema.js` の静的検証のみ（ live DB 非接続） | デプロイ後 smoke: `curl .../health/db` |
+
+全環境 smoke（手動）:
+
+```powershell
+@(
+  "https://pass-share-backend-production.up.railway.app/health/db",
+  "https://pass-share-backend-staging.up.railway.app/health/db",
+  "https://pass-share-backend-preview.up.railway.app/health/db",
+  "https://pass-share-backend-development.up.railway.app/health/db"
+) | ForEach-Object { Invoke-RestMethod $_ }
+```
 
 ### 旧 Railway プロジェクト（profound-growth）
 

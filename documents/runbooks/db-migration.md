@@ -11,7 +11,7 @@ PassShare backend は起動時に `store.migrate()` で `CREATE TABLE IF NOT EXI
 
 | 環境 | タイミング | 手順 |
 |------|-----------|------|
-| preview | PR マージ前 | CI `backend-test` → `migrate:verify` pass |
+| preview | PR マージ前 | CI `backend-test` → `migrate:verify` pass + deploy smoke `/health/db` |
 | dev | develop push | Railway 自動デプロイ → 起動時 migrate |
 | stg | stg ブランチ push | Railway staging デプロイ → smoke `/health/db` |
 | prd | main マージ | Railway production デプロイ → smoke `/health/db` |
