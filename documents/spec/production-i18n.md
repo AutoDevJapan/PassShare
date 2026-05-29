@@ -116,6 +116,7 @@ A11y: `role="group"`, `aria-pressed`, `aria-label`（[ui-polish.md](./ui-polish.
 | チェック | コマンド | Workflow |
 |---------|---------|----------|
 | キー完全性 | `pnpm run i18n:check` | `quality-gate.yml` → `i18n` job |
+| jp-ui-contracts（#130） | `pnpm run design:jp-ui-check` | `quality-gate.yml` → `i18n` job |
 | Visual Regression | `pnpm exec playwright test e2e/web/i18n-visual.spec.ts` | `frontend` job |
 
 ## 翻訳ワークフロー
@@ -150,7 +151,7 @@ Web ドキュメント（`/docs/*`）は `frontend/src/content/docs/{ja,en}.ts` 
 - [x] 疑似ロケールユーティリティ
 - [x] locale 別 Visual Regression テスト
 - [x] 言語切替 UI 統一（4 クライアント）
-- [ ] Pencil 多言語デザイン検証（手動 — Issue #130）
+- [x] Pencil 多言語デザイン検証（Issue #130 — [pencil-i18n-design.md](./pencil-i18n-design.md)）
 
 ## 子 Issue トレーサビリティ
 
@@ -169,5 +170,5 @@ Web ドキュメント（`/docs/*`）は `frontend/src/content/docs/{ja,en}.ts` 
 | [#127](https://github.com/AutoDevJapan/PassShare/issues/127) | 疑似ロケール |
 | [#128](https://github.com/AutoDevJapan/PassShare/issues/128) | Visual Regression |
 | [#129](https://github.com/AutoDevJapan/PassShare/issues/129) | 言語切替 UI 統一 |
-| [#130](https://github.com/AutoDevJapan/PassShare/issues/130) | Pencil 検証（手動） |
+| [#130](https://github.com/AutoDevJapan/PassShare/issues/130) | Pencil 検証 — [pencil-i18n-design.md](./pencil-i18n-design.md) |
 | [#131](https://github.com/AutoDevJapan/PassShare/issues/131) | 密度プロファイル |
