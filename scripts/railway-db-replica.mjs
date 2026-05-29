@@ -31,7 +31,17 @@ const POSTGRES_SERVICE_IDS = {
   dev: process.env.RAILWAY_POSTGRES_DEV_SERVICE_ID ?? "43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a",
 };
 
-function pickCiDatabaseUrl(variables, logicalEnv) {
+const POSTGRES_PORT = 5432;
+
+function normalizeTcpHost(domain) {
+  return domain.replace(/\.$/, "");
+}
+
+function buildPostgresUrl(user, password, database, host, port) {
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+}
+
+function pickDirectCiDatabaseUrl(variables, logicalEnv) {
   const overrideKey = `RAILWAY_DATABASE_PUBLIC_URL_${logicalEnv.toUpperCase()}`;
   const override = process.env[overrideKey];
   if (override) {
@@ -41,6 +51,23 @@ function pickCiDatabaseUrl(variables, logicalEnv) {
   const publicUrl = variables.DATABASE_PUBLIC_URL;
   if (typeof publicUrl === "string" && publicUrl.length > 0 && !publicUrl.includes("${{")) {
     return publicUrl;
+  }
+
+  const proxyDomain = variables.RAILWAY_TCP_PROXY_DOMAIN;
+  const proxyPort = variables.RAILWAY_TCP_PROXY_PORT;
+  if (proxyDomain && proxyPort) {
+    const user = variables.POSTGRES_USER ?? variables.PGUSER;
+    const password = variables.POSTGRES_PASSWORD ?? variables.PGPASSWORD;
+    const database = variables.POSTGRES_DB ?? variables.PGDATABASE;
+    if (user && password && database) {
+      return buildPostgresUrl(
+        user,
+        password,
+        database,
+        normalizeTcpHost(proxyDomain),
+        Number(proxyPort),
+      );
+    }
   }
 
   const databaseUrl = variables.DATABASE_URL;
@@ -53,10 +80,75 @@ function pickCiDatabaseUrl(variables, logicalEnv) {
     return databaseUrl;
   }
 
-  throw new Error(
-    `No CI-reachable Postgres URL for ${logicalEnv}. ` +
-      `Enable TCP proxy on the postgres service (DATABASE_PUBLIC_URL) or set ${overrideKey}.`,
+  return null;
+}
+
+function buildUrlFromTcpProxy(variables, tcpProxy) {
+  const user = variables.POSTGRES_USER ?? variables.PGUSER;
+  const password = variables.POSTGRES_PASSWORD ?? variables.PGPASSWORD;
+  const database = variables.POSTGRES_DB ?? variables.PGDATABASE;
+
+  if (!user || !password || !database) {
+    throw new Error("Postgres credentials missing for TCP proxy URL construction");
+  }
+
+  return buildPostgresUrl(
+    user,
+    password,
+    database,
+    normalizeTcpHost(tcpProxy.domain),
+    tcpProxy.proxyPort,
   );
+}
+
+async function listTcpProxies(environmentId, serviceId) {
+  const query = `
+    query TcpProxies($environmentId: String!, $serviceId: String!) {
+      tcpProxies(environmentId: $environmentId, serviceId: $serviceId) {
+        id
+        domain
+        proxyPort
+        applicationPort
+      }
+    }
+  `;
+
+  const data = await railwayQuery(query, { environmentId, serviceId });
+  return data?.tcpProxies ?? [];
+}
+
+async function createTcpProxy(environmentId, serviceId, applicationPort) {
+  const mutation = `
+    mutation TcpProxyCreate($input: TCPProxyCreateInput!) {
+      tcpProxyCreate(input: $input) {
+        id
+        domain
+        proxyPort
+        applicationPort
+      }
+    }
+  `;
+
+  const data = await railwayQuery(mutation, {
+    input: { applicationPort, environmentId, serviceId },
+  });
+
+  return data?.tcpProxyCreate;
+}
+
+async function ensureTcpProxy(environmentId, serviceId, logicalEnv) {
+  const existing = await listTcpProxies(environmentId, serviceId);
+  const postgresProxy =
+    existing.find((proxy) => proxy.applicationPort === POSTGRES_PORT) ?? existing[0];
+
+  if (postgresProxy) {
+    return postgresProxy;
+  }
+
+  console.log(
+    `No TCP proxy on postgres-${logicalEnv}; creating proxy for port ${POSTGRES_PORT}...`,
+  );
+  return createTcpProxy(environmentId, serviceId, POSTGRES_PORT);
 }
 
 async function getServiceVariables(environmentId, serviceId) {
@@ -87,7 +179,13 @@ async function getDatabaseUrl(logicalEnv) {
   }
 
   const variables = await getServiceVariables(environmentId, postgresServiceId);
-  return pickCiDatabaseUrl(variables, logicalEnv);
+  const directUrl = pickDirectCiDatabaseUrl(variables, logicalEnv);
+  if (directUrl) {
+    return directUrl;
+  }
+
+  const tcpProxy = await ensureTcpProxy(environmentId, postgresServiceId, logicalEnv);
+  return buildUrlFromTcpProxy(variables, tcpProxy);
 }
 
 function branchLabel() {

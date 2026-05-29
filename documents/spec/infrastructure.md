@@ -50,7 +50,8 @@
 - `preview` と `dev` は **同一 PostgreSQL インスタンス** (`postgres-dev`) を参照する
 - `stg` / `prd` はそれぞれ独立した PostgreSQL インスタンスを使用する
 - **dev / stg デプロイ前**に `scripts/railway-db-replica.mjs` で prd DB を refresh する（レプリカブランチ `replica-{run_id}-{sha}`）
-- CI（GitHub Actions）からの `pg_dump` / `pg_restore` は **Postgres サービスの `DATABASE_PUBLIC_URL`（TCP proxy）** を使用する。backend の `DATABASE_URL`（`.railway.internal`）は CI から到達不可
+- CI（GitHub Actions）からの `pg_dump` / `pg_restore` は **Postgres サービスの TCP proxy** 経由で接続する（`DATABASE_PUBLIC_URL` または Railway GraphQL `tcpProxies` + `POSTGRES_*` から URL を組み立て）。backend の `DATABASE_URL`（`.railway.internal`）は CI から到達不可
+- 各 Postgres サービス（`postgres-dev` / `postgres-stg` / `postgres-prd-v2`）には **TCP proxy（port 5432）** が必要。未設定時は `railway-db-replica.mjs` が Railway API で自動作成する
 - **prd デプロイ前**に prd DB の snapshot を取得し GitHub artifact に保存する
 
 ## Vercel 環境変数
