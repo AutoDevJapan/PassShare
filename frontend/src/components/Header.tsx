@@ -128,10 +128,6 @@ export function Header() {
               <LanguageSwitcher />
 
               <SessionControls />
-
-              <a className="ps-button ps-button--primary landing-header__cta" href="#download">
-                {t("header.cta.download")}
-              </a>
             </div>
           </nav>
         </div>

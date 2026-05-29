@@ -43,11 +43,6 @@ html:lang(ru) .landing-search {
   width: 7.5rem;
 }
 
-html:lang(ru) .landing-header__cta {
-  padding-inline: var(--ps-space-3);
-  font-size: var(--ps-text-sm);
-}
-
 /* CJK (Simplified / Traditional / Korean) */
 html:lang(zh-CN) .ps-body,
 html:lang(zh-TW) .ps-body,
