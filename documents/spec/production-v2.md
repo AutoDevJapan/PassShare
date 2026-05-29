@@ -530,7 +530,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38)（多言語 i18n
 | [#127](https://github.com/AutoDevJapan/PassShare/issues/127) | 疑似ロケール（pseudo.ts） |
 | [#128](https://github.com/AutoDevJapan/PassShare/issues/128) | Visual Regression（Playwright per locale） |
 | [#129](https://github.com/AutoDevJapan/PassShare/issues/129) | LanguageSwitcher 統一（4 クライアント） |
-| [#130](https://github.com/AutoDevJapan/PassShare/issues/130) | Pencil 多言語検証 — **手動**（手順は production-i18n.md） |
+| [#130](https://github.com/AutoDevJapan/PassShare/issues/130) | Pencil 多言語検証 — [pencil-i18n-design.md](./pencil-i18n-design.md) |
 | [#131](https://github.com/AutoDevJapan/PassShare/issues/131) | 密度プロファイル（locale.css saas ルール） |
 
 ### Epic 完了条件（検証）
@@ -547,7 +547,7 @@ Epic [#38](https://github.com/AutoDevJapan/PassShare/issues/38)（多言語 i18n
 
 - Should 言語のネイティブ翻訳（現状 en fallback）
 - `/docs` 長文の ru ローカライズ
-- Pencil デザインファイル手動検証（#130）
+- Pencil デザイン検証（#130）— manifest + jp-ui-contracts CI（`.pen` は Pencil MCP 接続後）
 - ランディング中腹セクション（QuickStart 等）の i18n キー化
 
 ---

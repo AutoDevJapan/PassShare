@@ -1,0 +1,80 @@
+# Issue #130 — Pencil multilingual design frames
+# 5 screens × 3 locales (ja, en, ru) × 2 widths (1440, 375) = 30 frames
+# SSOT: documents/spec/pencil-i18n-design.md
+
+pen_file: design/pencil-i18n/passshare-i18n.pen
+density_profile: saas
+icon_strategy: lucide-outline-24
+
+viewports:
+  desktop: 1440
+  mobile: 375
+
+locales: [ja, en, ru]
+
+screens:
+  - id: landing
+    path: /
+    components: [LandingHeader, Hero, Footer]
+    frames:
+      - { locale: ja, width: 1440, height: 900 }
+      - { locale: ja, width: 375, height: 812 }
+      - { locale: en, width: 1440, height: 900 }
+      - { locale: en, width: 375, height: 812 }
+      - { locale: ru, width: 1440, height: 900 }
+      - { locale: ru, width: 375, height: 812 }
+
+  - id: docs
+    path: /docs
+    components: [LandingHeader, DocIndex, Footer]
+    frames:
+      - { locale: ja, width: 1440, height: 900 }
+      - { locale: ja, width: 375, height: 812 }
+      - { locale: en, width: 1440, height: 900 }
+      - { locale: en, width: 375, height: 812 }
+      - { locale: ru, width: 1440, height: 900 }
+      - { locale: ru, width: 375, height: 812 }
+
+  - id: login
+    path: /app/login
+    components: [AppShell, LoginForm]
+    frames:
+      - { locale: ja, width: 1440, height: 720 }
+      - { locale: ja, width: 375, height: 812 }
+      - { locale: en, width: 1440, height: 720 }
+      - { locale: en, width: 375, height: 812 }
+      - { locale: ru, width: 1440, height: 720 }
+      - { locale: ru, width: 375, height: 812 }
+
+  - id: faq
+    path: /faq
+    components: [LandingHeader, DocPage, Footer]
+    frames:
+      - { locale: ja, width: 1440, height: 1200 }
+      - { locale: ja, width: 375, height: 1200 }
+      - { locale: en, width: 1440, height: 1200 }
+      - { locale: en, width: 375, height: 1200 }
+      - { locale: ru, width: 1440, height: 1200 }
+      - { locale: ru, width: 375, height: 812 }
+
+  - id: terms
+    path: /terms
+    components: [LandingHeader, DocPage, Footer]
+    frames:
+      - { locale: ja, width: 1440, height: 1400 }
+      - { locale: ja, width: 375, height: 1400 }
+      - { locale: en, width: 1440, height: 1400 }
+      - { locale: en, width: 375, height: 1400 }
+      - { locale: ru, width: 1440, height: 1400 }
+      - { locale: ru, width: 375, height: 812 }
+
+jp_ui_contracts:
+  reject_conditions: pass
+  review_checklist:
+    - long_paragraph: pass
+    - heading_narrow_width: pass
+    - url_overflow: pass
+    - form_labels: pass
+    - table_density: pass
+    - mixed_script: pass
+    - mobile_margins: pass

@@ -1,0 +1,557 @@
+{
+  "generatedAt": "2026-05-29T13:49:22.329Z",
+  "issue": 130,
+  "frameCount": 30,
+  "viewports": [
+    1440,
+    375
+  ],
+  "locales": [
+    "ja",
+    "en",
+    "ru"
+  ],
+  "screens": [
+    "landing",
+    "docs",
+    "login",
+    "faq",
+    "terms"
+  ],
+  "frames": [
+    {
+      "id": "landing-ja-1440",
+      "screen": "landing",
+      "locale": "ja",
+      "width": 1440,
+      "path": "/",
+      "strings": {
+        "header.nav.home": "Home",
+        "header.nav.docs": "Docs",
+        "header.nav.app": "Web アプリ",
+        "header.search.placeholder": "ページ内を検索…",
+        "header.lang.ja": "日本語",
+        "header.lang.en": "EN",
+        "header.cta.download": "Download",
+        "hero.badge": "完全無料",
+        "hero.title.line1": "パスワードを、",
+        "hero.title.line2": "かんたんに安全に。",
+        "hero.lead.prefix": "非 IT 向けパスワードマネージャー。マスターパスワード1つで",
+        "hero.lead.box": "パスワードボックス",
+        "hero.lead.suffix": "を開き、ログイン情報を端末内に暗号化して保管します。",
+        "hero.cta.download": "Download",
+        "hero.cta.docs": "View Documentation",
+        "footer.tagline.prefix": "非 IT 向けパスワードマネージャー。Tauri デスクトップアプリと Web ポータルで、",
+        "footer.tagline.box": "パスワードボックス",
+        "footer.tagline.suffix": "をどこからでも扱えます。",
+        "footer.faq": "よくある質問",
+        "footer.terms": "利用規約"
+      }
+    },
+    {
+      "id": "landing-ja-375",
+      "screen": "landing",
+      "locale": "ja",
+      "width": 375,
+      "path": "/",
+      "strings": {
+        "header.nav.home": "Home",
+        "header.nav.docs": "Docs",
+        "header.nav.app": "Web アプリ",
+        "header.search.placeholder": "ページ内を検索…",
+        "header.lang.ja": "日本語",
+        "header.lang.en": "EN",
+        "header.cta.download": "Download",
+        "hero.badge": "完全無料",
+        "hero.title.line1": "パスワードを、",
+        "hero.title.line2": "かんたんに安全に。",
+        "hero.lead.prefix": "非 IT 向けパスワードマネージャー。マスターパスワード1つで",
+        "hero.lead.box": "パスワードボックス",
+        "hero.lead.suffix": "を開き、ログイン情報を端末内に暗号化して保管します。",
+        "hero.cta.download": "Download",
+        "hero.cta.docs": "View Documentation",
+        "footer.tagline.prefix": "非 IT 向けパスワードマネージャー。Tauri デスクトップアプリと Web ポータルで、",
+        "footer.tagline.box": "パスワードボックス",
+        "footer.tagline.suffix": "をどこからでも扱えます。",
+        "footer.faq": "よくある質問",
+        "footer.terms": "利用規約"
+      }
+    },
+    {
+      "id": "landing-en-1440",
+      "screen": "landing",
+      "locale": "en",
+      "width": 1440,
+      "path": "/",
+      "strings": {
+        "header.nav.home": "Home",
+        "header.nav.docs": "Docs",
+        "header.nav.app": "Web App",
+        "header.search.placeholder": "Search this page…",
+        "header.lang.ja": "日本語",
+        "header.lang.en": "EN",
+        "header.cta.download": "Download",
+        "hero.badge": "Free forever",
+        "hero.title.line1": "Passwords,",
+        "hero.title.line2": "simple and secure.",
+        "hero.lead.prefix": "A password manager for non-IT users. One master password opens your",
+        "hero.lead.box": "password box",
+        "hero.lead.suffix": "and keeps login details encrypted on your device.",
+        "hero.cta.download": "Download",
+        "hero.cta.docs": "View Documentation",
+        "footer.tagline.prefix": "A password manager for non-IT users. Manage your ",
+        "footer.tagline.box": "password box",
+        "footer.tagline.suffix": " from the desktop app or web portal.",
+        "footer.faq": "FAQ",
+        "footer.terms": "Terms of Service"
+      }
+    },
+    {
+      "id": "landing-en-375",
+      "screen": "landing",
+      "locale": "en",
+      "width": 375,
+      "path": "/",
+      "strings": {
+        "header.nav.home": "Home",
+        "header.nav.docs": "Docs",
+        "header.nav.app": "Web App",
+        "header.search.placeholder": "Search this page…",
+        "header.lang.ja": "日本語",
+        "header.lang.en": "EN",
+        "header.cta.download": "Download",
+        "hero.badge": "Free forever",
+        "hero.title.line1": "Passwords,",
+        "hero.title.line2": "simple and secure.",
+        "hero.lead.prefix": "A password manager for non-IT users. One master password opens your",
+        "hero.lead.box": "password box",
+        "hero.lead.suffix": "and keeps login details encrypted on your device.",
+        "hero.cta.download": "Download",
+        "hero.cta.docs": "View Documentation",
+        "footer.tagline.prefix": "A password manager for non-IT users. Manage your ",
+        "footer.tagline.box": "password box",
+        "footer.tagline.suffix": " from the desktop app or web portal.",
+        "footer.faq": "FAQ",
+        "footer.terms": "Terms of Service"
+      }
+    },
+    {
+      "id": "landing-ru-1440",
+      "screen": "landing",
+      "locale": "ru",
+      "width": 1440,
+      "path": "/",
+      "strings": {
+        "header.nav.home": "Главная",
+        "header.nav.docs": "Документация",
+        "header.nav.app": "Веб-приложение",
+        "header.search.placeholder": "Поиск на странице…",
+        "header.lang.ja": "日本語",
+        "header.lang.en": "EN",
+        "header.cta.download": "Скачать",
+        "hero.badge": "Бесплатно",
+        "hero.title.line1": "Пароли —",
+        "hero.title.line2": "просто и безопасно.",
+        "hero.lead.prefix": "Менеджер паролей для обычных пользователей. Один мастер-пароль открывает",
+        "hero.lead.box": "парольный бокс",
+        "hero.lead.suffix": "и хранит данные для входа в зашифрованном виде на вашем устройстве.",
+        "hero.cta.download": "Скачать",
+        "hero.cta.docs": "Документация",
+        "footer.tagline.prefix": "Менеджер паролей для обычных пользователей. Управляйте ",
+        "footer.tagline.box": "парольным боксом",
+        "footer.tagline.suffix": " из десктопного приложения или веб-портала.",
+        "footer.faq": "FAQ",
+        "footer.terms": "Условия использования"
+      }
+    },
+    {
+      "id": "landing-ru-375",
+      "screen": "landing",
+      "locale": "ru",
+      "width": 375,
+      "path": "/",
+      "strings": {
+        "header.nav.home": "Главная",
+        "header.nav.docs": "Документация",
+        "header.nav.app": "Веб-приложение",
+        "header.search.placeholder": "Поиск на странице…",
+        "header.lang.ja": "日本語",
+        "header.lang.en": "EN",
+        "header.cta.download": "Скачать",
+        "hero.badge": "Бесплатно",
+        "hero.title.line1": "Пароли —",
+        "hero.title.line2": "просто и безопасно.",
+        "hero.lead.prefix": "Менеджер паролей для обычных пользователей. Один мастер-пароль открывает",
+        "hero.lead.box": "парольный бокс",
+        "hero.lead.suffix": "и хранит данные для входа в зашифрованном виде на вашем устройстве.",
+        "hero.cta.download": "Скачать",
+        "hero.cta.docs": "Документация",
+        "footer.tagline.prefix": "Менеджер паролей для обычных пользователей. Управляйте ",
+        "footer.tagline.box": "парольным боксом",
+        "footer.tagline.suffix": " из десктопного приложения или веб-портала.",
+        "footer.faq": "FAQ",
+        "footer.terms": "Условия использования"
+      }
+    },
+    {
+      "id": "docs-ja-1440",
+      "screen": "docs",
+      "locale": "ja",
+      "width": 1440,
+      "path": "/docs",
+      "strings": {
+        "header.nav.docs": "Docs",
+        "footer.documentation": "ドキュメント",
+        "docTitle": "ドキュメント",
+        "docLead": "PassShare の使い方、拡張機能、法務文書、FAQ をまとめています。",
+        "docSections": [
+          "ユーザーガイド"
+        ]
+      }
+    },
+    {
+      "id": "docs-ja-375",
+      "screen": "docs",
+      "locale": "ja",
+      "width": 375,
+      "path": "/docs",
+      "strings": {
+        "header.nav.docs": "Docs",
+        "footer.documentation": "ドキュメント",
+        "docTitle": "ドキュメント",
+        "docLead": "PassShare の使い方、拡張機能、法務文書、FAQ をまとめています。",
+        "docSections": [
+          "ユーザーガイド"
+        ]
+      }
+    },
+    {
+      "id": "docs-en-1440",
+      "screen": "docs",
+      "locale": "en",
+      "width": 1440,
+      "path": "/docs",
+      "strings": {
+        "header.nav.docs": "Docs",
+        "footer.documentation": "Documentation",
+        "docTitle": "Documentation",
+        "docLead": "User guides, extension install steps, legal documents, and FAQ for PassShare.",
+        "docSections": [
+          "User guide"
+        ]
+      }
+    },
+    {
+      "id": "docs-en-375",
+      "screen": "docs",
+      "locale": "en",
+      "width": 375,
+      "path": "/docs",
+      "strings": {
+        "header.nav.docs": "Docs",
+        "footer.documentation": "Documentation",
+        "docTitle": "Documentation",
+        "docLead": "User guides, extension install steps, legal documents, and FAQ for PassShare.",
+        "docSections": [
+          "User guide"
+        ]
+      }
+    },
+    {
+      "id": "docs-ru-1440",
+      "screen": "docs",
+      "locale": "ru",
+      "width": 1440,
+      "path": "/docs",
+      "strings": {
+        "header.nav.docs": "Документация",
+        "footer.documentation": "Документация",
+        "docTitle": "Documentation",
+        "docLead": "User guides, extension install steps, legal documents, and FAQ for PassShare.",
+        "docSections": [
+          "User guide"
+        ],
+        "_fallback": "en"
+      }
+    },
+    {
+      "id": "docs-ru-375",
+      "screen": "docs",
+      "locale": "ru",
+      "width": 375,
+      "path": "/docs",
+      "strings": {
+        "header.nav.docs": "Документация",
+        "footer.documentation": "Документация",
+        "docTitle": "Documentation",
+        "docLead": "User guides, extension install steps, legal documents, and FAQ for PassShare.",
+        "docSections": [
+          "User guide"
+        ],
+        "_fallback": "en"
+      }
+    },
+    {
+      "id": "login-ja-1440",
+      "screen": "login",
+      "locale": "ja",
+      "width": 1440,
+      "path": "/app/login",
+      "strings": {
+        "app.auth.loginTitle": "ログイン",
+        "session.email": "メールアドレス",
+        "session.password": "パスワード",
+        "session.login": "ログイン",
+        "app.auth.signupLink": "アカウントを作成",
+        "app.auth.resetLink": "パスワードを忘れた場合"
+      }
+    },
+    {
+      "id": "login-ja-375",
+      "screen": "login",
+      "locale": "ja",
+      "width": 375,
+      "path": "/app/login",
+      "strings": {
+        "app.auth.loginTitle": "ログイン",
+        "session.email": "メールアドレス",
+        "session.password": "パスワード",
+        "session.login": "ログイン",
+        "app.auth.signupLink": "アカウントを作成",
+        "app.auth.resetLink": "パスワードを忘れた場合"
+      }
+    },
+    {
+      "id": "login-en-1440",
+      "screen": "login",
+      "locale": "en",
+      "width": 1440,
+      "path": "/app/login",
+      "strings": {
+        "app.auth.loginTitle": "Sign in",
+        "session.email": "Email",
+        "session.password": "Password",
+        "session.login": "Sign in",
+        "app.auth.signupLink": "Create an account",
+        "app.auth.resetLink": "Forgot password"
+      }
+    },
+    {
+      "id": "login-en-375",
+      "screen": "login",
+      "locale": "en",
+      "width": 375,
+      "path": "/app/login",
+      "strings": {
+        "app.auth.loginTitle": "Sign in",
+        "session.email": "Email",
+        "session.password": "Password",
+        "session.login": "Sign in",
+        "app.auth.signupLink": "Create an account",
+        "app.auth.resetLink": "Forgot password"
+      }
+    },
+    {
+      "id": "login-ru-1440",
+      "screen": "login",
+      "locale": "ru",
+      "width": 1440,
+      "path": "/app/login",
+      "strings": {
+        "app.auth.loginTitle": "Вход",
+        "session.email": "Эл. почта",
+        "session.password": "Пароль",
+        "session.login": "Войти",
+        "app.auth.signupLink": "Создать аккаунт",
+        "app.auth.resetLink": "Забыли пароль"
+      }
+    },
+    {
+      "id": "login-ru-375",
+      "screen": "login",
+      "locale": "ru",
+      "width": 375,
+      "path": "/app/login",
+      "strings": {
+        "app.auth.loginTitle": "Вход",
+        "session.email": "Эл. почта",
+        "session.password": "Пароль",
+        "session.login": "Войти",
+        "app.auth.signupLink": "Создать аккаунт",
+        "app.auth.resetLink": "Забыли пароль"
+      }
+    },
+    {
+      "id": "faq-ja-1440",
+      "screen": "faq",
+      "locale": "ja",
+      "width": 1440,
+      "path": "/faq",
+      "strings": {
+        "docTitle": "よくある質問",
+        "docLead": "PassShare 利用時によくある質問と対処法です。",
+        "docSections": [
+          "マスターパスワードを忘れた"
+        ]
+      }
+    },
+    {
+      "id": "faq-ja-375",
+      "screen": "faq",
+      "locale": "ja",
+      "width": 375,
+      "path": "/faq",
+      "strings": {
+        "docTitle": "よくある質問",
+        "docLead": "PassShare 利用時によくある質問と対処法です。",
+        "docSections": [
+          "マスターパスワードを忘れた"
+        ]
+      }
+    },
+    {
+      "id": "faq-en-1440",
+      "screen": "faq",
+      "locale": "en",
+      "width": 1440,
+      "path": "/faq",
+      "strings": {
+        "docTitle": "FAQ",
+        "docLead": "Common questions and troubleshooting.",
+        "docSections": [
+          "I forgot my master password"
+        ]
+      }
+    },
+    {
+      "id": "faq-en-375",
+      "screen": "faq",
+      "locale": "en",
+      "width": 375,
+      "path": "/faq",
+      "strings": {
+        "docTitle": "FAQ",
+        "docLead": "Common questions and troubleshooting.",
+        "docSections": [
+          "I forgot my master password"
+        ]
+      }
+    },
+    {
+      "id": "faq-ru-1440",
+      "screen": "faq",
+      "locale": "ru",
+      "width": 1440,
+      "path": "/faq",
+      "strings": {
+        "docTitle": "FAQ",
+        "docLead": "Common questions and troubleshooting.",
+        "docSections": [
+          "I forgot my master password"
+        ],
+        "_fallback": "en"
+      }
+    },
+    {
+      "id": "faq-ru-375",
+      "screen": "faq",
+      "locale": "ru",
+      "width": 375,
+      "path": "/faq",
+      "strings": {
+        "docTitle": "FAQ",
+        "docLead": "Common questions and troubleshooting.",
+        "docSections": [
+          "I forgot my master password"
+        ],
+        "_fallback": "en"
+      }
+    },
+    {
+      "id": "terms-ja-1440",
+      "screen": "terms",
+      "locale": "ja",
+      "width": 1440,
+      "path": "/terms",
+      "strings": {
+        "docTitle": "利用規約",
+        "docLead": "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。",
+        "docSections": [
+          "1. 規約への同意"
+        ]
+      }
+    },
+    {
+      "id": "terms-ja-375",
+      "screen": "terms",
+      "locale": "ja",
+      "width": 375,
+      "path": "/terms",
+      "strings": {
+        "docTitle": "利用規約",
+        "docLead": "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。",
+        "docSections": [
+          "1. 規約への同意"
+        ]
+      }
+    },
+    {
+      "id": "terms-en-1440",
+      "screen": "terms",
+      "locale": "en",
+      "width": 1440,
+      "path": "/terms",
+      "strings": {
+        "docTitle": "Terms of service",
+        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docSections": [
+          "1. Acceptance"
+        ]
+      }
+    },
+    {
+      "id": "terms-en-375",
+      "screen": "terms",
+      "locale": "en",
+      "width": 375,
+      "path": "/terms",
+      "strings": {
+        "docTitle": "Terms of service",
+        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docSections": [
+          "1. Acceptance"
+        ]
+      }
+    },
+    {
+      "id": "terms-ru-1440",
+      "screen": "terms",
+      "locale": "ru",
+      "width": 1440,
+      "path": "/terms",
+      "strings": {
+        "docTitle": "Terms of service",
+        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docSections": [
+          "1. Acceptance"
+        ],
+        "_fallback": "en"
+      }
+    },
+    {
+      "id": "terms-ru-375",
+      "screen": "terms",
+      "locale": "ru",
+      "width": 375,
+      "path": "/terms",
+      "strings": {
+        "docTitle": "Terms of service",
+        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docSections": [
+          "1. Acceptance"
+        ],
+        "_fallback": "en"
+      }
+    }
+  ]
+}

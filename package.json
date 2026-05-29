@@ -2,7 +2,9 @@
   "private": true,
   "scripts": {
     "test:e2e": "playwright test",
-    "i18n:check": "node scripts/i18n-check.mjs"
+    "i18n:check": "node scripts/i18n-check.mjs",
+    "design:jp-ui-check": "node scripts/jp-ui-contracts-check.mjs",
+    "design:export-copy": "node scripts/export-i18n-design-copy.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",

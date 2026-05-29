@@ -1,0 +1,57 @@
+{
+  "issue": 130,
+  "verifiedAt": "2026-05-28",
+  "automatedScript": "scripts/jp-ui-contracts-check.mjs",
+  "visualRegression": "e2e/web/i18n-visual.spec.ts",
+  "items": [
+    {
+      "id": 1,
+      "name": "No global word-break: break-all",
+      "status": "pass",
+      "evidence": "shared/styles/locale.css — overflow-wrap: anywhere + word-break: normal"
+    },
+    {
+      "id": 2,
+      "name": "Conservative body letter-spacing (≤ 0.02em)",
+      "status": "pass",
+      "evidence": "shared/styles/typography.css — .ps-body has no letter-spacing override"
+    },
+    {
+      "id": 3,
+      "name": "Japanese body line-height 1.7–2.0",
+      "status": "pass",
+      "evidence": "shared/styles/tokens.css — --ps-leading-ja: 1.75"
+    },
+    {
+      "id": 4,
+      "name": "Explicit Japanese font fallback",
+      "status": "pass",
+      "evidence": "shared/styles/tokens.css — --ps-font-sans-cjk includes Hiragino Sans, Noto Sans JP"
+    },
+    {
+      "id": 5,
+      "name": "No global palt on body",
+      "status": "pass",
+      "evidence": "No font-feature-settings: palt on .ps-body or html:lang(ja)"
+    },
+    {
+      "id": 6,
+      "name": "Form/table density separation",
+      "status": "pass",
+      "evidence": "shared/styles/locale.css — --ps-leading-form, .ps-label, vault card min-height"
+    },
+    {
+      "id": 7,
+      "name": "Lucide-style icons (no emoji / Unicode substitutes)",
+      "status": "pass",
+      "evidence": "frontend/src + shared/ui scanned; ConnectItemList favorite uses Lucide-style SVG star"
+    }
+  ],
+  "frames": {
+    "count": 30,
+    "manifest": "design/pencil-i18n/frames-manifest.yaml",
+    "copy": "design/pencil-i18n/locale-copy.json",
+    "penFile": "design/pencil-i18n/passshare-i18n.pen",
+    "penStatus": "pending_pencil_mcp — binary .pen requires Pencil extension MCP"
+  }
+}

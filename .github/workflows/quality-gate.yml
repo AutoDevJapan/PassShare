@@ -120,6 +120,12 @@ jobs:
       - name: Check locale key parity
         run: node scripts/i18n-check.mjs
 
+      - name: Check jp-ui-contracts (Issue #130)
+        run: node scripts/jp-ui-contracts-check.mjs
+
+      - name: Export i18n design copy (drift check)
+        run: node scripts/export-i18n-design-copy.mjs
+
   frontend:
     name: Web (Playwright + build)
     runs-on: ubuntu-latest
