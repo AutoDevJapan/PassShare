@@ -39,4 +39,22 @@ CREATE TABLE IF NOT EXISTS vault_memberships (
 );
 
 CREATE INDEX IF NOT EXISTS idx_vault_memberships_vault_id ON vault_memberships(vault_id);
+
+CREATE TABLE IF NOT EXISTS vault_invitations (
+  id UUID PRIMARY KEY,
+  vault_id VARCHAR(26) NOT NULL REFERENCES connect_vaults(id) ON DELETE CASCADE,
+  inviter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  invitee_email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  status TEXT NOT NULL DEFAULT 'pending',
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  responded_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_invitations_vault_id ON vault_invitations(vault_id);
+CREATE INDEX IF NOT EXISTS idx_vault_invitations_invitee ON vault_invitations(invitee_email, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_invitations_pending_unique
+  ON vault_invitations(vault_id, invitee_email)
+  WHERE status = 'pending';
 `;

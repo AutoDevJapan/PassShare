@@ -23,6 +23,9 @@ export function AppShell() {
           <NavLink to="/app/vaults" className="app-shell__nav-link">
             {t("app.nav.vaults")}
           </NavLink>
+          <NavLink to="/app/invitations" className="app-shell__nav-link">
+            {t("app.nav.invitations")}
+          </NavLink>
         </nav>
         <div className="app-shell__session">
           <LanguageSwitcher />
@@ -40,6 +43,9 @@ export function AppShell() {
       <nav className="app-shell__bottom-nav" aria-label={t("app.nav.mobile")}>
         <NavLink to="/app/vaults" className="app-shell__bottom-link">
           {t("app.nav.vaults")}
+        </NavLink>
+        <NavLink to="/app/invitations" className="app-shell__bottom-link">
+          {t("app.nav.invitations")}
         </NavLink>
       </nav>
     </div>
