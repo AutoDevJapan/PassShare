@@ -1,7 +1,7 @@
 # Web ランディングページ シェル UI (SSOT)
 
-> 最終更新: 2026-05-27  
-> 関連 Issue: #4  
+> 最終更新: 2026-05-28  
+> 関連 Issue: #4, #180  
 > デザインシステム: [design-system.md](./design-system.md)
 
 ## 概要
@@ -32,10 +32,12 @@ frontend/src/
 | 要素 | 内容 |
 |------|------|
 | ロゴ | ロックアイコン + `PassShare` |
-| ナビ | Home / Download / Docs（Home がアクティブ） |
+| ナビ | Home / Web アプリ / Download（`#download` テキストリンク）/ Docs |
 | 検索 | ページ内検索ダイアログ + `⌘K` / `Ctrl+K` |
-| 言語 | 日本語 / EN 切替（`shared/i18n`） |
-| CTA | Download（Primary） |
+| 言語 | ja / en / ru 切替（`shared/ui/LanguageSwitcher`） |
+| セッション | 未ログイン時は「ログイン」リンク（`/app/login`）。ログイン済みはメール + ログアウト |
+
+Primary Download ボタンは Header に置かない（Hero のみ — Issue #180）。
 
 モバイル（≤960px）ではハンバーガーメニューでナビ・ツールを展開する。
 
@@ -46,7 +48,7 @@ frontend/src/
 | バッジ | `完全無料` |
 | 見出し | 白 + ネオングリーンの 2 行（グロー効果） |
 | リード | MVP 向け文言（**パスワードボックス** を使用） |
-| CTA | Download（Primary）/ View Documentation（Secondary） |
+| CTA | Download（Primary — **Hero 唯一**）/ View Documentation（Secondary） |
 | 背景 | Matrix 風縦ストリーク（`shared/ui/MatrixBackground`） |
 | 検索 | `⌘K` / `Ctrl+K` で SearchDialog を開く |
 | 言語 | 日本語 / EN 切替（`shared/i18n`） |
