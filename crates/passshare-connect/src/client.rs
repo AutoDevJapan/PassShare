@@ -1,9 +1,9 @@
 use std::env;
 use std::time::Duration;
 
+use passshare_core::domain::connect_id::ConnectId;
 use passshare_core::domain::item::Item;
 use passshare_core::domain::vault::Vault;
-use passshare_core::domain::ConnectId;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::Value;
