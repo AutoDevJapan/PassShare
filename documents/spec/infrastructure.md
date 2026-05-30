@@ -86,6 +86,15 @@ Root Directory は `frontend`。`@passshare/connect`（`file:../packages/connect
 
 SSOT: [vulnerability-sla.md](../security/vulnerability-sla.md), [audit-checklist.md](../security/audit-checklist.md)
 
+### Dependabot（npm）
+
+| 対象 | ポリシー |
+|------|---------|
+| UI workspace（`frontend/`, `apps/desktop/`, `apps/mobile/`, `packages/extension/`）の `vite` | **メジャー upgrade は ignore** — 4 workspace を同一 PR で統合対応（Issue 起票 → 一括 PR） |
+| 上記以外 | daily / weekly スケジュールで通常どおり PR |
+
+設定: `.github/dependabot.yml`
+
 ### 統合 Quality Gate（CI）
 
 | トリガー | ワークフロー | 動作 |
