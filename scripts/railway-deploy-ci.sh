@@ -17,12 +17,14 @@ health_attempts="${RAILWAY_HEALTH_ATTEMPTS:-18}"
 health_interval="${RAILWAY_HEALTH_INTERVAL_SEC:-10}"
 
 # CLI auth — project token preferred; account token works with @railway/cli v3 + --project flags
-if [ -n "${RAILWAY_PROJECT_TOKEN:-}" ]; then
+if [ -n "${RAILWAY_TOKEN:-}" ]; then
+  :
+elif [ -n "${RAILWAY_PROJECT_TOKEN:-}" ]; then
   export RAILWAY_TOKEN="${RAILWAY_PROJECT_TOKEN}"
 elif [ -n "${RAILWAY_API_TOKEN:-}" ]; then
   export RAILWAY_TOKEN="${RAILWAY_API_TOKEN}"
 else
-  echo "Missing RAILWAY_PROJECT_TOKEN or RAILWAY_API_TOKEN"
+  echo "Missing RAILWAY_TOKEN, RAILWAY_PROJECT_TOKEN, or RAILWAY_API_TOKEN"
   exit 1
 fi
 
