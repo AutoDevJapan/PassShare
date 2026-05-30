@@ -26,6 +26,8 @@ updates:
     ignore:
       - dependency-name: "vite"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/packages/connect-js"
@@ -45,6 +47,8 @@ updates:
     ignore:
       - dependency-name: "vite"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/apps/desktop"
@@ -56,6 +60,8 @@ updates:
     ignore:
       - dependency-name: "vite"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/apps/mobile"
@@ -66,6 +72,8 @@ updates:
       - "dependencies"
     ignore:
       - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
         update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
