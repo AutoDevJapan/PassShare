@@ -30,7 +30,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: "i18n-visual.spec.ts",
+      testIgnore: ["i18n-visual.spec.ts", "staging-smoke.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
     {

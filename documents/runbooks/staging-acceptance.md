@@ -81,7 +81,12 @@ node scripts/stg-smoke.mjs
 
 ## CI 連携
 
-`.github/workflows/stg-smoke.yml` — `workflow_dispatch` で stg smoke を実行（Secrets: `STG_OP_CONNECT_TOKEN`）。
+`.github/workflows/stg-smoke.yml` — `workflow_dispatch` で stg smoke を実行。
+
+| Job | Secrets | 内容 |
+|-----|---------|------|
+| `api-smoke` | `STG_OP_CONNECT_TOKEN`（任意） | `stg-smoke.mjs` — Backend / Connect |
+| `web-ui-smoke` | `STG_WEB_URL` + `run_web_ui: true` | `stg-web-smoke.mjs` — Playwright UI CRUD |
 
 ## 関連
 
