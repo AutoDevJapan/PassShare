@@ -141,6 +141,99 @@ export async function createPasswordBox(name: string): Promise<{ vaultId: string
   return (await response.json()) as { vaultId: string; name: string };
 }
 
+export type VaultMember = {
+  userId: string;
+  email: string;
+  role: "owner" | "member";
+  joinedAt: string;
+};
+
+export type ShareInvitation = {
+  id: string;
+  email?: string;
+  vaultId?: string;
+  vaultName?: string;
+  inviterEmail?: string;
+  role: string;
+  expiresAt: string;
+  createdAt?: string;
+};
+
+export async function listVaultMembers(vaultId: string): Promise<VaultMember[]> {
+  const response = await authFetch(`/api/auth/vaults/${vaultId}/members`);
+  if (!response.ok) {
+    return parseAuthError(response);
+  }
+  const body = (await response.json()) as { members: VaultMember[] };
+  return body.members;
+}
+
+export async function inviteToVault(vaultId: string, email: string): Promise<ShareInvitation> {
+  const response = await authFetch(`/api/auth/vaults/${vaultId}/invitations`, {
+    method: "POST",
+    body: JSON.stringify({ email, role: "member" }),
+  });
+  if (!response.ok) {
+    return parseAuthError(response);
+  }
+  return (await response.json()) as ShareInvitation;
+}
+
+export async function listVaultInvitations(vaultId: string): Promise<ShareInvitation[]> {
+  const response = await authFetch(`/api/auth/vaults/${vaultId}/invitations`);
+  if (!response.ok) {
+    return parseAuthError(response);
+  }
+  const body = (await response.json()) as { invitations: ShareInvitation[] };
+  return body.invitations;
+}
+
+export async function revokeVaultInvitation(vaultId: string, invitationId: string): Promise<void> {
+  const response = await authFetch(`/api/auth/vaults/${vaultId}/invitations/${invitationId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok && response.status !== 204) {
+    return parseAuthError(response);
+  }
+}
+
+export async function removeVaultMember(vaultId: string, userId: string): Promise<void> {
+  const response = await authFetch(`/api/auth/vaults/${vaultId}/members/${userId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok && response.status !== 204) {
+    return parseAuthError(response);
+  }
+}
+
+export async function listPendingInvitations(): Promise<ShareInvitation[]> {
+  const response = await authFetch("/api/auth/invitations");
+  if (!response.ok) {
+    return parseAuthError(response);
+  }
+  const body = (await response.json()) as { invitations: ShareInvitation[] };
+  return body.invitations;
+}
+
+export async function acceptInvitation(invitationId: string): Promise<{ vaultId: string; role: string }> {
+  const response = await authFetch(`/api/auth/invitations/${invitationId}/accept`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    return parseAuthError(response);
+  }
+  return (await response.json()) as { vaultId: string; role: string };
+}
+
+export async function declineInvitation(invitationId: string): Promise<void> {
+  const response = await authFetch(`/api/auth/invitations/${invitationId}/decline`, {
+    method: "POST",
+  });
+  if (!response.ok && response.status !== 204) {
+    return parseAuthError(response);
+  }
+}
+
 export async function primeCsrfToken(): Promise<void> {
   await loadCsrfToken();
 }

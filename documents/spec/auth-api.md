@@ -181,6 +181,22 @@ Create an additional password box for the authenticated user.
 
 Creates `connect_vaults` row and `vault_memberships` (`owner`).
 
+### Password box sharing (Issue [#100](https://github.com/AutoDevJapan/PassShare/issues/100))
+
+SSOT: [passshare-share.md](./passshare-share.md)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/vaults/:vaultId/members` | List members (owner / member) |
+| PATCH | `/vaults/:vaultId/members/:userId` | Change role (`member` only, owner) |
+| DELETE | `/vaults/:vaultId/members/:userId` | Remove member (owner) |
+| POST | `/vaults/:vaultId/invitations` | Invite by email (owner) |
+| GET | `/vaults/:vaultId/invitations` | Pending invitations (owner) |
+| DELETE | `/vaults/:vaultId/invitations/:id` | Revoke invitation (owner) |
+| GET | `/invitations` | Pending invitations for current user |
+| POST | `/invitations/:id/accept` | Accept invitation |
+| POST | `/invitations/:id/decline` | Decline invitation |
+
 ## Mobile client flow (Issue [#80](https://github.com/AutoDevJapan/PassShare/issues/80))
 
 Mobile / Extension clients send `X-PassShare-Client: mobile` or `X-PassShare-Client: extension` on signup/login. The API returns JSON tokens instead of HttpOnly cookies.
@@ -311,6 +327,7 @@ Defined in `backend/src/db/auth-schema.js`:
 - `sessions`
 - `connect_tokens`
 - `vault_memberships` (FK → `connect_vaults`)
+- `vault_invitations` (FK → `connect_vaults`, `users`)
 
 Connect vault schema remains in `backend/src/db/schema.js`.
 

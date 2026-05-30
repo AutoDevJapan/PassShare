@@ -6,6 +6,7 @@ import { authHttpError, sendAuthError } from "./errors.js";
 import { createLoginGuard, resolveClientIp } from "./login-guard.js";
 import { toMobileAuthResponse } from "./mobile-response.js";
 import { hashPassword, verifyPassword } from "./password.js";
+import { createInvitationsRouter, createShareRouter } from "./share-router.js";
 import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
 
@@ -187,6 +188,9 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
       sendAuthError(res, error);
     }
   });
+
+  router.use("/vaults/:vaultId", createShareRouter({ authStore, connectStore }));
+  router.use("/invitations", createInvitationsRouter({ authStore, connectStore }));
 
   router.use((err, _req, res, _next) => {
     sendAuthError(res, err);

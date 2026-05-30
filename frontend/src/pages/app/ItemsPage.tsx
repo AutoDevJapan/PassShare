@@ -155,6 +155,9 @@ export function ItemsPage() {
           {t("app.vault.back")}
         </Link>
         <h1 className="ps-heading-2">{vaultName || t("app.item.listHeading")}</h1>
+        <Link to={`/app/vaults/${vaultId}/share`} className="ps-button ps-button--secondary">
+          {t("app.share.link")}
+        </Link>
       </header>
 
       <div className="app-items-toolbar">

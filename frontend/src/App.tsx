@@ -3,6 +3,8 @@ import { AppShell } from "./app/AppShell";
 import { ProtectedRoute } from "./app/ProtectedRoute";
 import { ItemsPage } from "./pages/app/ItemsPage";
 import { VaultsPage } from "./pages/app/VaultsPage";
+import { VaultSharePage } from "./pages/app/VaultSharePage";
+import { InvitationsPage } from "./pages/app/InvitationsPage";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { ResetPasswordPage } from "./pages/auth/ResetPasswordPage";
 import { SignupPage } from "./pages/auth/SignupPage";
@@ -33,6 +35,8 @@ export function App() {
             <Route index element={<Navigate to="vaults" replace />} />
             <Route path="vaults" element={<VaultsPage />} />
             <Route path="vaults/:vaultId/items" element={<ItemsPage />} />
+            <Route path="vaults/:vaultId/share" element={<VaultSharePage />} />
+            <Route path="invitations" element={<InvitationsPage />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
