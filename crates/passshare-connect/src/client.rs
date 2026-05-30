@@ -1,4 +1,5 @@
 use std::env;
+use std::time::Duration;
 
 use passshare_core::domain::item::Item;
 use passshare_core::domain::vault::Vault;
@@ -29,10 +30,15 @@ impl ConnectClient {
         if !base.ends_with("/v1") {
             base.push_str("/v1");
         }
+        let http = Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()?;
         Ok(Self {
             base_url: base,
             token: token.into(),
-            http: Client::new(),
+            http,
         })
     }
 
