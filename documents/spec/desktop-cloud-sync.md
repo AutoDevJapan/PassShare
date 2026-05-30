@@ -1,6 +1,6 @@
 # Desktop クラウド同期（Should #76 / Epic #35）
 
-> 最終更新: 2026-05-28  
+> 最終更新: 2026-05-30  
 > ADR: [007-sync-migration-architecture.md](../adr/007-sync-migration-architecture.md)  
 > 親 Epic: [#35](https://github.com/AutoDevJapan/PassShare/issues/35) / [#32](https://github.com/AutoDevJapan/PassShare/issues/32)
 
@@ -30,3 +30,18 @@
 - [x] ADR 007 に沿った双方向同期 MVP
 - [x] 競合検出 + 手動解決 UI
 - [x] 1PUX インポート（クラウド経由）
+
+## 自動テスト対応表（#211）
+
+Quality Gate `docker-e2e`（`backend/test/cloud-sync.integration.test.js`）が Desktop `cloud-sync.ts` と同じ Auth + Connect HTTP フローを検証する。
+
+| 受入基準 / シナリオ | テスト | 検証内容 |
+|---------------------|--------|----------|
+| 双方向同期 MVP（push） | `pushes local-only items...` | ローカルのみの item を Connect API へ POST |
+| 双方向同期 MVP（pull） | `pushes local-only items...` | リモートのみの item を `onPull` でローカル反映 |
+| 競合検出 | `detects conflicts...` | 同一 id・異なるフィンガープリントで `checkSyncConflicts` が 1 件 |
+| 競合解決（ローカル優先） | `detects conflicts...` | `resolveConflictKeepLocal` で remote が local に一致 |
+| 競合解決（クラウド優先） | `detects conflicts...` | `resolveConflictKeepRemote` で `onPull` に remote が渡る |
+| Auth + Connect トークン | `before` + 各テスト | signup → session cookie → `/api/auth/connect-token` → Bearer |
+
+実装ミラー: `backend/test/helpers/desktop-cloud-sync-flow.js`（`apps/desktop/src/lib/cloud-sync.ts` 相当）
