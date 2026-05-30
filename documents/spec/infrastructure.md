@@ -259,13 +259,14 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
 - **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
 - デプロイ CI は `scripts/railway-deploy-with-replica.sh` → `scripts/railway-deploy-ci.sh`（`railway-deploy-preflight.mjs` + DB replica + `railway up --detach` + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
-- Railway CLI は **`RAILWAY_TOKEN`** を参照する。GitHub Secret `RAILWAY_API_TOKEN` を workflow で渡し、deploy スクリプト内で `export RAILWAY_TOKEN=$RAILWAY_API_TOKEN` する（#208）。
+- Railway CLI **v4+**: `railway up` は `RAILWAY_PROJECT_ID` / `RAILWAY_SERVICE_ID` / `RAILWAY_ENVIRONMENT_ID` / `RAILWAY_TOKEN` 環境変数でターゲットを解決する（`--project` 等のフラグは v4 で削除）。GitHub Secret `RAILWAY_API_TOKEN` を deploy スクリプト内で `RAILWAY_TOKEN` に export する（#208）。
 
 ### デプロイ失敗 vs DB 障害の切り分け
 
 | 症状 | 原因 | 確認方法 |
 |------|------|----------|
 | CI で `Failed to upload code with status code 404` | `RAILWAY_API_TOKEN` のみ設定で CLI が未認証（`RAILWAY_TOKEN` 未 export） | `railway-deploy-ci.sh` が `RAILWAY_TOKEN` を export。`railway-deploy-preflight.mjs` で project/service/environment を事前検証 |
+| CI で `unexpected argument '--project' found` | `@railway/cli` v4 で `railway up --project` 等が削除 | `railway up --detach` のみ。ターゲットは `RAILWAY_*` env で指定 |
 | CI で `load metadata for docker.io/...` 後に `Deploy failed` | Railway ビルド（Docker Hub メタデータ取得）の一時失敗 | Railway ビルドログ。`/health/db` はデプロイ前の旧リビジョンのまま 200 のことがある |
 | `/health` 200 だが `/health/db` 503 `database: unreachable` | `DATABASE_URL` 未設定・Variable Reference 切れ・Postgres 停止 | Railway Variables + Postgres サービス状態 |
 | `/health/db` 503 `database: not_configured` | backend に `DATABASE_URL` がない | preview/stg/prd 各環境の Variable Reference を確認 |

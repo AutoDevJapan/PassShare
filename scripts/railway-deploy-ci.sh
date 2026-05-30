@@ -28,13 +28,9 @@ node scripts/railway-deploy-preflight.mjs
 deploy_ok=0
 for i in $(seq 1 "$attempts"); do
   echo "Railway deploy attempt ${i}/${attempts}..."
-  # --detach uploads and returns without --ci's brittle post-export wait (Railway Metal builder
-  # often reports "Deploy failed" in CI mode even when the image build succeeds).
-  if railway up \
-    --project "${RAILWAY_PROJECT_ID}" \
-    --service "${RAILWAY_SERVICE_ID}" \
-    --environment "${RAILWAY_ENVIRONMENT_ID}" \
-    --detach; then
+  # CLI v4+: project/service/environment come from RAILWAY_* env (set by workflow).
+  # Do not pass --project/--service/--environment — removed in @railway/cli v4.
+  if railway up --detach; then
     deploy_ok=1
     break
   fi
