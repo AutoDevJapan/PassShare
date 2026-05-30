@@ -80,7 +80,9 @@ cd frontend && pnpm install && pnpm run build
 pnpm run i18n:check
 
 # Web E2E（Playwright — backend + frontend dev server）
-pnpm exec playwright test
+# Runbook: documents/runbooks/local-dev-web.md
+node scripts/local-web-e2e.mjs
+# または: pnpm exec playwright test
 
 # OpenAPI → SDK 型生成
 cd backend && pnpm run generate:types
