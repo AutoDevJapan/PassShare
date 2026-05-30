@@ -16,7 +16,14 @@ health_url="${RAILWAY_HEALTH_URL:-}"
 health_attempts="${RAILWAY_HEALTH_ATTEMPTS:-18}"
 health_interval="${RAILWAY_HEALTH_INTERVAL_SEC:-10}"
 
+# Railway CLI reads RAILWAY_TOKEN (Issue #208 — RAILWAY_API_TOKEN alone causes upload 404)
+if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+  export RAILWAY_TOKEN="${RAILWAY_API_TOKEN}"
+fi
+
 pnpm --dir backend run migrate:verify
+
+node scripts/railway-deploy-preflight.mjs
 
 deploy_ok=0
 for i in $(seq 1 "$attempts"); do
