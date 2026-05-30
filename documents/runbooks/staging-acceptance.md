@@ -1,7 +1,8 @@
 # ステージング受入テスト Runbook
 
 > Issue [#106](https://github.com/AutoDevJapan/PassShare/issues/106)  
-> 親 Epic: [#36](https://github.com/AutoDevJapan/PassShare/issues/36)
+> 親 Epic: [#36](https://github.com/AutoDevJapan/PassShare/issues/36)  
+> Operational Readiness Epic: [#205](https://github.com/AutoDevJapan/PassShare/issues/205) — SSOT: [operational-readiness.md](../spec/operational-readiness.md)
 
 ## 目的
 
@@ -20,8 +21,22 @@
 # Backend + Connect API
 node scripts/stg-smoke.mjs
 
+# Web UI（Vercel Preview / stg）— Issue #207
+# STG_WEB_URL=https://... node scripts/stg-web-smoke.mjs
+
+# Cross-client（Web API → op-cli → sync）— Issue #214
+# docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
+
 # 失敗時は exit 1 — CI workflow_dispatch または手動実行
 ```
+
+## Web / CLI / Desktop 自動化マトリクス（Issue #205）
+
+| クライアント | ローカル | CI（PR / main） | stg / preview |
+|-------------|---------|----------------|---------------|
+| **Web** | [local-dev-web.md](./local-dev-web.md) — Playwright E2E | Quality Gate `frontend` job | `stg-web-smoke.mjs` + `stg-smoke.yml` |
+| **CLI (op)** | [op-cli.md](./op-cli.md) — `cargo build -p op-cli` | Quality Gate `docker-e2e` — `op-cli-e2e.test.js` | 手動 `op vault list`（stg token） |
+| **Desktop** | [local-dev-desktop.md](./local-dev-desktop.md) | Quality Gate `desktop-smoke` — Rust `smoke_*` + cloud-sync integration | 手動 MVP + クラウド同期 smoke |
 
 ## 受入チェックリスト
 
