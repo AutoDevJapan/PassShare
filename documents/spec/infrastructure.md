@@ -226,7 +226,8 @@ railway login
 
 | Secret | 説明 |
 |--------|------|
-| `RAILWAY_API_TOKEN` | Railway プロジェクトトークン |
+| `RAILWAY_API_TOKEN` | Railway アカウント / ワークスペーストークン（GraphQL preflight 等） |
+| `RAILWAY_PROJECT_TOKEN` | （推奨）Preview 環境スコープの **Project Token** — `railway up` 用。未設定時は `RAILWAY_API_TOKEN` + `railway link` にフォールバック |
 | `RAILWAY_PROJECT_ID` | PassShare Railway プロジェクト ID |
 | `RAILWAY_SERVICE_ID` | backend サービス ID |
 | `RAILWAY_PREVIEW_ENV_ID` | preview 環境 ID |
@@ -266,7 +267,7 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 | 症状 | 原因 | 確認方法 |
 |------|------|----------|
 | CI で `Failed to upload code with status code 404` | `RAILWAY_API_TOKEN` のみ設定で CLI が未認証（`RAILWAY_TOKEN` 未 export） | `railway-deploy-ci.sh` が `RAILWAY_TOKEN` を export。`railway-deploy-preflight.mjs` で project/service/environment を事前検証 |
-| CI で `unexpected argument '--project' found` | `@railway/cli` v4 で `railway up --project` 等が削除 | `railway up --detach` のみ。ターゲットは `RAILWAY_*` env で指定 |
+| CI で `Project Token not found` | Account token を `RAILWAY_TOKEN` に渡している | Preview 用 **Project Token** を `RAILWAY_PROJECT_TOKEN` secret に設定。または account token + `railway link`（deploy スクリプト内） |
 | CI で `load metadata for docker.io/...` 後に `Deploy failed` | Railway ビルド（Docker Hub メタデータ取得）の一時失敗 | Railway ビルドログ。`/health/db` はデプロイ前の旧リビジョンのまま 200 のことがある |
 | `/health` 200 だが `/health/db` 503 `database: unreachable` | `DATABASE_URL` 未設定・Variable Reference 切れ・Postgres 停止 | Railway Variables + Postgres サービス状態 |
 | `/health/db` 503 `database: not_configured` | backend に `DATABASE_URL` がない | preview/stg/prd 各環境の Variable Reference を確認 |

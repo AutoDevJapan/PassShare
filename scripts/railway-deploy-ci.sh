@@ -16,9 +16,20 @@ health_url="${RAILWAY_HEALTH_URL:-}"
 health_attempts="${RAILWAY_HEALTH_ATTEMPTS:-18}"
 health_interval="${RAILWAY_HEALTH_INTERVAL_SEC:-10}"
 
-# Railway CLI reads RAILWAY_TOKEN (Issue #208 — RAILWAY_API_TOKEN alone causes upload 404)
-if [ -n "${RAILWAY_API_TOKEN:-}" ]; then
+# Railway CLI reads RAILWAY_TOKEN (Issue #208 — project token preferred for `railway up`)
+if [ -n "${RAILWAY_PROJECT_TOKEN:-}" ]; then
+  export RAILWAY_TOKEN="${RAILWAY_PROJECT_TOKEN}"
+elif [ -n "${RAILWAY_API_TOKEN:-}" ]; then
   export RAILWAY_TOKEN="${RAILWAY_API_TOKEN}"
+  # Account/workspace token: establish linked context for CLI v4 (project token skips this).
+  railway link \
+    --project "${RAILWAY_PROJECT_ID}" \
+    --environment "${RAILWAY_ENVIRONMENT_ID}" \
+    --service "${RAILWAY_SERVICE_ID}" \
+    --yes 2>/dev/null || railway link \
+    --project "${RAILWAY_PROJECT_ID}" \
+    --environment "${RAILWAY_ENVIRONMENT_ID}" \
+    --service "${RAILWAY_SERVICE_ID}"
 fi
 
 pnpm --dir backend run migrate:verify
