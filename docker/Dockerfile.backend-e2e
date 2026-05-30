@@ -12,6 +12,7 @@ RUN apt-get update \
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
+COPY apps/ ./apps/
 RUN cargo build -p op-cli --release \
   && install -m 755 target/release/op /usr/local/bin/op
 
