@@ -260,7 +260,8 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
 - **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
 - デプロイ CI は `scripts/railway-deploy-with-replica.sh` → `scripts/railway-deploy-ci.sh`（`railway-deploy-preflight.mjs` + DB replica + `railway up --detach` + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
-- Railway CLI **v4+**: `railway up` は `RAILWAY_PROJECT_ID` / `RAILWAY_SERVICE_ID` / `RAILWAY_ENVIRONMENT_ID` / `RAILWAY_TOKEN` 環境変数でターゲットを解決する（`--project` 等のフラグは v4 で削除）。GitHub Secret `RAILWAY_API_TOKEN` を deploy スクリプト内で `RAILWAY_TOKEN` に export する（#208）。
+- **Preview deploy**（`deploy-preview.yml`）は `@railway/cli@3.20.2` を使用（account token + `--project` フラグ）。v4 は Project Token 必須のため preview のみ v3 を pin。
+- `RAILWAY_TOKEN` は `RAILWAY_PROJECT_TOKEN`（推奨）または `RAILWAY_API_TOKEN` から export する（#208）。
 
 ### デプロイ失敗 vs DB 障害の切り分け
 

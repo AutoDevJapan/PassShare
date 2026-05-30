@@ -6,7 +6,10 @@
  */
 const API_URL = "https://backboard.railway.com/graphql/v2";
 
-const token = process.env.RAILWAY_API_TOKEN ?? process.env.RAILWAY_TOKEN;
+const token =
+  process.env.RAILWAY_PROJECT_TOKEN ??
+  process.env.RAILWAY_API_TOKEN ??
+  process.env.RAILWAY_TOKEN;
 const projectId = process.env.RAILWAY_PROJECT_ID;
 const serviceId = process.env.RAILWAY_SERVICE_ID;
 const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
@@ -18,7 +21,7 @@ function requireEnv(name, value) {
   }
 }
 
-requireEnv("RAILWAY_API_TOKEN", token);
+requireEnv("RAILWAY_PROJECT_TOKEN or RAILWAY_API_TOKEN", token);
 requireEnv("RAILWAY_PROJECT_ID", projectId);
 requireEnv("RAILWAY_SERVICE_ID", serviceId);
 requireEnv("RAILWAY_ENVIRONMENT_ID", environmentId);

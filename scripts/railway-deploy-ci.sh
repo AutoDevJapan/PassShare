@@ -4,7 +4,7 @@ set -euo pipefail
 # Deploy backend via Railway CLI (CI) with retries and post-deploy /health/db smoke.
 #
 # Required env:
-#   RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID, RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID
+#   RAILWAY_API_TOKEN or RAILWAY_PROJECT_TOKEN, RAILWAY_PROJECT_ID, RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID
 # Optional env:
 #   RAILWAY_DEPLOY_ATTEMPTS (default 3)
 #   RAILWAY_HEALTH_URL — e.g. https://pass-share-backend-preview.up.railway.app/health/db
@@ -16,32 +16,36 @@ health_url="${RAILWAY_HEALTH_URL:-}"
 health_attempts="${RAILWAY_HEALTH_ATTEMPTS:-18}"
 health_interval="${RAILWAY_HEALTH_INTERVAL_SEC:-10}"
 
-# Railway CLI reads RAILWAY_TOKEN (Issue #208 — project token preferred for `railway up`)
+# CLI auth — project token preferred; account token works with @railway/cli v3 + --project flags
 if [ -n "${RAILWAY_PROJECT_TOKEN:-}" ]; then
   export RAILWAY_TOKEN="${RAILWAY_PROJECT_TOKEN}"
 elif [ -n "${RAILWAY_API_TOKEN:-}" ]; then
   export RAILWAY_TOKEN="${RAILWAY_API_TOKEN}"
-  # Account/workspace token: establish linked context for CLI v4 (project token skips this).
-  railway link \
-    --project "${RAILWAY_PROJECT_ID}" \
-    --environment "${RAILWAY_ENVIRONMENT_ID}" \
-    --service "${RAILWAY_SERVICE_ID}" \
-    --yes 2>/dev/null || railway link \
-    --project "${RAILWAY_PROJECT_ID}" \
-    --environment "${RAILWAY_ENVIRONMENT_ID}" \
-    --service "${RAILWAY_SERVICE_ID}"
+else
+  echo "Missing RAILWAY_PROJECT_TOKEN or RAILWAY_API_TOKEN"
+  exit 1
 fi
 
 pnpm --dir backend run migrate:verify
 
 node scripts/railway-deploy-preflight.mjs
 
+railway_up() {
+  if railway up --help 2>&1 | grep -q -- '--project'; then
+    railway up \
+      --project "${RAILWAY_PROJECT_ID}" \
+      --service "${RAILWAY_SERVICE_ID}" \
+      --environment "${RAILWAY_ENVIRONMENT_ID}" \
+      --detach
+  else
+    railway up --detach
+  fi
+}
+
 deploy_ok=0
 for i in $(seq 1 "$attempts"); do
   echo "Railway deploy attempt ${i}/${attempts}..."
-  # CLI v4+: project/service/environment come from RAILWAY_* env (set by workflow).
-  # Do not pass --project/--service/--environment — removed in @railway/cli v4.
-  if railway up --detach; then
+  if railway_up; then
     deploy_ok=1
     break
   fi
