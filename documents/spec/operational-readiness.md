@@ -11,7 +11,7 @@ PassShare を **Web ポータル**・**op 互換 CLI**・**Tauri デスクトッ
 
 | Issue | 領域 | 成果物 | 自動化 |
 |-------|------|--------|--------|
-| [#206](https://github.com/AutoDevJapan/PassShare/issues/206) | Web ローカル | [local-dev-web.md](../runbooks/local-dev-web.md) | Playwright `auth-crud`（Quality Gate） |
+| [#206](https://github.com/AutoDevJapan/PassShare/issues/206) | Web ローカル | [local-dev-web.md](../runbooks/local-dev-web.md) | Playwright `auth-crud` + `local-web-e2e.mjs`（Quality Gate） |
 | [#207](https://github.com/AutoDevJapan/PassShare/issues/207) | Web デプロイ smoke | `scripts/stg-web-smoke.mjs` | `stg-smoke.yml` workflow_dispatch |
 | [#208](https://github.com/AutoDevJapan/PassShare/issues/208) | Infra preview | `deploy-preview.yml` / [infrastructure.md](./infrastructure.md) | PR `deploy-backend-preview` |
 | [#209](https://github.com/AutoDevJapan/PassShare/issues/209) | CLI E2E | `backend/test/op-cli-e2e.test.js` | Quality Gate `docker-e2e` |
