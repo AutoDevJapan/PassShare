@@ -126,7 +126,7 @@ SSOT: [vulnerability-sla.md](../security/vulnerability-sla.md), [audit-checklist
 
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
-| PR / main push | `quality-gate.yml` | `docker compose run backend-e2e` — PostgreSQL + Connect API 統合 |
+| PR / main push | `quality-gate.yml` | `docker compose run backend-e2e` — PostgreSQL + Connect API + op-cli E2E |
 
 ```bash
 docker compose -f docker/docker-compose.test.yml run --rm backend-e2e

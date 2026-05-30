@@ -24,19 +24,21 @@ services:
       service: test
 
   backend-e2e:
-    image: node:22-bookworm
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend-e2e
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ..:/app
-    working_dir: /app/backend
+    working_dir: /app
     environment:
       CI: "true"
       DATABASE_URL: postgresql://passshare:passshare@postgres:5432/passshare
       OP_CONNECT_TOKEN: test-connect-token
+      OP_CLI_BIN: /app/target/release/op
     command: >
-      sh -c "corepack enable &&
-             corepack prepare pnpm@10.11.0 --activate &&
-             pnpm install --frozen-lockfile &&
-             node --test test/pg-integration.test.js"
+      sh -c "pnpm --dir backend install --frozen-lockfile &&
+             cargo build -p op-cli --release &&
+             node --test backend/test/pg-integration.test.js backend/test/op-cli-e2e.test.js"
