@@ -22,6 +22,7 @@ jobs:
   docker-e2e:
     name: Docker E2E (API + PostgreSQL)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
