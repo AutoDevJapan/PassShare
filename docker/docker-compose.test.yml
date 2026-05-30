@@ -32,19 +32,12 @@ services:
         condition: service_healthy
     volumes:
       - ..:/app
-      - cargo-registry:/usr/local/cargo/registry
-      - cargo-target:/app/target
     working_dir: /app
     environment:
       CI: "true"
       DATABASE_URL: postgresql://passshare:passshare@postgres:5432/passshare
       OP_CONNECT_TOKEN: test-connect-token
-      OP_CLI_BIN: /app/target/release/op
+      OP_CLI_BIN: /usr/local/bin/op
     command: >
       sh -c "pnpm --dir backend install --frozen-lockfile &&
-             cargo build -p op-cli --release &&
              node --test backend/test/pg-integration.test.js backend/test/op-cli-e2e.test.js"
-
-volumes:
-  cargo-registry:
-  cargo-target:

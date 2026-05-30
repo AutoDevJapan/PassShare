@@ -8,4 +8,11 @@ RUN apt-get update \
   && corepack prepare pnpm@10.11.0 --activate \
   && rm -rf /var/lib/apt/lists/*
 
+# Pre-build op-cli in the image so runtime does not compile on every CI run.
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+RUN cargo build -p op-cli --release \
+  && install -m 755 target/release/op /usr/local/bin/op
+
 WORKDIR /app
