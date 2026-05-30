@@ -26,8 +26,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/passshare-core
+            crates/passshare-connect
+            crates/op-cli
+
+      - name: Build op-cli for E2E
+        run: cargo build -p op-cli --release
+
       - name: Run PostgreSQL integration tests
-        run: docker compose -f docker/docker-compose.test.yml run --build --rm backend-e2e
+        run: docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 
   backend:
     name: Backend

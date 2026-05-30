@@ -37,7 +37,7 @@ services:
       CI: "true"
       DATABASE_URL: postgresql://passshare:passshare@postgres:5432/passshare
       OP_CONNECT_TOKEN: test-connect-token
-      OP_CLI_BIN: /usr/local/bin/op
+      OP_CLI_BIN: /app/target/release/op
     command: >
       sh -c "pnpm --dir backend install --frozen-lockfile &&
              node --test backend/test/pg-integration.test.js backend/test/op-cli-e2e.test.js"
