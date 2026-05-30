@@ -1,6 +1,6 @@
 # PassShare インフラ構成 (SSOT)
 
-> 最終更新: 2026-05-28（デプロイパイプライン: main → dev、stg/prd 手動 — ADR 005）
+> 最終更新: 2026-05-30（dev/preview: seed データ、stg のみ prd レプリカ refresh）
 
 ## Railway プロジェクト ID
 
@@ -11,7 +11,6 @@
 | postgres-dev | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
 | postgres-stg | `7234bbc3-c482-4009-9c88-03063521ffd1` |
 | postgres-prd-v2 | `1509c487-cf03-4c50-8c9d-8781d53ee19a`（production 用） |
-| postgres-prd（旧・未使用） | `610efe3e-86cf-4537-b4f6-4417b34bc229` — API トークンでは削除不可。Railway UI から手動削除可 |
 | production env | `c1a3cdfc-9aa3-420d-b101-e6497714ccb9` |
 | staging env | `c807d209-0624-4e13-aff6-61332cd0bb29` |
 | preview env | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
@@ -41,7 +40,7 @@
 | **prd** | Production | —（手動 promote） | `production` | `postgres-prd-v2`（独立） | **手動** `deploy-prd.yml` |
 | **stg** | Preview (`stg` ブランチ) | `stg` | `staging` | `postgres-stg`（デプロイ時 prd から refresh） | **手動** `deploy-stg.yml` |
 | **preview** | Preview | PR / feature ブランチ | `preview` | `postgres-dev`（dev と共有） | PR 時 `deploy-preview.yml` |
-| **dev** | Development | **`main`（検知）** | `development` | `postgres-dev`（デプロイ時 prd から refresh） | **`main` push 自動** `deploy-dev.yml` |
+| **dev** | Development | **`main`（検知）** | `development` | `postgres-dev`（**seed データ**） | **`main` push 自動** `deploy-dev.yml` |
 
 > SSOT: [ADR 005](../adr/005-deploy-pipeline-dev-first.md) — `main` マージは dev Backend デプロイのみ。prd 自動デプロイは廃止。
 
@@ -49,10 +48,23 @@
 
 - `preview` と `dev` は **同一 PostgreSQL インスタンス** (`postgres-dev`) を参照する
 - `stg` / `prd` はそれぞれ独立した PostgreSQL インスタンスを使用する
-- **dev / stg デプロイ前**に `scripts/railway-db-replica.mjs` で prd DB を refresh する（レプリカブランチ `replica-{run_id}-{sha}`）
-- CI（GitHub Actions）からの `pg_dump` / `pg_restore` は **Postgres サービスの TCP proxy** 経由で接続する（`DATABASE_PUBLIC_URL` または Railway GraphQL `tcpProxies` + `POSTGRES_*` から URL を組み立て）。backend の `DATABASE_URL`（`.railway.internal`）は CI から到達不可
-- 各 Postgres サービス（`postgres-dev` / `postgres-stg` / `postgres-prd-v2`）には **TCP proxy（port 5432）** が必要。未設定時は `railway-db-replica.mjs` が Railway API で自動作成する
+- **local / preview / dev** は `backend/src/db/dev-seed.js` の **同一 seed データ**（デモユーザー・パスワードボックス・サンプルアイテム）を使用する。Backend 起動時に idempotent に適用
+- **stg デプロイ前**に `scripts/railway-db-replica.mjs` で prd DB を refresh する（レプリカブランチ `replica-{run_id}-{sha}`）
 - **prd デプロイ前**に prd DB の snapshot を取得し GitHub artifact に保存する
+- CI（GitHub Actions）から stg 向け `pg_dump` / `pg_restore` は **Postgres サービスの TCP proxy** 経由（`DATABASE_PUBLIC_URL` または Railway GraphQL `tcpProxies` + `POSTGRES_*`）。backend の `DATABASE_URL`（`.railway.internal`）は CI から到達不可
+- refresh 手順（stg のみ）: `pg_dump`（prd）→ 対象 DB で `DROP SCHEMA public CASCADE` → `pg_restore`（`--single-transaction --exit-on-error`）
+- 各 Postgres サービス（`postgres-dev` / `postgres-stg` / `postgres-prd-v2`）には **TCP proxy（port 5432）** が stg refresh 用に必要。未設定時は `railway-db-replica.mjs` が Railway API で自動作成する
+
+### Dev seed（local / preview / dev）
+
+| 項目 | 値 |
+|------|-----|
+| Email | `dev@passshare.local` |
+| Password | `DevPassShare1!` |
+| Password box ID | `abcdefghijklmnopqrstuvwxyz` |
+| Password box name | `Demo Password Box` |
+
+手動適用: `APP_ENV=dev DATABASE_URL=... pnpm --dir backend run db:seed`
 
 ## Vercel 環境変数
 
@@ -317,7 +329,7 @@ Then prd DB snapshot が作成され production backend がデプロイされる
 
 Given main ブランチに push する
 When deploy-dev.yml が実行される
-Then postgres-dev が prd レプリカで refresh され development backend がデプロイされる（production にはデプロイしない）
+Then development backend がデプロイされ postgres-dev に dev seed が適用される（production にはデプロイしない、prd レプリカ refresh は行わない）
 ```
 
 ## 関連ドキュメント

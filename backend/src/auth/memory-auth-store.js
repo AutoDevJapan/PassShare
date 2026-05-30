@@ -42,11 +42,11 @@ export function createMemoryAuthStore() {
       return usersById.get(userId) ?? null;
     },
 
-    async createUser({ email, passwordHash }) {
+    async createUser({ email, passwordHash, id: requestedId }) {
       if (userIdByEmail.has(email)) {
         throw authHttpError(409, "PS023", "Email is already registered");
       }
-      const id = randomUUID();
+      const id = requestedId ?? randomUUID();
       const createdAt = new Date().toISOString();
       const user = { id, email, password_hash: passwordHash, created_at: createdAt };
       usersById.set(id, user);

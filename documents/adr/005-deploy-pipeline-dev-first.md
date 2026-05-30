@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-05-28)
+Amended (2026-05-30) — dev/preview は seed、stg のみ prd レプリカ
 
 ## Context
 
@@ -14,7 +14,7 @@ Accepted (2026-05-28)
 - dev で問題なければ **stg は手動デプロイ**
 - stg デプロイ時は **prd DB のレプリカ** を stg Postgres に反映してからデプロイ
 - **prd へのデプロイは手動**（stg 受入後）
-- dev / stg / prd いずれもデプロイ前に **DB レプリカブランチ**（スナップショットまたは refresh）を作成
+- **local / preview / dev** は本番データではなく **同一 dev seed** を使用する
 
 ## Decision
 
@@ -22,16 +22,20 @@ Accepted (2026-05-28)
 
 | ワークフロー | トリガー | Railway 環境 | DB 前処理 |
 |-------------|---------|--------------|----------|
-| `deploy-dev.yml` | `push` → `main` | development | prd → dev refresh |
+| `deploy-dev.yml` | `push` → `main` | development | **なし**（起動時 dev seed） |
 | `deploy-stg.yml` | `workflow_dispatch`（確認入力 `deploy-stg`） | staging | prd → stg refresh |
 | `deploy-prd.yml` | `workflow_dispatch`（確認入力 `deploy-prd`） | production | prd snapshot + artifact |
-| `deploy-preview.yml` | PR → `main` | preview | なし（PR 検証用） |
+| `deploy-preview.yml` | PR → `main` | preview | **なし**（起動時 dev seed） |
 
-### DB レプリカ
+### DB 方針
 
-- スクリプト: `scripts/railway-db-replica.mjs`（Railway API で `DATABASE_URL` 解決 → `pg_dump` / `pg_restore`）
-- ラベル: `replica-{GITHUB_RUN_ID}-{sha7}`
-- prd スナップショットは GitHub Actions artifact に保存
+| 論理環境 | データソース |
+|---------|-------------|
+| local / preview / dev | `backend/src/db/dev-seed.js`（Backend 起動時 idempotent 適用） |
+| stg | prd レプリカ refresh（`scripts/railway-db-replica.mjs`） |
+| prd | 本番データ（snapshot のみ、refresh なし） |
+
+stg refresh スクリプト: `pg_dump` → `DROP SCHEMA public CASCADE` → `pg_restore`（`--single-transaction --exit-on-error`）
 
 ### Frontend（Vercel）
 
@@ -42,10 +46,12 @@ Accepted (2026-05-28)
 
 - `main` マージだけでは **本番 Backend は更新されない**
 - stg/prd は Actions → Run workflow から明示的に実行
-- dev refresh は `postgres-dev` を上書きする（preview 環境と共有 — preview も prd レプリカデータになる）
+- dev / preview は **本番データをコピーしない**（`operations.md` と一致）
+- preview と dev は `postgres-dev` を共有 — 同一 seed が両方に適用される
 - GitHub Secret **`RAILWAY_DEVELOPMENT_ENV_ID`** が必須
 
 ## Alternatives Considered
 
-- Neon 式 DB branching: Railway ネイティブ非対応のため pg_dump 方式を採用
+- main マージごとに prd → dev refresh: **却下** — 開発 DB に本番データを置く必要がなく、FK 依存で restore が脆い
+- Neon 式 DB branching: Railway ネイティブ非対応のため stg のみ pg_dump 方式を採用
 - `stg` ブランチ push 自動デプロイ: 手動のみに変更（受入後の明示デプロイ）

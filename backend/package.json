@@ -8,7 +8,8 @@
     "dev": "node --watch src/index.js",
     "test": "node --test test/**/*.test.js",
     "generate:types": "node scripts/generate-connect-types.mjs",
-    "migrate:verify": "node scripts/verify-schema.mjs"
+    "migrate:verify": "node scripts/verify-schema.mjs",
+    "db:seed": "node scripts/seed-dev.mjs"
   },
   "dependencies": {
     "argon2": "^0.44.0",

@@ -30,8 +30,8 @@ export function createPgAuthStore(pool) {
       return result.rows[0] ?? null;
     },
 
-    async createUser({ email, passwordHash }) {
-      const id = randomUUID();
+    async createUser({ email, passwordHash, id: requestedId }) {
+      const id = requestedId ?? randomUUID();
       try {
         const result = await pool.query(
           `INSERT INTO users (id, email, password_hash)

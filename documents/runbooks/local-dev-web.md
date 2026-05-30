@@ -54,6 +54,15 @@ node backend/src/index.js
 
 確認: http://127.0.0.1:8080/health → `{ "status": "ok" }`
 
+**Dev seed（自動）:** `APP_ENV=local` では Backend 起動時にデモユーザーが作成される。
+
+| 項目 | 値 |
+|------|-----|
+| Email | `dev@passshare.local` |
+| Password | `DevPassShare1!` |
+
+ログインせずにサインアップから試すこともできる。
+
 ### 3. Frontend 起動（ターミナル 2）
 
 ```powershell

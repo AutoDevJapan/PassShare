@@ -32,8 +32,7 @@ git pull origin main
 # PR マージ後、deploy-dev.yml が自動実行される
 ```
 
-- prd DB → dev (`postgres-dev`) refresh
-- Railway development backend デプロイ
+- Railway development backend デプロイ（**dev seed** を起動時適用 — prd レプリカ refresh なし）
 - smoke: `https://pass-share-backend-development.up.railway.app/health/db`
 
 ### 2. stg 手動デプロイ
