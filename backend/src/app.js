@@ -2,6 +2,7 @@ import express from "express";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
 import { createConnectRouter } from "./connect/router.js";
+import { applyDevSeed, isDevSeedEnvironment } from "./db/dev-seed.js";
 import { connectErrorHandler } from "./middleware/connect-errors.js";
 import { createRequireConnectAuth } from "./middleware/require-connect-auth.js";
 import { requireVaultAccess } from "./middleware/require-vault-access.js";
@@ -33,6 +34,11 @@ export async function createApp(options = {}) {
 
   const connectStore = options.store ?? (await createStore(pool));
   const authStore = options.authStore ?? (await createAuthStore(pool));
+
+  const ownsStores = !options.store && !options.authStore;
+  if (ownsStores && isDevSeedEnvironment(appEnv)) {
+    await applyDevSeed({ pool, authStore, connectStore });
+  }
 
   app.use(createSecurityHeadersMiddleware(appEnv));
   app.use(createWebCorsMiddleware(appEnv));

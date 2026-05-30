@@ -1,6 +1,6 @@
 import pg from "pg";
 import { createMemoryStore } from "./memory-store.js";
-import { createPgStore, ensureDefaultVault } from "./pg-store.js";
+import { createPgStore } from "./pg-store.js";
 
 const { Pool } = pg;
 
@@ -17,25 +17,11 @@ function normalizeDatabaseUrl(rawUrl) {
  */
 export async function createStore(pool) {
   if (!pool) {
-    const store = createMemoryStore();
-    const now = new Date().toISOString();
-    const vaultId = "abcdefghijklmnopqrstuvwxyz";
-    store.seedVault({
-      id: vaultId,
-      name: "Default Password Box",
-      description: "",
-      type: "USER_CREATED",
-      content_version: 1,
-      attribute_version: 1,
-      created_at: now,
-      updated_at: now,
-    });
-    return store;
+    return createMemoryStore();
   }
 
   const store = createPgStore(pool);
   await store.migrate();
-  await ensureDefaultVault(pool);
   return store;
 }
 

@@ -231,21 +231,3 @@ export function createPgStore(pool) {
     },
   };
 }
-
-/**
- * Seed a default vault when database is empty (dev convenience).
- * @param {import('pg').Pool} pool
- */
-export async function ensureDefaultVault(pool) {
-  const existing = await pool.query("SELECT id FROM connect_vaults LIMIT 1");
-  if (existing.rowCount > 0) {
-    return;
-  }
-  const id = generateConnectId();
-  const now = nowIso();
-  await pool.query(
-    `INSERT INTO connect_vaults (id, name, description, type, content_version, attribute_version, created_at, updated_at)
-     VALUES ($1, $2, '', 'USER_CREATED', 1, 1, $3::timestamptz, $4::timestamptz)`,
-    [id, "Default Password Box", now, now],
-  );
-}
