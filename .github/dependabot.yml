@@ -93,3 +93,6 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+    ignore:
+      - dependency-name: "rand"
+        update-types: ["version-update:semver-major"]

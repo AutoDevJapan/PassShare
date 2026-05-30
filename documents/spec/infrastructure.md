@@ -94,6 +94,12 @@ SSOT: [vulnerability-sla.md](../security/vulnerability-sla.md), [audit-checklist
 | 同上の `@vitejs/plugin-react` | **メジャー upgrade は ignore** — 同上 |
 | 上記以外 | daily / weekly スケジュールで通常どおり PR |
 
+### Dependabot（cargo）
+
+| 対象 | ポリシー |
+|------|---------|
+| `rand` | **メジャー upgrade は ignore** — API 移行（例: `thread_rng` → `rng`）を Issue/PR で対応 |
+
 設定: `.github/dependabot.yml`
 
 ### 統合 Quality Gate（CI）

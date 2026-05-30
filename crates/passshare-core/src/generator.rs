@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 
 const LOWERCASE: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
 const UPPERCASE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -29,7 +29,7 @@ impl Default for PasswordGeneratorOptions {
 pub fn generate_password(options: PasswordGeneratorOptions) -> String {
     let mut charset = Vec::new();
     let mut required = Vec::new();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     if options.lowercase {
         charset.extend_from_slice(LOWERCASE);
