@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const API_URL = "https://backboard.railway.com/graphql/v2";
 
@@ -235,6 +236,37 @@ function runCommand(command, args, env = {}) {
   }
 }
 
+/** @param {string} connectionUrl */
+export function parsePostgresUser(connectionUrl) {
+  const url = new URL(connectionUrl);
+  return decodeURIComponent(url.username);
+}
+
+/**
+ * SQL to reset the public schema before pg_restore.
+ * pg_restore --clean fails when FK dependencies exist (e.g. vault_invitations).
+ *
+ * @param {string} dbUser
+ */
+export function buildPublicSchemaWipeSql(dbUser) {
+  const quotedUser = `"${dbUser.replace(/"/g, '""')}"`;
+  return [
+    "DROP SCHEMA IF EXISTS public CASCADE;",
+    "CREATE SCHEMA public;",
+    "GRANT ALL ON SCHEMA public TO public;",
+    `GRANT ALL ON SCHEMA public TO ${quotedUser};`,
+  ].join("\n");
+}
+
+/** @param {string} targetUrl */
+function wipeTargetDatabase(targetUrl) {
+  const dbUser = parsePostgresUser(targetUrl);
+  const wipeSql = buildPublicSchemaWipeSql(dbUser);
+
+  console.log(`Wiping public schema on target before restore (user: ${dbUser})...`);
+  runCommand("psql", [targetUrl, "-v", "ON_ERROR_STOP=1", "-c", wipeSql]);
+}
+
 async function refreshTargetFromSource(sourceEnv, targetEnv) {
   const label = branchLabel();
   console.log(`DB replica branch: ${label}`);
@@ -254,11 +286,13 @@ async function refreshTargetFromSource(sourceEnv, targetEnv) {
       sourceUrl,
     ]);
 
+    wipeTargetDatabase(targetUrl);
+
     runCommand("pg_restore", [
-      "--clean",
-      "--if-exists",
+      "--exit-on-error",
       "--no-owner",
       "--no-acl",
+      "--single-transaction",
       "--dbname",
       targetUrl,
       dumpPath,
@@ -355,7 +389,12 @@ async function main() {
   throw new Error(`Unknown mode: ${mode ?? "(none)"}`);
 }
 
-main().catch((error) => {
-  console.error(error.message ?? error);
-  process.exit(1);
-});
+const isCliEntry =
+  process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isCliEntry) {
+  main().catch((error) => {
+    console.error(error.message ?? error);
+    process.exit(1);
+  });
+}

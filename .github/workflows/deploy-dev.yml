@@ -24,9 +24,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
       - name: Install backend dependencies
         working-directory: backend
         run: pnpm install --frozen-lockfile
@@ -34,18 +31,12 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Refresh dev DB from prd replica, then deploy
+      - name: Deploy backend to Railway (development)
         env:
-          DEPLOY_TARGET: dev
-          DB_REPLICA_MODE: refresh
-          DB_REPLICA_SOURCE: prd
-          DB_REPLICA_TARGET: dev
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_DEVELOPMENT_ENV_ID }}
-          RAILWAY_PRODUCTION_ENV_ID: ${{ secrets.RAILWAY_PRODUCTION_ENV_ID }}
-          RAILWAY_STAGING_ENV_ID: ${{ secrets.RAILWAY_STAGING_ENV_ID }}
-          RAILWAY_DEVELOPMENT_ENV_ID: ${{ secrets.RAILWAY_DEVELOPMENT_ENV_ID }}
           RAILWAY_HEALTH_URL: https://pass-share-backend-development.up.railway.app/health/db
-        run: bash scripts/railway-deploy-with-replica.sh
+        run: bash scripts/railway-deploy-ci.sh
