@@ -32,11 +32,6 @@ pnpm --dir backend run migrate:verify
 
 node scripts/railway-deploy-preflight.mjs
 
-# v3 account token: explicit login before deploy
-if ! railway whoami >/dev/null 2>&1; then
-  railway login --token "${RAILWAY_TOKEN}" --browserless
-fi
-
 railway_up() {
   if railway up --help 2>&1 | grep -q -- '--project'; then
     railway up \
