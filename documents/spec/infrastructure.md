@@ -67,7 +67,7 @@ CLI の Preview 向け `vercel env add` はブランチ指定を要求するた�
 
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
-| PR 作成 / 更新 | `sync-vercel-env.yml` | head ブランチ向け Preview env を upsert |
+| PR 作成 / 更新 | `sync-vercel-env.yml` | head ブランチ向け Preview env を upsert（Dependabot PR は secrets 非注入のため skip） |
 | `stg` / `develop` push | 同上 | 該当ブランチ向け Preview env を upsert |
 | 手動 (`workflow_dispatch`) | 同上 | baseline + 全 Preview デフォルト + 全 remote ブランチ |
 
@@ -235,7 +235,7 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 | `deploy-dev.yml` | `main` push | Railway development | prd → dev refresh |
 | `deploy-stg.yml` | 手動（`deploy-stg` 入力） | Railway staging | prd → stg refresh |
 | `deploy-prd.yml` | 手動（`deploy-prd` 入力） | Railway production | prd snapshot |
-| `deploy-preview.yml` | PR | Railway preview | なし |
+| `deploy-preview.yml` | PR（Dependabot 除く） | Railway preview | なし |
 
 - `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
