@@ -1,5 +1,7 @@
 use std::env;
+use std::time::Duration;
 
+use passshare_core::domain::connect_id::ConnectId;
 use passshare_core::domain::item::Item;
 use passshare_core::domain::vault::Vault;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -29,10 +31,15 @@ impl ConnectClient {
         if !base.ends_with("/v1") {
             base.push_str("/v1");
         }
+        let http = Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()?;
         Ok(Self {
             base_url: base,
             token: token.into(),
-            http: Client::new(),
+            http,
         })
     }
 
@@ -54,8 +61,16 @@ impl ConnectClient {
     }
 
     pub async fn create_item(&self, vault_id: &str, item: &Value) -> ConnectResult<Item> {
-        self.post_json(&format!("/vaults/{vault_id}/items"), item)
-            .await
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct CreatedItem {
+            id: ConnectId,
+        }
+
+        let created: CreatedItem = self
+            .post_json(&format!("/vaults/{vault_id}/items"), item)
+            .await?;
+        self.get_item(vault_id, created.id.as_str()).await
     }
 
     pub async fn replace_item(

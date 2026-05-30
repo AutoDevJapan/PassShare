@@ -64,7 +64,7 @@ node scripts/stg-smoke.mjs
 cd frontend && pnpm run dev
 # /docs, /terms, /privacy, /faq
 
-# op CLI ビルド（ローカル）
+# op CLI ビルド（Runbook: documents/runbooks/op-cli.md）
 cargo build -p op-cli --release
 
 # Connect SDK（TypeScript）

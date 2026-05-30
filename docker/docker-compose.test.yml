@@ -40,5 +40,4 @@ services:
       OP_CLI_BIN: /app/target/release/op
     command: >
       sh -c "pnpm --dir backend install --frozen-lockfile &&
-             cargo build -p op-cli --release &&
              node --test backend/test/pg-integration.test.js backend/test/op-cli-e2e.test.js"

@@ -1,0 +1,42 @@
+name: op-cli Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: op-cli-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+            artifact: op-cli-linux
+            bin_path: target/release/op
+          - platform: windows-latest
+            artifact: op-cli-windows
+            bin_path: target/release/op.exe
+          - platform: macos-latest
+            artifact: op-cli-macos
+            bin_path: target/release/op
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build op-cli release
+        run: cargo build -p op-cli --release
+
+      - name: Upload op-cli artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bin_path }}
+          if-no-files-found: error

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { after, before, describe, it } from "node:test";
 import pg from "pg";
 import { createApp } from "../src/app.js";
+import { generateConnectId } from "../src/lib/connect.js";
 
 const { Pool } = pg;
 
@@ -14,20 +15,37 @@ const DATABASE_URL =
 
 /** @param {string[]} args */
 function runOp(args) {
-  const result = spawnSync(OP_BIN, args, {
-    env: {
-      ...process.env,
-      OP_CONNECT_HOST: baseUrl,
-      OP_CONNECT_TOKEN: TOKEN,
-    },
-    encoding: "utf8",
+  return new Promise((resolve, reject) => {
+    const child = spawn(OP_BIN, args, {
+      env: {
+        ...process.env,
+        OP_CONNECT_HOST: baseUrl,
+        OP_CONNECT_TOKEN: TOKEN,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            `op ${args.join(" ")} failed (${code}): ${stderr || stdout}`,
+          ),
+        );
+        return;
+      }
+      resolve(stdout.trim());
+    });
   });
-  if (result.status !== 0) {
-    throw new Error(
-      `op ${args.join(" ")} failed (${result.status}): ${result.stderr || result.stdout}`,
-    );
-  }
-  return (result.stdout ?? "").trim();
 }
 
 /** @type {string} */
@@ -46,7 +64,16 @@ describe(
     /** @type {string} */
     let vaultName;
 
+    /** @type {string} */
+    let e2eTitle;
+    /** @type {string} */
+    let readRefTitle;
+
     before(async () => {
+      const suffix = generateConnectId().slice(0, 8);
+      e2eTitle = `CLI E2E Login ${suffix}`;
+      readRefTitle = `CLI Read Ref ${suffix}`;
+
       process.env.OP_CONNECT_TOKEN = TOKEN;
       pool = new Pool({ connectionString: DATABASE_URL });
 
@@ -73,13 +100,13 @@ describe(
       delete process.env.OP_CONNECT_TOKEN;
     });
 
-    it("lists vaults via op-cli", () => {
-      const output = runOp(["vault", "list"]);
+    it("lists vaults via op-cli", async () => {
+      const output = await runOp(["vault", "list"]);
       assert.match(output, new RegExp(vaultId));
     });
 
-    it("creates, lists, gets, edits, deletes item via op-cli", () => {
-      const itemId = runOp([
+    it("creates, lists, gets, edits, deletes item via op-cli", async () => {
+      const itemId = await runOp([
         "item",
         "create",
         "--vault",
@@ -87,57 +114,54 @@ describe(
         "--category",
         "LOGIN",
         "--title",
-        "CLI E2E Login",
+        e2eTitle,
         "username=cli@example.com",
         "password=cli-secret",
       ]);
       assert.ok(itemId.length >= 20);
 
-      const listOutput = runOp(["item", "list", "--vault", vaultName]);
-      assert.match(listOutput, /CLI E2E Login/);
+      const listOutput = await runOp(["item", "list", "--vault", vaultName]);
+      assert.match(listOutput, new RegExp(e2eTitle));
 
-      const password = runOp([
+      const password = await runOp([
         "item",
         "get",
         "--vault",
         vaultName,
-        "--item",
         itemId,
         "--fields",
         "password",
       ]);
       assert.equal(password, "cli-secret");
 
-      runOp([
+      await runOp([
         "item",
         "edit",
         "--vault",
         vaultName,
-        "--item",
         itemId,
         "password=cli-secret-updated",
       ]);
 
-      const updated = runOp([
+      const updated = await runOp([
         "item",
         "get",
         "--vault",
         vaultName,
-        "--item",
         itemId,
         "--fields",
         "password",
       ]);
       assert.equal(updated, "cli-secret-updated");
 
-      runOp(["item", "delete", "--vault", vaultName, "--item", itemId]);
+      await runOp(["item", "delete", "--vault", vaultName, itemId]);
 
-      const afterDelete = runOp(["item", "list", "--vault", vaultName]);
-      assert.doesNotMatch(afterDelete, /CLI E2E Login/);
+      const afterDelete = await runOp(["item", "list", "--vault", vaultName]);
+      assert.doesNotMatch(afterDelete, new RegExp(e2eTitle));
     });
 
-    it("reads op:// reference via op-cli", () => {
-      const itemId = runOp([
+    it("reads op:// reference via op-cli", async () => {
+      const itemId = await runOp([
         "item",
         "create",
         "--vault",
@@ -145,15 +169,15 @@ describe(
         "--category",
         "LOGIN",
         "--title",
-        "CLI Read Ref",
+        readRefTitle,
         "username=u",
         "password=ref-secret",
       ]);
 
-      const value = runOp(["read", `op://${vaultName}/CLI Read Ref/password`]);
+      const value = await runOp(["read", `op://${vaultName}/${readRefTitle}/password`]);
       assert.equal(value, "ref-secret");
 
-      runOp(["item", "delete", "--vault", vaultName, "--item", itemId]);
+      await runOp(["item", "delete", "--vault", vaultName, itemId]);
     });
   },
 );
