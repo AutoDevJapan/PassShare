@@ -239,6 +239,8 @@ railway login
 | `VERCEL_TOKEN` | Vercel トークン |
 | `VERCEL_ORG_ID` | `masashi-matsumotos-projects-c5830f3d` |
 | `VERCEL_PROJECT_ID` | `prj_itSKGa2HAEj3UNHnsCdPQEF5nziE` |
+| `STG_OP_CONNECT_TOKEN` | stg Connect API Bearer（`stg-smoke.mjs` 任意） |
+| `STG_WEB_URL` | stg / Preview Web URL（`stg-web-smoke.mjs` — `run_web_ui: true` 時） |
 
 ### 秘密情報ローテーション
 

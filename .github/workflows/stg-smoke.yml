@@ -2,13 +2,18 @@ name: Staging Smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      run_web_ui:
+        description: Run Web UI Playwright smoke (requires STG_WEB_URL secret)
+        type: boolean
+        default: false
 
 concurrency:
   group: stg-smoke
   cancel-in-progress: false
 
 jobs:
-  smoke:
+  api-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -17,8 +22,39 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Run staging smoke checks
+      - name: Run staging API smoke checks
         env:
           STG_BACKEND_URL: https://pass-share-backend-staging.up.railway.app
           STG_OP_CONNECT_TOKEN: ${{ secrets.STG_OP_CONNECT_TOKEN }}
         run: node scripts/stg-smoke.mjs
+
+  web-ui-smoke:
+    if: inputs.run_web_ui
+    runs-on: ubuntu-latest
+    needs: api-smoke
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.11.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir frontend install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Run staging Web UI smoke
+        env:
+          STG_WEB_URL: ${{ secrets.STG_WEB_URL }}
+          STG_BACKEND_URL: https://pass-share-backend-staging.up.railway.app
+        run: node scripts/stg-web-smoke.mjs
