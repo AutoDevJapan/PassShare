@@ -1,4 +1,5 @@
 import { connectHttpError } from "../middleware/connect-errors.js";
+import { generateConnectId, isValidConnectId } from "./connect.js";
 
 /** Connect Item categories aligned with passshare-core ItemCategory. */
 export const CONNECT_ITEM_CATEGORIES = Object.freeze([
@@ -49,6 +50,25 @@ export function assertValidItemCategory(body) {
 }
 
 /**
+ * @param {unknown} fields
+ */
+export function normalizeItemFields(fields) {
+  if (!Array.isArray(fields)) {
+    return fields;
+  }
+  return fields.map((field) => {
+    if (!field || typeof field !== "object") {
+      return field;
+    }
+    const id =
+      typeof field.id === "string" && isValidConnectId(field.id)
+        ? field.id
+        : generateConnectId();
+    return { ...field, id };
+  });
+}
+
+/**
  * @param {object} body
  * @returns {object}
  */
@@ -57,6 +77,9 @@ export function normalizeItemBody(body) {
   if (normalized.category !== undefined) {
     assertValidItemCategory(normalized);
     normalized.category = normalizeConnectCategory(normalized.category);
+  }
+  if (normalized.fields !== undefined) {
+    normalized.fields = normalizeItemFields(normalized.fields);
   }
   return normalized;
 }

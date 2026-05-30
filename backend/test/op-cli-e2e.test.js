@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { after, before, describe, it } from "node:test";
 import pg from "pg";
 import { createApp } from "../src/app.js";
+import { generateConnectId } from "../src/lib/connect.js";
 
 const { Pool } = pg;
 
@@ -63,7 +64,16 @@ describe(
     /** @type {string} */
     let vaultName;
 
+    /** @type {string} */
+    let e2eTitle;
+    /** @type {string} */
+    let readRefTitle;
+
     before(async () => {
+      const suffix = generateConnectId().slice(0, 8);
+      e2eTitle = `CLI E2E Login ${suffix}`;
+      readRefTitle = `CLI Read Ref ${suffix}`;
+
       process.env.OP_CONNECT_TOKEN = TOKEN;
       pool = new Pool({ connectionString: DATABASE_URL });
 
@@ -104,21 +114,20 @@ describe(
         "--category",
         "LOGIN",
         "--title",
-        "CLI E2E Login",
+        e2eTitle,
         "username=cli@example.com",
         "password=cli-secret",
       ]);
       assert.ok(itemId.length >= 20);
 
       const listOutput = await runOp(["item", "list", "--vault", vaultName]);
-      assert.match(listOutput, /CLI E2E Login/);
+      assert.match(listOutput, new RegExp(e2eTitle));
 
       const password = await runOp([
         "item",
         "get",
         "--vault",
         vaultName,
-        "--item",
         itemId,
         "--fields",
         "password",
@@ -130,7 +139,6 @@ describe(
         "edit",
         "--vault",
         vaultName,
-        "--item",
         itemId,
         "password=cli-secret-updated",
       ]);
@@ -140,17 +148,16 @@ describe(
         "get",
         "--vault",
         vaultName,
-        "--item",
         itemId,
         "--fields",
         "password",
       ]);
       assert.equal(updated, "cli-secret-updated");
 
-      await runOp(["item", "delete", "--vault", vaultName, "--item", itemId]);
+      await runOp(["item", "delete", "--vault", vaultName, itemId]);
 
       const afterDelete = await runOp(["item", "list", "--vault", vaultName]);
-      assert.doesNotMatch(afterDelete, /CLI E2E Login/);
+      assert.doesNotMatch(afterDelete, new RegExp(e2eTitle));
     });
 
     it("reads op:// reference via op-cli", async () => {
@@ -162,15 +169,15 @@ describe(
         "--category",
         "LOGIN",
         "--title",
-        "CLI Read Ref",
+        readRefTitle,
         "username=u",
         "password=ref-secret",
       ]);
 
-      const value = await runOp(["read", `op://${vaultName}/CLI Read Ref/password`]);
+      const value = await runOp(["read", `op://${vaultName}/${readRefTitle}/password`]);
       assert.equal(value, "ref-secret");
 
-      await runOp(["item", "delete", "--vault", vaultName, "--item", itemId]);
+      await runOp(["item", "delete", "--vault", vaultName, itemId]);
     });
   },
 );
