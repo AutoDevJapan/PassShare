@@ -1,6 +1,10 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # Pinned by digest so CI is reproducible and immune to a mutated tag
+    # (supply-chain hardening, #325). Refresh the digest when bumping the tag:
+    #   docker pull postgres:16-alpine && \
+    #   docker inspect --format='{{index .RepoDigests 0}}' postgres:16-alpine
+    image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
     environment:
       POSTGRES_USER: passshare
       POSTGRES_PASSWORD: passshare
