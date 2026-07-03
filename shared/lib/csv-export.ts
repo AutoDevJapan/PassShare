@@ -1,10 +1,14 @@
 import type { ConnectItem } from "@shared/types/item.js";
 
 function escapeCsv(value: string): string {
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  // Neutralize spreadsheet formula injection: a leading =, +, -, @ (or tab/CR)
+  // makes Excel/Sheets evaluate the cell as a formula on open. A vault shared by
+  // another user could inject such a value; prefix it with an apostrophe.
+  const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  if (/[",\n\r]/.test(guarded)) {
+    return `"${guarded.replace(/"/g, '""')}"`;
   }
-  return value;
+  return guarded;
 }
 
 /** Export Connect items to 1Password-compatible CSV. */
