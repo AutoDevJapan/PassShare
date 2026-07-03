@@ -1,5 +1,8 @@
 name: Frontend E2E
 
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
