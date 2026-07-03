@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt;
 use std::time::Duration;
 
 use passshare_core::domain::connect_id::ConnectId;
@@ -12,11 +13,21 @@ use crate::error::{ConnectError, ConnectResult};
 use crate::ItemOverview;
 
 /// 1Password Connect SDK compatible HTTP client.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectClient {
     base_url: String,
     token: String,
     http: Client,
+}
+
+// Manual Debug so the bearer token never leaks via `{:?}`, logs, or panic backtraces.
+impl fmt::Debug for ConnectClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectClient")
+            .field("base_url", &self.base_url)
+            .field("token", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 impl ConnectClient {
@@ -183,5 +194,18 @@ impl ConnectClient {
             .unwrap_or("unknown error")
             .to_string();
         Err(ConnectError::Api { status, message })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_token() {
+        let client = ConnectClient::new("https://example.test", "super-secret-token").unwrap();
+        let rendered = format!("{client:?}");
+        assert!(!rendered.contains("super-secret-token"), "token must not appear in Debug");
+        assert!(rendered.contains("<redacted>"));
     }
 }
