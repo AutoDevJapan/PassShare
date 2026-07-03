@@ -1,7 +1,7 @@
 # Tauri デスクトップ UI (SSOT)
 
-> 最終更新: 2026-05-27  
-> 関連 Issue: #6, #7, #13 (Phase 4)
+> 最終更新: 2026-07-03  
+> 関連 Issue: #6, #7, #13 (Phase 4), #212 (smoke 回帰)
 
 ## 概要
 
@@ -114,6 +114,19 @@ Rust 側 `PassShareError` が `PS00N: メッセージ` 形式で返す。`errors
 - [x] 用語: パスワードボックス / マスターパスワード / ログイン情報 / 開く / 閉じる
 - [x] 初回作成時に緊急キットを専用パネルで表示
 - [x] PS001〜PS005 エラーをインライン表示（`alert` 不使用）
+
+### Issue #212 (MVP smoke 回帰)
+
+`apps/desktop/src-tauri/src/lib.rs` の `smoke_tests` が MVP 必須操作を回帰テストとしてカバーする。
+実行: `cargo test -p passshare-desktop smoke_`（quality-gate / desktop-build CI で実行）。
+
+- [x] 作成・開く・追加・一覧・閉じる（`smoke_create_open_add_list_lock`）
+- [x] 検索: タイトル / URL / ユーザー名 / タグ（`smoke_search_by_title_url_username_and_tag`）
+- [x] パスワード生成: 16 文字・記号込み・非決定性（`smoke_generate_password_16_chars_with_symbols`）
+- [x] 削除: 再オープン後も反映、削除済み ID は `PS007`（`smoke_delete_item_persists_after_reopen`）
+- [x] 間違ったマスターパスワード: `PS001` で拒否（`smoke_open_with_wrong_master_password_fails`）
+- [x] 緊急キット: 作成時に生成・再オープン後も保持・閉じた状態では読めない（`smoke_recovery_kit_available_and_persisted`）
+- [x] 7 category（CREDIT_CARD 等）の parse / CRUD（`smoke_all_categories_crud_roundtrip`）
 
 ## 開発コマンド
 

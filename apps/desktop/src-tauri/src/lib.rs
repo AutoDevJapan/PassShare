@@ -2,18 +2,15 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Mutex;
 
+use chrono::Utc;
+use passshare_core::domain::field::FieldPurpose;
 use passshare_core::{
     domain::connect_id::ConnectId,
     domain::field::{Field, FieldType},
     domain::item::{ItemCategory, ItemUrl, VaultReference},
     generator::PasswordGeneratorOptions,
-    Item,
-    PassShareError,
-    PasswordBox,
-    PasswordBoxState,
+    Item, PassShareError, PasswordBox, PasswordBoxState,
 };
-use passshare_core::domain::field::FieldPurpose;
-use chrono::Utc;
 use serde::Serialize;
 use tauri::State;
 
@@ -93,7 +90,9 @@ fn parse_category(category: &str) -> Result<ItemCategory, PassShareError> {
         "IDENTITY" => Ok(ItemCategory::Identity),
         "SSH_KEY" => Ok(ItemCategory::SshKey),
         "CUSTOM" => Ok(ItemCategory::Custom),
-        _ => Err(PassShareError::Internal(format!("unsupported category: {category}"))),
+        _ => Err(PassShareError::Internal(format!(
+            "unsupported category: {category}"
+        ))),
     }
 }
 
@@ -155,8 +154,13 @@ fn build_item_from_fields(
             }
             created
         }
-        ItemCategory::SecureNote => Item::new_secure_note(vault_id, title, body.unwrap_or_default())?,
-        ItemCategory::CreditCard | ItemCategory::Identity | ItemCategory::SshKey | ItemCategory::Custom => {
+        ItemCategory::SecureNote => {
+            Item::new_secure_note(vault_id, title, body.unwrap_or_default())?
+        }
+        ItemCategory::CreditCard
+        | ItemCategory::Identity
+        | ItemCategory::SshKey
+        | ItemCategory::Custom => {
             new_body_item(vault_id, category, title, body.unwrap_or_default())?
         }
     };
@@ -212,7 +216,9 @@ fn open_password_box(
 #[tauri::command]
 fn list_items(state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
     let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = pb.as_ref().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = pb
+        .as_ref()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     Ok(pb
         .list_connect_items()
         .map_err(map_error)?
@@ -224,7 +230,9 @@ fn list_items(state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
 #[tauri::command]
 fn search_items(query: String, state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
     let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = pb.as_ref().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = pb
+        .as_ref()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     Ok(pb
         .search_connect_items(&query)
         .map_err(map_error)?
@@ -248,7 +256,9 @@ fn add_item(
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = guard
+        .as_mut()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     let vault_id = pb.vault().map_err(map_error)?.id.clone();
     let parsed = parse_category(&category).map_err(map_error)?;
 
@@ -264,14 +274,19 @@ fn add_item(
             let password = password.ok_or_else(|| PassShareError::PasswordRequired.to_string())?;
             let mut created = Item::new_password(vault_id, title, password).map_err(map_error)?;
             if let Some(notes) = notes {
-                created.set_field_by_purpose(FieldPurpose::Notes, &notes).map_err(map_error)?;
+                created
+                    .set_field_by_purpose(FieldPurpose::Notes, &notes)
+                    .map_err(map_error)?;
             }
             created
         }
         ItemCategory::SecureNote => {
             Item::new_secure_note(vault_id, title, body.unwrap_or_default()).map_err(map_error)?
         }
-        ItemCategory::CreditCard | ItemCategory::Identity | ItemCategory::SshKey | ItemCategory::Custom => {
+        ItemCategory::CreditCard
+        | ItemCategory::Identity
+        | ItemCategory::SshKey
+        | ItemCategory::Custom => {
             new_body_item(vault_id, parsed, title, body.unwrap_or_default()).map_err(map_error)?
         }
     };
@@ -303,7 +318,9 @@ fn update_item(
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = guard
+        .as_mut()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     let existing = pb.get_item(&id).map_err(map_error)?.clone();
 
     let mut item = existing;
@@ -320,7 +337,8 @@ fn update_item(
                     .map_err(map_error)?;
             }
             if let Some(notes) = notes {
-                item.set_field_by_label("notes", &notes).map_err(map_error)?;
+                item.set_field_by_label("notes", &notes)
+                    .map_err(map_error)?;
             }
             item.urls.clear();
             if let Some(url) = url.filter(|value| !value.is_empty()) {
@@ -341,7 +359,11 @@ fn update_item(
                     .map_err(map_error)?;
             }
         }
-        ItemCategory::SecureNote | ItemCategory::CreditCard | ItemCategory::Identity | ItemCategory::SshKey | ItemCategory::Custom => {
+        ItemCategory::SecureNote
+        | ItemCategory::CreditCard
+        | ItemCategory::Identity
+        | ItemCategory::SshKey
+        | ItemCategory::Custom => {
             if let Some(body) = body {
                 item.set_field_by_label("notesPlain", &body)
                     .map_err(map_error)?;
@@ -362,18 +384,30 @@ fn update_item(
 }
 
 #[tauri::command]
-fn delete_item(id: String, master_password: String, state: State<'_, AppState>) -> Result<(), String> {
+fn delete_item(
+    id: String,
+    master_password: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = guard
+        .as_mut()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     pb.delete_item(&id).map_err(map_error)?;
     pb.save(&master_password).map_err(map_error)?;
     Ok(())
 }
 
 #[tauri::command]
-fn import_onepassword_csv(csv_data: String, master_password: String, state: State<'_, AppState>) -> Result<usize, String> {
+fn import_onepassword_csv(
+    csv_data: String,
+    master_password: String,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = guard
+        .as_mut()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     let count = pb.import_onepassword_csv(&csv_data).map_err(map_error)?;
     pb.save(&master_password).map_err(map_error)?;
     Ok(count)
@@ -382,7 +416,9 @@ fn import_onepassword_csv(csv_data: String, master_password: String, state: Stat
 #[tauri::command]
 fn export_onepassword_csv(state: State<'_, AppState>) -> Result<String, String> {
     let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = pb.as_ref().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = pb
+        .as_ref()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     pb.export_onepassword_csv().map_err(map_error)
 }
 
@@ -402,22 +438,14 @@ fn upsert_sync_item(
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
     let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
-    let pb = guard.as_mut().ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    let pb = guard
+        .as_mut()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
     let vault_id = pb.vault().map_err(map_error)?.id.clone();
     let connect_id = ConnectId::from_str(&id).map_err(map_error)?;
     let parsed = parse_category(&category).map_err(map_error)?;
     let item = build_item_from_fields(
-        connect_id,
-        vault_id,
-        parsed,
-        title,
-        password,
-        url,
-        username,
-        notes,
-        body,
-        tags,
-        favorite,
+        connect_id, vault_id, parsed, title, password, url, username, notes, body, tags, favorite,
     )
     .map_err(map_error)?;
 
@@ -477,20 +505,45 @@ mod smoke_tests {
     use passshare_core::domain::item::ItemCategory;
     use std::path::PathBuf;
 
+    const MASTER_PASSWORD: &str = "TestPass123!";
+
+    fn temp_box(name: &str) -> (PathBuf, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("passshare-desktop-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("smoke.pbox");
+        (dir, path)
+    }
+
+    fn add_login(
+        pb: &mut PasswordBox,
+        title: &str,
+        password: &str,
+        url: Option<&str>,
+        username: Option<&str>,
+        tags: &[&str],
+    ) -> Item {
+        let vault_id = pb.vault().expect("vault").id.clone();
+        let mut item = Item::new_login(vault_id, title, password)
+            .expect("login item")
+            .with_optional_fields(url.map(String::from), username.map(String::from), None)
+            .expect("optional fields");
+        if !tags.is_empty() {
+            item.set_tags(tags.iter().map(|t| t.to_string()).collect());
+        }
+        pb.add_item(item.clone()).expect("add");
+        item
+    }
+
     #[test]
     fn smoke_create_open_add_list_lock() {
-        let dir = std::env::temp_dir().join(format!("passshare-desktop-smoke-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let path: PathBuf = dir.join("smoke.pbox");
-        let password = "TestPass123!";
+        let (dir, path) = temp_box("smoke");
 
-        let mut pb = PasswordBox::create(&path, password).expect("create");
-        let vault_id = pb.vault().expect("vault").id.clone();
-        let item = Item::new_login(vault_id, "Smoke Login", "secret").expect("item");
-        pb.add_item(item).expect("add");
-        pb.save(password).expect("save");
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        add_login(&mut pb, "Smoke Login", "secret", None, None, &[]);
+        pb.save(MASTER_PASSWORD).expect("save");
 
-        let pb = PasswordBox::open(&path, password).expect("open");
+        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("open");
         let items = pb.list_connect_items().expect("list");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Smoke Login");
@@ -512,5 +565,232 @@ mod smoke_tests {
         ] {
             parse_category(category).expect(category);
         }
+    }
+
+    // MVP ATDD: タイトルで検索すると一致するログイン情報のみ返る
+    // （タイトル / URL / ユーザー名 / タグの各軸をカバー）
+    #[test]
+    fn smoke_search_by_title_url_username_and_tag() {
+        let (dir, path) = temp_box("search");
+
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        add_login(
+            &mut pb,
+            "GitHub",
+            "gh-pass-1",
+            Some("https://github.com"),
+            Some("alice"),
+            &[],
+        );
+        add_login(
+            &mut pb,
+            "メールサービス",
+            "mail-pass-2",
+            Some("https://mail.example.jp"),
+            Some("bob"),
+            &["work"],
+        );
+        pb.save(MASTER_PASSWORD).expect("save");
+
+        let by_title = pb.search_connect_items("github").expect("title search");
+        assert_eq!(by_title.len(), 1);
+        assert_eq!(by_title[0].title, "GitHub");
+
+        let by_url = pb.search_connect_items("mail.example").expect("url search");
+        assert_eq!(by_url.len(), 1);
+        assert_eq!(by_url[0].title, "メールサービス");
+
+        let by_username = pb.search_connect_items("alice").expect("username search");
+        assert_eq!(by_username.len(), 1);
+        assert_eq!(by_username[0].title, "GitHub");
+
+        let by_tag = pb.search_connect_items("work").expect("tag search");
+        assert_eq!(by_tag.len(), 1);
+        assert_eq!(by_tag[0].title, "メールサービス");
+
+        assert!(pb
+            .search_connect_items("存在しない")
+            .expect("no hit")
+            .is_empty());
+        assert_eq!(pb.search_connect_items("  ").expect("empty query").len(), 2);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // MVP ATDD: 16文字・記号込みのパスワードを生成すると推測困難な文字列が返る
+    #[test]
+    fn smoke_generate_password_16_chars_with_symbols() {
+        let options = || PasswordGeneratorOptions {
+            length: 16,
+            ..Default::default()
+        };
+        let generated = PasswordBox::generate_password(options());
+        assert_eq!(generated.chars().count(), 16);
+        assert!(generated.chars().any(|c| c.is_ascii_lowercase()));
+        assert!(generated.chars().any(|c| c.is_ascii_uppercase()));
+        assert!(generated.chars().any(|c| c.is_ascii_digit()));
+        assert!(generated.chars().any(|c| "!@#$%^&*()-_=+[]{}".contains(c)));
+
+        let another = PasswordBox::generate_password(options());
+        assert_ne!(generated, another, "同一パスワードが連続生成された");
+    }
+
+    // MVP ATDD: 削除した項目は保存後・再オープン後も存在しない
+    #[test]
+    fn smoke_delete_item_persists_after_reopen() {
+        let (dir, path) = temp_box("delete");
+
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let keep = add_login(&mut pb, "Keep", "keep-pass", None, None, &[]);
+        let remove = add_login(&mut pb, "Remove", "remove-pass", None, None, &[]);
+        pb.save(MASTER_PASSWORD).expect("save");
+
+        pb.delete_item(&remove.id.to_string()).expect("delete");
+        pb.save(MASTER_PASSWORD).expect("save after delete");
+
+        assert_eq!(
+            pb.delete_item(&remove.id.to_string()),
+            Err(PassShareError::ItemNotFound),
+            "削除済み ID の再削除は ItemNotFound"
+        );
+
+        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let items = pb.list_connect_items().expect("list");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, keep.id);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // MVP ATDD: 間違ったマスターパスワードではエラーが返り、中身は読めない
+    #[test]
+    fn smoke_open_with_wrong_master_password_fails() {
+        let (dir, path) = temp_box("wrongpass");
+
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        add_login(&mut pb, "Secret Login", "top-secret", None, None, &[]);
+        pb.save(MASTER_PASSWORD).expect("save");
+
+        let err = match PasswordBox::open(&path, "WrongPass456?") {
+            Ok(_) => panic!("間違ったマスターパスワードで開けてしまった"),
+            Err(err) => err,
+        };
+        assert_eq!(err, PassShareError::InvalidMasterPassword);
+        assert!(
+            map_error(err).starts_with("PS001"),
+            "UI へは PS001 エラーコードで返る"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // MVP ATDD: 初回作成時に緊急キット（リカバリ用シークレットキー）が表示でき、
+    // 再オープン後も同じ値が保持される。閉じた状態では読めない
+    #[test]
+    fn smoke_recovery_kit_available_and_persisted() {
+        let (dir, path) = temp_box("recovery");
+
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let secret = pb
+            .recovery_secret()
+            .expect("recovery accessible")
+            .expect("recovery generated on create")
+            .to_string();
+        assert!(!secret.is_empty());
+
+        pb.lock();
+        assert_eq!(
+            pb.recovery_secret(),
+            Err(PassShareError::BoxLocked),
+            "閉じた状態では緊急キットを読めない"
+        );
+
+        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        assert_eq!(
+            pb.recovery_secret().expect("recovery accessible"),
+            Some(secret.as_str()),
+            "再オープン後も同じシークレットが保持される"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // 主要 category（CREDIT_CARD 等 7 種）が parse / CRUD をエラーなく通過する
+    #[test]
+    fn smoke_all_categories_crud_roundtrip() {
+        let (dir, path) = temp_box("categories");
+        let categories = [
+            "LOGIN",
+            "PASSWORD",
+            "SECURE_NOTE",
+            "CREDIT_CARD",
+            "IDENTITY",
+            "SSH_KEY",
+            "CUSTOM",
+        ];
+
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let vault_id = pb.vault().expect("vault").id.clone();
+
+        for name in categories {
+            let category = parse_category(name).expect(name);
+            let needs_password = matches!(category, ItemCategory::Login | ItemCategory::Password);
+            let item = build_item_from_fields(
+                ConnectId::generate().expect("id"),
+                vault_id.clone(),
+                category,
+                format!("{name} item"),
+                needs_password.then(|| format!("{name}-pass")),
+                None,
+                None,
+                None,
+                (!needs_password).then(|| format!("{name} body")),
+                Some(vec![name.to_ascii_lowercase()]),
+                Some(false),
+            )
+            .expect(name);
+            pb.add_item(item).expect(name);
+        }
+        pb.save(MASTER_PASSWORD).expect("save");
+
+        // Read: 全 category が API 文字列へ round-trip する
+        let mut pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let items = pb.list_connect_items().expect("list");
+        assert_eq!(items.len(), categories.len());
+        for name in categories {
+            let item = items
+                .iter()
+                .find(|i| category_to_api(&i.category) == name)
+                .unwrap_or_else(|| panic!("{name} が一覧に存在しない"));
+            assert_eq!(item.title, format!("{name} item"));
+        }
+
+        // Update: CREDIT_CARD の body を更新して永続化を確認
+        let mut card = items
+            .iter()
+            .find(|i| i.category == ItemCategory::CreditCard)
+            .expect("credit card")
+            .clone();
+        card.set_field_by_label("notesPlain", "4111 1111 1111 1111")
+            .expect("set body");
+        pb.update_item(card.clone()).expect("update");
+        pb.save(MASTER_PASSWORD).expect("save update");
+
+        let pb2 = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen after update");
+        let updated = pb2.get_item(&card.id.to_string()).expect("get updated");
+        assert_eq!(
+            ItemDto::from(updated).body.as_deref(),
+            Some("4111 1111 1111 1111")
+        );
+
+        // Delete: 全件削除できる
+        let mut pb = pb2;
+        for item in pb.list_connect_items().expect("list before delete") {
+            pb.delete_item(&item.id.to_string()).expect("delete");
+        }
+        pb.save(MASTER_PASSWORD).expect("save deletes");
+        assert!(pb.list_connect_items().expect("final list").is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
