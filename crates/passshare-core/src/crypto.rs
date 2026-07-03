@@ -1,10 +1,7 @@
-use argon2::{
-    password_hash::{PasswordHasher, SaltString},
-    Algorithm, Argon2, Params, Version,
-};
+use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit},
     XChaCha20Poly1305, XNonce,
 };
 use getrandom::fill;
@@ -99,17 +96,6 @@ pub fn decrypt(
     cipher
         .decrypt(XNonce::from_slice(nonce), ciphertext)
         .map_err(|_| PassShareError::InvalidMasterPassword)
-}
-
-/// Argon2 salt string for verification-only checks (not used for file format).
-#[allow(dead_code)]
-pub fn hash_master_password_for_verify(password: &str) -> Result<String, PassShareError> {
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| PassShareError::Internal(e.to_string()))?;
-    Ok(hash.to_string())
 }
 
 #[cfg(test)]
