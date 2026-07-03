@@ -442,4 +442,79 @@ mod tests {
         let reopened = PasswordBox::open(path, "correct-password").unwrap();
         assert_eq!(reopened.list_connect_items().unwrap().len(), 1);
     }
+
+    #[test]
+    fn open_rejects_tampered_ciphertext() {
+        // Flipping a ciphertext byte fails the AEAD tag even with the right
+        // password — the same signal as a wrong password (indistinguishable).
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+        PasswordBox::create(path, "correct-password").unwrap();
+
+        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        assert!(!stored.ciphertext.is_empty());
+        stored.ciphertext[0] ^= 0xff;
+        stored.save_to_path(path).unwrap();
+
+        assert_eq!(
+            PasswordBox::open(path, "correct-password").err(),
+            Some(PassShareError::InvalidMasterPassword)
+        );
+    }
+
+    #[test]
+    fn open_rejects_version_mismatch() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+        PasswordBox::create(path, "correct-password").unwrap();
+
+        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        stored.version = FILE_VERSION + 1;
+        stored.save_to_path(path).unwrap();
+
+        assert_eq!(
+            PasswordBox::open(path, "correct-password").err(),
+            Some(PassShareError::CorruptFile)
+        );
+    }
+
+    #[test]
+    fn open_rejects_unknown_cipher_algorithm() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+        PasswordBox::create(path, "correct-password").unwrap();
+
+        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        stored.cipher.algorithm = "aes-gcm".to_string();
+        stored.save_to_path(path).unwrap();
+
+        assert_eq!(
+            PasswordBox::open(path, "correct-password").err(),
+            Some(PassShareError::CorruptFile)
+        );
+    }
+
+    #[test]
+    fn open_rejects_wrong_length_nonce_and_salt() {
+        // "AAAA" is valid base64 but decodes to 3 bytes — neither a 24-byte
+        // nonce nor a 16-byte salt — so the fixed-length decode must reject it.
+        for mutate in [
+            (|s: &mut PasswordBoxFile| s.cipher.nonce = "AAAA".to_string())
+                as fn(&mut PasswordBoxFile),
+            |s: &mut PasswordBoxFile| s.kdf.salt = "AAAA".to_string(),
+        ] {
+            let file = NamedTempFile::new().unwrap();
+            let path = file.path();
+            PasswordBox::create(path, "correct-password").unwrap();
+
+            let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+            mutate(&mut stored);
+            stored.save_to_path(path).unwrap();
+
+            assert_eq!(
+                PasswordBox::open(path, "correct-password").err(),
+                Some(PassShareError::CorruptFile)
+            );
+        }
+    }
 }
