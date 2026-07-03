@@ -16,12 +16,23 @@ pub struct ConnectId(String);
 
 impl ConnectId {
     pub fn generate() -> Result<Self, PassShareError> {
-        let mut bytes = [0u8; ID_LEN];
-        fill(&mut bytes).map_err(|e| PassShareError::Internal(e.to_string()))?;
-        let id: String = bytes
-            .iter()
-            .map(|b| CHARSET[(*b as usize) % CHARSET.len()] as char)
-            .collect();
+        // Rejection sampling avoids the modulo bias of `byte % 36` (256 is not a
+        // multiple of 36): draw fresh bytes and discard those at or above the
+        // largest multiple of the charset size.
+        const LIMIT: u8 = (256 / 36 * 36) as u8; // 252
+        let mut id = String::with_capacity(ID_LEN);
+        let mut buf = [0u8; ID_LEN];
+        while id.len() < ID_LEN {
+            fill(&mut buf).map_err(|e| PassShareError::Internal(e.to_string()))?;
+            for &b in buf.iter() {
+                if b < LIMIT {
+                    id.push(CHARSET[(b as usize) % CHARSET.len()] as char);
+                    if id.len() == ID_LEN {
+                        break;
+                    }
+                }
+            }
+        }
         Ok(Self(id))
     }
 
@@ -73,6 +84,16 @@ mod tests {
         let id = ConnectId::generate().unwrap();
         assert_eq!(id.as_str().len(), 26);
         ConnectId::validate(id.as_str()).unwrap();
+    }
+
+    #[test]
+    fn generated_ids_are_valid_and_unique_across_many() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let id = ConnectId::generate().unwrap();
+            ConnectId::validate(id.as_str()).unwrap();
+            assert!(seen.insert(id.as_str().to_string()), "unexpected duplicate id");
+        }
     }
 
     #[test]

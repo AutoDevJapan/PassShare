@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use passshare_connect::{parse_op_reference, ConnectClient};
+use passshare_core::domain::connect_id::ConnectId;
 use passshare_core::domain::field::FieldPurpose;
 use passshare_core::domain::item::Item;
 use serde_json::{json, Value};
@@ -165,7 +166,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn resolve_vault_id(client: &ConnectClient, vault: &str) -> Result<String, Box<dyn std::error::Error>> {
-    if vault.len() == 26 && vault.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    // Only treat the argument as a raw ID when it matches the real ConnectId
+    // charset (26 lowercase alphanumerics); otherwise resolve it as a name so a
+    // 26-char or mixed-case vault name is not misrouted as an ID.
+    if ConnectId::validate(vault).is_ok() {
         return Ok(vault.to_string());
     }
     let vaults = client.list_vaults().await?;
@@ -181,7 +185,7 @@ async fn resolve_item_id(
     vault_id: &str,
     item: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    if item.len() == 26 && item.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    if ConnectId::validate(item).is_ok() {
         return Ok(item.to_string());
     }
     let items = client.list_items(vault_id).await?;
