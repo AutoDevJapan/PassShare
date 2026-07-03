@@ -71,11 +71,12 @@ export async function createApp(options = {}) {
         result: result.rows[0]?.ok ?? null,
       });
     } catch (error) {
+      // Do not leak internal DB error detail to unauthenticated callers; log it.
+      console.error("[health/db] database check failed:", error);
       res.status(503).json({
         status: "error",
         environment: appEnv,
         database: "unreachable",
-        message: error instanceof Error ? error.message : "unknown error",
       });
     }
   });

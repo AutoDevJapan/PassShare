@@ -102,7 +102,7 @@ export function createPgStore(pool) {
           [requestedId],
         );
         if (existing.rowCount > 0) {
-          throw new Error("PS010: Item already exists");
+          throw connectHttpError(409, "PS015: Item already exists");
         }
       }
       const id = requestedId ?? generateConnectId();
@@ -115,11 +115,20 @@ export function createPgStore(pool) {
         updatedAt: now,
         version: body.version ?? 1,
       };
-      await pool.query(
-        `INSERT INTO connect_items (id, vault_id, document, created_at, updated_at)
-         VALUES ($1, $2, $3::jsonb, $4::timestamptz, $5::timestamptz)`,
-        [id, vaultId, JSON.stringify(document), now, now],
-      );
+      try {
+        await pool.query(
+          `INSERT INTO connect_items (id, vault_id, document, created_at, updated_at)
+           VALUES ($1, $2, $3::jsonb, $4::timestamptz, $5::timestamptz)`,
+          [id, vaultId, JSON.stringify(document), now, now],
+        );
+      } catch (error) {
+        // Concurrent create with the same requested id: the pre-check above is not
+        // atomic, so surface the unique-violation as a 409 rather than a 500.
+        if (error && error.code === "23505") {
+          throw connectHttpError(409, "PS015: Item already exists");
+        }
+        throw error;
+      }
       return document;
     },
 
