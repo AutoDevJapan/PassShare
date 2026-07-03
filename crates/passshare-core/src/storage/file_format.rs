@@ -46,7 +46,8 @@ pub struct PasswordBoxFile {
 impl PasswordBoxFile {
     pub fn load_from_path(path: &Path) -> Result<Self, PassShareError> {
         let data = fs::read_to_string(path)?;
-        serde_json::from_str(&data).map_err(Into::into)
+        // Reading untrusted on-disk bytes: malformed JSON means a corrupt file.
+        serde_json::from_str(&data).map_err(|_| PassShareError::CorruptFile)
     }
 
     pub fn save_to_path(&self, path: &Path) -> Result<(), PassShareError> {
@@ -55,7 +56,10 @@ impl PasswordBoxFile {
                 fs::create_dir_all(parent)?;
             }
         }
-        let json = serde_json::to_string_pretty(self)?;
+        // Serializing our own struct: a failure here is an internal bug, not a
+        // corrupt input file.
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| PassShareError::Internal(e.to_string()))?;
         fs::write(path, json)?;
         Ok(())
     }
@@ -131,5 +135,15 @@ mod tests {
         file.save_to_path(tmp.path()).unwrap();
         let loaded = PasswordBoxFile::load_from_path(tmp.path()).unwrap();
         assert_eq!(loaded, file);
+    }
+
+    #[test]
+    fn load_rejects_malformed_json_as_corrupt() {
+        // Deserializing untrusted on-disk bytes must surface CorruptFile, not an
+        // Internal error (the serialize/deserialize split, #322).
+        let tmp = NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"{ this is not json ]").unwrap();
+        let err = PasswordBoxFile::load_from_path(tmp.path()).unwrap_err();
+        assert_eq!(err, PassShareError::CorruptFile);
     }
 }

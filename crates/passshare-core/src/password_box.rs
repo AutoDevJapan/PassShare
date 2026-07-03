@@ -221,7 +221,11 @@ impl PasswordBox {
         let salt = self.salt.ok_or(PassShareError::CorruptFile)?;
         let key = derive_master_key(master_password, &salt)?;
         self.payload.sync_vault_item_count();
-        let plaintext = Zeroizing::new(serde_json::to_vec(&self.payload)?);
+        // Serializing our own in-memory payload: a failure is an internal bug.
+        let plaintext = Zeroizing::new(
+            serde_json::to_vec(&self.payload)
+                .map_err(|e| PassShareError::Internal(e.to_string()))?,
+        );
         let (ciphertext, nonce) = encrypt(&plaintext, &key)?;
         let file = PasswordBoxFile {
             version: FILE_VERSION,
