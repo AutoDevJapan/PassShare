@@ -54,9 +54,12 @@ jobs:
           RAILWAY_HEALTH_URL: https://pass-share-backend-production.up.railway.app/health/db
         run: bash scripts/railway-deploy-with-replica.sh
 
-      - name: Upload prd DB snapshot artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: prd-db-snapshot-${{ github.run_id }}
-          path: passshare-snapshot-replica-*.dump
-          if-no-files-found: warn
+      # SECURITY: never upload the production DB dump as a GitHub Actions artifact.
+      # Artifacts are downloadable by anyone with repo read access and retained ~90d
+      # unencrypted — that would expose all prod rows on every deploy (#318). The
+      # snapshot is consumed in-job to refresh the dev/stg replica and is discarded
+      # with the ephemeral runner. If a retained backup is ever needed, stream it to
+      # encrypted storage (gpg + short retention), not Actions artifacts.
+      - name: Remove local prd DB dump
+        if: always()
+        run: rm -f passshare-snapshot-replica-*.dump
