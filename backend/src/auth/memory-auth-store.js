@@ -138,6 +138,15 @@ export function createMemoryAuthStore() {
       };
     },
 
+    async deleteConnectTokensForUser(userId) {
+      for (const [id, row] of connectTokensById) {
+        if (row.user_id === userId) {
+          connectTokensById.delete(id);
+          connectTokenIdByHash.delete(row.token_hash);
+        }
+      }
+    },
+
     async findConnectTokenByHash(tokenHash) {
       const tokenId = connectTokenIdByHash.get(tokenHash);
       if (!tokenId) return null;
@@ -199,6 +208,7 @@ export function createMemoryAuthStore() {
         }
       }
       memberships.splice(index, 1);
+      await this.deleteConnectTokensForUser(targetUserId);
     },
 
     async createVaultInvitation({ vaultId, inviterId, inviteeEmail, role }) {
