@@ -327,7 +327,6 @@ async function snapshotSource(sourceEnv) {
 
   console.log(`Snapshot written: ${dumpPath}`);
   console.log(`Snapshot branch label: ${label}`);
-  console.log(`::set-output name=dump_path::${dumpPath}`);
 }
 
 function printHelp() {
