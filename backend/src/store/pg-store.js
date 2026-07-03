@@ -3,6 +3,9 @@ import { generateConnectId, isValidConnectId, nowIso, rowToVault, toItemOverview
 import { patchDocument } from "../lib/json-patch.js";
 import { connectHttpError } from "../middleware/connect-errors.js";
 
+// Arbitrary fixed key for the advisory lock guarding schema migration.
+const MIGRATION_LOCK_KEY = 4820121;
+
 /**
  * @param {import('pg').Pool} pool
  * @returns {import('./memory-store.js').ConnectStore}
@@ -44,7 +47,20 @@ export function createPgStore(pool) {
 
   return {
     async migrate() {
-      await pool.query(SCHEMA_SQL);
+      // Serialize schema application across concurrent app instances. Postgres
+      // `CREATE TABLE IF NOT EXISTS` is not race-safe — parallel runs can collide
+      // on pg_type (23505). A session advisory lock makes migrate idempotent when
+      // multiple instances start against the same database (tests, multi-instance).
+      const client = await pool.connect();
+      try {
+        await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
+        await client.query(SCHEMA_SQL);
+      } finally {
+        await client
+          .query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY])
+          .catch(() => {});
+        client.release();
+      }
     },
 
     async listVaults() {

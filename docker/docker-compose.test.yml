@@ -40,4 +40,4 @@ services:
       OP_CLI_BIN: /app/target/release/op
     command: >
       sh -c "pnpm --dir backend install --frozen-lockfile &&
-             node --test backend/test/pg-integration.test.js backend/test/op-cli-e2e.test.js backend/test/cloud-sync.integration.test.js"
+             node --test backend/test/pg-integration.test.js backend/test/op-cli-e2e.test.js backend/test/cloud-sync.integration.test.js backend/test/cross-client.integration.test.js"

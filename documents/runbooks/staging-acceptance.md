@@ -24,11 +24,39 @@ node scripts/stg-smoke.mjs
 # Web UI（Vercel Preview / stg）— Issue #207
 # STG_WEB_URL=https://... node scripts/stg-web-smoke.mjs
 
-# Cross-client（Web API → op-cli → sync）— Issue #214
-# docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
+# Cross-client（Web API → op-cli → Desktop sync）— Issue #214
+# 事前に op-cli をビルド: cargo build -p op-cli --release
+docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 
 # 失敗時は exit 1 — CI workflow_dispatch または手動実行
 ```
+
+## Cross-client 統合 smoke（Issue #214）
+
+`backend/test/cross-client.integration.test.js` が Web → CLI → Desktop を **同一 vault / item** で 1 本に連鎖する:
+
+1. Web API: signup → vault（自動作成）→ item 追加
+2. op-cli: `op read op://<vault>/<item>/password` が同じ password を返す
+3. Desktop sync: pull で Web 追加 item がローカルに反映される
+4. Desktop sync: ローカル item を push
+5. op-cli: Desktop が push した item を読める（ループ完結）
+
+実行（Quality Gate `Docker E2E` ジョブと同一）:
+
+```powershell
+cargo build -p op-cli --release
+docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
+```
+
+### 失敗時 triage
+
+| 症状 | 切り分け |
+|------|---------|
+| `op ... failed`（op-cli ステップ） | `OP_CLI_BIN`（`/app/target/release/op`）が存在するか、`cargo build -p op-cli --release` 済みか。単体で `op-cli-e2e.test.js` が pass するか確認 |
+| signup / connect-token が 4xx | backend の `APP_ENV=local` seed と CSRF（`GET /api/auth/csrf`）を確認。`cloud-sync.integration.test.js` の切り分けと共通 |
+| pull / push 件数が不一致 | `runCloudSync` の fingerprint 差分（`helpers/desktop-cloud-sync-flow.js`）。同期済み item を localItems に含めているか |
+| PostgreSQL 接続不可 | compose の `postgres` healthcheck、`DATABASE_URL` を確認 |
+| op-cli が別 vault を参照 | `OP_CONNECT_TOKEN` を signup ユーザーの accessToken に上書きしているか（固定 `test-connect-token` は別ユーザー） |
 
 ## Web / CLI / Desktop 自動化マトリクス（Issue #205）
 
