@@ -301,8 +301,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Prebuilt binary — compiling cargo-audit from source made transient
+      # crates.io failures fail unrelated PRs (#325).
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
 
       - name: Run cargo-audit
         run: cargo audit
