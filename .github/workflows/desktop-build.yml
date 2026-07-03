@@ -1,5 +1,10 @@
 name: Desktop Build
 
+# tauri-action publishes GitHub releases via GITHUB_TOKEN, so this workflow needs
+# contents: write. All other workflows are read-only (least privilege).
+permissions:
+  contents: write
+
 on:
   pull_request:
   push:
