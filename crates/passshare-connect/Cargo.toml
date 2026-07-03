@@ -8,6 +8,7 @@ description = "1Password Connect API compatible HTTP client for PassShare"
 
 [dependencies]
 passshare-core = { path = "../passshare-core" }
+percent-encoding.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

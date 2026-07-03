@@ -5,12 +5,21 @@ use std::time::Duration;
 use passshare_core::domain::connect_id::ConnectId;
 use passshare_core::domain::item::Item;
 use passshare_core::domain::vault::Vault;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::Value;
 
 use crate::error::{ConnectError, ConnectResult};
 use crate::ItemOverview;
+
+/// Percent-encode a single URL path segment. Vault/item identifiers are
+/// interpolated into the request path; without encoding, a value containing
+/// `/`, `?`, `#`, or `..` could alter the path (traversal / request smuggling).
+/// Legitimate ConnectIds (`[a-z0-9]{26}`) pass through unchanged.
+fn seg(segment: &str) -> String {
+    utf8_percent_encode(segment, NON_ALPHANUMERIC).to_string()
+}
 
 /// 1Password Connect SDK compatible HTTP client.
 #[derive(Clone)]
@@ -59,15 +68,15 @@ impl ConnectClient {
     }
 
     pub async fn get_vault(&self, vault_id: &str) -> ConnectResult<Vault> {
-        self.get_json(&format!("/vaults/{vault_id}")).await
+        self.get_json(&format!("/vaults/{}", seg(vault_id))).await
     }
 
     pub async fn list_items(&self, vault_id: &str) -> ConnectResult<Vec<ItemOverview>> {
-        self.get_json(&format!("/vaults/{vault_id}/items")).await
+        self.get_json(&format!("/vaults/{}/items", seg(vault_id))).await
     }
 
     pub async fn get_item(&self, vault_id: &str, item_id: &str) -> ConnectResult<Item> {
-        self.get_json(&format!("/vaults/{vault_id}/items/{item_id}"))
+        self.get_json(&format!("/vaults/{}/items/{}", seg(vault_id), seg(item_id)))
             .await
     }
 
@@ -79,7 +88,7 @@ impl ConnectClient {
         }
 
         let created: CreatedItem = self
-            .post_json(&format!("/vaults/{vault_id}/items"), item)
+            .post_json(&format!("/vaults/{}/items", seg(vault_id)), item)
             .await?;
         self.get_item(vault_id, created.id.as_str()).await
     }
@@ -91,7 +100,7 @@ impl ConnectClient {
         item: &Value,
     ) -> ConnectResult<Item> {
         self.put_json(
-            &format!("/vaults/{vault_id}/items/{item_id}"),
+            &format!("/vaults/{}/items/{}", seg(vault_id), seg(item_id)),
             item,
         )
         .await
@@ -103,7 +112,12 @@ impl ConnectClient {
         item_id: &str,
         patch: &Value,
     ) -> ConnectResult<Item> {
-        let url = format!("{}{}", self.base_url, format!("/vaults/{vault_id}/items/{item_id}"));
+        let url = format!(
+            "{}/vaults/{}/items/{}",
+            self.base_url,
+            seg(vault_id),
+            seg(item_id)
+        );
         let response = self
             .http
             .patch(url)
@@ -116,7 +130,12 @@ impl ConnectClient {
     }
 
     pub async fn delete_item(&self, vault_id: &str, item_id: &str) -> ConnectResult<()> {
-        let url = format!("{}{}", self.base_url, format!("/vaults/{vault_id}/items/{item_id}"));
+        let url = format!(
+            "{}/vaults/{}/items/{}",
+            self.base_url,
+            seg(vault_id),
+            seg(item_id)
+        );
         let response = self
             .http
             .delete(url)
@@ -207,5 +226,24 @@ mod tests {
         let rendered = format!("{client:?}");
         assert!(!rendered.contains("super-secret-token"), "token must not appear in Debug");
         assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn seg_passes_through_legitimate_connect_ids() {
+        let id = "abcdefghijklmnopqrstuvwxyz"; // 26 lowercase alnum
+        assert_eq!(seg(id), id);
+    }
+
+    #[test]
+    fn seg_neutralizes_path_delimiters_and_traversal() {
+        // A malicious id must not be able to change the request path.
+        assert_eq!(seg("../../secrets"), "%2E%2E%2F%2E%2E%2Fsecrets");
+        assert_eq!(seg("a/b"), "a%2Fb");
+        assert_eq!(seg("a?b#c"), "a%3Fb%23c");
+        for encoded in [seg("../x"), seg("a/b"), seg("a?b")] {
+            assert!(!encoded.contains('/'));
+            assert!(!encoded.contains('?'));
+            assert!(!encoded.contains('#'));
+        }
     }
 }
