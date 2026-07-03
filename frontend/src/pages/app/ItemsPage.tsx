@@ -7,16 +7,11 @@ import { emptyFormValues, formValuesFromItem } from "@shared/types/item.js";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import { import1puxFile } from "@shared/lib/1pux-import";
 import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
+import { generatePassword } from "@shared/lib/password-generator";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
 import { useAuthSession } from "../../hooks/useAuthSession";
 import { useItemLabels } from "../../hooks/useItemLabels";
-
-function generatePassword(length = 20): string {
-  const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$";
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
-}
 
 export function ItemsPage() {
   const { vaultId = "" } = useParams();

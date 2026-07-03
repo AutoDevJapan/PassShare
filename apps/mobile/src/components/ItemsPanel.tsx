@@ -4,6 +4,7 @@ import { ItemForm } from "@shared/ui/ItemForm.js";
 import type { ConnectItem, ItemFormValues } from "@shared/types/item.js";
 import { emptyFormValues, formValuesFromItem } from "@shared/types/item.js";
 import { useI18n } from "@shared/i18n/I18nProvider";
+import { generatePassword } from "@shared/lib/password-generator";
 import { connectItemFromApi, connectItemToCreateBody } from "../lib/connect-items";
 import { useAuthSession } from "../hooks/useAuthSession";
 import { useItemLabels } from "../hooks/useItemLabels";
@@ -12,12 +13,6 @@ type Props = {
   vaultId: string;
   onBack: () => void;
 };
-
-function generatePassword(length = 20): string {
-  const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$";
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
-}
 
 export function ItemsPanel({ vaultId, onBack }: Props) {
   const { t } = useI18n();
