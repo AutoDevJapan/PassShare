@@ -43,6 +43,33 @@ export async function fetchCsrf(baseUrl) {
 }
 
 /**
+ * Issue a CSRF-protected authenticated request (fetches a fresh CSRF token first).
+ * @param {string} baseUrl
+ * @param {string} sessionCookie
+ * @param {string} method
+ * @param {string} path
+ * @param {object} [body]
+ */
+export async function authRequest(baseUrl, sessionCookie, method, path, body) {
+  const { csrfToken, csrfCookie } = await fetchCsrf(baseUrl);
+  /** @type {Record<string, string>} */
+  const headers = {
+    "X-CSRF-Token": csrfToken,
+    Cookie: [sessionCookie, `${CSRF_COOKIE}=${encodeURIComponent(csrfCookie ?? csrfToken)}`]
+      .filter(Boolean)
+      .join("; "),
+  };
+  if (body) {
+    headers["Content-Type"] = "application/json";
+  }
+  return fetch(`${baseUrl}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+/**
  * Sign up a user, then resolve their Connect access token and (single) vault.
  * @param {string} baseUrl
  * @param {string} email

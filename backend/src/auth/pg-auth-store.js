@@ -305,24 +305,31 @@ export function createPgAuthStore(pool) {
         throw authHttpError(403, "PS041", "Invitation is for a different email address");
       }
 
-      await pool.query("BEGIN");
+      // Pin the transaction to a single connection. `pool.query` may hand each
+      // statement a different pooled connection, so BEGIN/COMMIT/ROLLBACK would
+      // not wrap the INSERT/UPDATE atomically and could leak an open transaction
+      // onto a connection reused by an unrelated request.
+      const client = await pool.connect();
       try {
-        await pool.query(
+        await client.query("BEGIN");
+        await client.query(
           `INSERT INTO vault_memberships (user_id, vault_id, role)
            VALUES ($1, $2, $3)
            ON CONFLICT (user_id, vault_id) DO NOTHING`,
           [userId, invitation.vault_id, invitation.role],
         );
-        await pool.query(
+        await client.query(
           `UPDATE vault_invitations
            SET status = 'accepted', responded_at = NOW()
            WHERE id = $1`,
           [invitationId],
         );
-        await pool.query("COMMIT");
+        await client.query("COMMIT");
       } catch (error) {
-        await pool.query("ROLLBACK");
+        await client.query("ROLLBACK").catch(() => {});
         throw error;
+      } finally {
+        client.release();
       }
 
       return { vaultId: invitation.vault_id, role: invitation.role };
