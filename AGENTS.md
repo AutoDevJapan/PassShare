@@ -91,6 +91,7 @@ cd backend && pnpm run generate:types
 cargo test -p passshare-core
 
 # デスクトップ（Tauri + React）
+# Runbook: documents/runbooks/local-dev-desktop.md
 cd apps/desktop && pnpm install && pnpm --dir ../../packages/connect-js run build && cargo tauri dev
 
 # デスクトップ smoke（Rust）
