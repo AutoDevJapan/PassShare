@@ -131,6 +131,10 @@ export function createPgAuthStore(pool) {
       };
     },
 
+    async deleteConnectTokensForUser(userId) {
+      await pool.query("DELETE FROM connect_tokens WHERE user_id = $1", [userId]);
+    },
+
     async findConnectTokenByHash(tokenHash) {
       const result = await pool.query(
         `SELECT id, user_id, token_hash, vault_ids, expires_at, label
@@ -205,6 +209,9 @@ export function createPgAuthStore(pool) {
         "DELETE FROM vault_memberships WHERE vault_id = $1 AND user_id = $2",
         [vaultId, targetUserId],
       );
+      // Invalidate the removed member's outstanding connect tokens so their
+      // snapshotted vault access does not linger for the token TTL.
+      await this.deleteConnectTokensForUser(targetUserId);
     },
 
     async createVaultInvitation({ vaultId, inviterId, inviteeEmail, role }) {

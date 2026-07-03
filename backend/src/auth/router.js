@@ -130,6 +130,9 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
   router.post("/logout", sessionGuard, requireCsrf, async (req, res) => {
     try {
       await authStore.deleteSession(req.auth.sessionId);
+      // Revoke the user's Connect access tokens on logout so API access does not
+      // outlive the session for up to the token TTL (#317).
+      await authStore.deleteConnectTokensForUser(req.auth.userId);
       if (!parseBearerToken(req)) {
         clearSessionCookie(res, appEnv);
         clearCsrfCookie(res, appEnv);
