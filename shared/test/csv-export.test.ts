@@ -23,4 +23,28 @@ describe("exportOnepasswordCsv", () => {
     assert.match(csv, /user/);
     assert.match(csv, /pass/);
   });
+
+  it("neutralizes spreadsheet formula injection in fields", () => {
+    const csv = exportOnepasswordCsv([
+      {
+        id: "abcdefghijklmnopqrstuvwxyz",
+        title: "=HYPERLINK(\"http://evil\")",
+        category: "LOGIN",
+        tags: [],
+        favorite: false,
+        username: "+cmd",
+        password: "pass",
+        url: "",
+        notes: "@formula",
+      },
+    ]);
+
+    // Dangerous leading chars are prefixed with an apostrophe (quoted because the
+    // title also contains a comma/quote).
+    assert.match(csv, /"'=HYPERLINK/);
+    assert.match(csv, /'\+cmd/);
+    assert.match(csv, /'@formula/);
+    // A benign value is untouched.
+    assert.match(csv, /,pass,/);
+  });
 });
