@@ -12,7 +12,7 @@ PassShare v2.0 のリリースフロー:
 3. **stg 受入 OK** → prd 手動デプロイ
 4. tag / Desktop / CHANGELOG
 
-SSOT: [ADR 005](../adr/005-deploy-pipeline-dev-first.md), [infrastructure.md](../spec/infrastructure.md)
+SSOT: [ADR 008](../adr/008-deploy-pipeline-dev-first.md), [infrastructure.md](../spec/infrastructure.md)
 
 ## 環境マッピング
 
@@ -96,11 +96,11 @@ git pull origin main
 
 | 日付 | 種別 | 実施者 | 結果 | 備考 |
 |------|------|--------|------|------|
-| 2026-05-28 | パイプライン変更 | — | ✅ ADR 005 | main → dev、stg/prd 手動 |
+| 2026-05-28 | パイプライン変更 | — | ✅ ADR 008 | main → dev、stg/prd 手動 |
 
 ## 関連
 
 - [release-versioning.md](../spec/release-versioning.md)
 - [staging-acceptance.md](./staging-acceptance.md)
 - [secret-rotation.md](./secret-rotation.md)
-- [ADR 005](../adr/005-deploy-pipeline-dev-first.md)
+- [ADR 008](../adr/008-deploy-pipeline-dev-first.md)

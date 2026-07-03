@@ -1,4 +1,4 @@
-# ADR 005: Backend デプロイパイプライン（main → dev、手動 stg/prd）
+# ADR 008: Backend デプロイパイプライン（main → dev、手動 stg/prd）
 
 ## Status
 

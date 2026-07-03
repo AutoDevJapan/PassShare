@@ -42,7 +42,7 @@
 | **preview** | Preview | PR / feature ブランチ | `preview` | `postgres-dev`（dev と共有） | PR 時 `deploy-preview.yml` |
 | **dev** | Development | **`main`（検知）** | `development` | `postgres-dev`（**seed データ**） | **`main` push 自動** `deploy-dev.yml` |
 
-> SSOT: [ADR 005](../adr/005-deploy-pipeline-dev-first.md) — `main` マージは dev Backend デプロイのみ。prd 自動デプロイは廃止。
+> SSOT: [ADR 008](../adr/008-deploy-pipeline-dev-first.md) — `main` マージは dev Backend デプロイのみ。prd 自動デプロイは廃止。
 
 ### DB 共有ルール
 
