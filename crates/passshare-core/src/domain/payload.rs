@@ -63,6 +63,9 @@ impl RawPasswordBoxPayload {
 }
 
 pub fn deserialize_payload(bytes: &[u8], vault_name: &str) -> Result<PasswordBoxPayload, crate::error::PassShareError> {
-    let raw: RawPasswordBoxPayload = serde_json::from_slice(bytes)?;
+    // Bytes here are already decrypted; if they will not parse the payload is
+    // corrupt (or from an unsupported layout).
+    let raw: RawPasswordBoxPayload = serde_json::from_slice(bytes)
+        .map_err(|_| crate::error::PassShareError::CorruptFile)?;
     raw.into_payload(vault_name)
 }

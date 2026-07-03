@@ -55,8 +55,8 @@ impl From<std::io::Error> for PassShareError {
     }
 }
 
-impl From<serde_json::Error> for PassShareError {
-    fn from(_value: serde_json::Error) -> Self {
-        Self::CorruptFile
-    }
-}
+// Intentionally no blanket `From<serde_json::Error>`: the same error type is
+// produced by both serialization (writing our own data — a bug, → Internal) and
+// deserialization (reading untrusted bytes — → CorruptFile). A blanket impl
+// would mislabel serialize bugs as "corrupt file". Each call site maps
+// explicitly so the direction — and therefore the surfaced error — is correct.
