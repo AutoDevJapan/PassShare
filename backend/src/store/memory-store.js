@@ -98,7 +98,7 @@ export function createMemoryStore() {
       await requireVault(vaultId);
       const requestedId = typeof body.id === "string" && isValidConnectId(body.id) ? body.id : null;
       if (requestedId && items.has(requestedId)) {
-        throw new Error("PS010: Item already exists");
+        throw connectHttpError(409, "PS015: Item already exists");
       }
       const id = requestedId ?? generateConnectId();
       const now = nowIso();

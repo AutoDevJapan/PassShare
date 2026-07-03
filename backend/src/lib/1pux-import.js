@@ -130,14 +130,24 @@ function mapField(field) {
   };
 }
 
+// Upload cap for raw 1PUX/zip bodies (not covered by express.json's limit).
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MiB
+
 /**
  * @param {import('express').Request} req
+ * @param {number} [maxBytes]
  * @returns {Promise<Buffer>}
  */
-export async function readRequestBodyBuffer(req) {
+export async function readRequestBodyBuffer(req, maxBytes = MAX_UPLOAD_BYTES) {
   const chunks = [];
+  let total = 0;
   for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    const buf = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    total += buf.length;
+    if (total > maxBytes) {
+      throw connectHttpError(413, "PS016: Upload exceeds the maximum allowed size");
+    }
+    chunks.push(buf);
   }
   return Buffer.concat(chunks);
 }
