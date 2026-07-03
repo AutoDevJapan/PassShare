@@ -7,12 +7,20 @@ import { Readable } from "node:stream";
 import { connectHttpError } from "../middleware/connect-errors.js";
 import { normalizeItemBody } from "./categories.js";
 
+// A 20 MiB upload can hold a ZIP that decompresses to gigabytes (a "zip bomb"),
+// which would OOM the process during extraction. Cap the decompressed size of
+// the JSON entry we actually read. 100 MiB is far larger than any real 1Password
+// export JSON yet bounds the blast radius. See #323.
+export const MAX_DECOMPRESSED_BYTES = 100 * 1024 * 1024;
+
 /**
  * Parse 1Password 1PUX export (ZIP containing JSON items).
  * @param {Buffer} zipBuffer
+ * @param {{ maxDecompressedBytes?: number }} [options]
  * @returns {Promise<object[]>}
  */
-export async function parse1puxBuffer(zipBuffer) {
+export async function parse1puxBuffer(zipBuffer, options = {}) {
+  const maxDecompressedBytes = options.maxDecompressedBytes ?? MAX_DECOMPRESSED_BYTES;
   if (!zipBuffer || zipBuffer.length === 0) {
     throw connectHttpError(400, "PS017: Invalid 1PUX — empty payload");
   }
@@ -37,8 +45,55 @@ export async function parse1puxBuffer(zipBuffer) {
     throw connectHttpError(400, "PS017: Invalid 1PUX — no JSON export found in archive");
   }
 
-  const raw = await jsonEntry.buffer();
+  const raw = await readEntryCapped(jsonEntry, maxDecompressedBytes);
   return parseJsonExport(raw);
+}
+
+/**
+ * Throw a 413 when a running/declared decompressed byte count exceeds the cap.
+ * @param {number} total
+ * @param {number} maxBytes
+ */
+export function guardDecompressedTotal(total, maxBytes) {
+  if (total > maxBytes) {
+    throw connectHttpError(
+      413,
+      "PS018: 1PUX archive decompresses beyond the maximum allowed size",
+    );
+  }
+}
+
+/**
+ * Read a ZIP entry's decompressed bytes with a hard size cap. The central
+ * directory's declared size is checked first (cheap rejection), then the actual
+ * stream is metered in case the declared size was spoofed.
+ * @param {{ uncompressedSize?: number, stream: () => Readable, buffer: () => Promise<Buffer> }} entry
+ * @param {number} maxBytes
+ * @returns {Promise<Buffer>}
+ */
+async function readEntryCapped(entry, maxBytes) {
+  const declared = Number(entry.uncompressedSize);
+  if (Number.isFinite(declared)) {
+    guardDecompressedTotal(declared, maxBytes);
+  }
+
+  const stream = entry.stream();
+  const chunks = [];
+  let total = 0;
+  try {
+    for await (const chunk of stream) {
+      total += chunk.length;
+      guardDecompressedTotal(total, maxBytes);
+      chunks.push(chunk);
+    }
+  } catch (err) {
+    stream.destroy();
+    if (err && err.status === 413) {
+      throw err;
+    }
+    throw connectHttpError(400, "PS017: Invalid 1PUX — archive is not a valid ZIP export");
+  }
+  return Buffer.concat(chunks);
 }
 
 /**
