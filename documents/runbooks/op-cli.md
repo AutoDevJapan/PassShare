@@ -94,7 +94,7 @@ $env:OP_CONNECT_TOKEN = "test-connect-token"
 docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 ```
 
-`backend/test/op-cli-e2e.test.js` が vault list / item CRUD / `op read` を検証する。
+`backend-e2e` サービスがコンテナ内で op-cli をビルド（`cargo build -p op-cli --release`）してから E2E を実行するため、**このコマンド単体で完結する**（host 側の事前ビルドは不要）。コンテナと同一 glibc でビルドされるので host との不整合も起きない（#320）。`backend/test/op-cli-e2e.test.js` が vault list / item CRUD / `op read` を検証する。
 
 ## CI 成果物
 
