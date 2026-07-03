@@ -2,9 +2,11 @@ use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
+use zeroize::{Zeroize, Zeroizing};
+
 use crate::crypto::{
-    decrypt, derive_master_key, encrypt, generate_recovery_secret, generate_salt, FILE_VERSION,
-    KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST,
+    decrypt, derive_master_key, derive_master_key_with_params, encrypt, generate_recovery_secret,
+    generate_salt, FILE_VERSION, KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST,
 };
 use crate::domain::connect_id::ConnectId;
 use crate::domain::item::Item;
@@ -13,8 +15,8 @@ use crate::domain::login_view::LoginItemView;
 use crate::domain::payload::{deserialize_payload, PasswordBoxPayload};
 use crate::domain::vault::Vault;
 use crate::error::PassShareError;
-use crate::generator::{generate_password, PasswordGeneratorOptions};
 use crate::export::export_onepassword_csv;
+use crate::generator::{generate_password, PasswordGeneratorOptions};
 use crate::import::import_onepassword_csv;
 use crate::storage::file_format::{KdfParams, PasswordBoxFile, StoredCipher};
 
@@ -53,9 +55,17 @@ impl PasswordBox {
         let file = PasswordBoxFile::load_from_path(&path)?;
         file.validate_version()?;
         let salt = file.kdf.salt_bytes()?;
-        let key = derive_master_key(master_password, &salt)?;
+        // Honor the KDF cost parameters recorded in the file header (crypto-agility)
+        // instead of assuming the current defaults.
+        let key = derive_master_key_with_params(
+            master_password,
+            &salt,
+            file.kdf.memory_kib,
+            file.kdf.time_cost,
+            file.kdf.parallelism,
+        )?;
         let nonce = file.cipher.nonce_bytes()?;
-        let plaintext = decrypt(&file.ciphertext, &key, &nonce)?;
+        let plaintext = Zeroizing::new(decrypt(&file.ciphertext, &key, &nonce)?);
         let vault_name = default_vault_name(&path);
         let payload = deserialize_payload(&plaintext, &vault_name)?;
         Ok(Self {
@@ -211,7 +221,7 @@ impl PasswordBox {
         let salt = self.salt.ok_or(PassShareError::CorruptFile)?;
         let key = derive_master_key(master_password, &salt)?;
         self.payload.sync_vault_item_count();
-        let plaintext = serde_json::to_vec(&self.payload)?;
+        let plaintext = Zeroizing::new(serde_json::to_vec(&self.payload)?);
         let (ciphertext, nonce) = encrypt(&plaintext, &key)?;
         let file = PasswordBoxFile {
             version: FILE_VERSION,
@@ -234,6 +244,16 @@ impl PasswordBox {
 
     pub fn lock(&mut self) {
         self.state = PasswordBoxState::Locked;
+        // Wipe secret-bearing material before dropping the payload so cleartext
+        // passwords do not linger in freed heap pages after locking.
+        for item in &mut self.payload.items {
+            for field in &mut item.fields {
+                field.value.zeroize();
+            }
+        }
+        if let Some(secret) = self.payload.recovery_secret.as_mut() {
+            secret.zeroize();
+        }
         if let Ok(vault) = Vault::new("_") {
             self.payload = PasswordBoxPayload::new(vault, None);
         }
@@ -264,8 +284,8 @@ use std::str::FromStr;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::payload::deserialize_payload;
     use crate::domain::item::Item;
+    use crate::domain::payload::deserialize_payload;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -384,5 +404,38 @@ mod tests {
 
         let stored = pb.get_item(id.to_string().as_str()).unwrap();
         assert_eq!(stored.title, "Updated");
+    }
+
+    #[test]
+    fn open_rejects_weak_kdf_header() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+        PasswordBox::create(path, "correct-password").unwrap();
+
+        // Tamper the header to advertise a weak KDF cost below the security floor.
+        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        stored.kdf.memory_kib = 1024;
+        stored.save_to_path(path).unwrap();
+
+        assert_eq!(
+            PasswordBox::open(path, "correct-password").err(),
+            Some(PassShareError::CorruptFile)
+        );
+    }
+
+    #[test]
+    fn open_honors_stored_default_kdf_params() {
+        // A file written with the current defaults must still open normally after
+        // the header params are honored on decrypt.
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+        let mut pb = PasswordBox::create(path, "correct-password").unwrap();
+        let vault_id = pb.vault().unwrap().id.clone();
+        pb.add_item(Item::new_login(vault_id, "Site", "pwd").unwrap())
+            .unwrap();
+        pb.save("correct-password").unwrap();
+
+        let reopened = PasswordBox::open(path, "correct-password").unwrap();
+        assert_eq!(reopened.list_connect_items().unwrap().len(), 1);
     }
 }

@@ -55,6 +55,8 @@ crates/passshare-connect + op-cli   packages/connect-python, connect-go
 | 乱数 | OS CSPRNG (`getrandom`) |
 | 秘密情報 | `zeroize` でメモリ消去 |
 
+> KDF パラメータは `.pbox` ヘッダに記録し、**復号時はヘッダ値を使用**する（crypto-agility）。セキュリティフロア（m≥19MiB, t≥2, p≥1）を下回るヘッダは `CorruptFile` として拒否する（ダウングレード防御）。復号した平文バッファは `Zeroizing` でラップし、`lock()` は保持中のフィールド値・リカバリシークレットをゼロ化する（[#313](https://github.com/AutoDevJapan/PassShare/issues/313)）。
+
 ### v1（1Password Connect 互換 — Epic #9）✅ 完了
 
 - Vault / Item / Field ドメインモデル（Connect スキーマ準拠）
