@@ -24,6 +24,20 @@ describe("web origin allowlist", () => {
     assert.equal(isAllowedWebOrigin("http://pass-share-frontend.vercel.app", "prd"), false);
   });
 
+  it("rejects untrusted vercel.app subdomains", () => {
+    // A bare `.vercel.app` suffix must not be trusted: anyone can deploy one.
+    assert.equal(isAllowedWebOrigin("https://evil.vercel.app", "prd"), false);
+    assert.equal(isAllowedWebOrigin("https://evil.vercel.app", "preview"), false);
+    // Prefix-lookalikes without the exact project boundary must also be rejected.
+    assert.equal(isAllowedWebOrigin("https://pass-share-frontend-evil.vercel.app", "prd"), false);
+    assert.equal(isAllowedWebOrigin("https://pass-share-frontend.evil.vercel.app", "prd"), false);
+    assert.equal(isAllowedWebOrigin("https://evil-pass-share-frontend.vercel.app", "prd"), false);
+    assert.equal(
+      isAllowedWebOrigin("https://pass-share-frontend.vercel.app.evil.com", "prd"),
+      false,
+    );
+  });
+
   it("allows configured WEB_ORIGIN custom domain", () => {
     assert.equal(
       isAllowedWebOrigin("https://pass-share.bm1314.net", "prd", "https://pass-share.bm1314.net"),
@@ -94,6 +108,14 @@ describe("security headers and CORS", () => {
   it("does not reflect disallowed origins", async () => {
     const res = await fetch(`${baseUrl}/health`, {
       headers: { Origin: "https://evil.example" },
+    });
+    assert.equal(res.headers.get("access-control-allow-origin"), null);
+    assert.equal(res.headers.get("access-control-allow-credentials"), null);
+  });
+
+  it("does not reflect untrusted vercel.app origins", async () => {
+    const res = await fetch(`${baseUrl}/health`, {
+      headers: { Origin: "https://evil.vercel.app" },
     });
     assert.equal(res.headers.get("access-control-allow-origin"), null);
     assert.equal(res.headers.get("access-control-allow-credentials"), null);

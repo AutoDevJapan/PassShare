@@ -6,10 +6,19 @@ const DEFAULT_LOCAL_ORIGIN = "http://localhost:5173";
 const DEFAULT_VERCEL_ORIGIN = "https://pass-share-frontend.vercel.app";
 
 /**
+ * Strictly bind trusted Vercel hostnames to this project's prefix.
+ * Matches only the production host `pass-share-frontend.vercel.app` and
+ * git-branch preview hosts like `pass-share-frontend-git-<branch>-<scope>.vercel.app`.
+ * A bare `.vercel.app` suffix is NOT trusted, so an attacker-controlled
+ * `evil.vercel.app` cannot become a credentialed CORS origin.
+ */
+const VERCEL_HOSTNAME_PATTERN = /^pass-share-frontend(-git-[a-z0-9-]+)?\.vercel\.app$/;
+
+/**
  * @param {string} hostname
  */
 function isVercelHostname(hostname) {
-  return hostname === "pass-share-frontend.vercel.app" || hostname.endsWith(".vercel.app");
+  return VERCEL_HOSTNAME_PATTERN.test(hostname);
 }
 
 /**
