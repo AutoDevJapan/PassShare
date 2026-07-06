@@ -276,7 +276,7 @@ CSRF protection for state-changing Web requests (Issue [#44](https://github.com/
 
 **Web CORS:** `WEB_ORIGIN` env (default `http://localhost:5173` in local) with `Access-Control-Allow-Credentials: true`.
 
-In `prd` / `stg` / `preview` / `dev`, only **HTTPS Vercel origins** (`pass-share-frontend.vercel.app` and `*.vercel.app` preview URLs) are reflected. Set `WEB_ORIGIN` on Railway when using a custom frontend domain (e.g. `https://pass-share.bm1314.net`).
+In `prd` / `stg` / `preview` / `dev`, only **HTTPS Vercel origins bound to this project's prefix** are reflected: the production host `pass-share-frontend.vercel.app` and git-branch preview URLs matching `^pass-share-frontend(-git-[a-z0-9-]+)?\.vercel\.app$`. A bare `*.vercel.app` origin (e.g. `evil.vercel.app`) is **not** trusted (Issue [#315](https://github.com/AutoDevJapan/PassShare/issues/315)). Set `WEB_ORIGIN` on Railway when using a custom frontend domain (e.g. `https://pass-share.bm1314.net`).
 
 **Security headers (Issue [#46](https://github.com/AutoDevJapan/PassShare/issues/46)):**
 
@@ -314,9 +314,13 @@ Given a browser request from a non-Vercel origin
 When the auth API is called with credentials
 Then Access-Control-Allow-Origin is not reflected
 
-Given a browser request from *.vercel.app
+Given a browser request from a project-bound Vercel origin (pass-share-frontend.vercel.app or a pass-share-frontend-git-* preview URL)
 When the auth API is called with credentials
 Then Access-Control-Allow-Origin matches the request origin
+
+Given a browser request from an untrusted *.vercel.app origin (e.g. evil.vercel.app)
+When the auth API is called with credentials
+Then Access-Control-Allow-Origin is not reflected
 ```
 
 ## Database Tables
