@@ -214,6 +214,7 @@ PassShare (project)
 | `DATABASE_URL` | 対応する Postgres の Variable Reference |
 | `WEB_ORIGIN` | カスタムフロントドメイン（任意）。未設定時はプロジェクト prefix に束縛した Vercel オリジン（`pass-share-frontend.vercel.app` と `pass-share-frontend-git-*` プレビュー）のみ CORS 許可。任意の `*.vercel.app` は信頼しない（[#46](https://github.com/AutoDevJapan/PassShare/issues/46), [#315](https://github.com/AutoDevJapan/PassShare/issues/315)） |
 | `OP_CONNECT_TOKEN` | Connect API Bearer トークン（`/v1/*` 必須） |
+| `TRUST_PROXY_HOPS` | 信頼するフロントプロキシのホップ数（`req.ip` 算出用）。省略時は `local`=0 / それ以外=1（Railway エッジ 1 段）。生の `X-Forwarded-For` は信頼せず per-IP スロットルのバイパスを防ぐ（[#316](https://github.com/AutoDevJapan/PassShare/issues/316)）。プロキシ段数変更時のみ設定 |
 | `PORT` | Railway が自動設定（省略可） |
 
 ## セットアップ手順
