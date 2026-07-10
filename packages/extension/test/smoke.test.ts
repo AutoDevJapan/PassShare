@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { hostnameMatchesItem } from "../src/lib/connect-items.ts";
+import { hostnameMatchesItem, isAutofillAllowed } from "../src/lib/connect-items.ts";
 import { generatePassword } from "../src/lib/password-generator.ts";
 
 describe("hostnameMatchesItem", () => {
@@ -17,6 +17,26 @@ describe("hostnameMatchesItem", () => {
 
   it("ignores invalid URLs", () => {
     assert.equal(hostnameMatchesItem("example.com", "not-a-url"), false);
+  });
+});
+
+describe("isAutofillAllowed", () => {
+  it("allows any HTTPS page", () => {
+    assert.equal(isAutofillAllowed("https:", "example.com"), true);
+  });
+
+  it("rejects plain HTTP on public hosts", () => {
+    assert.equal(isAutofillAllowed("http:", "example.com"), false);
+  });
+
+  it("allows plain HTTP only on loopback dev hosts", () => {
+    assert.equal(isAutofillAllowed("http:", "localhost"), true);
+    assert.equal(isAutofillAllowed("http:", "127.0.0.1"), true);
+    assert.equal(isAutofillAllowed("http:", "[::1]"), true);
+  });
+
+  it("rejects non-web schemes", () => {
+    assert.equal(isAutofillAllowed("file:", "localhost"), false);
   });
 });
 

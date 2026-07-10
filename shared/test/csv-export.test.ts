@@ -47,4 +47,28 @@ describe("exportOnepasswordCsv", () => {
     // A benign value is untouched.
     assert.match(csv, /,pass,/);
   });
+
+  it("keeps password-less items such as secure notes", () => {
+    const csv = exportOnepasswordCsv([
+      {
+        id: "abcdefghijklmnopqrstuvwxyz",
+        title: "Recovery codes",
+        category: "SECURE_NOTE",
+        tags: [],
+        favorite: false,
+        username: null,
+        password: null,
+        url: null,
+        notes: "one two three",
+      },
+    ]);
+
+    const rows = csv.trimEnd().split("\n");
+    // Header + one data row: the note is not dropped.
+    assert.equal(rows.length, 2);
+    assert.match(csv, /Recovery codes/);
+    assert.match(csv, /one two three/);
+    // The Password column is empty for a note (Title,Username,Password,...).
+    assert.match(csv, /Recovery codes,,,/);
+  });
 });

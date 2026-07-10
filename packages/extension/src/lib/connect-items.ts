@@ -83,6 +83,23 @@ export function hostnameMatchesItem(pageHostname: string, itemUrl: string | null
   }
 }
 
+/**
+ * Whether autofill/save may run on a page with the given location.
+ *
+ * Allowed on HTTPS everywhere; on plain HTTP only for loopback development
+ * hosts. Credentials must never be filled into or captured from an insecure
+ * public page.
+ */
+export function isAutofillAllowed(protocol: string, hostname: string): boolean {
+  if (protocol === "https:") {
+    return true;
+  }
+  if (protocol === "http:") {
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  }
+  return false;
+}
+
 export function findUsernameInput(form: HTMLFormElement | Document): HTMLInputElement | null {
   const selectors = [
     'input[autocomplete="username"]',
