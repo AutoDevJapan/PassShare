@@ -7,7 +7,20 @@ type BiometryApi = typeof import("@choochmeque/tauri-plugin-biometry-api");
 
 let biometryApi: BiometryApi | null | undefined;
 
+// Test seam: when set, loadBiometryApi() resolves to this value without touching
+// the real plugin, so the fallback path can be exercised deterministically.
+let forcedBiometryApi: BiometryApi | null | undefined;
+
+// Session-only fallback (#321 H9a). When no OS-backed secure store is available
+// we keep secrets in memory for the lifetime of the process only. They are
+// never written to localStorage / disk, so a refresh token cannot silently
+// persist in plaintext where file, WebView, or XSS access could read it.
+const memoryStore = new Map<string, string>();
+
 async function loadBiometryApi(): Promise<BiometryApi | null> {
+  if (forcedBiometryApi !== undefined) {
+    return forcedBiometryApi;
+  }
   if (biometryApi !== undefined) {
     return biometryApi;
   }
@@ -20,13 +33,26 @@ async function loadBiometryApi(): Promise<BiometryApi | null> {
   }
 }
 
+/**
+ * Remove any plaintext value a previous build may have left in localStorage for
+ * this key. Secrets must never live there; this purges legacy at-rest copies.
+ */
+function purgeLegacyPlaintext(name: string): void {
+  try {
+    globalThis.localStorage?.removeItem(`${BIOMETRY_DOMAIN}:${name}`);
+  } catch {
+    // localStorage may be unavailable; nothing to purge.
+  }
+}
+
 async function setSecureValue(name: string, data: string): Promise<void> {
+  purgeLegacyPlaintext(name);
   const api = await loadBiometryApi();
   if (api) {
     await api.setData({ domain: BIOMETRY_DOMAIN, name, data });
     return;
   }
-  localStorage.setItem(`${BIOMETRY_DOMAIN}:${name}`, data);
+  memoryStore.set(name, data);
 }
 
 async function getSecureValue(name: string, reason: string): Promise<string | null> {
@@ -35,16 +61,17 @@ async function getSecureValue(name: string, reason: string): Promise<string | nu
     const response = await api.getData({ domain: BIOMETRY_DOMAIN, name, reason });
     return response.data ?? null;
   }
-  return localStorage.getItem(`${BIOMETRY_DOMAIN}:${name}`);
+  return memoryStore.get(name) ?? null;
 }
 
 async function removeSecureValue(name: string): Promise<void> {
+  purgeLegacyPlaintext(name);
   const api = await loadBiometryApi();
   if (api) {
     await api.removeData({ domain: BIOMETRY_DOMAIN, name });
     return;
   }
-  localStorage.removeItem(`${BIOMETRY_DOMAIN}:${name}`);
+  memoryStore.delete(name);
 }
 
 export async function saveRefreshToken(token: string): Promise<void> {
@@ -86,6 +113,14 @@ export async function clearAllSecureAuth(): Promise<void> {
   await clearConnectToken();
 }
 
+/**
+ * Whether an OS-backed secure store is available. When false, secrets live only
+ * in memory for the current session and the UI should surface that state.
+ */
+export async function isSecureStorageAvailable(): Promise<boolean> {
+  return (await loadBiometryApi()) !== null;
+}
+
 export async function isBiometricAvailable(): Promise<boolean> {
   const api = await loadBiometryApi();
   if (!api) {
@@ -105,4 +140,18 @@ export async function authenticateBiometric(reason: string): Promise<void> {
     title: "PassShare",
     subtitle: reason,
   });
+}
+
+/** Test-only: force the biometry backend (or `null` for the memory fallback). */
+export function __setBiometryApiForTests(api: BiometryApi | null): void {
+  forcedBiometryApi = api;
+  biometryApi = undefined;
+  memoryStore.clear();
+}
+
+/** Test-only: restore normal plugin resolution and clear the memory fallback. */
+export function __resetBiometryApiForTests(): void {
+  forcedBiometryApi = undefined;
+  biometryApi = undefined;
+  memoryStore.clear();
 }

@@ -45,6 +45,9 @@ jobs:
           pnpm --dir apps/mobile install --frozen-lockfile
           pnpm --dir apps/mobile run build
 
+      - name: Run mobile unit tests
+        run: pnpm --dir apps/mobile run test
+
       - name: Install backend dependencies
         run: pnpm --dir backend install --frozen-lockfile
 

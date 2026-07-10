@@ -294,6 +294,9 @@ jobs:
       - name: Build mobile frontend
         run: pnpm --dir apps/mobile run build
 
+      - name: Run mobile unit tests
+        run: pnpm --dir apps/mobile run test
+
       - name: Run mobile auth API tests
         working-directory: backend
         run: node --test test/mobile-auth.test.js
