@@ -36,8 +36,11 @@ jobs:
 
       - name: Deploy backend to Railway (development)
         env:
+          # Account/team token: supply via RAILWAY_API_TOKEN only. Do NOT also set
+          # RAILWAY_TOKEN — the CLI would treat the account token as a project token
+          # and fail `railway up` with "Unauthorized". The deploy script authenticates
+          # with RAILWAY_API_TOKEN + explicit --project/--service/--environment flags.
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_DEVELOPMENT_ENV_ID }}

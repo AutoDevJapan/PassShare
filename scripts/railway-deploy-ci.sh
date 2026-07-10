@@ -16,13 +16,32 @@ health_url="${RAILWAY_HEALTH_URL:-}"
 health_attempts="${RAILWAY_HEALTH_ATTEMPTS:-18}"
 health_interval="${RAILWAY_HEALTH_INTERVAL_SEC:-10}"
 
-# CLI auth — project token preferred; account token works with @railway/cli v3 + --project flags
-if [ -n "${RAILWAY_TOKEN:-}" ]; then
-  :
-elif [ -n "${RAILWAY_PROJECT_TOKEN:-}" ]; then
+# CLI auth resolution.
+#
+# Railway distinguishes two token kinds, and the CLI reads them from different
+# env vars:
+#   - Project token  -> RAILWAY_TOKEN. Environment-scoped; the CLI's project-token
+#     auth path. `railway up` uses it directly.
+#   - Account/team token -> RAILWAY_API_TOKEN, used together with explicit
+#     `railway up --project/--service/--environment` flags.
+#
+# An account/team token must NOT be placed in RAILWAY_TOKEN: the CLI then treats
+# it as a project token and rejects it with "Unauthorized" — this was the root
+# cause of the persistently failing development deploy, where the workflow set
+# RAILWAY_TOKEN=${RAILWAY_API_TOKEN}. Prefer a real project token when present;
+# otherwise use the account/team token via RAILWAY_API_TOKEN with RAILWAY_TOKEN
+# cleared.
+if [ -n "${RAILWAY_PROJECT_TOKEN:-}" ]; then
   export RAILWAY_TOKEN="${RAILWAY_PROJECT_TOKEN}"
+  unset RAILWAY_API_TOKEN || true
 elif [ -n "${RAILWAY_API_TOKEN:-}" ]; then
-  export RAILWAY_TOKEN="${RAILWAY_API_TOKEN}"
+  # Account/team token path: the CLI authenticates via RAILWAY_API_TOKEN and the
+  # explicit --project/--service/--environment flags below. RAILWAY_TOKEN must be
+  # cleared so the CLI does not misinterpret the account token as a project token.
+  unset RAILWAY_TOKEN || true
+elif [ -n "${RAILWAY_TOKEN:-}" ]; then
+  # Caller supplied a genuine project token directly in RAILWAY_TOKEN.
+  :
 else
   echo "Missing RAILWAY_TOKEN, RAILWAY_PROJECT_TOKEN, or RAILWAY_API_TOKEN"
   exit 1
