@@ -16,13 +16,13 @@ jobs:
   cargo-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       # Install a prebuilt cargo-audit binary. Compiling from source
       # (`cargo install`) turned transient crates.io hiccups into false CI
       # failures on unrelated PRs (#325).
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c7eb1735f09259a5035e8e5d44b1406b1cddc0fb # v2.83.0
         with:
           tool: cargo-audit
 
@@ -42,7 +42,7 @@ jobs:
           - packages/connect-js
           - packages/extension
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Detect package manager
         id: pm
@@ -54,19 +54,19 @@ jobs:
             echo "manager=npm" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         if: steps.pm.outputs.manager == 'pnpm'
         with:
           version: 10.11.0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         if: steps.pm.outputs.manager == 'pnpm'
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: ${{ matrix.directory }}/pnpm-lock.yaml
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         if: steps.pm.outputs.manager == 'npm'
         with:
           node-version: "22"
