@@ -11,17 +11,21 @@ function escapeCsv(value: string): string {
   return guarded;
 }
 
-/** Export Connect items to 1Password-compatible CSV. */
+/**
+ * Export Connect items to 1Password-compatible CSV.
+ *
+ * Every item is exported, including password-less categories such as
+ * SECURE_NOTE — dropping them would silently lose data during a backup. For
+ * those items the Password column is left empty and their content is preserved
+ * in the Notes column.
+ */
 export function exportOnepasswordCsv(items: ConnectItem[]): string {
   const lines = ["Title,Username,Password,URL,Notes,Tags"];
   for (const item of items) {
-    if (!item.password) {
-      continue;
-    }
     const row = [
       item.title,
       item.username ?? "",
-      item.password,
+      item.password ?? "",
       item.url ?? "",
       item.notes ?? item.body ?? "",
       item.tags.join(", "),

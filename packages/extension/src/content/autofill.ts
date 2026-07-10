@@ -2,9 +2,14 @@ import type { BackgroundRequest, BackgroundResponse, CredentialMatch } from "../
 import {
   findPasswordInput,
   findUsernameInput,
+  isAutofillAllowed,
 } from "../lib/connect-items";
 
 const PANEL_ID = "passshare-autofill-panel";
+
+// The password field the user is currently editing. Autofill is scoped to this
+// field's form so we do not clobber an unrelated form at the top of the page.
+let activePasswordInput: HTMLInputElement | null = null;
 
 function sendBackgroundMessage<T extends BackgroundResponse>(
   message: BackgroundRequest,
@@ -25,8 +30,11 @@ function removePanel(): void {
 }
 
 function fillInputs(username: string, password: string): void {
-  const passwordInput = findPasswordInput(document);
-  const usernameInput = findUsernameInput(document);
+  // Prefer the form of the focused password field; fall back to the document
+  // only when the field is not inside a form.
+  const scope: HTMLFormElement | Document = activePasswordInput?.form ?? document;
+  const passwordInput = activePasswordInput ?? findPasswordInput(scope);
+  const usernameInput = findUsernameInput(scope);
   if (usernameInput) {
     usernameInput.value = username;
     usernameInput.dispatchEvent(new Event("input", { bubbles: true }));
@@ -102,6 +110,7 @@ function attachPasswordFocusHandler(): void {
       if (!(target instanceof HTMLInputElement) || target.type !== "password") {
         return;
       }
+      activePasswordInput = target;
       void showMatchesForCurrentPage();
     },
     true,
@@ -181,5 +190,8 @@ function showSaveBanner(title: string, username: string, password: string, url: 
   document.documentElement.appendChild(banner);
 }
 
-attachPasswordFocusHandler();
-attachSavePrompt();
+// Do not offer autofill or save on insecure pages (plain HTTP, except local dev).
+if (isAutofillAllowed(window.location.protocol, window.location.hostname)) {
+  attachPasswordFocusHandler();
+  attachSavePrompt();
+}

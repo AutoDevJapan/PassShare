@@ -15,7 +15,10 @@ export default defineManifest({
   },
   content_scripts: [
     {
-      matches: ["http://*/*", "https://*/*"],
+      // Only inject over HTTPS. Plain HTTP is limited to loopback hosts so
+      // autofill/save still works during local development but is never
+      // offered on insecure public pages where credentials could be sniffed.
+      matches: ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
       js: ["src/content/autofill.ts"],
       run_at: "document_idle",
       all_frames: false,
