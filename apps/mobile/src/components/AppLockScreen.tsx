@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { hasAppPin, setAppPin, verifyAppPin } from "../lib/app-lock";
+import { getPinLockState, hasAppPin, setAppPin, verifyAppPin } from "../lib/app-lock";
 import { authenticateBiometric, isBiometricAvailable } from "../lib/secure-storage";
 import { useMobileLabels } from "../hooks/useMobileLabels";
 
@@ -14,6 +14,7 @@ export function AppLockScreen({ onUnlocked }: Props) {
   const [setupConfirm, setSetupConfirm] = useState("");
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const [biometricReady, setBiometricReady] = useState(false);
+  const [locked, setLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -21,8 +22,13 @@ export function AppLockScreen({ onUnlocked }: Props) {
       const [pinExists, biometric] = await Promise.all([hasAppPin(), isBiometricAvailable()]);
       setNeedsSetup(!pinExists);
       setBiometricReady(biometric);
+      const lockState = getPinLockState();
+      setLocked(lockState.locked);
+      if (lockState.locked) {
+        setError(labels.lockLocked);
+      }
     })();
-  }, []);
+  }, [labels.lockLocked]);
 
   async function unlockWithBiometric() {
     setError(null);
@@ -37,12 +43,18 @@ export function AppLockScreen({ onUnlocked }: Props) {
   async function handlePinUnlock(event: FormEvent) {
     event.preventDefault();
     setError(null);
-    const valid = await verifyAppPin(pin);
-    if (!valid) {
-      setError(labels.lockPinMismatch);
+    const result = await verifyAppPin(pin);
+    if (result.status === "ok") {
+      setLocked(false);
+      onUnlocked();
       return;
     }
-    onUnlocked();
+    if (result.status === "locked") {
+      setLocked(true);
+      setError(labels.lockLocked);
+      return;
+    }
+    setError(labels.lockPinMismatch);
   }
 
   async function handlePinSetup(event: FormEvent) {
@@ -52,7 +64,12 @@ export function AppLockScreen({ onUnlocked }: Props) {
       setError(labels.lockPinMismatch);
       return;
     }
-    await setAppPin(setupPin);
+    try {
+      await setAppPin(setupPin);
+    } catch {
+      setError(labels.lockPinTooShort);
+      return;
+    }
     setNeedsSetup(false);
     onUnlocked();
   }
@@ -115,10 +132,11 @@ export function AppLockScreen({ onUnlocked }: Props) {
                 value={pin}
                 onChange={(event) => setPin(event.target.value)}
                 placeholder={labels.lockPinPlaceholder}
+                disabled={locked}
                 required
               />
             </label>
-            <button type="submit" className="ps-button ps-button--full">
+            <button type="submit" className="ps-button ps-button--full" disabled={locked}>
               {labels.lockUnlock}
             </button>
           </form>
