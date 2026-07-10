@@ -212,7 +212,7 @@ PassShare (project)
 |------|-----|
 | `APP_ENV` | `prd` / `stg` / `preview` / `dev` |
 | `DATABASE_URL` | 対応する Postgres の Variable Reference |
-| `WEB_ORIGIN` | カスタムフロントドメイン（任意）。未設定時は `*.vercel.app` のみ CORS 許可（[#46](https://github.com/AutoDevJapan/PassShare/issues/46)） |
+| `WEB_ORIGIN` | カスタムフロントドメイン（任意）。未設定時はプロジェクト prefix に束縛した Vercel オリジン（`pass-share-frontend.vercel.app` と `pass-share-frontend-git-*` プレビュー）のみ CORS 許可。任意の `*.vercel.app` は信頼しない（[#46](https://github.com/AutoDevJapan/PassShare/issues/46), [#315](https://github.com/AutoDevJapan/PassShare/issues/315)） |
 | `OP_CONNECT_TOKEN` | Connect API Bearer トークン（`/v1/*` 必須） |
 | `PORT` | Railway が自動設定（省略可） |
 
