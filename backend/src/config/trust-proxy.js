@@ -18,14 +18,14 @@
  * @returns {number} Non-negative integer hop count for `app.set('trust proxy')`.
  */
 export function resolveTrustProxyHops(appEnv = "local", env = process.env) {
-  const override = env.TRUST_PROXY_HOPS;
-  if (override !== undefined && override !== "") {
+  const override = env.TRUST_PROXY_HOPS?.trim();
+  if (override) {
     const parsed = Number(override);
     if (Number.isInteger(parsed) && parsed >= 0) {
       return parsed;
     }
     throw new Error(
-      `Invalid TRUST_PROXY_HOPS: "${override}" (expected a non-negative integer)`,
+      `Invalid TRUST_PROXY_HOPS: "${env.TRUST_PROXY_HOPS}" (expected a non-negative integer)`,
     );
   }
 

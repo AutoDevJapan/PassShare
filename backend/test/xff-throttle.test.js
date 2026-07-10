@@ -54,6 +54,11 @@ describe("resolveTrustProxyHops", () => {
     assert.equal(resolveTrustProxyHops("local", { TRUST_PROXY_HOPS: "3" }), 3);
   });
 
+  it("falls back to the default for a blank TRUST_PROXY_HOPS override", () => {
+    assert.equal(resolveTrustProxyHops("prd", { TRUST_PROXY_HOPS: "   " }), 1);
+    assert.equal(resolveTrustProxyHops("local", { TRUST_PROXY_HOPS: "" }), 0);
+  });
+
   it("rejects an invalid TRUST_PROXY_HOPS override", () => {
     assert.throws(() => resolveTrustProxyHops("prd", { TRUST_PROXY_HOPS: "-1" }));
     assert.throws(() => resolveTrustProxyHops("prd", { TRUST_PROXY_HOPS: "nope" }));
