@@ -1,6 +1,7 @@
 import express from "express";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
+import { resolveTrustProxyHops } from "./config/trust-proxy.js";
 import { createConnectRouter } from "./connect/router.js";
 import { applyDevSeed, isDevSeedEnvironment } from "./db/dev-seed.js";
 import { connectErrorHandler } from "./middleware/connect-errors.js";
@@ -20,6 +21,10 @@ import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
 export async function createApp(options = {}) {
   const app = express();
   const appEnv = process.env.APP_ENV ?? "local";
+
+  // Derive req.ip from a fixed number of trusted proxy hops so the per-IP login
+  // throttle cannot be bypassed with a spoofed X-Forwarded-For header (#316).
+  app.set("trust proxy", resolveTrustProxyHops(appEnv));
   const databaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL);
   const pool =
     options.pool ??

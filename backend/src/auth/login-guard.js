@@ -86,11 +86,18 @@ export function createLoginGuard() {
   }
 }
 
-/** @param {import('express').Request} req */
+/**
+ * Resolve the throttling key for a request.
+ *
+ * Uses Express's `req.ip`, which honours the app's `trust proxy` setting and
+ * walks the `X-Forwarded-For` chain from right to left past the configured
+ * trusted hops. A raw, attacker-supplied `X-Forwarded-For` is therefore never
+ * trusted, so per-IP throttling cannot be bypassed by rotating spoofed
+ * forwarded addresses (#316). Falls back to the socket address when `req.ip`
+ * is unavailable.
+ *
+ * @param {import('express').Request} req
+ */
 export function resolveClientIp(req) {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.length > 0) {
-    return forwarded.split(",")[0].trim();
-  }
-  return req.socket.remoteAddress ?? "unknown";
+  return req.ip ?? req.socket?.remoteAddress ?? "unknown";
 }
