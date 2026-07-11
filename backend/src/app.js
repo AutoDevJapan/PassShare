@@ -13,6 +13,39 @@ import { createSecurityHeadersMiddleware } from "./middleware/security-headers.j
 import { createWebCorsMiddleware } from "./middleware/web-cors.js";
 import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
 
+// Best-effort DB pool warm-up: open the first connection during startup so the
+// first real request after a Railway cold-start (idle wake / fresh deploy) does
+// not pay connection-establishment latency — or fail — while the pool lazily
+// connects. Non-fatal by design; readiness is still enforced by /health/db. (#368)
+const POOL_WARMUP_MAX_ATTEMPTS = 3;
+const POOL_WARMUP_RETRY_DELAY_MS = 200;
+
+/**
+ * @param {import('pg').Pool | null | undefined} pool
+ */
+async function warmUpPool(pool) {
+  if (!pool) {
+    return;
+  }
+  for (let attempt = 1; attempt <= POOL_WARMUP_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await pool.query("SELECT 1");
+      return;
+    } catch (error) {
+      if (attempt >= POOL_WARMUP_MAX_ATTEMPTS) {
+        // Do not block startup on a transient DB hiccup; the app still boots and
+        // serves liveness while the pool keeps retrying on demand.
+        console.warn(
+          "[startup] DB pool warm-up did not complete; continuing:",
+          error instanceof Error ? error.message : error,
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, POOL_WARMUP_RETRY_DELAY_MS));
+    }
+  }
+}
+
 /**
  * @param {{
  *   pool?: import('pg').Pool | null,
@@ -36,6 +69,10 @@ export async function createApp(options = {}) {
           ssl: resolveDbSslConfig(databaseUrl),
         })
       : null);
+
+  // Warm the connection early so the first post-cold-start request is served by
+  // an already-established connection rather than a cold one.
+  await warmUpPool(pool);
 
   const connectStore = options.store ?? (await createStore(pool));
   const authStore = options.authStore ?? (await createAuthStore(pool));

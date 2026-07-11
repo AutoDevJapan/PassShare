@@ -29,6 +29,57 @@ type AuthErrorBody = {
 
 let csrfToken: string | null = null;
 
+// Railway backend cold-starts (idle wake / fresh deploy) briefly have no healthy
+// replica, so the edge proxy returns a transient 5xx before the container is
+// listening. These retries absorb that window so the first request after idle
+// does not surface as a user-visible "Failed to fetch". See issue #368.
+const RETRY_MAX_ATTEMPTS = 4; // initial attempt + 3 retries
+const RETRY_BASE_DELAY_MS = 300;
+const RETRY_MAX_DELAY_MS = 3000;
+// A 5xx from the gateway means the request never reached app logic, so retrying
+// is safe regardless of HTTP method.
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function backoffDelayMs(attempt: number): number {
+  const exponential = Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS);
+  // Full jitter avoids synchronized retry stampedes across tabs/clients.
+  return exponential + Math.random() * RETRY_BASE_DELAY_MS;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(input: string, init: RequestInit = {}): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const idempotent = IDEMPOTENT_METHODS.has(method);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt += 1) {
+    const isLastAttempt = attempt >= RETRY_MAX_ATTEMPTS - 1;
+    try {
+      const response = await fetch(input, init);
+      if (RETRYABLE_STATUS.has(response.status) && !isLastAttempt) {
+        await delay(backoffDelayMs(attempt));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      // Network-level failure (fetch throws, e.g. TypeError). Only retry
+      // idempotent requests so a mutation that may already have been processed
+      // is never double-submitted.
+      lastError = error;
+      if (!idempotent || isLastAttempt) {
+        throw error;
+      }
+      await delay(backoffDelayMs(attempt));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Request failed after retries");
+}
+
 export class AuthApiError extends Error {
   constructor(message: string) {
     super(message);
@@ -42,7 +93,7 @@ async function parseAuthError(response: Response): Promise<never> {
 }
 
 async function loadCsrfToken(): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/auth/csrf`, {
+  const response = await fetchWithRetry(`${API_BASE}/api/auth/csrf`, {
     credentials: "include",
   });
   if (!response.ok) {
@@ -65,8 +116,9 @@ async function authFetch(path: string, init: RequestInit = {}): Promise<Response
     headers.set("Content-Type", "application/json");
   }
 
-  return fetch(`${API_BASE}${path}`, {
+  return fetchWithRetry(`${API_BASE}${path}`, {
     ...init,
+    method,
     headers,
     credentials: "include",
   });

@@ -33,6 +33,29 @@
 | Backend API | Railway (`pass-share-backend`) | Connect API `/v1` + ヘルスチェック |
 | Database | Railway PostgreSQL | 環境別 DB |
 
+## Backend ヘルスチェック / コールドスタート耐性（#368）
+
+### ヘルスチェックエンドポイント
+
+| パス | 種別 | 挙動 |
+|------|------|------|
+| `/health` | liveness | DB 非依存で常に 200。Railway の `healthcheckPath`（`backend/railway.toml`）に設定。 |
+| `/health/db` | readiness | `SELECT 1` を実行し、DB 到達可否で 200 / 503 を返す。 |
+
+### 事象と根本原因
+
+本番フロント初回ロード時、`/api/auth/csrf` が Railway エッジ（`railway-hikari`）から数回 **503** を返し、リトライで 200 に回復する事象が観測された（[#368](https://github.com/AutoDevJapan/PassShare/issues/368)）。原因はアイドル後 / 再デプロイ直後の **コンテナ・コールドスタート**で、healthy replica が存在しない一瞬の窓でエッジが 503 を返すため。この窓は `app.listen` より前に発生するため、**バックエンドのコード単体ではこの 503 窓そのものを消せない**。
+
+### アプリ側で実装済みの緩和
+
+- **フロント: バックオフ付きリトライ**（`frontend/src/lib/auth-api.ts` の `fetchWithRetry`）— transient `502 / 503 / 504` は全メソッドで、ネットワーク例外は冪等な GET のみ、指数バックオフ + フルジッターで最大 4 回リトライして 503 窓を吸収する。ユーザに `Failed to fetch` を見せずに初回リクエストを成立させる。
+- **バックエンド: DB プールウォームアップ**（`backend/src/app.js` の `warmUpPool`）— 起動時に best-effort で `SELECT 1` を短いリトライ付きで実行し、コールドスタート直後の初回 DB リクエストが接続確立レイテンシを払わずに済むようにする。失敗しても非 fatal（liveness は維持される）。
+
+### 純インフラ側の推奨（本タスク対象外・手動対応が必要）
+
+- **prd Backend サービスの min replicas を 1 以上にする / app sleep を無効化する** — コールドスタート窓そのものを恒久的に解消する唯一の手段。実インフラ操作は本タスクのスコープ外のため、別途手動対応が必要（Railway の service settings）。
+- （任意）`healthcheckPath` を readiness（`/health/db`）へ切替えると、DB 接続確立後にのみトラフィックが流れる。ただし DB の一過性障害でサービス全体が unhealthy 判定 → 再起動ループに陥るリスクがあるため、現状は liveness（`/health`）を維持する。
+
 ## 環境マッピング
 
 | 論理環境 | Vercel | Git ブランチ | Railway Environment | DB | Backend デプロイ |
