@@ -23,7 +23,7 @@ pnpm --dir backend migrate:verify
 pnpm --dir backend test
 ```
 
-`.github/workflows/backend-test.yml` が PR / main push で実行する。
+`.github/workflows/quality-gate.yml`（job `backend`）が PR / main push で実行する。
 
 ## Rollback 方針
 
