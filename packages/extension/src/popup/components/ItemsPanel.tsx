@@ -1,9 +1,39 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ConnectItem } from "@shared/types/item.js";
-import { copyTextWithAutoClear } from "@shared/ui/clipboard-auto-clear.js";
+import {
+  copyTextWithAutoClear,
+  getClipboardClearSeconds,
+} from "@shared/ui/clipboard-auto-clear.js";
 import { connectItemFromApi } from "../../lib/connect-items";
+import { sha256Hex } from "../../lib/hash";
 import { useAuthSession } from "../hooks/useAuthSession";
 import { useExtensionLabels } from "../hooks/useExtensionLabels";
+
+/**
+ * Copy a secret and arm two independent auto-clears:
+ *
+ *  1. The shared `copyTextWithAutoClear` timer, which clears while the popup
+ *     stays open.
+ *  2. A service-worker alarm (via `SCHEDULE_CLIPBOARD_CLEAR`) that survives the
+ *     popup closing — the common "copy → click page → paste" flow tears the
+ *     popup (and its timer) down before the delay elapses. Only a SHA-256 hash
+ *     of the secret crosses the message boundary; the plaintext stays here.
+ */
+async function copySecretWithAutoClear(value: string): Promise<void> {
+  const seconds = getClipboardClearSeconds();
+  await copyTextWithAutoClear(value, seconds);
+  try {
+    const hash = await sha256Hex(value);
+    await chrome.runtime.sendMessage({
+      type: "SCHEDULE_CLIPBOARD_CLEAR",
+      hash,
+      seconds,
+    });
+  } catch {
+    // Best-effort: if the worker is unreachable the in-popup timer still covers
+    // the case where the popup stays open.
+  }
+}
 
 export function ItemsPanel() {
   const labels = useExtensionLabels();
@@ -56,8 +86,9 @@ export function ItemsPanel() {
   async function copyValue(label: string, value: string) {
     // Parity with desktop/mobile/web: copy through the shared helper so the
     // secret is wiped from the OS clipboard after the default clear delay
-    // instead of lingering indefinitely.
-    await copyTextWithAutoClear(value);
+    // instead of lingering indefinitely. The service-worker alarm also covers
+    // the popup being closed before the delay elapses.
+    await copySecretWithAutoClear(value);
     setCopied(label);
     window.setTimeout(() => setCopied(null), 1500);
   }
@@ -69,7 +100,7 @@ export function ItemsPanel() {
     });
     if (response?.ok && typeof response.password === "string") {
       setGenerated(response.password);
-      await copyTextWithAutoClear(response.password);
+      await copySecretWithAutoClear(response.password);
     }
   }
 

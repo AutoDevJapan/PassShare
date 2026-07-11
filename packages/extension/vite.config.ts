@@ -21,5 +21,14 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      // The offscreen document is created at runtime via
+      // `chrome.offscreen.createDocument("offscreen.html")`, so it is not
+      // reachable from the manifest and must be declared as an explicit entry
+      // to be emitted into the build.
+      input: {
+        offscreen: path.resolve(rootDir, "offscreen.html"),
+      },
+    },
   },
 });
