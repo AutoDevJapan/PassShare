@@ -92,7 +92,7 @@ Railway / Vercel / GitHub に保存される秘密情報を、漏洩疑い・定
 
 ### 手順
 
-1. Railway で新プロジェクトトークンを発行
+1. Railway で新しいアカウント / ワークスペーストークン（Account / Team Token）を発行（`RAILWAY_API_TOKEN` は Project Token ではない）
 2. GitHub → PassShare → Settings → Secrets → `RAILWAY_API_TOKEN` を更新
 3. `workflow_dispatch` または main への merge でデプロイ Workflow を 1 回実行
 4. Smoke 手順を **prd または対象環境** で実行
