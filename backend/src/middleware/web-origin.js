@@ -3,7 +3,16 @@
  */
 
 const DEFAULT_LOCAL_ORIGIN = "http://localhost:5173";
-const DEFAULT_VERCEL_ORIGIN = "https://pass-share-frontend.vercel.app";
+/**
+ * Fallback production web origin used only when `WEB_ORIGIN` is unset.
+ *
+ * The canonical Vercel alias `pass-share-frontend.vercel.app` currently returns
+ * 404 (`DEPLOYMENT_NOT_FOUND`): it is not aliased to any deployment, since prod
+ * is served through the custom domain below (see issue #374). The bare alias is
+ * still a trusted CORS pattern via {@link VERCEL_HOSTNAME_PATTERN} in case Vercel
+ * re-attaches it, but it must NOT be the default origin — a live host is required.
+ */
+const DEFAULT_PROD_WEB_ORIGIN = "https://pass-share.bm1314.net";
 
 /**
  * Strictly bind trusted Vercel hostnames to this project's prefix.
@@ -104,7 +113,7 @@ export function isAllowedWebOrigin(origin, appEnv = "local", configuredOrigin, v
     return isVercelHostname(parsed.hostname, vercelTeamSlug);
   }
 
-  return origin === (configuredOrigin?.trim() || DEFAULT_VERCEL_ORIGIN);
+  return origin === (configuredOrigin?.trim() || DEFAULT_PROD_WEB_ORIGIN);
 }
 
 /**
@@ -114,5 +123,5 @@ export function defaultWebOrigin(appEnv = "local") {
   if (appEnv === "local") {
     return process.env.WEB_ORIGIN?.trim() || DEFAULT_LOCAL_ORIGIN;
   }
-  return process.env.WEB_ORIGIN?.trim() || DEFAULT_VERCEL_ORIGIN;
+  return process.env.WEB_ORIGIN?.trim() || DEFAULT_PROD_WEB_ORIGIN;
 }
