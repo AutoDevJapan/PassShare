@@ -3,7 +3,6 @@ import {
   getMessages,
   isLocale,
   resolveBrowserLocale,
-  type Locale,
   type MessageKey,
 } from "@shared/i18n/index";
 import type { BackgroundRequest, BackgroundResponse, CredentialMatch } from "../lib/constants";
@@ -37,7 +36,7 @@ let messages = getMessages(
 
 function applyLocale(locale: string): void {
   if (isLocale(locale)) {
-    messages = getMessages(locale as Locale);
+    messages = getMessages(locale);
   }
 }
 
