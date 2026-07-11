@@ -3,8 +3,23 @@ import type { ConnectItem } from "@shared/types/item.js";
 import { formValuesFromItem } from "@shared/types/item.js";
 import { connectItemFromApi, connectItemToCreateBody } from "./connect-items";
 import { detectSyncConflicts, type SyncConflict } from "@shared/lib/sync-conflicts";
+import {
+  SyncError,
+  executeSyncTasks,
+  type SyncItemOutcome,
+  type SyncProgressHandler,
+  type SyncTask,
+} from "./sync-run";
 
 export type { SyncConflict };
+export {
+  SyncError,
+  classifySyncError,
+  type SyncErrorKind,
+  type SyncItemOutcome,
+  type SyncProgress,
+  type SyncProgressHandler,
+} from "./sync-run";
 
 export type CloudSyncConfig = {
   apiBaseUrl: string;
@@ -17,6 +32,8 @@ export type SyncRunResult = {
   pushed: number;
   pulled: number;
   conflicts: SyncConflict[];
+  outcomes: SyncItemOutcome[];
+  failures: SyncItemOutcome[];
 };
 
 const STORAGE_KEY = "passshare.desktop.cloudSync.enabled";
@@ -31,14 +48,36 @@ export function setCloudSyncEnabled(enabled: boolean): void {
 
 export { detectSyncConflicts };
 
-async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient> {
-  const csrfRes = await fetch(`${config.apiBaseUrl}/api/auth/csrf`, { credentials: "include" });
-  if (!csrfRes.ok) {
-    throw new Error("CSRF fetch failed");
+/** `fetch` wrapper that reports connection failures as a network `SyncError`. */
+async function syncFetch(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    throw new SyncError("network", error instanceof Error ? error.message : "network error");
   }
+}
+
+/** Translate a non-OK response into a classified `SyncError`. */
+function assertOk(response: Response, context: string): void {
+  if (response.ok) {
+    return;
+  }
+  const detail = `${context} (${response.status})`;
+  if (response.status === 401 || response.status === 403) {
+    throw new SyncError("auth", detail);
+  }
+  if (response.status >= 500) {
+    throw new SyncError("server", detail);
+  }
+  throw new SyncError("unknown", detail);
+}
+
+async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient> {
+  const csrfRes = await syncFetch(`${config.apiBaseUrl}/api/auth/csrf`, { credentials: "include" });
+  assertOk(csrfRes, "CSRF fetch failed");
   const { csrfToken } = (await csrfRes.json()) as { csrfToken: string };
 
-  const loginRes = await fetch(`${config.apiBaseUrl}/api/auth/login`, {
+  const loginRes = await syncFetch(`${config.apiBaseUrl}/api/auth/login`, {
     method: "POST",
     credentials: "include",
     headers: {
@@ -47,16 +86,12 @@ async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient
     },
     body: JSON.stringify({ email: config.email, password: config.password }),
   });
-  if (!loginRes.ok) {
-    throw new Error("Login failed");
-  }
+  assertOk(loginRes, "Login failed");
 
-  const tokenRes = await fetch(`${config.apiBaseUrl}/api/auth/connect-token`, {
+  const tokenRes = await syncFetch(`${config.apiBaseUrl}/api/auth/connect-token`, {
     credentials: "include",
   });
-  if (!tokenRes.ok) {
-    throw new Error("Connect token fetch failed");
-  }
+  assertOk(tokenRes, "Connect token fetch failed");
   const tokenBody = (await tokenRes.json()) as { accessToken: string };
 
   return new ConnectClient({
@@ -88,6 +123,7 @@ export async function runCloudSync(
   config: CloudSyncConfig,
   localItems: ConnectItem[],
   onPull: SyncPullHandler,
+  onProgress?: SyncProgressHandler,
 ): Promise<SyncRunResult> {
   const client = await loginAndGetClient(config);
   const remoteItems = await fetchRemoteItems(client, config.vaultId);
@@ -97,32 +133,47 @@ export async function runCloudSync(
   const localById = new Map(localItems.map((item) => [item.id, item]));
   const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
 
-  let pushed = 0;
+  const tasks: SyncTask[] = [];
+
   for (const local of localItems) {
-    if (conflictIds.has(local.id)) {
+    if (conflictIds.has(local.id) || remoteById.has(local.id)) {
       continue;
     }
-    if (!remoteById.has(local.id)) {
-      await client.createItem(
-        config.vaultId,
-        connectItemToCreateBody(formValuesFromItem(local), { id: local.id }),
-      );
-      pushed += 1;
-    }
+    tasks.push({
+      itemId: local.id,
+      title: local.title,
+      direction: "push",
+      run: () =>
+        client
+          .createItem(
+            config.vaultId,
+            connectItemToCreateBody(formValuesFromItem(local), { id: local.id }),
+          )
+          .then(() => undefined),
+    });
   }
 
-  let pulled = 0;
   for (const remote of remoteItems) {
-    if (conflictIds.has(remote.id)) {
+    if (conflictIds.has(remote.id) || localById.has(remote.id)) {
       continue;
     }
-    if (!localById.has(remote.id)) {
-      await onPull(remote);
-      pulled += 1;
-    }
+    tasks.push({
+      itemId: remote.id,
+      title: remote.title,
+      direction: "pull",
+      run: () => onPull(remote),
+    });
   }
 
-  return { pushed, pulled, conflicts };
+  const summary = await executeSyncTasks(tasks, onProgress);
+
+  return {
+    pushed: summary.pushed,
+    pulled: summary.pulled,
+    conflicts,
+    outcomes: summary.outcomes,
+    failures: summary.failures,
+  };
 }
 
 export async function resolveConflictKeepLocal(

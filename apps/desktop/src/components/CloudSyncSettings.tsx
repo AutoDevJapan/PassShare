@@ -5,6 +5,7 @@ import { import1puxWithSession } from "@shared/lib/1pux-import";
 import { useDesktopLabels } from "../hooks/useDesktopLabels";
 import {
   checkSyncConflicts,
+  classifySyncError,
   isCloudSyncEnabled,
   resolveConflictKeepLocal,
   resolveConflictKeepRemote,
@@ -12,9 +13,27 @@ import {
   setCloudSyncEnabled,
   type CloudSyncConfig,
   type SyncConflict,
+  type SyncItemOutcome,
+  type SyncProgress,
 } from "../lib/cloud-sync";
 import { upsertSyncItem } from "../tauri";
 import { StatusMessage } from "./StatusMessage";
+
+type SyncLabels = ReturnType<typeof useDesktopLabels>["sync"];
+
+/** Pick an actionable message for a caught error based on its classified kind. */
+function errorMessage(error: unknown, sync: SyncLabels): string {
+  switch (classifySyncError(error)) {
+    case "auth":
+      return sync.errorAuth;
+    case "network":
+      return sync.errorNetwork;
+    case "server":
+      return sync.errorServer;
+    default:
+      return sync.error;
+  }
+}
 
 type CloudSyncSettingsProps = {
   localItems: ConnectItem[];
@@ -53,6 +72,8 @@ export function CloudSyncSettings({
   const [password, setPassword] = useState("");
   const [vaultId, setVaultId] = useState("");
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
+  const [failures, setFailures] = useState<SyncItemOutcome[]>([]);
+  const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [message, setMessage] = useState("");
   const [messageVariant, setMessageVariant] = useState<"info" | "error" | "success">("info");
   const [busy, setBusy] = useState(false);
@@ -85,8 +106,8 @@ export function CloudSyncSettings({
       setConflicts(found);
       setMessage(found.length === 0 ? labels.sync.noConflict : labels.sync.conflictTitle);
       setMessageVariant(found.length === 0 ? "success" : "info");
-    } catch {
-      setMessage(labels.sync.error);
+    } catch (error) {
+      setMessage(errorMessage(error, labels.sync));
       setMessageVariant("error");
     } finally {
       setBusy(false);
@@ -100,21 +121,28 @@ export function CloudSyncSettings({
 
     setBusy(true);
     setMessage("");
+    setFailures([]);
+    setProgress(null);
     try {
-      const result = await runCloudSync(config, localItems, pullRemoteItem);
+      const result = await runCloudSync(config, localItems, pullRemoteItem, setProgress);
       setConflicts(result.conflicts);
+      setFailures(result.failures);
       await onSynced();
-      if (result.conflicts.length > 0) {
+      if (result.failures.length > 0) {
+        setMessage(labels.sync.syncPartial(result.pushed, result.pulled, result.failures.length));
+        setMessageVariant("error");
+      } else if (result.conflicts.length > 0) {
         setMessage(labels.sync.conflictTitle);
         setMessageVariant("info");
       } else {
         setMessage(labels.sync.syncSuccess(result.pushed, result.pulled));
         setMessageVariant("success");
       }
-    } catch {
-      setMessage(labels.sync.error);
+    } catch (error) {
+      setMessage(errorMessage(error, labels.sync));
       setMessageVariant("error");
     } finally {
+      setProgress(null);
       setBusy(false);
     }
   }
@@ -128,8 +156,8 @@ export function CloudSyncSettings({
       await resolveConflictKeepLocal(config, conflict.local);
       setConflicts((current) => current.filter((c) => c.itemId !== conflict.itemId));
       setMessageVariant("success");
-    } catch {
-      setMessage(labels.sync.error);
+    } catch (error) {
+      setMessage(errorMessage(error, labels.sync));
       setMessageVariant("error");
     } finally {
       setBusy(false);
@@ -143,8 +171,8 @@ export function CloudSyncSettings({
       setConflicts((current) => current.filter((c) => c.itemId !== conflict.itemId));
       await onSynced();
       setMessageVariant("success");
-    } catch {
-      setMessage(labels.sync.error);
+    } catch (error) {
+      setMessage(errorMessage(error, labels.sync));
       setMessageVariant("error");
     } finally {
       setBusy(false);
@@ -170,8 +198,8 @@ export function CloudSyncSettings({
       );
       setMessage(import1puxSuccess(result.imported));
       setMessageVariant("success");
-    } catch {
-      setMessage(labels.sync.error);
+    } catch (error) {
+      setMessage(errorMessage(error, labels.sync));
       setMessageVariant("error");
     } finally {
       setBusy(false);
@@ -268,6 +296,26 @@ export function CloudSyncSettings({
               onChange={(event) => void handleImport1pux(event)}
             />
           </div>
+        </div>
+      ) : null}
+
+      {progress && progress.total > 0 ? (
+        <div className="ps-sync-progress" role="status" aria-live="polite">
+          <p className="ps-text-muted">{labels.sync.progress(progress.completed, progress.total)}</p>
+          <progress className="ps-progress" max={progress.total} value={progress.completed} />
+        </div>
+      ) : null}
+
+      {failures.length > 0 ? (
+        <div className="ps-sync-failures">
+          <p className="ps-text-muted">{labels.sync.failedItemsTitle}</p>
+          <ul className="ps-conflict-list">
+            {failures.map((failure) => (
+              <li key={failure.itemId} className="ps-conflict-item">
+                <span>{labels.sync.failedItem(failure.title)}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 

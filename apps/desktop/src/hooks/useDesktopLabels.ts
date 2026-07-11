@@ -60,6 +60,15 @@ export function useDesktopLabels() {
         runSync: t("desktop.sync.runSync"),
         syncSuccess: (pushed: number, pulled: number) =>
           t("desktop.sync.syncSuccess").replace("{pushed}", String(pushed)).replace("{pulled}", String(pulled)),
+        syncPartial: (pushed: number, pulled: number, failed: number) =>
+          t("desktop.sync.syncPartial")
+            .replace("{pushed}", String(pushed))
+            .replace("{pulled}", String(pulled))
+            .replace("{failed}", String(failed)),
+        progress: (completed: number, total: number) =>
+          t("desktop.sync.progress").replace("{completed}", String(completed)).replace("{total}", String(total)),
+        failedItemsTitle: t("desktop.sync.failedItemsTitle"),
+        failedItem: (title: string) => t("desktop.sync.failedItem").replace("{title}", title),
         keepLocal: t("desktop.sync.keepLocal"),
         keepRemote: t("desktop.sync.keepRemote"),
         import1pux: t("desktop.sync.import1pux"),
@@ -67,6 +76,9 @@ export function useDesktopLabels() {
         conflictItem: (title: string) => t("desktop.sync.conflictItem").replace("{title}", title),
         noConflict: t("desktop.sync.noConflict"),
         error: t("desktop.sync.error"),
+        errorAuth: t("desktop.sync.error.auth"),
+        errorNetwork: t("desktop.sync.error.network"),
+        errorServer: t("desktop.sync.error.server"),
       },
       loading: t("desktop.loading"),
       mainHiddenTitle: t("desktop.main.hiddenTitle"),
