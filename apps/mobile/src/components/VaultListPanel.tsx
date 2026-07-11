@@ -3,7 +3,7 @@ import type { Vault } from "@passshare/connect";
 import { formatVaultItemCount } from "@shared/i18n/index";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import { AuthApiError, createPasswordBox } from "../lib/auth-api";
-import { loadRefreshToken } from "../lib/secure-storage";
+import { loadAuthSession } from "../lib/secure-storage";
 import { useAuthSession } from "../hooks/useAuthSession";
 
 type Props = {
@@ -42,11 +42,11 @@ export function VaultListPanel({ onSelectVault }: Props) {
     setCreating(true);
     setError(null);
     try {
-      const refreshToken = await loadRefreshToken();
-      if (!refreshToken) {
+      const session = await loadAuthSession(t("mobile.lock.biometricReason"));
+      if (!session?.refreshToken) {
         throw new AuthApiError("Session expired");
       }
-      await createPasswordBox(refreshToken, name.trim());
+      await createPasswordBox(session.refreshToken, name.trim());
       await refreshConnect();
       setName("");
       await loadVaults();

@@ -1,7 +1,14 @@
 const BIOMETRY_DOMAIN = "com.passshare.mobile";
-const REFRESH_TOKEN_KEY = "refresh-token";
-const CONNECT_TOKEN_KEY = "connect-access-token";
-const CONNECT_EXPIRES_KEY = "connect-expires-at";
+const AUTH_SESSION_KEY = "auth-session";
+
+// Pre-blob storage keys — one keychain entry per secret. Kept only so we can
+// purge any secret a previous build left behind after the session was unified
+// into a single blob; never read back.
+const LEGACY_SECURE_KEYS = [
+  "refresh-token",
+  "connect-access-token",
+  "connect-expires-at",
+] as const;
 
 type BiometryApi = typeof import("@choochmeque/tauri-plugin-biometry-api");
 
@@ -74,43 +81,65 @@ async function removeSecureValue(name: string): Promise<void> {
   memoryStore.delete(name);
 }
 
-export async function saveRefreshToken(token: string): Promise<void> {
-  await setSecureValue(REFRESH_TOKEN_KEY, token);
+export type StoredAuthSession = {
+  refreshToken: string;
+  connectAccessToken: string;
+  connectExpiresAt: string;
+};
+
+/** Best-effort removal of any secret written under the pre-blob key layout. */
+async function purgeLegacySecureKeys(): Promise<void> {
+  for (const name of LEGACY_SECURE_KEYS) {
+    try {
+      await removeSecureValue(name);
+    } catch {
+      // A missing legacy entry is not an error.
+    }
+  }
 }
 
-export async function loadRefreshToken(reason = "PassShare にログイン"): Promise<string | null> {
-  return getSecureValue(REFRESH_TOKEN_KEY, reason);
+/**
+ * Persist the whole auth session as a single secure blob. Bundling the refresh
+ * token, Connect access token, and its expiry into one entry means a later read
+ * ({@link loadAuthSession}) needs a single biometric unlock instead of one
+ * prompt per secret.
+ */
+export async function saveAuthSession(session: StoredAuthSession): Promise<void> {
+  await setSecureValue(AUTH_SESSION_KEY, JSON.stringify(session));
+  await purgeLegacySecureKeys();
 }
 
-export async function clearRefreshToken(): Promise<void> {
-  await removeSecureValue(REFRESH_TOKEN_KEY);
-}
-
-export async function saveConnectToken(accessToken: string, expiresAt: string): Promise<void> {
-  await setSecureValue(CONNECT_TOKEN_KEY, accessToken);
-  await setSecureValue(CONNECT_EXPIRES_KEY, expiresAt);
-}
-
-export async function loadConnectToken(reason = "Connect API"): Promise<string | null> {
-  const token = await getSecureValue(CONNECT_TOKEN_KEY, reason);
-  if (!token) {
+/**
+ * Read the auth session with a single biometric prompt. `reason` is shown to the
+ * user in that prompt, so it must be a localised, user-facing string.
+ */
+export async function loadAuthSession(reason: string): Promise<StoredAuthSession | null> {
+  const raw = await getSecureValue(AUTH_SESSION_KEY, reason);
+  if (!raw) {
     return null;
   }
-  const expiresAt = await getSecureValue(CONNECT_EXPIRES_KEY, reason);
-  if (expiresAt && Date.parse(expiresAt) <= Date.now()) {
-    return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredAuthSession>;
+    if (
+      typeof parsed.refreshToken === "string" &&
+      typeof parsed.connectAccessToken === "string" &&
+      typeof parsed.connectExpiresAt === "string"
+    ) {
+      return {
+        refreshToken: parsed.refreshToken,
+        connectAccessToken: parsed.connectAccessToken,
+        connectExpiresAt: parsed.connectExpiresAt,
+      };
+    }
+  } catch {
+    // Corrupt or legacy payload: treat as no stored session.
   }
-  return token;
+  return null;
 }
 
-export async function clearConnectToken(): Promise<void> {
-  await removeSecureValue(CONNECT_TOKEN_KEY);
-  await removeSecureValue(CONNECT_EXPIRES_KEY);
-}
-
-export async function clearAllSecureAuth(): Promise<void> {
-  await clearRefreshToken();
-  await clearConnectToken();
+export async function clearAuthSession(): Promise<void> {
+  await removeSecureValue(AUTH_SESSION_KEY);
+  await purgeLegacySecureKeys();
 }
 
 /**

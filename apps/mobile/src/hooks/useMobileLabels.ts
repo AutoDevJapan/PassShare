@@ -23,6 +23,7 @@ export function useMobileLabels() {
       lockSetupPinConfirm: t("mobile.lock.setupPinConfirm"),
       lockPinMismatch: t("mobile.lock.pinMismatch"),
       lockPinTooShort: t("mobile.lock.pinTooShort"),
+      lockSetupFailed: t("mobile.lock.setupFailed"),
       lockLocked: t("mobile.lock.locked"),
       settingsTitle: t("mobile.settings.title"),
       settingsBiometric: t("mobile.settings.biometric"),

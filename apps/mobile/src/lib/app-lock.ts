@@ -21,6 +21,11 @@ const MAX_LOCKOUT_MS = 15 * 60_000;
 
 const PIN_PATTERN = /^\d{6,8}$/;
 
+/** Whether a candidate PIN meets the enrolment policy (6–8 digits). */
+export function isValidPin(pin: string): boolean {
+  return PIN_PATTERN.test(pin);
+}
+
 type PinRecord = {
   v: number;
   salt: string;
@@ -149,7 +154,7 @@ export async function hasAppPin(): Promise<boolean> {
 }
 
 export async function setAppPin(pin: string): Promise<void> {
-  if (!PIN_PATTERN.test(pin)) {
+  if (!isValidPin(pin)) {
     throw new Error("PIN must be 6-8 digits.");
   }
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));

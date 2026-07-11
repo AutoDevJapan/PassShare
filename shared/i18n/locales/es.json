@@ -210,6 +210,8 @@
   "mobile.app.title": "PassShare",
   "mobile.autofill.stub": "OS autofill integration ships in a follow-up phase (Issue #83).",
   "mobile.lock.biometric": "Unlock with biometrics",
+  "mobile.lock.biometricReason": "Desbloquear PassShare",
+  "mobile.lock.setupFailed": "No se pudo establecer el PIN. Inténtalo de nuevo.",
   "mobile.lock.lead": "Use biometrics or your PIN to unlock.",
   "mobile.lock.locked": "Demasiados intentos. Inténtalo más tarde.",
   "mobile.lock.pin": "PIN",

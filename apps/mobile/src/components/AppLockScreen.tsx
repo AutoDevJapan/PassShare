@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { getPinLockState, hasAppPin, setAppPin, verifyAppPin } from "../lib/app-lock";
+import { getPinLockState, hasAppPin, isValidPin, setAppPin, verifyAppPin } from "../lib/app-lock";
 import { authenticateBiometric, isBiometricAvailable } from "../lib/secure-storage";
 import { useMobileLabels } from "../hooks/useMobileLabels";
 
@@ -60,6 +60,12 @@ export function AppLockScreen({ onUnlocked }: Props) {
   async function handlePinSetup(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    // Client-side validation first, so an out-of-policy PIN gets an accurate
+    // message instead of being reported as a generic setup failure.
+    if (!isValidPin(setupPin)) {
+      setError(labels.lockPinTooShort);
+      return;
+    }
     if (setupPin !== setupConfirm) {
       setError(labels.lockPinMismatch);
       return;
@@ -67,7 +73,8 @@ export function AppLockScreen({ onUnlocked }: Props) {
     try {
       await setAppPin(setupPin);
     } catch {
-      setError(labels.lockPinTooShort);
+      // Unexpected failure (e.g. storage/crypto): surface it rather than swallow.
+      setError(labels.lockSetupFailed);
       return;
     }
     setNeedsSetup(false);
