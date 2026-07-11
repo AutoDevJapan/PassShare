@@ -250,6 +250,27 @@ impl PasswordBox {
         self.state = PasswordBoxState::Locked;
         // Wipe secret-bearing material before dropping the payload so cleartext
         // passwords do not linger in freed heap pages after locking.
+        self.zeroize_secrets();
+        if let Ok(vault) = Vault::new("_") {
+            self.payload = PasswordBoxPayload::new(vault, None);
+        }
+        self.salt = None;
+    }
+
+    /// Scrub every plaintext secret still held in the in-memory payload.
+    ///
+    /// Shared by `lock()` and the `Drop` impl so that boxes torn down without an
+    /// explicit `lock()` (state replacement in the desktop app, process exit,
+    /// panic unwinding) still have their cleartext field values and recovery
+    /// secret zeroized in place. Idempotent: running it again over an
+    /// already-wiped (or empty) payload is a no-op, so `lock()`-then-drop does
+    /// not double-free or panic.
+    ///
+    /// Best-effort by nature: any earlier `String` reallocation (push/growth)
+    /// may have left stale copies on freed heap pages that we can no longer
+    /// reach. Wiping the current buffers is the strongest guarantee available
+    /// without moving every secret behind a `Zeroizing` newtype.
+    fn zeroize_secrets(&mut self) {
         for item in &mut self.payload.items {
             for field in &mut item.fields {
                 field.value.zeroize();
@@ -258,10 +279,6 @@ impl PasswordBox {
         if let Some(secret) = self.payload.recovery_secret.as_mut() {
             secret.zeroize();
         }
-        if let Ok(vault) = Vault::new("_") {
-            self.payload = PasswordBoxPayload::new(vault, None);
-        }
-        self.salt = None;
     }
 
     pub fn generate_password(options: PasswordGeneratorOptions) -> String {
@@ -273,6 +290,16 @@ impl PasswordBox {
             return Err(PassShareError::BoxLocked);
         }
         Ok(())
+    }
+}
+
+impl Drop for PasswordBox {
+    /// Guarantee plaintext scrubbing on every teardown path — not just an
+    /// explicit `lock()`. Without this, replacing an unlocked box in app state,
+    /// or unwinding on panic / process exit, would drop the payload's `String`
+    /// buffers with the decrypted passwords and recovery secret still in them.
+    fn drop(&mut self) {
+        self.zeroize_secrets();
     }
 }
 
@@ -413,6 +440,74 @@ mod tests {
 
         let stored = pb.get_item(id.to_string().as_str()).unwrap();
         assert_eq!(stored.title, "Updated");
+    }
+
+    #[test]
+    fn zeroize_secrets_scrubs_field_and_recovery_secret_heap() {
+        // The shared helper that both `lock()` and `Drop` invoke must wipe the
+        // decrypted secrets in place. We inspect the concealed password field's
+        // heap buffer directly to prove the plaintext bytes are overwritten,
+        // not merely that the length was reset.
+        let path = temp_box_path();
+        let secret = "top-secret-plaintext-marker-9973";
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
+        let vault_id = pb.vault().unwrap().id.clone();
+        pb.add_item(Item::new_login(vault_id, "Site", secret).unwrap())
+            .unwrap();
+
+        // `create()` seeds a recovery secret; capture the password field buffer.
+        assert!(pb.payload.recovery_secret.is_some());
+        let (ptr, len) = {
+            let field = pb
+                .payload
+                .items
+                .iter()
+                .flat_map(|item| item.fields.iter())
+                .find(|f| f.value == secret)
+                .expect("password field present");
+            (field.value.as_ptr(), field.value.len())
+        };
+
+        // SAFETY: `pb` owns the allocation and the [0..len) region is the
+        // initialized plaintext; the read is sound while `pb` is alive.
+        let before = unsafe { std::slice::from_raw_parts(ptr, len) };
+        assert_eq!(before, secret.as_bytes(), "plaintext present before wipe");
+
+        pb.zeroize_secrets();
+
+        // `String::zeroize` overwrites the bytes in place and truncates without
+        // reallocating, so `ptr` still points at the same (now zeroed) buffer.
+        // SAFETY: same allocation, still owned by `pb`, bytes written to zero.
+        let after = unsafe { std::slice::from_raw_parts(ptr, len) };
+        assert!(
+            after.iter().all(|&b| b == 0),
+            "field plaintext must be wiped in place"
+        );
+        for item in &pb.payload.items {
+            for field in &item.fields {
+                assert!(field.value.is_empty(), "field value truncated after wipe");
+            }
+        }
+        assert_eq!(
+            pb.payload.recovery_secret.as_deref(),
+            Some(""),
+            "recovery secret zeroized"
+        );
+    }
+
+    #[test]
+    fn lock_then_drop_is_safe() {
+        // Double zeroization (explicit lock followed by drop) must be a no-op on
+        // the second pass — no panic, no double free.
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
+        let vault_id = pb.vault().unwrap().id.clone();
+        pb.add_item(Item::new_login(vault_id, "Site", "secret").unwrap())
+            .unwrap();
+        pb.lock();
+        assert_eq!(pb.state(), PasswordBoxState::Locked);
+        // `pb` drops at end of scope; Drop re-runs zeroize_secrets over the
+        // already-emptied payload without incident.
     }
 
     #[test]
