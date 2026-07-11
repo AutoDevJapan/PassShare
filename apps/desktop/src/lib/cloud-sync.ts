@@ -2,7 +2,13 @@ import { ConnectClient } from "@passshare/connect";
 import type { ConnectItem } from "@shared/types/item.js";
 import { formValuesFromItem } from "@shared/types/item.js";
 import { connectItemFromApi, connectItemToCreateBody } from "./connect-items";
-import { detectSyncConflicts, planCloudSync, type SyncConflict } from "@shared/lib/sync-conflicts";
+import {
+  detectSyncConflicts,
+  itemFingerprint,
+  planCloudSync,
+  type SyncBase,
+  type SyncConflict,
+} from "@shared/lib/sync-conflicts";
 import {
   SyncError,
   executeSyncTasks,
@@ -38,12 +44,56 @@ export type SyncRunResult = {
 
 const STORAGE_KEY = "passshare.desktop.cloudSync.enabled";
 
+/**
+ * Per-item merge-base revisions from the last successful sync, keyed by item id.
+ * Only the server revision (a non-sensitive integer) is persisted here — never
+ * the content fingerprint, which embeds plaintext secrets and must stay inside
+ * the encrypted `.pbox`. This is enough to detect a local one-sided edit: when
+ * the remote revision is unchanged from the recorded base, a content difference
+ * can only be a local edit and is auto-pushed.
+ */
+const BASE_STORAGE_KEY = "passshare.desktop.cloudSync.baseRevisions";
+
 export function isCloudSyncEnabled(): boolean {
   return localStorage.getItem(STORAGE_KEY) === "true";
 }
 
 export function setCloudSyncEnabled(enabled: boolean): void {
   localStorage.setItem(STORAGE_KEY, enabled ? "true" : "false");
+}
+
+/** Read the stored base-revision map, tolerating absent/corrupt storage. */
+function loadBaseRevisionRecord(): Record<string, number> {
+  const raw = localStorage.getItem(BASE_STORAGE_KEY);
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    const record: Record<string, number> = {};
+    for (const [id, revision] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof revision === "number" && Number.isFinite(revision)) {
+        record[id] = revision;
+      }
+    }
+    return record;
+  } catch {
+    return {};
+  }
+}
+
+/** Build the revision-only merge-base lookup consumed by the sync planner. */
+function loadSyncBases(): Map<string, SyncBase> {
+  return new Map(
+    Object.entries(loadBaseRevisionRecord()).map(([id, revision]) => [id, { revision }]),
+  );
+}
+
+function saveBaseRevisionRecord(record: Record<string, number>): void {
+  localStorage.setItem(BASE_STORAGE_KEY, JSON.stringify(record));
 }
 
 export { detectSyncConflicts };
@@ -114,7 +164,7 @@ export async function checkSyncConflicts(
 ): Promise<SyncConflict[]> {
   const client = await loginAndGetClient(config);
   const remoteItems = await fetchRemoteItems(client, config.vaultId);
-  return planCloudSync(localItems, remoteItems).conflicts;
+  return planCloudSync(localItems, remoteItems, loadSyncBases()).conflicts;
 }
 
 export type SyncPullHandler = (item: ConnectItem) => Promise<void>;
@@ -127,7 +177,28 @@ export async function runCloudSync(
 ): Promise<SyncRunResult> {
   const client = await loginAndGetClient(config);
   const remoteItems = await fetchRemoteItems(client, config.vaultId);
-  const plan = planCloudSync(localItems, remoteItems);
+  const plan = planCloudSync(localItems, remoteItems, loadSyncBases());
+
+  // Merge-base bookkeeping: record, per item, the server revision both sides
+  // agree on after this sync. Only successful tasks update it (a failed push
+  // leaves the old base so the edit is retried, never lost). Conflicts are left
+  // untouched. Persisted as revision-only integers — never the fingerprint.
+  const nextBases: Record<string, number> = loadBaseRevisionRecord();
+  const recordBase = (id: string, revision: number | null | undefined): void => {
+    if (typeof revision === "number" && Number.isFinite(revision)) {
+      nextBases[id] = revision;
+    }
+  };
+
+  // Items already identical on both sides: adopt the remote revision as the base
+  // so a subsequent local-only edit becomes auto-pushable (upgrade path).
+  const localById = new Map(localItems.map((item) => [item.id, item]));
+  for (const remote of remoteItems) {
+    const local = localById.get(remote.id);
+    if (local && itemFingerprint(local) === itemFingerprint(remote)) {
+      recordBase(remote.id, remote.revision);
+    }
+  }
 
   const tasks: SyncTask[] = [];
 
@@ -143,7 +214,9 @@ export async function runCloudSync(
             config.vaultId,
             connectItemToCreateBody(formValuesFromItem(local), { id: local.id }),
           )
-          .then(() => undefined),
+          .then((created) => {
+            recordBase(local.id, created.version);
+          }),
     });
   }
 
@@ -156,7 +229,9 @@ export async function runCloudSync(
       run: () =>
         client
           .replaceItem(config.vaultId, local.id, connectItemToCreateBody(formValuesFromItem(local)))
-          .then(() => undefined),
+          .then((replaced) => {
+            recordBase(local.id, replaced.version);
+          }),
     });
   }
 
@@ -167,11 +242,15 @@ export async function runCloudSync(
       itemId: remote.id,
       title: remote.title,
       direction: "pull",
-      run: () => onPull(remote),
+      run: () =>
+        onPull(remote).then(() => {
+          recordBase(remote.id, remote.revision);
+        }),
     });
   }
 
   const summary = await executeSyncTasks(tasks, onProgress);
+  saveBaseRevisionRecord(nextBases);
 
   return {
     pushed: summary.pushed,

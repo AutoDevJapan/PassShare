@@ -8,6 +8,28 @@ export type SyncConflict = {
 };
 
 /**
+ * The merge base for an item: the state both sides last agreed on (captured at
+ * the previous successful sync). Either signal is optional so consumers can
+ * persist only what is safe for their storage:
+ *
+ * - `revision` is the server-monotonic version (Connect `Item.version`) at the
+ *   last sync. Because the server bumps it on every write, an unchanged remote
+ *   revision *proves* the remote is still the merge base — no server-side edit
+ *   has happened since. It is a non-sensitive integer, so it may be persisted
+ *   outside the encrypted vault (e.g. desktop `localStorage`).
+ * - `fingerprint` is the content fingerprint at the last sync. It embeds
+ *   plaintext secrets, so it MUST only be kept inside the encrypted boundary
+ *   (or in memory); never persist it to plaintext storage.
+ */
+export type SyncBase = {
+  revision?: number | null;
+  fingerprint?: string | null;
+};
+
+/** Per-item merge-base lookup consumed by the resolution functions. */
+export type SyncBaseLookup = ReadonlyMap<string, SyncBase>;
+
+/**
  * Outcome of comparing the two sides of an item that exists in both places and
  * whose content (fingerprint) differs.
  *
@@ -35,7 +57,15 @@ export type CloudSyncPlan = {
   conflicts: SyncConflict[];
 };
 
-function itemFingerprint(item: ConnectItem): string {
+/**
+ * Content fingerprint of an item (metadata like `revision`/`updatedAt` is
+ * excluded — those are not content). Exported so consumers can capture a merge
+ * base and so orchestrators can detect already-in-sync items.
+ *
+ * NOTE: the fingerprint embeds plaintext secrets. Treat it like the secret
+ * itself — compare it in memory, but never persist it to plaintext storage.
+ */
+export function itemFingerprint(item: ConnectItem): string {
   return JSON.stringify({
     title: item.title,
     category: item.category,
@@ -46,6 +76,71 @@ function itemFingerprint(item: ConnectItem): string {
     tags: [...item.tags].sort(),
     favorite: item.favorite,
   });
+}
+
+/**
+ * Capture the merge base for an item that is currently in sync (i.e. the state
+ * both sides agree on right now). Consumers persist the parts appropriate for
+ * their storage — desktop keeps only `revision`, dropping the plaintext-bearing
+ * `fingerprint`.
+ */
+export function captureSyncBase(item: ConnectItem): SyncBase {
+  return {
+    revision: typeof item.revision === "number" ? item.revision : null,
+    fingerprint: itemFingerprint(item),
+  };
+}
+
+/**
+ * Three-way resolution against a recorded merge base, used only when the item's
+ * content already differs between the two sides.
+ *
+ * Returns which side to auto-apply, `"conflict"` when both sides diverged from
+ * the base, or `null` when the base cannot decide safely (caller then falls
+ * back to {@link compareItemRecency}).
+ */
+function resolveWithBase(
+  local: ConnectItem,
+  remote: ConnectItem,
+  base: SyncBase,
+): "local" | "remote" | "conflict" | null {
+  const baseRevision = typeof base.revision === "number" ? base.revision : null;
+  const baseFingerprint = typeof base.fingerprint === "string" ? base.fingerprint : null;
+
+  // Did each side diverge from the merge base?
+  const localChanged: boolean | null =
+    baseFingerprint !== null ? itemFingerprint(local) !== baseFingerprint : null;
+
+  let remoteChanged: boolean | null = null;
+  if (baseRevision !== null && typeof remote.revision === "number") {
+    // Server revision is monotonic: an unchanged revision proves the remote is
+    // still the merge base (no server-side write since the last sync).
+    remoteChanged = remote.revision !== baseRevision;
+  } else if (baseFingerprint !== null) {
+    remoteChanged = itemFingerprint(remote) !== baseFingerprint;
+  }
+
+  // Full three-way merge when both divergence signals are known.
+  if (localChanged !== null && remoteChanged !== null) {
+    if (localChanged && !remoteChanged) {
+      return "local";
+    }
+    if (!localChanged && remoteChanged) {
+      return "remote";
+    }
+    // Both diverged (content already known to differ) -> genuine conflict.
+    return "conflict";
+  }
+
+  // Revision-only base (no fingerprint to prove the local side): we can still
+  // safely auto-push a local edit iff the remote is provably unchanged, because
+  // the differing content must then be the local one-sided edit.
+  if (remoteChanged === false) {
+    return "local";
+  }
+
+  // Not enough signal to decide safely -> fall back to conservative recency.
+  return null;
 }
 
 /**
@@ -87,10 +182,17 @@ function compareItemRecency(local: ConnectItem, remote: ConnectItem): "local" | 
 /**
  * Classify every item present on both sides whose content differs into an
  * auto-appliable side (one-sided edit) or a genuine conflict.
+ *
+ * When a merge base is available for an item (via `bases`), a three-way merge
+ * decides the outcome: an edit on exactly one side auto-applies, both sides
+ * diverging is a conflict. Without a base, or when the base cannot decide
+ * safely, resolution falls back to the conservative recency comparison so no
+ * edit is ever silently overwritten.
  */
 export function resolveSyncConflicts(
   localItems: ConnectItem[],
   remoteItems: ConnectItem[],
+  bases?: SyncBaseLookup,
 ): SyncResolution {
   const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
   const resolution: SyncResolution = { conflicts: [], pushLocal: [], pullRemote: [] };
@@ -103,7 +205,9 @@ export function resolveSyncConflicts(
     if (itemFingerprint(local) === itemFingerprint(remote)) {
       continue;
     }
-    switch (compareItemRecency(local, remote)) {
+    const base = bases?.get(local.id);
+    const decided = base ? resolveWithBase(local, remote, base) : null;
+    switch (decided ?? compareItemRecency(local, remote)) {
       case "local":
         resolution.pushLocal.push(local);
         break;
@@ -123,8 +227,12 @@ export function resolveSyncConflicts(
  * is auto-resolved by {@link resolveSyncConflicts} and is deliberately not
  * reported here.
  */
-export function detectSyncConflicts(localItems: ConnectItem[], remoteItems: ConnectItem[]): SyncConflict[] {
-  return resolveSyncConflicts(localItems, remoteItems).conflicts;
+export function detectSyncConflicts(
+  localItems: ConnectItem[],
+  remoteItems: ConnectItem[],
+  bases?: SyncBaseLookup,
+): SyncConflict[] {
+  return resolveSyncConflicts(localItems, remoteItems, bases).conflicts;
 }
 
 /**
@@ -133,10 +241,14 @@ export function detectSyncConflicts(localItems: ConnectItem[], remoteItems: Conn
  * pure (no network/client) so it is fully unit-testable and so the orchestrator
  * ({@link runCloudSync}) is a thin mapping from plan entries to API calls.
  */
-export function planCloudSync(localItems: ConnectItem[], remoteItems: ConnectItem[]): CloudSyncPlan {
+export function planCloudSync(
+  localItems: ConnectItem[],
+  remoteItems: ConnectItem[],
+  bases?: SyncBaseLookup,
+): CloudSyncPlan {
   const localById = new Map(localItems.map((item) => [item.id, item]));
   const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
-  const resolution = resolveSyncConflicts(localItems, remoteItems);
+  const resolution = resolveSyncConflicts(localItems, remoteItems, bases);
 
   const create = localItems.filter((local) => !remoteById.has(local.id));
   const remoteOnly = remoteItems.filter((remote) => !localById.has(remote.id));

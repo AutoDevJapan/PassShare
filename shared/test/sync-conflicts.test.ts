@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ConnectItem } from "../types/item.js";
-import { detectSyncConflicts, planCloudSync, resolveSyncConflicts } from "../lib/sync-conflicts.ts";
+import {
+  captureSyncBase,
+  detectSyncConflicts,
+  itemFingerprint,
+  planCloudSync,
+  resolveSyncConflicts,
+  type SyncBase,
+} from "../lib/sync-conflicts.ts";
 
 const ID_A = "abcdefghijklmnopqrstuvwxyz";
 const ID_B = "bcdefghijklmnopqrstuvwxyzab";
@@ -156,5 +163,100 @@ describe("planCloudSync", () => {
     assert.equal(plan.create.length, 0);
     assert.equal(plan.overwriteRemote.length, 0);
     assert.equal(plan.pull.length, 0);
+  });
+});
+
+describe("merge-base tracking", () => {
+  const basesFor = (id: string, base: SyncBase) => new Map<string, SyncBase>([[id, base]]);
+
+  it("captures a merge base with both revision and fingerprint", () => {
+    const item = baseItem({ revision: 4 });
+    const base = captureSyncBase(item);
+    assert.equal(base.revision, 4);
+    assert.equal(base.fingerprint, itemFingerprint(item));
+  });
+
+  it("captures a null revision when the item has none", () => {
+    const base = captureSyncBase(baseItem());
+    assert.equal(base.revision, null);
+  });
+
+  it("auto-pushes a local one-sided edit (local changed, remote is the base)", () => {
+    // Same equal-revision + differing-content shape that is a conflict WITHOUT a
+    // base, now resolved as a local push because the base proves remote == base.
+    const remote = baseItem({ title: "Example", revision: 7 });
+    const base = captureSyncBase(remote);
+    const local = baseItem({ title: "Local edit", revision: 7 });
+    const resolution = resolveSyncConflicts([local], [remote], basesFor(local.id, base));
+    assert.deepEqual(resolution.pushLocal, [local]);
+    assert.equal(resolution.pullRemote.length, 0);
+    assert.equal(resolution.conflicts.length, 0);
+  });
+
+  it("auto-pulls a remote one-sided edit (remote changed, local is the base)", () => {
+    const local = baseItem({ title: "Example", revision: 7 });
+    const base = captureSyncBase(local);
+    const remote = baseItem({ title: "Remote edit", revision: 8 });
+    const resolution = resolveSyncConflicts([local], [remote], basesFor(local.id, base));
+    assert.deepEqual(resolution.pullRemote, [remote]);
+    assert.equal(resolution.pushLocal.length, 0);
+    assert.equal(resolution.conflicts.length, 0);
+  });
+
+  it("flags a conflict when both sides diverged from the base", () => {
+    const original = baseItem({ title: "Original", revision: 7 });
+    const base = captureSyncBase(original);
+    const local = baseItem({ title: "Local edit", revision: 7 });
+    const remote = baseItem({ title: "Remote edit", revision: 8 });
+    const resolution = resolveSyncConflicts([local], [remote], basesFor(local.id, base));
+    assert.equal(resolution.conflicts.length, 1);
+    assert.equal(resolution.pushLocal.length, 0);
+    assert.equal(resolution.pullRemote.length, 0);
+  });
+
+  it("auto-pushes with a revision-only base when the remote revision is unchanged", () => {
+    // Desktop production path: the base carries only the (non-sensitive) server
+    // revision; the local item has no revision at all.
+    const local = baseItem({ title: "Local edit" });
+    const remote = baseItem({ title: "Example", revision: 5 });
+    const resolution = resolveSyncConflicts([local], [remote], basesFor(local.id, { revision: 5 }));
+    assert.deepEqual(resolution.pushLocal, [local]);
+    assert.equal(resolution.conflicts.length, 0);
+  });
+
+  it("falls back to a conflict with a revision-only base when the remote advanced", () => {
+    // Remote moved past the base and there is no fingerprint to prove the local
+    // side is unchanged -> stay conservative, never silently overwrite.
+    const local = baseItem({ title: "Local edit" });
+    const remote = baseItem({ title: "Remote edit", revision: 6 });
+    const resolution = resolveSyncConflicts([local], [remote], basesFor(local.id, { revision: 5 }));
+    assert.equal(resolution.conflicts.length, 1);
+    assert.equal(resolution.pushLocal.length, 0);
+    assert.equal(resolution.pullRemote.length, 0);
+  });
+
+  it("keeps the conservative conflict when no base is recorded for the item", () => {
+    const local = baseItem({ title: "Local edit", revision: 7 });
+    const remote = baseItem({ title: "Remote edit", revision: 7 });
+    // Empty base map -> identical to the no-base behavior above.
+    const resolution = resolveSyncConflicts([local], [remote], new Map());
+    assert.equal(resolution.conflicts.length, 1);
+    assert.equal(resolution.pushLocal.length, 0);
+  });
+
+  it("plans a local one-sided edit as overwriteRemote when a base is known", () => {
+    const remote = baseItem({ title: "Example", revision: 7 });
+    const local = baseItem({ title: "Local edit", revision: 7 });
+    const plan = planCloudSync([local], [remote], basesFor(local.id, captureSyncBase(remote)));
+    assert.deepEqual(plan.overwriteRemote, [local]);
+    assert.equal(plan.conflicts.length, 0);
+    assert.equal(plan.pull.length, 0);
+  });
+
+  it("reports no conflicts via detectSyncConflicts for a based local edit", () => {
+    const remote = baseItem({ title: "Example", revision: 7 });
+    const local = baseItem({ title: "Local edit", revision: 7 });
+    const conflicts = detectSyncConflicts([local], [remote], basesFor(local.id, captureSyncBase(remote)));
+    assert.equal(conflicts.length, 0);
   });
 });
