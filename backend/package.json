@@ -15,7 +15,7 @@
     "argon2": "^0.44.0",
     "express": "^5.1.0",
     "fast-json-patch": "^3.1.1",
-    "pg": "^8.16.0",
+    "pg": "^8.22.0",
     "unzipper": "^0.12.3"
   },
   "devDependencies": {
