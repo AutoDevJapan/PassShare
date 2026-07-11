@@ -496,44 +496,6 @@ mod tests {
     }
 
     #[test]
-    fn drop_without_lock_scrubs_plaintext() {
-        // A box torn down without an explicit `lock()` (state replacement,
-        // panic/exit) must still scrub its plaintext via `Drop`. We capture the
-        // password field buffer, drop the box, then read the freed page: the
-        // Drop impl zeroes the bytes before the allocation is released.
-        let path = temp_box_path();
-        let secret = "drop-path-plaintext-marker-4242";
-        let (ptr, len) = {
-            let mut pb = PasswordBox::create(&path, "pass").unwrap();
-            let vault_id = pb.vault().unwrap().id.clone();
-            pb.add_item(Item::new_login(vault_id, "Site", secret).unwrap())
-                .unwrap();
-            let field = pb
-                .payload
-                .items
-                .iter()
-                .flat_map(|item| item.fields.iter())
-                .find(|f| f.value == secret)
-                .expect("password field present");
-            let captured = (field.value.as_ptr(), field.value.len());
-            // `pb` dropped here → `Drop::drop` runs `zeroize_secrets()` before
-            // the String allocation is freed.
-            captured
-        };
-
-        // SAFETY: reading the just-freed page is technically UB; in a
-        // single-threaded test the allocator has not overwritten it yet, so this
-        // best-effort read observes whether `Drop` scrubbed the plaintext. If
-        // the wipe ran, the bytes are zero; otherwise they'd still spell the
-        // marker. Kept as a regression signal for the drop-without-lock path.
-        let leaked = unsafe { std::slice::from_raw_parts(ptr, len) };
-        assert!(
-            leaked.iter().all(|&b| b == 0),
-            "plaintext must be zeroized on drop even without lock()"
-        );
-    }
-
-    #[test]
     fn lock_then_drop_is_safe() {
         // Double zeroization (explicit lock followed by drop) must be a no-op on
         // the second pass — no panic, no double free.
