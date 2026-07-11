@@ -276,7 +276,7 @@ railway login
 | Secret | 説明 |
 |--------|------|
 | `RAILWAY_API_TOKEN` | Railway アカウント / ワークスペーストークン（GraphQL preflight 等） |
-| `RAILWAY_PROJECT_TOKEN` | （推奨）Preview 環境スコープの **Project Token** — `railway up` 用。未設定時は `RAILWAY_API_TOKEN` + `railway link` にフォールバック |
+| `RAILWAY_PROJECT_TOKEN` | （推奨）Preview 環境スコープの **Project Token** — `railway up` 用。未設定時は `RAILWAY_API_TOKEN`（account/team token）+ 明示的な `--project/--service/--environment` フラグにフォールバック（`RAILWAY_TOKEN` は設定しない） |
 | `RAILWAY_PROJECT_ID` | PassShare Railway プロジェクト ID |
 | `RAILWAY_SERVICE_ID` | backend サービス ID |
 | `RAILWAY_PREVIEW_ENV_ID` | preview 環境 ID |
@@ -310,13 +310,15 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 - **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
 - デプロイ CI は `scripts/railway-deploy-with-replica.sh` → `scripts/railway-deploy-ci.sh`（`railway-deploy-preflight.mjs` + DB replica + `railway up --detach` + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
 - **Preview deploy**（`deploy-preview.yml`）は `@railway/cli@3.20.2` を使用（account token + `--project` フラグ）。v4 は Project Token 必須のため preview のみ v3 を pin。
-- `RAILWAY_TOKEN` は `RAILWAY_PROJECT_TOKEN`（推奨）または `RAILWAY_API_TOKEN` から export する（#208）。
+- Railway CLI のトークン種別は使い分ける（根拠: `scripts/railway-deploy-ci.sh` の CLI auth resolution ブロック `railway-deploy-ci.sh:34-48`）:
+  - **Project Token**（`RAILWAY_PROJECT_TOKEN`、推奨）または直接渡した本物の Project Token のみを `RAILWAY_TOKEN` に設定する。`railway up` はこれを直接使う。
+  - **Account / Team Token**（`RAILWAY_API_TOKEN`）を使う経路では `RAILWAY_TOKEN` を**設定してはならない**。account/team token を `RAILWAY_TOKEN` に入れると CLI が Project Token と誤認して `Unauthorized` になる（#365 で修正済みの development deploy 恒常失敗の根本原因）。`railway-deploy-ci.sh` はこの経路で `RAILWAY_TOKEN` を `unset` し、`RAILWAY_API_TOKEN` + 明示的な `--project/--service/--environment` フラグで認証する（#208 / #365 / #366）。
 
 ### デプロイ失敗 vs DB 障害の切り分け
 
 | 症状 | 原因 | 確認方法 |
 |------|------|----------|
-| CI で `Failed to upload code with status code 404` | `RAILWAY_API_TOKEN` のみ設定で CLI が未認証（`RAILWAY_TOKEN` 未 export） | `railway-deploy-ci.sh` が `RAILWAY_TOKEN` を export。`railway-deploy-preflight.mjs` で project/service/environment を事前検証 |
+| CI で `railway up` → `Unauthorized` / `Failed to upload code with status code 404` | account/team token（`RAILWAY_API_TOKEN`）を `RAILWAY_TOKEN` に入れており、CLI が Project Token と誤認（#365 の恒常デプロイ失敗の根本原因） | account/team token を `RAILWAY_TOKEN` に**入れない**こと。`railway-deploy-ci.sh` は account-token 経路で `RAILWAY_TOKEN` を `unset` し、`RAILWAY_API_TOKEN` + 明示的な `--project/--service/--environment` フラグで認証する。`railway-deploy-preflight.mjs` で project/service/environment を事前検証 |
 | CI で `Project Token not found` | Account token を `railway up` に使用 | Preview 用 **Project Token** を `RAILWAY_PROJECT_TOKEN` secret に設定（Railway → Project → Settings → Tokens → preview 環境）。未設定時は `deploy-preview.yml` が skip（#208） |
 | CI で `load metadata for docker.io/...` 後に `Deploy failed` | Railway ビルド（Docker Hub メタデータ取得）の一時失敗 | Railway ビルドログ。`/health/db` はデプロイ前の旧リビジョンのまま 200 のことがある |
 | `/health` 200 だが `/health/db` 503 `database: unreachable` | `DATABASE_URL` 未設定・Variable Reference 切れ・Postgres 停止 | Railway Variables + Postgres サービス状態 |
