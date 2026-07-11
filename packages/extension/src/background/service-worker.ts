@@ -17,6 +17,20 @@ import {
   loadRefreshToken,
   saveConnectToken,
 } from "../lib/storage";
+import { createCachedLookup } from "../lib/cached-lookup";
+
+/**
+ * Credential discovery decrypts every login item across every vault, so it is
+ * expensive (O(vaults × items)). Cache the matches per hostname for a short
+ * window and de-duplicate concurrent lookups so repeated `focusin` events on a
+ * password field do not each trigger a full re-decrypt.
+ */
+const CREDENTIAL_CACHE_TTL_MS = 30_000;
+const listCredentialMatches = createCachedLookup<CredentialMatch[]>({
+  fetcher: fetchCredentialMatches,
+  ttlMs: CREDENTIAL_CACHE_TTL_MS,
+  fallback: [],
+});
 
 async function getConnectClient(): Promise<ConnectClient | null> {
   const refreshToken = await loadRefreshToken();
@@ -27,6 +41,7 @@ async function getConnectClient(): Promise<ConnectClient | null> {
   const user = await fetchCurrentUser(refreshToken);
   if (!user) {
     await clearAllAuthStorage();
+    listCredentialMatches.invalidate();
     return null;
   }
 
@@ -40,10 +55,12 @@ async function getConnectClient(): Promise<ConnectClient | null> {
   return new ConnectClient({ host: getApiBaseUrl(), token: accessToken });
 }
 
-async function listCredentialMatches(hostname: string): Promise<CredentialMatch[]> {
+async function fetchCredentialMatches(
+  hostname: string,
+): Promise<CredentialMatch[] | null> {
   const client = await getConnectClient();
   if (!client) {
-    return [];
+    return null;
   }
 
   const vaults = await client.listVaults();
@@ -107,6 +124,9 @@ async function saveCredential(payload: {
   });
 
   await client.createItem(vault.id, body);
+  // A newly saved login can match a page the user just visited, so drop the
+  // cached matches to force a fresh lookup on the next focus.
+  listCredentialMatches.invalidate();
 }
 
 chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendResponse) => {
