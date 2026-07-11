@@ -4,10 +4,10 @@ const VISUAL_LOCALES = ["ja", "en", "ru"] as const;
 
 const PAGES = [
   { path: "/", name: "landing", heading: /PassShare|パスワード/ },
-  { path: "/docs", name: "docs", heading: /Documentation|ドキュメント/i },
+  { path: "/docs", name: "docs", heading: /Documentation|ドキュメント|Документация/i },
   { path: "/app/login", name: "login", heading: /Sign in|ログイン|Вход/i },
   { path: "/faq", name: "faq", heading: /FAQ|よくある質問/i },
-  { path: "/terms", name: "terms", heading: /Terms|利用規約/i },
+  { path: "/terms", name: "terms", heading: /Terms|利用規約|Условия использования/i },
 ] as const;
 
 for (const locale of VISUAL_LOCALES) {
