@@ -1,11 +1,13 @@
 import type { Locale } from "../../../../shared/i18n/index";
 import { docsEn } from "./en";
 import { docsJa } from "./ja";
+import { docsRu } from "./ru";
 import type { DocPageContent, DocsHubContent, LocaleDocs } from "./types";
 
 const catalogs: Partial<Record<Locale, LocaleDocs>> = {
   ja: docsJa,
   en: docsEn,
+  ru: docsRu,
 };
 
 export function getDocsContent(locale: Locale): LocaleDocs {
