@@ -213,6 +213,7 @@ PassShare (project)
 | `APP_ENV` | `prd` / `stg` / `preview` / `dev` |
 | `DATABASE_URL` | 対応する Postgres の Variable Reference |
 | `WEB_ORIGIN` | カスタムフロントドメイン（任意）。未設定時はプロジェクト prefix に束縛した Vercel オリジン（`pass-share-frontend.vercel.app` と `pass-share-frontend-git-*` プレビュー）のみ CORS 許可。任意の `*.vercel.app` は信頼しない（[#46](https://github.com/AutoDevJapan/PassShare/issues/46), [#315](https://github.com/AutoDevJapan/PassShare/issues/315)） |
+| `VERCEL_TEAM_SLUG` | Vercel スコープ（チーム/ユーザ）スラッグ（例 `masashi-matsumotos-projects-c5830f3d`）。**preview backend にのみ設定**。ブランチ名が長く Vercel がプレビュー URL のプロジェクト prefix を切り詰めた場合（例 `pass-share-fron-git-<hash>-<slug>.vercel.app`）でも当該 origin を CORS 許可する。スラッグ suffix は自スコープ専有のため任意の `*.vercel.app` は信頼せず #315 の境界を維持（[#358](https://github.com/AutoDevJapan/PassShare/issues/358)）。prd では未設定 |
 | `OP_CONNECT_TOKEN` | Connect API Bearer トークン（`/v1/*` 必須） |
 | `TRUST_PROXY_HOPS` | 信頼するフロントプロキシのホップ数（`req.ip` 算出用）。省略時は `local`=0 / それ以外=1（Railway エッジ 1 段）。生の `X-Forwarded-For` は信頼せず per-IP スロットルのバイパスを防ぐ（[#316](https://github.com/AutoDevJapan/PassShare/issues/316)）。プロキシ段数変更時のみ設定 |
 | `PORT` | Railway が自動設定（省略可） |

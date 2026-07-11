@@ -6,13 +6,14 @@ import { isAllowedWebOrigin } from "./web-origin.js";
  */
 export function createWebCorsMiddleware(appEnv = "local") {
   const configuredOrigin = process.env.WEB_ORIGIN?.trim();
+  const vercelTeamSlug = process.env.VERCEL_TEAM_SLUG?.trim();
 
   /** @type {import('express').RequestHandler} */
   return (req, res, next) => {
     const requestOrigin = req.headers.origin;
     if (
       typeof requestOrigin === "string" &&
-      isAllowedWebOrigin(requestOrigin, appEnv, configuredOrigin)
+      isAllowedWebOrigin(requestOrigin, appEnv, configuredOrigin, vercelTeamSlug)
     ) {
       res.setHeader("Access-Control-Allow-Origin", requestOrigin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
