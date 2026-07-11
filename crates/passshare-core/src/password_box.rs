@@ -6,7 +6,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::{
     decrypt, derive_master_key, derive_master_key_with_params, encrypt, generate_recovery_secret,
-    generate_salt, FILE_VERSION, KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST,
+    generate_salt, MasterKey, FILE_VERSION, KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST,
 };
 use crate::domain::connect_id::ConnectId;
 use crate::domain::item::Item;
@@ -26,11 +26,41 @@ pub enum PasswordBoxState {
     Unlocked,
 }
 
+/// A master key retained in memory while the box is unlocked, tagged with the
+/// exact KDF inputs it was derived from.
+///
+/// Deriving the master key runs a deliberately expensive Argon2id pass
+/// (64 MiB / t=3 / p=4), so paying it on every mutation `save` is pure UX cost:
+/// the box is already unlocked and the plaintext payload is already resident in
+/// memory. Caching the derived key removes that per-save cost.
+///
+/// `save` may reuse a cached key **only** when its tagged inputs match the
+/// parameters it is about to write to the file header (current defaults + the
+/// box's salt). If they differ — e.g. the box was opened from a file written
+/// with older KDF cost parameters (crypto-agility) — the key is re-derived so
+/// the on-disk ciphertext stays consistent with the header, and the cache is
+/// refreshed. The cache never influences the on-disk format or `FILE_VERSION`.
+///
+/// The key material is a [`MasterKey`], which is `ZeroizeOnDrop`; dropping the
+/// cache (on `lock()`, on re-derive replacement, or when the `PasswordBox` is
+/// torn down) wipes it. The salt/params are non-secret (they live in the file
+/// header) so only the key needs scrubbing.
+struct CachedMasterKey {
+    key: MasterKey,
+    salt: [u8; 16],
+    memory_kib: u32,
+    time_cost: u32,
+    parallelism: u32,
+}
+
 pub struct PasswordBox {
     path: PathBuf,
     state: PasswordBoxState,
     payload: PasswordBoxPayload,
     salt: Option<[u8; 16]>,
+    /// Master key retained while unlocked so repeated `save`s skip Argon2id.
+    /// `None` when locked or not yet derived. See [`CachedMasterKey`].
+    cached_key: Option<CachedMasterKey>,
 }
 
 impl PasswordBox {
@@ -45,6 +75,8 @@ impl PasswordBox {
             state: PasswordBoxState::Unlocked,
             payload,
             salt: Some(salt),
+            // Populated by the `save` below (first derivation), then reused.
+            cached_key: None,
         };
         pb.save(master_password)?;
         Ok(pb)
@@ -68,11 +100,23 @@ impl PasswordBox {
         let plaintext = Zeroizing::new(decrypt(&file.ciphertext, &key, &nonce)?);
         let vault_name = default_vault_name(&path);
         let payload = deserialize_payload(&plaintext, &vault_name)?;
+        // Retain the just-derived key for reuse by `save`, tagged with the KDF
+        // inputs it was derived from (the header's, honoring crypto-agility).
+        // If those differ from the current defaults, the first `save` re-derives
+        // rather than reusing this key (see `master_key_for_save`).
+        let cached_key = Some(CachedMasterKey {
+            key,
+            salt,
+            memory_kib: file.kdf.memory_kib,
+            time_cost: file.kdf.time_cost,
+            parallelism: file.kdf.parallelism,
+        });
         Ok(Self {
             path,
             state: PasswordBoxState::Unlocked,
             payload,
             salt: Some(salt),
+            cached_key,
         })
     }
 
@@ -219,14 +263,17 @@ impl PasswordBox {
     pub fn save(&mut self, master_password: &str) -> Result<(), PassShareError> {
         self.ensure_unlocked()?;
         let salt = self.salt.ok_or(PassShareError::CorruptFile)?;
-        let key = derive_master_key(master_password, &salt)?;
         self.payload.sync_vault_item_count();
         // Serializing our own in-memory payload: a failure is an internal bug.
         let plaintext = Zeroizing::new(
             serde_json::to_vec(&self.payload)
                 .map_err(|e| PassShareError::Internal(e.to_string()))?,
         );
-        let (ciphertext, nonce) = encrypt(&plaintext, &key)?;
+        // Reuse the unlock-time master key when it matches what we are about to
+        // write to the header; otherwise re-derive (first save after `create`,
+        // or a box opened with older KDF cost parameters being re-keyed).
+        let key = self.master_key_for_save(master_password, &salt)?;
+        let (ciphertext, nonce) = encrypt(&plaintext, key)?;
         let file = PasswordBoxFile {
             version: FILE_VERSION,
             kdf: KdfParams {
@@ -246,6 +293,52 @@ impl PasswordBox {
         Ok(())
     }
 
+    /// Return the master key `save` should encrypt with, reusing the cached
+    /// unlock-time key when it is valid and re-deriving (and re-caching) when it
+    /// is not.
+    ///
+    /// `save` always writes the **current default** KDF parameters to the header
+    /// and must encrypt with a key derived from exactly those parameters (plus
+    /// the box's salt), or the file would be undecryptable on the next `open`.
+    /// The cached key is therefore reusable only when its tagged inputs equal
+    /// those the header will advertise. A mismatch means the box was opened from
+    /// a file written with different (older) cost parameters; re-deriving here is
+    /// the crypto-agility re-key, and the refreshed cache lets subsequent saves
+    /// take the fast path again.
+    fn master_key_for_save(
+        &mut self,
+        master_password: &str,
+        salt: &[u8; 16],
+    ) -> Result<&MasterKey, PassShareError> {
+        let reusable = matches!(
+            &self.cached_key,
+            Some(cached)
+                if cached.salt == *salt
+                    && cached.memory_kib == KDF_MEMORY_KIB
+                    && cached.time_cost == KDF_TIME_COST
+                    && cached.parallelism == KDF_PARALLELISM
+        );
+        if !reusable {
+            // Replacing the `Option` drops any previous `CachedMasterKey`, whose
+            // `MasterKey` is `ZeroizeOnDrop` — the stale key is wiped, not leaked.
+            let key = derive_master_key(master_password, salt)?;
+            self.cached_key = Some(CachedMasterKey {
+                key,
+                salt: *salt,
+                memory_kib: KDF_MEMORY_KIB,
+                time_cost: KDF_TIME_COST,
+                parallelism: KDF_PARALLELISM,
+            });
+        }
+        // `reusable` guarantees `Some` on the fast path, and the branch above
+        // guarantees `Some` otherwise.
+        Ok(&self
+            .cached_key
+            .as_ref()
+            .expect("cached key is populated above")
+            .key)
+    }
+
     pub fn lock(&mut self) {
         self.state = PasswordBoxState::Locked;
         // Wipe secret-bearing material before dropping the payload so cleartext
@@ -255,6 +348,10 @@ impl PasswordBox {
             self.payload = PasswordBoxPayload::new(vault, None);
         }
         self.salt = None;
+        // Drop the cached master key so a locked box holds no derived key.
+        // Assigning `None` runs `CachedMasterKey`'s drop, zeroizing the
+        // `MasterKey`; a subsequent unlock (`open`) re-derives from scratch.
+        self.cached_key = None;
     }
 
     /// Scrub every plaintext secret still held in the in-memory payload.
@@ -610,5 +707,138 @@ mod tests {
                 Some(PassShareError::CorruptFile)
             );
         }
+    }
+
+    #[test]
+    fn open_caches_key_matching_fresh_derivation() {
+        // After unlocking, the retained key must equal a fresh derivation from
+        // the same password + salt + (default) header params, so reusing it on
+        // save is byte-for-byte equivalent to re-deriving.
+        let path = temp_box_path();
+        PasswordBox::create(&path, "correct-password").unwrap();
+
+        let reopened = PasswordBox::open(&path, "correct-password").unwrap();
+        let salt = reopened.salt.expect("unlocked box retains its salt");
+        let fresh = derive_master_key("correct-password", &salt).unwrap();
+        let cached = reopened.cached_key.as_ref().expect("key cached on open");
+        assert_eq!(
+            cached.key.as_bytes(),
+            fresh.as_bytes(),
+            "cached key must equal a fresh derivation"
+        );
+        assert_eq!(
+            (cached.memory_kib, cached.time_cost, cached.parallelism),
+            (KDF_MEMORY_KIB, KDF_TIME_COST, KDF_PARALLELISM),
+            "cache tags the KDF params it was derived with"
+        );
+    }
+
+    #[test]
+    fn save_reuses_cached_key_verbatim() {
+        // Prove the cache is actually consulted: poison it with a key derived
+        // from the WRONG password but tagged with the params `save` will write.
+        // The reuse condition holds, so `save` encrypts with the cached key and
+        // ignores its `master_password` argument — the file then opens with the
+        // poisoned password, not the "correct" one.
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "correct-password").unwrap();
+        let salt = pb.salt.unwrap();
+
+        pb.cached_key = Some(CachedMasterKey {
+            key: derive_master_key("poisoned-password", &salt).unwrap(),
+            salt,
+            memory_kib: KDF_MEMORY_KIB,
+            time_cost: KDF_TIME_COST,
+            parallelism: KDF_PARALLELISM,
+        });
+        let vault_id = pb.vault().unwrap().id.clone();
+        pb.add_item(Item::new_login(vault_id, "Site", "pwd").unwrap())
+            .unwrap();
+        pb.save("correct-password").unwrap();
+        drop(pb);
+
+        assert_eq!(
+            PasswordBox::open(&path, "correct-password").err(),
+            Some(PassShareError::InvalidMasterPassword),
+            "save reused the cached (poisoned) key, not the argument"
+        );
+        let opened = PasswordBox::open(&path, "poisoned-password").unwrap();
+        assert_eq!(opened.list_connect_items().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn save_rederives_when_cached_params_mismatch() {
+        // A box opened from a file written with different (older) KDF cost
+        // parameters carries a cache tagged with those params. Because `save`
+        // always writes the current defaults, the cache must NOT be reused: the
+        // key is re-derived from the argument so the file stays decryptable, and
+        // the cache is refreshed to the defaults for subsequent fast-path saves.
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "correct-password").unwrap();
+        let salt = pb.salt.unwrap();
+
+        // Poison the key AND mark it with non-default params so reuse is refused.
+        pb.cached_key = Some(CachedMasterKey {
+            key: derive_master_key("poisoned-password", &salt).unwrap(),
+            salt,
+            memory_kib: KDF_MEMORY_KIB + 1024,
+            time_cost: KDF_TIME_COST,
+            parallelism: KDF_PARALLELISM,
+        });
+        let vault_id = pb.vault().unwrap().id.clone();
+        pb.add_item(Item::new_login(vault_id, "Site", "pwd").unwrap())
+            .unwrap();
+        pb.save("correct-password").unwrap();
+
+        let refreshed = pb.cached_key.as_ref().expect("cache refreshed on save");
+        assert_eq!(
+            (
+                refreshed.memory_kib,
+                refreshed.time_cost,
+                refreshed.parallelism
+            ),
+            (KDF_MEMORY_KIB, KDF_TIME_COST, KDF_PARALLELISM),
+            "re-derive refreshes the cache to the params written to the header"
+        );
+
+        // The file was encrypted with the re-derived (correct) key, not poison.
+        let reopened = PasswordBox::open(&path, "correct-password").unwrap();
+        assert_eq!(reopened.list_connect_items().unwrap().len(), 1);
+        assert!(PasswordBox::open(&path, "poisoned-password").is_err());
+    }
+
+    #[test]
+    fn repeated_saves_stay_decryptable() {
+        // The fast path (cache reuse) across many saves must never desync the
+        // ciphertext from the header: every re-open must still decrypt.
+        let path = temp_box_path();
+        let master = "MySecurePass123!";
+        let mut pb = PasswordBox::create(&path, master).unwrap();
+        let vault_id = pb.vault().unwrap().id.clone();
+
+        for i in 0..5 {
+            pb.add_item(Item::new_login(vault_id.clone(), format!("Site {i}"), "pwd").unwrap())
+                .unwrap();
+            pb.save(master).unwrap();
+            let reopened = PasswordBox::open(&path, master).unwrap();
+            assert_eq!(reopened.list_connect_items().unwrap().len(), i + 1);
+        }
+    }
+
+    #[test]
+    fn lock_clears_cached_master_key() {
+        // Locking must drop the retained key (zeroized via `ZeroizeOnDrop`) so a
+        // locked box holds no derived key material.
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
+        assert!(
+            pb.cached_key.is_some(),
+            "creating a box derives and caches the key"
+        );
+        pb.lock();
+        assert!(
+            pb.cached_key.is_none(),
+            "lock() must clear the cached master key"
+        );
     }
 }
