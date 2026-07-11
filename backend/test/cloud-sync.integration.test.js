@@ -282,5 +282,70 @@ describe(
       assert.equal(resolvedLocal.title, "Remote Version 2");
       assert.equal(resolvedLocal.password, "remote-pass-2");
     });
+
+    it("auto-pushes a local one-sided edit after a prior sync (merge-base tracking)", async () => {
+      // Use a dedicated user (and therefore a fresh, empty vault) so item counts
+      // are not polluted by the other subtests that share the top-level `user`.
+      const editUser = await signupUser(baseUrl, `merge-base-${generateConnectId()}@example.com`);
+      const itemId = generateConnectId();
+      const config = {
+        apiBaseUrl: baseUrl,
+        email: editUser.email,
+        password: editUser.password,
+        vaultId: editUser.vaultId,
+      };
+
+      // Seed the remote and perform an initial sync so the merge base is recorded.
+      const createRes = await fetch(`${baseUrl}/v1/vaults/${editUser.vaultId}/items`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${editUser.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          connectItemToCreateBody(
+            localLoginItem({ id: itemId, title: "Base Login", password: "base-secret" }),
+            { id: itemId },
+          ),
+        ),
+      });
+      assert.equal(createRes.status, 201);
+
+      // A merge-base store the caller persists across syncs (desktop keeps this in
+      // localStorage as revision-only integers).
+      const bases = new Map();
+      const firstSync = await runCloudSync(config, editUser.sessionCookie, [], async () => {}, bases);
+      assert.equal(firstSync.pulled, 1);
+      assert.equal(firstSync.pushed, 0);
+      assert.ok(bases.has(itemId), "the initial sync records a merge base for the item");
+
+      // Local-only edit: same id, changed content, no revision (mirrors the local
+      // vault, which stores form values without the server revision).
+      const editedLocal = localLoginItem({
+        id: itemId,
+        title: "Base Login",
+        password: "local-edited-secret",
+      });
+      assert.equal(editedLocal.revision, undefined);
+
+      const secondSync = await runCloudSync(
+        config,
+        editUser.sessionCookie,
+        [editedLocal],
+        async () => {},
+        bases,
+      );
+      assert.equal(secondSync.conflicts.length, 0, "a local one-sided edit is not a conflict");
+      assert.equal(secondSync.pushed, 1, "the local one-sided edit is auto-pushed");
+      assert.equal(secondSync.pulled, 0);
+
+      // The remote now reflects the local edit.
+      const remoteRes = await fetch(`${baseUrl}/v1/vaults/${editUser.vaultId}/items/${itemId}`, {
+        headers: { Authorization: `Bearer ${editUser.accessToken}` },
+      });
+      assert.equal(remoteRes.status, 200);
+      const remoteItem = connectItemFromApi(await remoteRes.json());
+      assert.equal(remoteItem.password, "local-edited-secret");
+    });
   },
 );

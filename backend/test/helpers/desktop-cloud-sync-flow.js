@@ -11,8 +11,10 @@
 
 /** @typedef {{ pushed: number, pulled: number, conflicts: SyncConflict[] }} SyncRunResult */
 
+/** @typedef {{ revision?: number | null, fingerprint?: string | null }} SyncBase */
+
 /** @param {ConnectItem} item */
-function itemFingerprint(item) {
+export function itemFingerprint(item) {
   return JSON.stringify({
     title: item.title,
     category: item.category,
@@ -23,6 +25,53 @@ function itemFingerprint(item) {
     tags: [...item.tags].sort(),
     favorite: item.favorite,
   });
+}
+
+/** @param {ConnectItem} item @returns {SyncBase} */
+export function captureSyncBase(item) {
+  return {
+    revision: typeof item.revision === "number" ? item.revision : null,
+    fingerprint: itemFingerprint(item),
+  };
+}
+
+/**
+ * Three-way resolution against a recorded merge base (content already differs).
+ * @param {ConnectItem} local
+ * @param {ConnectItem} remote
+ * @param {SyncBase} base
+ * @returns {"local" | "remote" | "conflict" | null}
+ */
+function resolveWithBase(local, remote, base) {
+  const baseRevision = typeof base.revision === "number" ? base.revision : null;
+  const baseFingerprint = typeof base.fingerprint === "string" ? base.fingerprint : null;
+
+  /** @type {boolean | null} */
+  const localChanged = baseFingerprint !== null ? itemFingerprint(local) !== baseFingerprint : null;
+
+  /** @type {boolean | null} */
+  let remoteChanged = null;
+  if (baseRevision !== null && typeof remote.revision === "number") {
+    remoteChanged = remote.revision !== baseRevision;
+  } else if (baseFingerprint !== null) {
+    remoteChanged = itemFingerprint(remote) !== baseFingerprint;
+  }
+
+  if (localChanged !== null && remoteChanged !== null) {
+    if (localChanged && !remoteChanged) {
+      return "local";
+    }
+    if (!localChanged && remoteChanged) {
+      return "remote";
+    }
+    return "conflict";
+  }
+
+  if (remoteChanged === false) {
+    return "local";
+  }
+
+  return null;
 }
 
 /**
@@ -60,9 +109,10 @@ function compareItemRecency(local, remote) {
 /**
  * @param {ConnectItem[]} localItems
  * @param {ConnectItem[]} remoteItems
+ * @param {ReadonlyMap<string, SyncBase>} [bases]
  * @returns {{ conflicts: SyncConflict[], pushLocal: ConnectItem[], pullRemote: ConnectItem[] }}
  */
-export function resolveSyncConflicts(localItems, remoteItems) {
+export function resolveSyncConflicts(localItems, remoteItems, bases) {
   const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
   const resolution = { conflicts: [], pushLocal: [], pullRemote: [] };
 
@@ -74,7 +124,9 @@ export function resolveSyncConflicts(localItems, remoteItems) {
     if (itemFingerprint(local) === itemFingerprint(remote)) {
       continue;
     }
-    switch (compareItemRecency(local, remote)) {
+    const base = bases?.get(local.id);
+    const decided = base ? resolveWithBase(local, remote, base) : null;
+    switch (decided ?? compareItemRecency(local, remote)) {
       case "local":
         resolution.pushLocal.push(local);
         break;
@@ -92,21 +144,23 @@ export function resolveSyncConflicts(localItems, remoteItems) {
 /**
  * @param {ConnectItem[]} localItems
  * @param {ConnectItem[]} remoteItems
+ * @param {ReadonlyMap<string, SyncBase>} [bases]
  * @returns {SyncConflict[]}
  */
-export function detectSyncConflicts(localItems, remoteItems) {
-  return resolveSyncConflicts(localItems, remoteItems).conflicts;
+export function detectSyncConflicts(localItems, remoteItems, bases) {
+  return resolveSyncConflicts(localItems, remoteItems, bases).conflicts;
 }
 
 /**
  * @param {ConnectItem[]} localItems
  * @param {ConnectItem[]} remoteItems
+ * @param {ReadonlyMap<string, SyncBase>} [bases]
  * @returns {{ create: ConnectItem[], overwriteRemote: ConnectItem[], pull: ConnectItem[], conflicts: SyncConflict[] }}
  */
-export function planCloudSync(localItems, remoteItems) {
+export function planCloudSync(localItems, remoteItems, bases) {
   const localById = new Map(localItems.map((item) => [item.id, item]));
   const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
-  const resolution = resolveSyncConflicts(localItems, remoteItems);
+  const resolution = resolveSyncConflicts(localItems, remoteItems, bases);
 
   const create = localItems.filter((local) => !remoteById.has(local.id));
   const remoteOnly = remoteItems.filter((remote) => !localById.has(remote.id));
@@ -246,12 +300,13 @@ async function fetchRemoteItems(apiBaseUrl, accessToken, vaultId) {
  * @param {CloudSyncConfig} config
  * @param {string} sessionCookie
  * @param {ConnectItem[]} localItems
+ * @param {ReadonlyMap<string, SyncBase>} [bases]
  * @returns {Promise<SyncConflict[]>}
  */
-export async function checkSyncConflicts(config, sessionCookie, localItems) {
+export async function checkSyncConflicts(config, sessionCookie, localItems, bases = new Map()) {
   const accessToken = await loginAndGetAccessToken(config, sessionCookie);
   const remoteItems = await fetchRemoteItems(config.apiBaseUrl, accessToken, config.vaultId);
-  return planCloudSync(localItems, remoteItems).conflicts;
+  return planCloudSync(localItems, remoteItems, bases).conflicts;
 }
 
 /** @typedef {(item: ConnectItem) => Promise<void>} SyncPullHandler */
@@ -261,12 +316,30 @@ export async function checkSyncConflicts(config, sessionCookie, localItems) {
  * @param {string} sessionCookie
  * @param {ConnectItem[]} localItems
  * @param {SyncPullHandler} onPull
+ * @param {Map<string, SyncBase>} [bases] Merge-base store, MUTATED in place so a
+ *   caller can persist per-item base revisions across successive syncs.
  * @returns {Promise<SyncRunResult>}
  */
-export async function runCloudSync(config, sessionCookie, localItems, onPull) {
+export async function runCloudSync(config, sessionCookie, localItems, onPull, bases = new Map()) {
   const accessToken = await loginAndGetAccessToken(config, sessionCookie);
   const remoteItems = await fetchRemoteItems(config.apiBaseUrl, accessToken, config.vaultId);
-  const plan = planCloudSync(localItems, remoteItems);
+  const plan = planCloudSync(localItems, remoteItems, bases);
+
+  /** @param {string} id @param {number | null | undefined} revision */
+  const recordBase = (id, revision) => {
+    if (typeof revision === "number" && Number.isFinite(revision)) {
+      bases.set(id, { revision });
+    }
+  };
+
+  // Items already identical on both sides: adopt the remote revision as base.
+  const localById = new Map(localItems.map((item) => [item.id, item]));
+  for (const remote of remoteItems) {
+    const local = localById.get(remote.id);
+    if (local && itemFingerprint(local) === itemFingerprint(remote)) {
+      recordBase(remote.id, remote.revision);
+    }
+  }
 
   let pushed = 0;
   // Local-only items: create them on the remote.
@@ -282,6 +355,8 @@ export async function runCloudSync(config, sessionCookie, localItems, onPull) {
     if (!createRes.ok) {
       throw new Error(`createItem failed (${createRes.status})`);
     }
+    const created = /** @type {{ version?: number }} */ (await createRes.json());
+    recordBase(local.id, created.version);
     pushed += 1;
   }
 
@@ -301,6 +376,8 @@ export async function runCloudSync(config, sessionCookie, localItems, onPull) {
     if (!replaceRes.ok) {
       throw new Error(`replaceItem failed (${replaceRes.status})`);
     }
+    const replaced = /** @type {{ version?: number }} */ (await replaceRes.json());
+    recordBase(local.id, replaced.version);
     pushed += 1;
   }
 
@@ -308,6 +385,7 @@ export async function runCloudSync(config, sessionCookie, localItems, onPull) {
   let pulled = 0;
   for (const remote of plan.pull) {
     await onPull(remote);
+    recordBase(remote.id, remote.revision);
     pulled += 1;
   }
 
