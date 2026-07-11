@@ -6,6 +6,17 @@ import {
 } from "./rate-limit-constants.js";
 import { authHttpError } from "./errors.js";
 
+// An unlocked email entry whose last activity is older than this is forgotten,
+// so the `byEmail` map cannot grow without bound from one-off failed attempts.
+// Aligned with the lockout window: after this much inactivity the accumulated
+// failure count would no longer matter for a lockout decision anyway.
+const EMAIL_IDLE_TTL_MS = LOGIN_LOCKOUT_MS;
+
+// How often (at most) a full sweep of the `byEmail` map runs. The sweep is
+// opportunistic — triggered by write operations — so no background timer is
+// required and the guard leaves no dangling handles in tests.
+const EMAIL_SWEEP_INTERVAL_MS = LOGIN_IP_WINDOW_MS;
+
 /**
  * @typedef {object} LoginGuard
  * @property {(email: string) => void} assertNotLocked
@@ -13,23 +24,42 @@ import { authHttpError } from "./errors.js";
  * @property {(email: string) => void} clearFailures
  * @property {(ip: string) => void} assertIpAllowed
  * @property {(ip: string) => void} recordIpRequest
+ * @property {() => { trackedEmails: number, trackedIps: number }} stats
  */
 
-/** @returns {LoginGuard} */
-export function createLoginGuard() {
-  /** @type {Map<string, { failures: number, lockedUntil: number | null }>} */
+/**
+ * In-memory login throttle / lockout guard.
+ *
+ * NOTE: State is process-local. In a multi-instance deployment the lockout and
+ * per-IP counters are not shared, and they reset on restart. A shared store
+ * (Redis / DB) with TTL eviction is tracked separately for that hardening; this
+ * implementation bounds memory growth via opportunistic idle eviction so a
+ * single instance cannot leak memory from unbounded distinct emails.
+ *
+ * @param {{ now?: () => number }} [options] Injectable clock (defaults to `Date.now`).
+ * @returns {LoginGuard}
+ */
+export function createLoginGuard(options = {}) {
+  const now = options.now ?? Date.now;
+
+  /** @type {Map<string, { failures: number, lockedUntil: number | null, lastSeenAt: number }>} */
   const byEmail = new Map();
   /** @type {Map<string, number[]>} */
   const byIp = new Map();
+  let lastEmailSweepAt = now();
 
   return {
     assertNotLocked(email) {
       const entry = byEmail.get(email);
-      if (!entry?.lockedUntil) {
+      if (!entry) {
         return;
       }
-      if (Date.now() < entry.lockedUntil) {
-        const retryAfterSec = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
+      entry.lastSeenAt = now();
+      if (!entry.lockedUntil) {
+        return;
+      }
+      if (now() < entry.lockedUntil) {
+        const retryAfterSec = Math.ceil((entry.lockedUntil - now()) / 1000);
         const error = authHttpError(
           429,
           "PS028",
@@ -42,12 +72,14 @@ export function createLoginGuard() {
     },
 
     recordFailure(email) {
-      const entry = byEmail.get(email) ?? { failures: 0, lockedUntil: null };
+      const entry = byEmail.get(email) ?? { failures: 0, lockedUntil: null, lastSeenAt: now() };
       entry.failures += 1;
+      entry.lastSeenAt = now();
       if (entry.failures >= MAX_LOGIN_FAILURES) {
-        entry.lockedUntil = Date.now() + LOGIN_LOCKOUT_MS;
+        entry.lockedUntil = now() + LOGIN_LOCKOUT_MS;
       }
       byEmail.set(email, entry);
+      maybeSweepByEmail();
     },
 
     clearFailures(email) {
@@ -59,7 +91,7 @@ export function createLoginGuard() {
       const timestamps = byIp.get(ip) ?? [];
       if (timestamps.length >= LOGIN_IP_MAX_REQUESTS) {
         const retryAfterSec = Math.ceil(
-          (timestamps[0] + LOGIN_IP_WINDOW_MS - Date.now()) / 1000,
+          (timestamps[0] + LOGIN_IP_WINDOW_MS - now()) / 1000,
         );
         const error = authHttpError(429, "PS029", "Too many requests. Try again later.");
         error.retryAfterSec = Math.max(retryAfterSec, 1);
@@ -70,19 +102,39 @@ export function createLoginGuard() {
     recordIpRequest(ip) {
       pruneIpWindow(ip);
       const timestamps = byIp.get(ip) ?? [];
-      timestamps.push(Date.now());
+      timestamps.push(now());
       byIp.set(ip, timestamps);
+    },
+
+    stats() {
+      return { trackedEmails: byEmail.size, trackedIps: byIp.size };
     },
   };
 
   function pruneIpWindow(ip) {
-    const now = Date.now();
-    const timestamps = (byIp.get(ip) ?? []).filter((ts) => now - ts < LOGIN_IP_WINDOW_MS);
+    const current = now();
+    const timestamps = (byIp.get(ip) ?? []).filter((ts) => current - ts < LOGIN_IP_WINDOW_MS);
     if (timestamps.length === 0) {
       byIp.delete(ip);
       return;
     }
     byIp.set(ip, timestamps);
+  }
+
+  function maybeSweepByEmail() {
+    const current = now();
+    if (current - lastEmailSweepAt < EMAIL_SWEEP_INTERVAL_MS) {
+      return;
+    }
+    lastEmailSweepAt = current;
+    for (const [email, entry] of byEmail) {
+      const lockExpired = entry.lockedUntil !== null && current >= entry.lockedUntil;
+      const idleExpired =
+        entry.lockedUntil === null && current - entry.lastSeenAt >= EMAIL_IDLE_TTL_MS;
+      if (lockExpired || idleExpired) {
+        byEmail.delete(email);
+      }
+    }
   }
 }
 

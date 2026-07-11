@@ -216,6 +216,9 @@ PassShare (project)
 | `VERCEL_TEAM_SLUG` | Vercel スコープ（チーム/ユーザ）スラッグ（例 `masashi-matsumotos-projects-c5830f3d`）。**preview backend にのみ設定**。ブランチ名が長く Vercel がプレビュー URL のプロジェクト prefix を切り詰めた場合（例 `pass-share-fron-git-<hash>-<slug>.vercel.app`）でも当該 origin を CORS 許可する。スラッグ suffix は自スコープ専有のため任意の `*.vercel.app` は信頼せず #315 の境界を維持（[#358](https://github.com/AutoDevJapan/PassShare/issues/358)）。prd では未設定 |
 | `OP_CONNECT_TOKEN` | Connect API Bearer トークン（`/v1/*` 必須） |
 | `TRUST_PROXY_HOPS` | 信頼するフロントプロキシのホップ数（`req.ip` 算出用）。省略時は `local`=0 / それ以外=1（Railway エッジ 1 段）。生の `X-Forwarded-For` は信頼せず per-IP スロットルのバイパスを防ぐ（[#316](https://github.com/AutoDevJapan/PassShare/issues/316)）。プロキシ段数変更時のみ設定 |
+| `DATABASE_CA_CERT` | DB 接続の TLS 検証に用いる CA 証明書（PEM 文字列）。設定時は `rejectUnauthorized: true` でサーバ証明書を検証。`*.railway.internal`（私設ネットワーク）接続では TLS 不要のため無視。公開/プロキシホスト（`railway.app` / `rlwy.net` / `sslmode=require` 等）は既定で証明書検証必須（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
+| `DATABASE_SSL_ALLOW_INSECURE` | `true` の時のみ公開ホストの TLS 証明書検証を無効化する明示的オプトアウト（MITM リスクあり・非推奨）。既定は検証有効（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
+| `METRICS_TOKEN` | `/metrics`（RSS/uptime 等の内部情報）の認証トークン。設定時は `Authorization: Bearer <token>` 必須で、不一致は 404。未設定時は `local` 以外のデプロイ環境で `/metrics` を無効化（404）し無認証の情報漏洩を防ぐ（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
 | `PORT` | Railway が自動設定（省略可） |
 
 ## セットアップ手順

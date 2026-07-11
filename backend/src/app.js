@@ -1,6 +1,8 @@
 import express from "express";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
+import { resolveDbSslConfig } from "./config/db-ssl.js";
+import { createRequireMetricsAuth } from "./config/metrics-auth.js";
 import { resolveTrustProxyHops } from "./config/trust-proxy.js";
 import { createConnectRouter } from "./connect/router.js";
 import { applyDevSeed, isDevSeedEnvironment } from "./db/dev-seed.js";
@@ -31,9 +33,7 @@ export async function createApp(options = {}) {
     (databaseUrl
       ? new Pool({
           connectionString: databaseUrl,
-          ssl: databaseUrl.includes("railway.app")
-            ? { rejectUnauthorized: false }
-            : undefined,
+          ssl: resolveDbSslConfig(databaseUrl),
         })
       : null);
 
@@ -86,7 +86,7 @@ export async function createApp(options = {}) {
     }
   });
 
-  app.get("/metrics", async (_req, res) => {
+  app.get("/metrics", createRequireMetricsAuth(appEnv), async (_req, res) => {
     const metrics = {
       service: "pass-share-backend",
       environment: appEnv,
