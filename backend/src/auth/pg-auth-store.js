@@ -4,6 +4,11 @@ import { SESSION_TTL_MS, CONNECT_TOKEN_TTL_MS, INVITATION_TTL_MS } from "./const
 import { authHttpError } from "./errors.js";
 import { generateToken, hashToken } from "./tokens.js";
 
+// Arbitrary fixed key for the advisory lock guarding auth schema migration.
+// Distinct from the connect store's MIGRATION_LOCK_KEY so the two migrations
+// do not contend on the same lock.
+const AUTH_MIGRATION_LOCK_KEY = 4820122;
+
 /**
  * @param {import('pg').Pool} pool
  * @returns {import('./index.js').AuthStore}
@@ -11,7 +16,20 @@ import { generateToken, hashToken } from "./tokens.js";
 export function createPgAuthStore(pool) {
   return {
     async migrate() {
-      await pool.query(AUTH_SCHEMA_SQL);
+      // Serialize schema application across concurrent app instances. Postgres
+      // `CREATE TABLE IF NOT EXISTS` is not race-safe — parallel runs can collide
+      // on pg_type (23505). A session advisory lock makes migrate idempotent when
+      // multiple instances start against the same database (tests, multi-instance).
+      const client = await pool.connect();
+      try {
+        await client.query("SELECT pg_advisory_lock($1)", [AUTH_MIGRATION_LOCK_KEY]);
+        await client.query(AUTH_SCHEMA_SQL);
+      } finally {
+        await client
+          .query("SELECT pg_advisory_unlock($1)", [AUTH_MIGRATION_LOCK_KEY])
+          .catch(() => {});
+        client.release();
+      }
     },
 
     async findUserByEmail(email) {
