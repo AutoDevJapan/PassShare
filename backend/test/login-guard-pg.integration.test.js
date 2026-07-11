@@ -17,6 +17,15 @@ const DATABASE_URL =
 const CSRF_TOKEN = "pg-login-guard-csrf";
 const CSRF_COOKIE_HEADER = `${CSRF_COOKIE}=${CSRF_TOKEN}`;
 
+// This suite shares a Postgres database with the other backend-e2e integration
+// suites, which run concurrently (node's test runner parallelises files) and
+// also perform logins from the loopback socket. To keep the per-IP throttle
+// state isolated to THIS suite, we trust one proxy hop (TRUST_PROXY_HOPS=1) and
+// send a unique X-Forwarded-For, so `req.ip` becomes our own dedicated bucket
+// instead of the shared 127.0.0.1. That makes the email-lockout assertions
+// deterministic regardless of what other suites do concurrently.
+const CLIENT_IP = `198.51.100.${1 + Math.floor(Math.random() * 250)}`;
+
 /** @param {import('express').Express} app */
 async function listen(app) {
   const server = app.listen(0);
@@ -34,6 +43,7 @@ function post(baseUrl, path, body) {
       "Content-Type": "application/json",
       "X-CSRF-Token": CSRF_TOKEN,
       Cookie: CSRF_COOKIE_HEADER,
+      "X-Forwarded-For": CLIENT_IP,
     },
     body: JSON.stringify(body),
   });
@@ -44,8 +54,13 @@ describe("Login guard shared store (PostgreSQL integration)", { skip: !process.e
   let pool;
   /** @type {Array<{ server: import('http').Server }>} */
   const instances = [];
+  /** @type {string | undefined} */
+  let previousTrustProxyHops;
 
   before(async () => {
+    // Isolated to this file's worker process; restored in `after`.
+    previousTrustProxyHops = process.env.TRUST_PROXY_HOPS;
+    process.env.TRUST_PROXY_HOPS = "1";
     pool = new Pool({ connectionString: DATABASE_URL });
   });
 
@@ -56,6 +71,11 @@ describe("Login guard shared store (PostgreSQL integration)", { skip: !process.e
       });
     }
     await pool.end();
+    if (previousTrustProxyHops === undefined) {
+      delete process.env.TRUST_PROXY_HOPS;
+    } else {
+      process.env.TRUST_PROXY_HOPS = previousTrustProxyHops;
+    }
   });
 
   /** Start a fresh backend instance bound to the shared Postgres pool. */
@@ -73,11 +93,10 @@ describe("Login guard shared store (PostgreSQL integration)", { skip: !process.e
     const instanceA = await startInstance();
     const instanceB = await startInstance();
 
-    // Every instance shares the same client IP (127.0.0.1) here, so leftover
-    // per-IP rows from an earlier run against the same DB could trip the PS029
-    // throttle before the lockout under test. Start from a clean throttle slate
-    // (the tables exist now that an instance has run its migration).
-    await pool.query("DELETE FROM login_ip_requests");
+    // Clear any leftover throttle state for THIS suite's dedicated IP/email so
+    // a re-run against the same DB starts from a clean slate. Scoped by ip/email
+    // so it never disrupts a concurrently-running suite.
+    await pool.query("DELETE FROM login_ip_requests WHERE ip = $1", [CLIENT_IP]);
     await pool.query("DELETE FROM login_failures WHERE email = $1", [email]);
 
     const signup = await post(instanceA, "/api/auth/signup", { email, password });
@@ -105,5 +124,6 @@ describe("Login guard shared store (PostgreSQL integration)", { skip: !process.e
 
     // Leave no state behind so repeated runs against the same DB start clean.
     await pool.query("DELETE FROM login_failures WHERE email = $1", [email]);
+    await pool.query("DELETE FROM login_ip_requests WHERE ip = $1", [CLIENT_IP]);
   });
 });
