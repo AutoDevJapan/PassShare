@@ -11,6 +11,12 @@ const BACKEND_URL =
   process.env.STG_BACKEND_URL ??
   "https://pass-share-backend-staging.up.railway.app";
 const TOKEN = process.env.STG_OP_CONNECT_TOKEN ?? process.env.OP_CONNECT_TOKEN;
+// In CI the Connect token is mandatory: a missing/broken token must fail the
+// smoke run, not silently skip the Connect check and report green (#325).
+// Local runs (no CI / opt-out) keep the skip-with-warning behaviour.
+const REQUIRE_TOKEN =
+  process.env.STG_SMOKE_REQUIRE_TOKEN === "true" ||
+  (process.env.CI === "true" && process.env.STG_SMOKE_REQUIRE_TOKEN !== "false");
 
 const checks = [];
 
@@ -51,6 +57,12 @@ async function main() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = await res.json();
       if (!Array.isArray(body)) throw new Error("Expected array");
+    });
+  } else if (REQUIRE_TOKEN) {
+    await check("Connect token present", () => {
+      throw new Error(
+        "STG_OP_CONNECT_TOKEN (or OP_CONNECT_TOKEN) is required in CI — refusing to report green without exercising the Connect API",
+      );
     });
   } else {
     console.warn("Skipping Connect API check — set STG_OP_CONNECT_TOKEN or OP_CONNECT_TOKEN");
