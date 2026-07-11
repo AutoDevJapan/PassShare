@@ -53,20 +53,22 @@ export async function saveConnectToken(token: string, expiresAt: string): Promis
   });
 }
 
-export async function loadConnectToken(): Promise<string | null> {
+/**
+ * Read the raw stored Connect token and its expiry (both empty strings when
+ * absent). Expiry is validated by the shared session bootstrap
+ * (`isConnectTokenUsable`), so this returns the token unfiltered.
+ */
+export async function loadStoredConnectToken(): Promise<{ token: string; expiresAt: string } | null> {
   const result = await storageGet<string>([
     STORAGE_KEYS.connectToken,
     STORAGE_KEYS.connectExpiresAt,
   ]);
   const token = result[STORAGE_KEYS.connectToken];
-  const expiresAt = result[STORAGE_KEYS.connectExpiresAt];
   if (typeof token !== "string" || !token) {
     return null;
   }
-  if (typeof expiresAt === "string" && expiresAt && Date.parse(expiresAt) <= Date.now()) {
-    return null;
-  }
-  return token;
+  const expiresAt = result[STORAGE_KEYS.connectExpiresAt];
+  return { token, expiresAt: typeof expiresAt === "string" ? expiresAt : "" };
 }
 
 export async function clearAllAuthStorage(): Promise<void> {
