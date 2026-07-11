@@ -12,7 +12,15 @@ export type MessageType =
   | "GET_CREDENTIALS_FOR_HOST"
   | "FILL_CREDENTIAL"
   | "SAVE_CREDENTIAL"
-  | "GENERATE_PASSWORD";
+  | "GENERATE_PASSWORD"
+  | "SCHEDULE_CLIPBOARD_CLEAR";
+
+/**
+ * Message the service worker sends to the offscreen document when a scheduled
+ * clipboard-clear alarm fires. Kept distinct from `MessageType` (popup → SW)
+ * because it flows SW → offscreen and carries only a hash of the secret.
+ */
+export const OFFSCREEN_CLEAR_CLIPBOARD = "OFFSCREEN_CLEAR_CLIPBOARD" as const;
 
 export type CredentialMatch = {
   itemId: string;
@@ -59,11 +67,34 @@ export type GeneratePasswordResponse = {
   error?: string;
 };
 
+/**
+ * Popup → service worker: offload the clipboard auto-clear so it survives the
+ * MV3 popup closing (which destroys the popup's `setTimeout`). Only the SHA-256
+ * `hash` of the secret is sent — never the plaintext.
+ */
+export type ScheduleClipboardClearRequest = {
+  type: "SCHEDULE_CLIPBOARD_CLEAR";
+  hash: string;
+  seconds?: number;
+};
+
+/** Service worker → offscreen document: clear the clipboard if it still holds the secret. */
+export type OffscreenClearClipboardRequest = {
+  type: typeof OFFSCREEN_CLEAR_CLIPBOARD;
+  hash: string;
+};
+
+export type OffscreenClearClipboardResponse = {
+  ok: boolean;
+  cleared: boolean;
+};
+
 export type BackgroundRequest =
   | GetCredentialsRequest
   | FillCredentialRequest
   | SaveCredentialRequest
-  | GeneratePasswordRequest;
+  | GeneratePasswordRequest
+  | ScheduleClipboardClearRequest;
 
 export type BackgroundResponse =
   | GetCredentialsResponse

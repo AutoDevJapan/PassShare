@@ -4,7 +4,20 @@ import {
   getApiBaseUrl,
   refreshConnectToken,
 } from "../lib/auth-api";
-import type { BackgroundRequest, BackgroundResponse, CredentialMatch } from "../lib/constants";
+import type {
+  BackgroundRequest,
+  BackgroundResponse,
+  CredentialMatch,
+  OffscreenClearClipboardRequest,
+  OffscreenClearClipboardResponse,
+} from "../lib/constants";
+import { OFFSCREEN_CLEAR_CLIPBOARD } from "../lib/constants";
+import {
+  type ClipboardClearEnv,
+  type ClipboardClearState,
+  handleClipboardClearAlarm,
+  scheduleClipboardClear,
+} from "./clipboard-clear";
 import {
   connectItemFromApi,
   connectItemToCreateBody,
@@ -139,6 +152,53 @@ async function saveCredential(payload: {
   listCredentialMatches.invalidate();
 }
 
+/**
+ * Bridge the injectable clipboard-clear logic to the real `chrome.*` APIs.
+ * Kept as a factory so the pure logic in `clipboard-clear.ts` stays testable
+ * with in-memory fakes.
+ */
+const clipboardClearEnv: ClipboardClearEnv = {
+  now: () => Date.now(),
+  alarms: {
+    create: (name, alarmInfo) => chrome.alarms.create(name, alarmInfo),
+  },
+  session: {
+    async get(key) {
+      const stored = await chrome.storage.session.get(key);
+      return (stored[key] as ClipboardClearState | undefined) ?? null;
+    },
+    async set(key, value) {
+      await chrome.storage.session.set({ [key]: value });
+    },
+    async remove(key) {
+      await chrome.storage.session.remove(key);
+    },
+  },
+  offscreen: {
+    hasDocument: () => chrome.offscreen.hasDocument(),
+    create: (path) =>
+      chrome.offscreen.createDocument({
+        url: path,
+        reasons: [chrome.offscreen.Reason.CLIPBOARD],
+        justification: "Clear the copied secret from the clipboard after the auto-clear delay.",
+      }),
+    close: () => chrome.offscreen.closeDocument(),
+  },
+  async requestOffscreenClear(hash) {
+    const request: OffscreenClearClipboardRequest = { type: OFFSCREEN_CLEAR_CLIPBOARD, hash };
+    // The service worker never receives its own broadcast, so only the
+    // offscreen document handles this; awaiting its reply keeps the offscreen
+    // document alive until the clear completes.
+    await (chrome.runtime.sendMessage(request) as Promise<OffscreenClearClipboardResponse>).catch(
+      () => undefined,
+    );
+  },
+};
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  void handleClipboardClearAlarm(clipboardClearEnv, alarm.name);
+});
+
 chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendResponse) => {
   void (async () => {
     try {
@@ -152,6 +212,11 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
         }
         case "GENERATE_PASSWORD": {
           response = { ok: true, password: generatePassword(message.length ?? 20) };
+          break;
+        }
+        case "SCHEDULE_CLIPBOARD_CLEAR": {
+          await scheduleClipboardClear(clipboardClearEnv, message.hash, message.seconds);
+          response = { ok: true };
           break;
         }
         case "SAVE_CREDENTIAL": {

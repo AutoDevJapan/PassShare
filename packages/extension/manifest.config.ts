@@ -24,7 +24,12 @@ export default defineManifest({
       all_frames: false,
     },
   ],
-  permissions: ["storage", "activeTab"],
+  // `alarms` + `offscreen` let the clipboard auto-clear survive the popup
+  // closing: the clear is scheduled on an alarm and executed from an offscreen
+  // document (a service worker cannot reach the clipboard). `clipboardRead` is
+  // needed to confirm the clipboard still holds our secret before wiping it, and
+  // `clipboardWrite` to perform the wipe.
+  permissions: ["storage", "activeTab", "alarms", "offscreen", "clipboardRead", "clipboardWrite"],
   host_permissions: [
     "http://127.0.0.1:8080/*",
     "http://127.0.0.1:3000/*",
