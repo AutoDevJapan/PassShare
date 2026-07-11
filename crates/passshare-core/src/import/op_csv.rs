@@ -40,8 +40,13 @@ pub fn import_onepassword_csv(vault: &Vault, csv_data: &str) -> Result<Vec<Item>
             .and_then(|i| record.get(*i))
             .unwrap_or("")
             .to_string();
+        // Skip password-less rows instead of failing the whole import. Our own
+        // export (#392) emits password-less categories (secure notes, …) with an
+        // empty Password column; erroring here would break the export→import
+        // roundtrip and reject otherwise-valid backups. Parity with the TS SSOT
+        // `frontend/src/lib/csv-import.ts`, which likewise skips such rows.
         if password.is_empty() {
-            return Err(PassShareError::PasswordRequired);
+            continue;
         }
 
         let mut item = Item::new_login(vault.id.clone(), title, password)?;
@@ -116,5 +121,23 @@ GitHub,dev@example.com,secret123,https://github.com,work account,dev
         );
         assert_eq!(items[0].urls[0].href, "https://github.com");
         assert_eq!(items[0].tags, vec!["dev"]);
+    }
+
+    #[test]
+    fn skips_password_less_rows_instead_of_failing() {
+        let vault = Vault::new("Imported").unwrap();
+        let csv = "\
+Title,Username,Password,URL,Notes,Tags
+Recovery codes,,,,one two three,
+GitHub,dev@example.com,secret123,https://github.com,,
+";
+        let items = import_onepassword_csv(&vault, csv).unwrap();
+        // The password-less note row is skipped; the login is kept.
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "GitHub");
+        assert_eq!(
+            items[0].field_value_by_purpose(FieldPurpose::Password),
+            Some("secret123".into())
+        );
     }
 }
