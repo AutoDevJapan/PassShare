@@ -26,11 +26,38 @@ const storage = new MemoryStorage();
 const {
   __resetBiometryApiForTests,
   __setBiometryApiForTests,
-  clearAllSecureAuth,
+  clearAuthSession,
   isSecureStorageAvailable,
-  loadRefreshToken,
-  saveRefreshToken,
+  loadAuthSession,
+  saveAuthSession,
 } = await import("../src/lib/secure-storage.ts");
+
+const SESSION = {
+  refreshToken: "super-secret-refresh-token",
+  connectAccessToken: "connect-access-token-value",
+  connectExpiresAt: "2999-01-01T00:00:00.000Z",
+};
+
+const REASON = "Unlock PassShare";
+
+/** Minimal fake of the biometry plugin that counts unlock (getData) prompts. */
+function makeFakeApi() {
+  const backing = new Map<string, string>();
+  let getDataCalls = 0;
+  const api = {
+    async setData({ name, data }: { name: string; data: string }) {
+      backing.set(name, data);
+    },
+    async getData({ name }: { name: string }) {
+      getDataCalls += 1;
+      return { data: backing.get(name) ?? null };
+    },
+    async removeData({ name }: { name: string }) {
+      backing.delete(name);
+    },
+  };
+  return { api, backing, getDataCalls: () => getDataCalls };
+}
 
 beforeEach(() => {
   storage.clear();
@@ -44,50 +71,65 @@ test("without a secure backend, secrets stay in memory and never touch localStor
   __setBiometryApiForTests(null);
   assert.equal(await isSecureStorageAvailable(), false);
 
-  await saveRefreshToken("super-secret-refresh-token");
+  await saveAuthSession(SESSION);
 
   // The value is usable for the current session...
-  assert.equal(await loadRefreshToken(), "super-secret-refresh-token");
+  assert.deepEqual(await loadAuthSession(REASON), SESSION);
   // ...but nothing was persisted to localStorage (no plaintext at rest).
   assert.equal(storage.size, 0);
 });
 
 test("saving a secret purges any legacy plaintext copy left in localStorage", async () => {
   __setBiometryApiForTests(null);
-  // Simulate a value written at rest by the old localStorage fallback.
+  // Simulate values written at rest by the pre-blob localStorage fallback.
   storage.setItem("com.passshare.mobile:refresh-token", "leaked-plaintext");
+  storage.setItem("com.passshare.mobile:connect-access-token", "leaked-connect");
 
-  await saveRefreshToken("fresh-token");
+  await saveAuthSession(SESSION);
 
   assert.equal(storage.getItem("com.passshare.mobile:refresh-token"), null);
+  assert.equal(storage.getItem("com.passshare.mobile:connect-access-token"), null);
   assert.equal(storage.size, 0);
 });
 
-test("a real secure backend is used and no fallback storage is written", async () => {
-  const backing = new Map<string, string>();
-  const fakeApi = {
-    async setData({ name, data }: { name: string; data: string }) {
-      backing.set(name, data);
-    },
-    async getData({ name }: { name: string }) {
-      return { data: backing.get(name) ?? null };
-    },
-    async removeData({ name }: { name: string }) {
-      backing.delete(name);
-    },
-  };
-  __setBiometryApiForTests(fakeApi as never);
+test("reading the stored session needs a single biometric prompt", async () => {
+  const { api, getDataCalls } = makeFakeApi();
+  __setBiometryApiForTests(api as never);
 
-  assert.equal(await isSecureStorageAvailable(), true);
-  await saveRefreshToken("keychain-token");
-  assert.equal(await loadRefreshToken(), "keychain-token");
-  assert.equal(backing.get("refresh-token"), "keychain-token");
-  assert.equal(storage.size, 0);
+  await saveAuthSession(SESSION);
+  const loaded = await loadAuthSession(REASON);
+
+  assert.deepEqual(loaded, SESSION);
+  // The whole session is one blob, so exactly one unlock prompt occurs.
+  assert.equal(getDataCalls(), 1);
 });
 
-test("clearAllSecureAuth removes the in-memory session secrets", async () => {
+test("saving the session purges secrets left under the pre-blob keys", async () => {
+  const { api, backing } = makeFakeApi();
+  __setBiometryApiForTests(api as never);
+  backing.set("refresh-token", "stale-refresh");
+  backing.set("connect-access-token", "stale-connect");
+  backing.set("connect-expires-at", "stale-expiry");
+
+  await saveAuthSession(SESSION);
+
+  assert.equal(backing.has("refresh-token"), false);
+  assert.equal(backing.has("connect-access-token"), false);
+  assert.equal(backing.has("connect-expires-at"), false);
+  assert.equal(backing.get("auth-session"), JSON.stringify(SESSION));
+});
+
+test("a corrupt or legacy payload is treated as no session", async () => {
+  const { api, backing } = makeFakeApi();
+  __setBiometryApiForTests(api as never);
+  backing.set("auth-session", "{not valid json");
+
+  assert.equal(await loadAuthSession(REASON), null);
+});
+
+test("clearAuthSession removes the in-memory session secrets", async () => {
   __setBiometryApiForTests(null);
-  await saveRefreshToken("to-be-cleared");
-  await clearAllSecureAuth();
-  assert.equal(await loadRefreshToken(), null);
+  await saveAuthSession(SESSION);
+  await clearAuthSession();
+  assert.equal(await loadAuthSession(REASON), null);
 });

@@ -217,6 +217,8 @@
   "mobile.app.title": "PassShare",
   "mobile.autofill.stub": "Интеграция с автозаполнением ОС будет в следующей фазе (Issue #83).",
   "mobile.lock.biometric": "Разблокировать биометрией",
+  "mobile.lock.biometricReason": "Разблокировать PassShare",
+  "mobile.lock.setupFailed": "Не удалось установить PIN. Попробуйте ещё раз.",
   "mobile.lock.lead": "Используйте биометрию или PIN-код.",
   "mobile.lock.locked": "Слишком много попыток. Повторите позже.",
   "mobile.lock.pin": "PIN",

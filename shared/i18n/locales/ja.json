@@ -217,6 +217,8 @@
   "mobile.app.title": "PassShare",
   "mobile.autofill.stub": "OS オートフィル連携は次フェーズで有効化されます（Issue #83）。",
   "mobile.lock.biometric": "生体認証で解除",
+  "mobile.lock.biometricReason": "PassShare のロックを解除します",
+  "mobile.lock.setupFailed": "PIN の設定に失敗しました。もう一度お試しください。",
   "mobile.lock.lead": "生体認証または PIN でロックを解除してください。",
   "mobile.lock.locked": "試行回数が上限に達しました。しばらくしてからもう一度お試しください。",
   "mobile.lock.pin": "PIN",
