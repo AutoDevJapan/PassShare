@@ -290,12 +290,18 @@ mod tests {
     use super::*;
     use crate::domain::item::Item;
     use crate::domain::payload::deserialize_payload;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempPath};
+
+    /// A temp path whose backing file handle is already closed, so the atomic
+    /// rename used by the save path (#390) is not blocked by an open handle on
+    /// Windows. In production the `.pbox` is never held open across a save.
+    fn temp_box_path() -> TempPath {
+        NamedTempFile::new().unwrap().into_temp_path()
+    }
 
     #[test]
     fn create_open_add_search_save_roundtrip() {
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path().to_path_buf();
+        let path = temp_box_path();
         let master = "MySecurePass123!";
 
         let mut pb = PasswordBox::create(&path, master).unwrap();
@@ -335,8 +341,8 @@ mod tests {
 
     #[test]
     fn add_item_validation() {
-        let file = NamedTempFile::new().unwrap();
-        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
         assert_eq!(
             Item::new_login(pb.vault().unwrap().id.clone(), "", "x"),
             Err(PassShareError::TitleRequired)
@@ -352,8 +358,8 @@ mod tests {
 
     #[test]
     fn import_csv_adds_items() {
-        let file = NamedTempFile::new().unwrap();
-        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
         let csv = "Title,Username,Password\nSite,user,pwd123\n";
         let count = pb.import_onepassword_csv(csv).unwrap();
         assert_eq!(count, 1);
@@ -362,19 +368,18 @@ mod tests {
 
     #[test]
     fn wrong_master_password_on_open() {
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path();
-        PasswordBox::create(path, "correct-password").unwrap();
+        let path = temp_box_path();
+        PasswordBox::create(&path, "correct-password").unwrap();
         assert!(matches!(
-            PasswordBox::open(path, "wrong-password"),
+            PasswordBox::open(&path, "wrong-password"),
             Err(PassShareError::InvalidMasterPassword)
         ));
     }
 
     #[test]
     fn delete_item_not_found() {
-        let file = NamedTempFile::new().unwrap();
-        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
         assert_eq!(
             pb.delete_item("abcdefghijklmnopqrstuvwxyz"),
             Err(PassShareError::ItemNotFound)
@@ -383,8 +388,8 @@ mod tests {
 
     #[test]
     fn export_csv_contains_items() {
-        let file = NamedTempFile::new().unwrap();
-        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
         let vault_id = pb.vault().unwrap().id.clone();
         let item = Item::new_login(vault_id, "Export Me", "secret").unwrap();
         pb.add_item(item).unwrap();
@@ -395,8 +400,8 @@ mod tests {
 
     #[test]
     fn upsert_sync_item_updates_existing() {
-        let file = NamedTempFile::new().unwrap();
-        let mut pb = PasswordBox::create(file.path(), "pass").unwrap();
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "pass").unwrap();
         let vault_id = pb.vault().unwrap().id.clone();
         let item = Item::new_login(vault_id.clone(), "Original", "secret").unwrap();
         let id = item.id.clone();
@@ -412,17 +417,16 @@ mod tests {
 
     #[test]
     fn open_rejects_weak_kdf_header() {
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path();
-        PasswordBox::create(path, "correct-password").unwrap();
+        let path = temp_box_path();
+        PasswordBox::create(&path, "correct-password").unwrap();
 
         // Tamper the header to advertise a weak KDF cost below the security floor.
-        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        let mut stored = PasswordBoxFile::load_from_path(&path).unwrap();
         stored.kdf.memory_kib = 1024;
-        stored.save_to_path(path).unwrap();
+        stored.save_to_path(&path).unwrap();
 
         assert_eq!(
-            PasswordBox::open(path, "correct-password").err(),
+            PasswordBox::open(&path, "correct-password").err(),
             Some(PassShareError::CorruptFile)
         );
     }
@@ -431,15 +435,14 @@ mod tests {
     fn open_honors_stored_default_kdf_params() {
         // A file written with the current defaults must still open normally after
         // the header params are honored on decrypt.
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path();
-        let mut pb = PasswordBox::create(path, "correct-password").unwrap();
+        let path = temp_box_path();
+        let mut pb = PasswordBox::create(&path, "correct-password").unwrap();
         let vault_id = pb.vault().unwrap().id.clone();
         pb.add_item(Item::new_login(vault_id, "Site", "pwd").unwrap())
             .unwrap();
         pb.save("correct-password").unwrap();
 
-        let reopened = PasswordBox::open(path, "correct-password").unwrap();
+        let reopened = PasswordBox::open(&path, "correct-password").unwrap();
         assert_eq!(reopened.list_connect_items().unwrap().len(), 1);
     }
 
@@ -447,49 +450,46 @@ mod tests {
     fn open_rejects_tampered_ciphertext() {
         // Flipping a ciphertext byte fails the AEAD tag even with the right
         // password — the same signal as a wrong password (indistinguishable).
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path();
-        PasswordBox::create(path, "correct-password").unwrap();
+        let path = temp_box_path();
+        PasswordBox::create(&path, "correct-password").unwrap();
 
-        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        let mut stored = PasswordBoxFile::load_from_path(&path).unwrap();
         assert!(!stored.ciphertext.is_empty());
         stored.ciphertext[0] ^= 0xff;
-        stored.save_to_path(path).unwrap();
+        stored.save_to_path(&path).unwrap();
 
         assert_eq!(
-            PasswordBox::open(path, "correct-password").err(),
+            PasswordBox::open(&path, "correct-password").err(),
             Some(PassShareError::InvalidMasterPassword)
         );
     }
 
     #[test]
     fn open_rejects_version_mismatch() {
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path();
-        PasswordBox::create(path, "correct-password").unwrap();
+        let path = temp_box_path();
+        PasswordBox::create(&path, "correct-password").unwrap();
 
-        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        let mut stored = PasswordBoxFile::load_from_path(&path).unwrap();
         stored.version = FILE_VERSION + 1;
-        stored.save_to_path(path).unwrap();
+        stored.save_to_path(&path).unwrap();
 
         assert_eq!(
-            PasswordBox::open(path, "correct-password").err(),
+            PasswordBox::open(&path, "correct-password").err(),
             Some(PassShareError::CorruptFile)
         );
     }
 
     #[test]
     fn open_rejects_unknown_cipher_algorithm() {
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path();
-        PasswordBox::create(path, "correct-password").unwrap();
+        let path = temp_box_path();
+        PasswordBox::create(&path, "correct-password").unwrap();
 
-        let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+        let mut stored = PasswordBoxFile::load_from_path(&path).unwrap();
         stored.cipher.algorithm = "aes-gcm".to_string();
-        stored.save_to_path(path).unwrap();
+        stored.save_to_path(&path).unwrap();
 
         assert_eq!(
-            PasswordBox::open(path, "correct-password").err(),
+            PasswordBox::open(&path, "correct-password").err(),
             Some(PassShareError::CorruptFile)
         );
     }
@@ -503,16 +503,15 @@ mod tests {
                 as fn(&mut PasswordBoxFile),
             |s: &mut PasswordBoxFile| s.kdf.salt = "AAAA".to_string(),
         ] {
-            let file = NamedTempFile::new().unwrap();
-            let path = file.path();
-            PasswordBox::create(path, "correct-password").unwrap();
+            let path = temp_box_path();
+            PasswordBox::create(&path, "correct-password").unwrap();
 
-            let mut stored = PasswordBoxFile::load_from_path(path).unwrap();
+            let mut stored = PasswordBoxFile::load_from_path(&path).unwrap();
             mutate(&mut stored);
-            stored.save_to_path(path).unwrap();
+            stored.save_to_path(&path).unwrap();
 
             assert_eq!(
-                PasswordBox::open(path, "correct-password").err(),
+                PasswordBox::open(&path, "correct-password").err(),
                 Some(PassShareError::CorruptFile)
             );
         }
