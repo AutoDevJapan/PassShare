@@ -27,6 +27,20 @@
   a failure counter with exponential lockout backoff. Legacy unsalted SHA-256
   records are discarded on read and force re-enrollment.
 
+## Auto-lock ([#408](https://github.com/AutoDevJapan/PassShare/issues/408))
+
+Unlock is **not** held for the whole process lifetime. The app re-locks itself
+(`unlocked → false`, re-entering the biometric/PIN AppLockScreen) on two triggers:
+
+- **Background transition** — locks immediately (configurable grace) when the
+  WebView is hidden (`visibilitychange` / `pagehide`).
+- **Idle timeout** — locks after inactivity (default 120s; user-selectable
+  60/120/300s in Settings). `pointerdown`/`keydown`/`touchstart` reset the timer.
+
+The decision logic lives in `lib/auto-lock.ts` (`AutoLockController`, unit-tested
+with a fake clock in `test/auto-lock.test.ts`); React wiring is `hooks/useAutoLock.ts`.
+See [biometric-unlock.md](./biometric-unlock.md#自動ロック--再ロック-issue-408).
+
 ## Shared components
 
 - `shared/ui/ItemForm`, `ConnectItemList`, `CategoryPicker`

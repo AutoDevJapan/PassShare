@@ -50,6 +50,32 @@ PassShare は OS ネイティブの生体認証（Windows Hello / Touch ID / Fac
 | iOS / Android | ✅ | Tauri Mobile ビルド時（公式プラグイン同一 API） |
 | Linux | — | 生体認証 UI 非表示 |
 
+## 自動ロック / 再ロック (Issue [#408](https://github.com/AutoDevJapan/PassShare/issues/408))
+
+アンロックは **プロセス寿命の間ずっと有効** ではなく、端末がユーザーの管理下を離れたら自動で再ロックする。パスワードマネージャの中核防御であり、ストアリリースの前提とする。
+
+### トリガー
+
+| トリガー | 挙動 | 既定 |
+|---------|------|------|
+| バックグラウンド遷移 | WebView が hidden（アプリスイッチャ / 画面オフ / タスク切替）になったら猶予後に再ロック。復帰が猶予内なら取消。`visibilitychange`（`document.hidden`）と `pagehide` を購読 | 即時（猶予 0ms） |
+| アイドルタイムアウト | 無操作が続くと再ロック。`pointerdown` / `keydown` / `touchstart` でカウントダウンをリセット | 120 秒（設定で 60 / 120 / 300 秒） |
+
+- 再ロック後は `unlocked` を false に戻し、既存の **生体認証 / PIN アンロックフロー**（App lock 画面）を再度通す。選択中のパスワードボックスも閉じる。
+- アイドルタイムアウトは Mobile 設定で変更可能（`mobile.settings.autoLock*`）。変更は実行中セッションに即時反映される。
+- ロック判定ロジックは UI 非依存の `apps/mobile/src/lib/auto-lock.ts`（`AutoLockController`）に分離し、フェイククロックでユニットテスト（`apps/mobile/test/auto-lock.test.ts`）。React 配線は `hooks/useAutoLock.ts`。
+
+### 実装
+
+| レイヤー | パス |
+|---------|------|
+| 判定ロジック（framework 非依存） | `apps/mobile/src/lib/auto-lock.ts` |
+| ライフサイクル / アクティビティ配線 | `apps/mobile/src/hooks/useAutoLock.ts` |
+| アプリ状態リセット | `apps/mobile/src/App.tsx`（`useAutoLock(unlocked, relock)`） |
+| 設定 UI（アイドル時間） | `apps/mobile/src/components/SettingsPanel.tsx` |
+
+> 関連: クリップボード自動クリアが WebView 破棄で発火しない穴（[#401](https://github.com/AutoDevJapan/PassShare/issues/401)）は Extension 側で対処済み。Mobile の同型評価は別途。
+
 ## 受入基準 (Issue #49)
 
 ```gherkin
