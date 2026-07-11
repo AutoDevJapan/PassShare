@@ -15,11 +15,14 @@ import { parseEmail, parsePassword } from "./validation.js";
  * @param {import('./index.js').AuthStore} deps.authStore
  * @param {import('../store/memory-store.js').ConnectStore} deps.connectStore
  * @param {string} [deps.appEnv]
+ * @param {import('./login-guard-store.js').LoginGuardStore} [deps.loginGuardStore]
+ *   Shared backing for the login throttle / lockout state. Defaults to a
+ *   process-local in-memory store when omitted.
  */
-export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) {
+export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore }) {
   const router = Router();
   const sessionGuard = requireSession(authStore);
-  const loginGuard = createLoginGuard();
+  const loginGuard = createLoginGuard({ store: loginGuardStore });
 
   router.get("/csrf", (_req, res) => {
     const csrfToken = issueCsrfToken(res, appEnv);
@@ -63,24 +66,24 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local" }) 
   router.post("/login", requireCsrf, async (req, res) => {
     try {
       const clientIp = resolveClientIp(req);
-      loginGuard.assertIpAllowed(clientIp);
-      loginGuard.recordIpRequest(clientIp);
+      await loginGuard.assertIpAllowed(clientIp);
+      await loginGuard.recordIpRequest(clientIp);
 
       const email = parseEmail(req.body?.email);
-      loginGuard.assertNotLocked(email);
+      await loginGuard.assertNotLocked(email);
       const password = parsePassword(req.body?.password);
       const user = await authStore.findUserByEmail(email);
       if (!user) {
-        loginGuard.recordFailure(email);
+        await loginGuard.recordFailure(email);
         throw authHttpError(401, "PS026", "Invalid email or password");
       }
       const valid = await verifyPassword(user.password_hash, password);
       if (!valid) {
-        loginGuard.recordFailure(email);
+        await loginGuard.recordFailure(email);
         throw authHttpError(401, "PS026", "Invalid email or password");
       }
 
-      loginGuard.clearFailures(email);
+      await loginGuard.clearFailures(email);
       const session = await authStore.createSession(user.id);
       const connectToken = await authStore.createConnectToken(user.id);
 

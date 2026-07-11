@@ -57,4 +57,29 @@ CREATE INDEX IF NOT EXISTS idx_vault_invitations_invitee ON vault_invitations(in
 CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_invitations_pending_unique
   ON vault_invitations(vault_id, invitee_email)
   WHERE status = 'pending';
+
+-- Login failure lockout state, shared across backend instances and durable
+-- across restarts (#378). expires_at = last activity + lockout window; rows
+-- past it are treated as absent and swept opportunistically by the pg store.
+CREATE TABLE IF NOT EXISTS login_failures (
+  email TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL DEFAULT 0,
+  locked_until TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_failures_expires_at ON login_failures(expires_at);
+
+-- Per-IP login request timestamps for the sliding-window throttle (#378). One
+-- row per request; expires_at = requested_at + window, used for eviction.
+CREATE TABLE IF NOT EXISTS login_ip_requests (
+  id BIGSERIAL PRIMARY KEY,
+  ip TEXT NOT NULL,
+  requested_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_ip_requests_ip ON login_ip_requests(ip, requested_at);
+CREATE INDEX IF NOT EXISTS idx_login_ip_requests_expires_at ON login_ip_requests(expires_at);
 `;
