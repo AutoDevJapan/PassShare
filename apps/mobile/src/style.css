@@ -129,6 +129,16 @@
   font-size: 0.875rem;
 }
 
+.mobile-settings__hint {
+  color: var(--ps-text-muted);
+  font-size: 0.8125rem;
+}
+
+.mobile-settings__section {
+  font-weight: 600;
+  margin-top: var(--ps-space-2);
+}
+
 .ps-button--full {
   width: 100%;
 }
