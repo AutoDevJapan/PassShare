@@ -4,8 +4,13 @@ import {
   findUsernameInput,
   isAutofillAllowed,
 } from "../lib/connect-items";
+import { debounce } from "../lib/debounce";
 
 const PANEL_ID = "passshare-autofill-panel";
+
+// Coalesce bursts of `focusin` events (e.g. tabbing through a form) into a
+// single credential lookup so the service worker is not queried per keystroke.
+const FOCUS_DEBOUNCE_MS = 150;
 
 // The password field the user is currently editing. Autofill is scoped to this
 // field's form so we do not clobber an unrelated form at the top of the page.
@@ -103,6 +108,10 @@ async function showMatchesForCurrentPage(): Promise<void> {
 }
 
 function attachPasswordFocusHandler(): void {
+  const requestMatches = debounce(() => {
+    void showMatchesForCurrentPage();
+  }, FOCUS_DEBOUNCE_MS);
+
   document.addEventListener(
     "focusin",
     (event) => {
@@ -110,8 +119,10 @@ function attachPasswordFocusHandler(): void {
       if (!(target instanceof HTMLInputElement) || target.type !== "password") {
         return;
       }
+      // Track the active field synchronously so autofill targets the right form
+      // even though the lookup itself is debounced.
       activePasswordInput = target;
-      void showMatchesForCurrentPage();
+      requestMatches();
     },
     true,
   );
