@@ -31,6 +31,15 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   router.post("/signup", requireCsrf, async (req, res) => {
     try {
+      // Per-IP throttle BEFORE the deliberately expensive Argon2id hash and the
+      // user/vault/session/token row creation, so an unauthenticated flood is
+      // rejected with 429 before it can amplify into CPU/memory/storage
+      // exhaustion (#393). Shares the login-guard IP window so all auth entry
+      // points draw from one budget.
+      const clientIp = resolveClientIp(req);
+      await loginGuard.assertIpAllowed(clientIp);
+      await loginGuard.recordIpRequest(clientIp);
+
       const email = parseEmail(req.body?.email);
       const password = parsePassword(req.body?.password);
       const passwordHash = await hashPassword(password);
@@ -106,6 +115,13 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   router.post("/token/refresh", async (req, res) => {
     try {
+      // Per-IP throttle before minting a fresh Connect token / refreshing the
+      // session, so this route cannot be used to flood connect_tokens rows
+      // (#393). Same IP window as login/signup.
+      const clientIp = resolveClientIp(req);
+      await loginGuard.assertIpAllowed(clientIp);
+      await loginGuard.recordIpRequest(clientIp);
+
       const refreshToken =
         typeof req.body?.refreshToken === "string" ? req.body.refreshToken.trim() : "";
       if (!refreshToken) {
