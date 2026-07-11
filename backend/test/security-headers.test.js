@@ -3,7 +3,7 @@ import { describe, it, before, after } from "node:test";
 import { createMemoryAuthStore } from "../src/auth/index.js";
 import { createMemoryStore } from "../src/store/memory-store.js";
 import { createApp } from "../src/app.js";
-import { isAllowedWebOrigin } from "../src/middleware/web-origin.js";
+import { defaultWebOrigin, isAllowedWebOrigin } from "../src/middleware/web-origin.js";
 
 describe("web origin allowlist", () => {
   it("allows localhost in local env", () => {
@@ -103,6 +103,40 @@ describe("web origin allowlist", () => {
       isAllowedWebOrigin("https://pass-share.bm1314.net", "prd"),
       false,
     );
+  });
+});
+
+describe("defaultWebOrigin fallback (#374)", () => {
+  /** @type {string | undefined} */
+  let previousWebOrigin;
+
+  before(() => {
+    previousWebOrigin = process.env.WEB_ORIGIN;
+    delete process.env.WEB_ORIGIN;
+  });
+
+  after(() => {
+    if (previousWebOrigin === undefined) {
+      delete process.env.WEB_ORIGIN;
+    } else {
+      process.env.WEB_ORIGIN = previousWebOrigin;
+    }
+  });
+
+  it("falls back to the live custom domain (not the 404 vercel alias) for prod when WEB_ORIGIN unset", () => {
+    // The canonical vercel alias returns 404; the fallback must point at the live host.
+    assert.equal(defaultWebOrigin("prd"), "https://pass-share.bm1314.net");
+    assert.notEqual(defaultWebOrigin("prd"), "https://pass-share-frontend.vercel.app");
+  });
+
+  it("uses the local origin for local env", () => {
+    assert.equal(defaultWebOrigin("local"), "http://localhost:5173");
+  });
+
+  it("prefers a configured WEB_ORIGIN when set", () => {
+    process.env.WEB_ORIGIN = "https://pass-share.bm1314.net";
+    assert.equal(defaultWebOrigin("prd"), "https://pass-share.bm1314.net");
+    delete process.env.WEB_ORIGIN;
   });
 });
 
