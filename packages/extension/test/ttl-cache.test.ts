@@ -44,6 +44,18 @@ describe("TtlCache", () => {
     assert.equal(cache.get("b"), "y");
   });
 
+  it("prunes expired entries on set so the map does not grow unbounded", () => {
+    let now = 0;
+    const cache = new TtlCache<number>(100, () => now);
+    cache.set("a", 1);
+    cache.set("b", 2);
+    now = 150; // both "a" and "b" have expired
+    cache.set("c", 3);
+    // Writing "c" should have swept the two stale entries.
+    assert.equal(cache.size, 1);
+    assert.equal(cache.get("c"), 3);
+  });
+
   it("caches an empty array as a valid (non-repeated) result", () => {
     let now = 0;
     const cache = new TtlCache<string[]>(100, () => now);

@@ -32,7 +32,19 @@ export class TtlCache<T> {
   }
 
   set(key: string, value: T): void {
+    // Opportunistically drop entries that expired since the last write so the
+    // map does not accumulate hosts that are never focused again.
+    this.pruneExpired();
     this.store.set(key, { value, expiresAt: this.now() + this.ttlMs });
+  }
+
+  private pruneExpired(): void {
+    const nowMs = this.now();
+    for (const [key, entry] of this.store) {
+      if (nowMs >= entry.expiresAt) {
+        this.store.delete(key);
+      }
+    }
   }
 
   delete(key: string): void {
