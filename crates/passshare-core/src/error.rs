@@ -31,6 +31,9 @@ pub enum PassShareError {
 
     #[error("PS010: インポートに失敗しました: {0}")]
     ImportError(String),
+
+    #[error("PS011: このパスワードボックスは新しいバージョンで作成されています。アプリを更新してください")]
+    UnsupportedVersion,
 }
 
 impl From<argon2::Error> for PassShareError {

@@ -63,9 +63,79 @@ impl RawPasswordBoxPayload {
 }
 
 pub fn deserialize_payload(bytes: &[u8], vault_name: &str) -> Result<PasswordBoxPayload, crate::error::PassShareError> {
-    // Bytes here are already decrypted; if they will not parse the payload is
-    // corrupt (or from an unsupported layout).
-    let raw: RawPasswordBoxPayload = serde_json::from_slice(bytes)
-        .map_err(|_| crate::error::PassShareError::CorruptFile)?;
+    // Bytes here are already decrypted (the AEAD auth tag verified), so they came
+    // from a genuine PassShare box. Distinguish two failure modes:
+    //   * invalid JSON / structure  -> CorruptFile
+    //   * valid JSON but a newer     -> UnsupportedVersion
+    //     `payloadVersion` we don't understand
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| crate::error::PassShareError::CorruptFile)?;
+
+    // Peek the version BEFORE the typed parse: `payload_version` is a plain field,
+    // so a newer-but-structurally-compatible payload would otherwise silently
+    // deserialize as V2 and risk misinterpreting/dropping newer data. A decrypted
+    // payload from a newer app is unsupported, not corrupt — surface it distinctly
+    // so the UI can prompt an app upgrade. Legacy payloads carry no `payloadVersion`
+    // and fall through to the untagged parse + migration below.
+    if let Some(version) = value
+        .get("payloadVersion")
+        .and_then(serde_json::Value::as_u64)
+    {
+        if version > u64::from(PAYLOAD_VERSION_V2) {
+            return Err(crate::error::PassShareError::UnsupportedVersion);
+        }
+    }
+
+    let raw: RawPasswordBoxPayload =
+        serde_json::from_value(value).map_err(|_| crate::error::PassShareError::CorruptFile)?;
     raw.into_payload(vault_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::PassShareError;
+
+    fn v2_value() -> serde_json::Value {
+        let payload = PasswordBoxPayload::new(Vault::new("My Box").unwrap(), None);
+        serde_json::to_value(payload).unwrap()
+    }
+
+    #[test]
+    fn valid_v2_payload_round_trips() {
+        let bytes = serde_json::to_vec(&v2_value()).unwrap();
+        let payload = deserialize_payload(&bytes, "My Box").unwrap();
+        assert_eq!(payload.payload_version, PAYLOAD_VERSION_V2);
+        assert!(payload.items.is_empty());
+    }
+
+    #[test]
+    fn newer_payload_version_is_unsupported_not_corrupt() {
+        // Structurally valid V2 shape but a future payloadVersion: it must be
+        // rejected as UnsupportedVersion rather than silently downgraded to V2.
+        let mut value = v2_value();
+        value["payloadVersion"] = serde_json::json!(PAYLOAD_VERSION_V2 + 1);
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let err = deserialize_payload(&bytes, "My Box").unwrap_err();
+        assert_eq!(err, PassShareError::UnsupportedVersion);
+    }
+
+    #[test]
+    fn garbage_json_is_corrupt() {
+        let err = deserialize_payload(b"{ not json ]", "My Box").unwrap_err();
+        assert_eq!(err, PassShareError::CorruptFile);
+    }
+
+    #[test]
+    fn legacy_payload_without_version_migrates() {
+        // Legacy v0.1 layout carries no payloadVersion; it must still migrate to V2.
+        let legacy = serde_json::json!({
+            "items": [LoginItem::new("Site", "pwd").unwrap()],
+            "recovery_secret": null
+        });
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        let payload = deserialize_payload(&bytes, "Legacy Box").unwrap();
+        assert_eq!(payload.payload_version, PAYLOAD_VERSION_V2);
+        assert_eq!(payload.items.len(), 1);
+    }
 }
