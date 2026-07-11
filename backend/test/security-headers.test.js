@@ -38,6 +38,62 @@ describe("web origin allowlist", () => {
     );
   });
 
+  it("allows truncated Vercel preview hosts bound to the team slug (#358)", () => {
+    // Vercel truncates the project prefix (`pass-share-frontend` -> `pass-share-fron`)
+    // and injects a hash when the branch label exceeds 63 chars.
+    const teamSlug = "masashi-matsumotos-projects-c5830f3d";
+    const truncated =
+      "https://pass-share-fron-git-ac642b-masashi-matsumotos-projects-c5830f3d.vercel.app";
+    assert.equal(isAllowedWebOrigin(truncated, "preview", undefined, teamSlug), true);
+    // Non-truncated previews under the same team are also admitted.
+    assert.equal(
+      isAllowedWebOrigin(
+        "https://pass-share-frontend-git-feat-x-masashi-matsumotos-projects-c5830f3d.vercel.app",
+        "preview",
+        undefined,
+        teamSlug,
+      ),
+      true,
+    );
+    // Without the team slug the truncated host stays denied (fail-safe, pre-#358 behavior).
+    assert.equal(isAllowedWebOrigin(truncated, "preview"), false);
+  });
+
+  it("keeps the #315 boundary even when a team slug is configured (#358)", () => {
+    const teamSlug = "masashi-matsumotos-projects-c5830f3d";
+    // Attacker host that does not end with our scope slug: denied.
+    assert.equal(isAllowedWebOrigin("https://evil.vercel.app", "preview", undefined, teamSlug), false);
+    // Attacker host that lacks the project prefix but appends the slug text: denied.
+    assert.equal(
+      isAllowedWebOrigin(
+        "https://evil-git-x-masashi-matsumotos-projects-c5830f3d.vercel.app",
+        "preview",
+        undefined,
+        teamSlug,
+      ),
+      false,
+    );
+    // Slug as a bare subdomain or spoofed apex: denied.
+    assert.equal(
+      isAllowedWebOrigin(
+        "https://pass-share-fron-git-ac642b-masashi-matsumotos-projects-c5830f3d.vercel.app.evil.com",
+        "preview",
+        undefined,
+        teamSlug,
+      ),
+      false,
+    );
+    // A malformed/empty slug must be ignored (fail-safe), not turned into a wildcard.
+    assert.equal(
+      isAllowedWebOrigin("https://pass-share-fron-git-x-anything.vercel.app", "preview", undefined, "  "),
+      false,
+    );
+    assert.equal(
+      isAllowedWebOrigin("https://evil.vercel.app", "preview", undefined, ".*"),
+      false,
+    );
+  });
+
   it("allows configured WEB_ORIGIN custom domain", () => {
     assert.equal(
       isAllowedWebOrigin("https://pass-share.bm1314.net", "prd", "https://pass-share.bm1314.net"),
@@ -134,5 +190,73 @@ describe("security headers and CORS", () => {
       res.headers.get("access-control-allow-origin"),
       "https://pass-share-frontend-git-main-autodevjapan.vercel.app",
     );
+  });
+});
+
+describe("preview CORS with VERCEL_TEAM_SLUG (#358)", () => {
+  /** @type {import('http').Server} */
+  let server;
+  /** @type {string} */
+  let baseUrl;
+  /** @type {string | undefined} */
+  let previousWebOrigin;
+  /** @type {string | undefined} */
+  let previousTeamSlug;
+  const truncatedPreviewOrigin =
+    "https://pass-share-fron-git-ac642b-masashi-matsumotos-projects-c5830f3d.vercel.app";
+
+  before(async () => {
+    previousWebOrigin = process.env.WEB_ORIGIN;
+    previousTeamSlug = process.env.VERCEL_TEAM_SLUG;
+    delete process.env.WEB_ORIGIN;
+    process.env.APP_ENV = "preview";
+    process.env.VERCEL_TEAM_SLUG = "masashi-matsumotos-projects-c5830f3d";
+
+    const store = createMemoryStore();
+    const authStore = createMemoryAuthStore();
+    const { app } = await createApp({ store, authStore, pool: null });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    baseUrl = `http://127.0.0.1:${port}`;
+  });
+
+  after(async () => {
+    if (previousWebOrigin === undefined) {
+      delete process.env.WEB_ORIGIN;
+    } else {
+      process.env.WEB_ORIGIN = previousWebOrigin;
+    }
+    if (previousTeamSlug === undefined) {
+      delete process.env.VERCEL_TEAM_SLUG;
+    } else {
+      process.env.VERCEL_TEAM_SLUG = previousTeamSlug;
+    }
+    delete process.env.APP_ENV;
+    await new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve(undefined)));
+    });
+  });
+
+  it("reflects the truncated preview origin with credentials", async () => {
+    const res = await fetch(`${baseUrl}/api/auth/csrf`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: truncatedPreviewOrigin,
+        "Access-Control-Request-Method": "POST",
+      },
+    });
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get("access-control-allow-origin"), truncatedPreviewOrigin);
+    assert.equal(res.headers.get("access-control-allow-credentials"), "true");
+  });
+
+  it("still denies untrusted vercel.app origins (#315 regression)", async () => {
+    const res = await fetch(`${baseUrl}/health`, {
+      headers: { Origin: "https://evil.vercel.app" },
+    });
+    assert.equal(res.headers.get("access-control-allow-origin"), null);
+    assert.equal(res.headers.get("access-control-allow-credentials"), null);
   });
 });
