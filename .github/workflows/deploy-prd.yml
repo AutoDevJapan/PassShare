@@ -54,6 +54,9 @@ jobs:
           RAILWAY_PRODUCTION_ENV_ID: ${{ secrets.RAILWAY_PRODUCTION_ENV_ID }}
           RAILWAY_STAGING_ENV_ID: ${{ secrets.RAILWAY_STAGING_ENV_ID }}
           RAILWAY_DEVELOPMENT_ENV_ID: ${{ secrets.RAILWAY_DEVELOPMENT_ENV_ID }}
+          # Postgres service ID is required (no hardcoded fallback, #325).
+          # Snapshot mode reads prd only (no destructive wipe).
+          RAILWAY_POSTGRES_PRD_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_PRD_SERVICE_ID }}
           RAILWAY_HEALTH_URL: https://pass-share-backend-production.up.railway.app/health/db
         run: bash scripts/railway-deploy-with-replica.sh
 

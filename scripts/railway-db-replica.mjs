@@ -8,7 +8,19 @@
  *   node scripts/railway-db-replica.mjs snapshot --source prd
  *
  * Env: RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID
+ *   Railway environment IDs (required — no hardcoded fallback):
+ *     RAILWAY_PRODUCTION_ENV_ID, RAILWAY_STAGING_ENV_ID, RAILWAY_DEVELOPMENT_ENV_ID
+ *   Postgres plugin service IDs (required — no hardcoded fallback):
+ *     RAILWAY_POSTGRES_PRD_SERVICE_ID, RAILWAY_POSTGRES_STG_SERVICE_ID,
+ *     RAILWAY_POSTGRES_DEV_SERVICE_ID
  * Optional: RAILWAY_DATABASE_PUBLIC_URL_PRD|DEV|STG (CI override)
+ *
+ * SAFETY: environment/service IDs are resolved from env vars only. Hardcoded
+ * UUID fallbacks were removed (#325) — a renamed/unset CI variable must fail
+ * loudly rather than silently resolve to a stale ID and wipe the wrong Railway
+ * environment (max blast-radius: wiping prd, or wiping dev/stg from the wrong
+ * source). `refreshTargetFromSource` additionally asserts the resolved target
+ * host differs from the source host before any destructive DROP.
  */
 
 import { spawnSync } from "node:child_process";
@@ -19,20 +31,58 @@ import { fileURLToPath } from "node:url";
 
 const API_URL = "https://backboard.railway.com/graphql/v2";
 
-const ENV_IDS = {
-  prd: process.env.RAILWAY_PRODUCTION_ENV_ID ?? "c1a3cdfc-9aa3-420d-b101-e6497714ccb9",
-  stg: process.env.RAILWAY_STAGING_ENV_ID ?? "c807d209-0624-4e13-aff6-61332cd0bb29",
-  dev: process.env.RAILWAY_DEVELOPMENT_ENV_ID ?? "0951c467-6bc3-418f-af75-a96e810f4946",
+/** Env var names for Railway environment IDs — SSOT: documents/spec/infrastructure.md */
+const ENV_ID_VARS = {
+  prd: "RAILWAY_PRODUCTION_ENV_ID",
+  stg: "RAILWAY_STAGING_ENV_ID",
+  dev: "RAILWAY_DEVELOPMENT_ENV_ID",
 };
 
-/** Postgres plugin service IDs — SSOT: documents/spec/infrastructure.md */
-const POSTGRES_SERVICE_IDS = {
-  prd: process.env.RAILWAY_POSTGRES_PRD_SERVICE_ID ?? "1509c487-cf03-4c50-8c9d-8781d53ee19a",
-  stg: process.env.RAILWAY_POSTGRES_STG_SERVICE_ID ?? "7234bbc3-c482-4009-9c88-03063521ffd1",
-  dev: process.env.RAILWAY_POSTGRES_DEV_SERVICE_ID ?? "43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a",
+/** Env var names for Postgres plugin service IDs — SSOT: documents/spec/infrastructure.md */
+const POSTGRES_SERVICE_ID_VARS = {
+  prd: "RAILWAY_POSTGRES_PRD_SERVICE_ID",
+  stg: "RAILWAY_POSTGRES_STG_SERVICE_ID",
+  dev: "RAILWAY_POSTGRES_DEV_SERVICE_ID",
 };
 
 const POSTGRES_PORT = 5432;
+
+/**
+ * Read a required Railway identifier from the environment.
+ * Throws instead of falling back to a hardcoded UUID (#325) so a
+ * missing/renamed CI variable can never silently target the wrong environment.
+ *
+ * @param {string} varName
+ * @param {string} description
+ */
+function requireRailwayId(varName, description) {
+  const value = process.env[varName];
+  if (!value) {
+    throw new Error(
+      `${varName} is required (${description}). Refusing to run with a hardcoded ` +
+        "fallback that could target the wrong Railway environment (#325).",
+    );
+  }
+  return value;
+}
+
+/** @param {string} logicalEnv */
+function getEnvironmentId(logicalEnv) {
+  const varName = ENV_ID_VARS[logicalEnv];
+  if (!varName) {
+    throw new Error(`Unknown logical environment: ${logicalEnv}`);
+  }
+  return requireRailwayId(varName, `Railway environment ID for ${logicalEnv}`);
+}
+
+/** @param {string} logicalEnv */
+function getPostgresServiceId(logicalEnv) {
+  const varName = POSTGRES_SERVICE_ID_VARS[logicalEnv];
+  if (!varName) {
+    throw new Error(`No postgres service ID mapped for ${logicalEnv}`);
+  }
+  return requireRailwayId(varName, `Railway Postgres service ID for ${logicalEnv}`);
+}
 
 function normalizeTcpHost(domain) {
   return domain.replace(/\.$/, "");
@@ -169,15 +219,8 @@ async function getServiceVariables(environmentId, serviceId) {
 }
 
 async function getDatabaseUrl(logicalEnv) {
-  const environmentId = ENV_IDS[logicalEnv];
-  if (!environmentId) {
-    throw new Error(`Unknown logical environment: ${logicalEnv}`);
-  }
-
-  const postgresServiceId = POSTGRES_SERVICE_IDS[logicalEnv];
-  if (!postgresServiceId) {
-    throw new Error(`No postgres service ID mapped for ${logicalEnv}`);
-  }
+  const environmentId = getEnvironmentId(logicalEnv);
+  const postgresServiceId = getPostgresServiceId(logicalEnv);
 
   const variables = await getServiceVariables(environmentId, postgresServiceId);
   const directUrl = pickDirectCiDatabaseUrl(variables, logicalEnv);
@@ -243,6 +286,42 @@ export function parsePostgresUser(connectionUrl) {
 }
 
 /**
+ * Host:port identity of a Postgres connection URL, used to prove the wipe
+ * target is a different database from the source before any destructive DROP.
+ *
+ * @param {string} connectionUrl
+ */
+export function parsePostgresHost(connectionUrl) {
+  const url = new URL(connectionUrl);
+  return url.host.toLowerCase();
+}
+
+/**
+ * Fail closed if the resolved target database is the same host as the source
+ * (or the source is not clearly distinct). Guards the max-blast-radius bug
+ * (#325): a stale/renamed env or service ID could resolve `--target dev|stg`
+ * to prd's host and then DROP the source (prd) schema.
+ *
+ * @param {string} sourceUrl
+ * @param {string} targetUrl
+ * @param {{ sourceEnv: string, targetEnv: string }} labels
+ */
+export function assertDistinctTarget(sourceUrl, targetUrl, { sourceEnv, targetEnv }) {
+  const sourceHost = parsePostgresHost(sourceUrl);
+  const targetHost = parsePostgresHost(targetUrl);
+  if (!targetHost) {
+    throw new Error(`Resolved target host for ${targetEnv} is empty — aborting wipe`);
+  }
+  if (sourceHost === targetHost) {
+    throw new Error(
+      `Refusing to wipe: resolved target host for ${targetEnv} (${targetHost}) ` +
+        `matches source ${sourceEnv} (${sourceHost}). A DROP here would destroy ` +
+        "the source database. Check RAILWAY_*_ENV_ID / RAILWAY_POSTGRES_*_SERVICE_ID (#325).",
+    );
+  }
+}
+
+/**
  * SQL to reset the public schema before pg_restore.
  * pg_restore --clean fails when FK dependencies exist (e.g. vault_invitations).
  *
@@ -274,6 +353,11 @@ async function refreshTargetFromSource(sourceEnv, targetEnv) {
 
   const sourceUrl = await getDatabaseUrl(sourceEnv);
   const targetUrl = await getDatabaseUrl(targetEnv);
+
+  // Fail closed before any dump/restore if the target resolves to the source
+  // host — the destructive DROP below must never hit the source (prd) DB (#325).
+  assertDistinctTarget(sourceUrl, targetUrl, { sourceEnv, targetEnv });
+
   const dumpPath = join(tmpdir(), `passshare-${label}.dump`);
 
   try {
@@ -334,9 +418,10 @@ function printHelp() {
   node scripts/railway-db-replica.mjs refresh --source prd --target dev|stg
   node scripts/railway-db-replica.mjs snapshot --source prd
 
-Environment:
+Environment (all IDs required — no hardcoded fallback, #325):
   RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID
   RAILWAY_PRODUCTION_ENV_ID, RAILWAY_STAGING_ENV_ID, RAILWAY_DEVELOPMENT_ENV_ID
+  RAILWAY_POSTGRES_PRD_SERVICE_ID, RAILWAY_POSTGRES_STG_SERVICE_ID, RAILWAY_POSTGRES_DEV_SERVICE_ID
   RAILWAY_DATABASE_PUBLIC_URL_PRD|DEV|STG (optional CI override)
 `);
 }

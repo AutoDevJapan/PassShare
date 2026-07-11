@@ -93,8 +93,9 @@ Root Directory は `frontend`。`@passshare/connect`（`file:../packages/connect
 
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
-| PR / main push | `security-audit.yml` | `cargo audit` + 各パッケージ `pnpm audit --audit-level=high`（pnpm-lock がある場合） |
-| PR / main push | `quality-gate.yml` | 上記 + 統合ゲート（job `security`） |
+| PR / main push / nightly schedule | `security-audit.yml` | `cargo audit` + 各パッケージ `pnpm audit --audit-level=high`（pnpm-lock がある場合） |
+
+依存 advisory 監査は `security-audit.yml` の単一 SSOT（`quality-gate.yml` の重複 `security` job は削除、#325）。新規 CVE 公開で無関係 PR が赤くならないよう **PR では非ブロッキング（`continue-on-error`）**、**main push + nightly schedule では hard gate**。`cargo-audit` は SHA-pin した `taiki-e/install-action` のプリビルドバイナリで導入（ソースビルドの crates.io flakiness 回避）。
 
 SSOT: [vulnerability-sla.md](../security/vulnerability-sla.md), [audit-checklist.md](../security/audit-checklist.md)
 
@@ -118,9 +119,9 @@ SSOT: [vulnerability-sla.md](../security/vulnerability-sla.md), [audit-checklist
 
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
-| PR / main push | `quality-gate.yml` | Rust Docker + Docker E2E (PG) + Backend + Connect SDK + Web E2E + Extension + Desktop/Mobile smoke + Security + Benchmark → job `gate` |
+| PR / main push | `quality-gate.yml` | Rust Docker + Docker E2E (PG) + Backend + Connect SDK + Web E2E + Extension + Desktop/Mobile smoke + Benchmark → job `gate` |
 
-個別ワークフロー（`backend-test.yml`, `frontend-e2e.yml`, `desktop-build.yml` 等）は引き続き並行実行。Quality Gate が Epic #36 の完了条件 SSOT。
+`quality-gate.yml` が Backend / Connect / Web E2E テストの単一 SSOT（重複ワークフローは統合済み、#325）。依存 advisory 監査は `security-audit.yml` に集約（PR は非ブロッキング、main + nightly schedule で hard gate）。`desktop-build.yml` 等のビルド系ワークフローは引き続き並行実行。Quality Gate が Epic #36 の完了条件 SSOT。
 
 ### Docker E2E（CI）
 
@@ -157,7 +158,7 @@ SSOT: [documents/guides/](../guides/), [documents/legal/](../legal/)
 
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
-| PR / main push | `backend-test.yml` | pnpm test + migrate:verify + Connect 型 drift チェック |
+| PR / main push | `quality-gate.yml`（jobs `backend` / `connect-types` / `connect-js`） | pnpm test + migrate:verify + Connect 型 drift チェック |
 
 SSOT: [audit-checklist.md](../security/audit-checklist.md), [connect-api-gap-analysis.md](./connect-api-gap-analysis.md)
 
@@ -165,7 +166,7 @@ SSOT: [audit-checklist.md](../security/audit-checklist.md), [connect-api-gap-ana
 
 | トリガー | ワークフロー | 動作 |
 |---------|-------------|------|
-| PR / main push | `frontend-e2e.yml` | Playwright signup → CRUD → logout + frontend build |
+| PR / main push | `quality-gate.yml`（job `frontend`） | Playwright signup → CRUD → logout + frontend build |
 
 ### Desktop ビルド（CI）
 

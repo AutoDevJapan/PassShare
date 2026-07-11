@@ -94,7 +94,7 @@ docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 | ローカル | CI |
 |---------|-----|
 | `node scripts/local-web-e2e.mjs` | Quality Gate `Web (Playwright + build)` |
-| `pnpm exec playwright test` | `frontend-e2e.yml` |
+| `pnpm exec playwright test` | Quality Gate `Web (Playwright + build)`（`quality-gate.yml` job `frontend`） |
 
 ## トラブルシュート
 

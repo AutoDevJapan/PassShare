@@ -29,6 +29,8 @@ jobs:
         env:
           STG_BACKEND_URL: https://pass-share-backend-staging.up.railway.app
           STG_OP_CONNECT_TOKEN: ${{ secrets.STG_OP_CONNECT_TOKEN }}
+          # Fail (do not skip) if the Connect token is missing/broken (#325).
+          STG_SMOKE_REQUIRE_TOKEN: "true"
         run: node scripts/stg-smoke.mjs
 
   web-ui-smoke:

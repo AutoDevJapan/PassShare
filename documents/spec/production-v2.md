@@ -291,7 +291,7 @@ Epic [#30](https://github.com/AutoDevJapan/PassShare/issues/30)（Connect API �
 |------|------|
 | OpenAPI Must ギャップ 0 | ✅ [gap analysis](./connect-api-gap-analysis.md) |
 | 全環境 Connect トークン Runbook | ✅ [secret-rotation.md](../runbooks/secret-rotation.md) § OP_CONNECT |
-| backend 統合テスト CI | ✅ `backend-test.yml`（pnpm） |
+| backend 統合テスト CI | ✅ `quality-gate.yml` job `backend`（pnpm、#325 で統合） |
 
 ---
 
@@ -309,7 +309,7 @@ Epic [#31](https://github.com/AutoDevJapan/PassShare/issues/31)（Web アプリ�
 | [#65](https://github.com/AutoDevJapan/PassShare/issues/65) | ボトムナビ + 44px タップターゲット |
 | [#66](https://github.com/AutoDevJapan/PassShare/issues/66) | 1Password CSV インポート UI |
 | [#67](https://github.com/AutoDevJapan/PassShare/issues/67) | `manifest.webmanifest` + PWA メタ |
-| [#68](https://github.com/AutoDevJapan/PassShare/issues/68) | Playwright E2E + `frontend-e2e.yml` |
+| [#68](https://github.com/AutoDevJapan/PassShare/issues/68) | Playwright E2E（`quality-gate.yml` job `frontend`、#325 で統合） |
 | [#69](https://github.com/AutoDevJapan/PassShare/issues/69) | A11y ラベル + Lighthouse 手順（CI build gate） |
 
 ### Epic 完了条件（検証）

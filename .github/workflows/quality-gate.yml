@@ -301,21 +301,10 @@ jobs:
         working-directory: backend
         run: node --test test/mobile-auth.test.js
 
-  security:
-    name: Security audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      # Prebuilt binary — compiling cargo-audit from source made transient
-      # crates.io failures fail unrelated PRs (#325).
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@c7eb1735f09259a5035e8e5d44b1406b1cddc0fb # v2.83.0
-        with:
-          tool: cargo-audit
-
-      - name: Run cargo-audit
-        run: cargo audit
+  # NOTE: cargo-audit / pnpm-audit live in security-audit.yml (single SSOT for
+  # dependency advisories, #325). Advisory scans are non-blocking on PRs (a newly
+  # published CVE must not redden unrelated PRs) and a hard gate on main + the
+  # nightly schedule. They are intentionally NOT a `needs:` of this gate.
 
   benchmark:
     name: Performance benchmarks
@@ -363,7 +352,6 @@ jobs:
       - extension
       - desktop-smoke
       - mobile-smoke
-      - security
       - benchmark
     steps:
       - name: All quality checks passed
