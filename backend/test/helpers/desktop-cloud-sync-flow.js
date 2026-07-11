@@ -26,26 +26,97 @@ function itemFingerprint(item) {
 }
 
 /**
+ * @param {ConnectItem} local
+ * @param {ConnectItem} remote
+ * @returns {"local" | "remote" | "conflict"}
+ */
+function compareItemRecency(local, remote) {
+  const localRevision = typeof local.revision === "number" ? local.revision : Number.NaN;
+  const remoteRevision = typeof remote.revision === "number" ? remote.revision : Number.NaN;
+  if (Number.isFinite(localRevision) && Number.isFinite(remoteRevision)) {
+    if (localRevision > remoteRevision) {
+      return "local";
+    }
+    if (remoteRevision > localRevision) {
+      return "remote";
+    }
+    return "conflict";
+  }
+
+  const localTime = local.updatedAt ? Date.parse(local.updatedAt) : Number.NaN;
+  const remoteTime = remote.updatedAt ? Date.parse(remote.updatedAt) : Number.NaN;
+  if (!Number.isNaN(localTime) && !Number.isNaN(remoteTime)) {
+    if (localTime > remoteTime) {
+      return "local";
+    }
+    if (remoteTime > localTime) {
+      return "remote";
+    }
+  }
+
+  return "conflict";
+}
+
+/**
  * @param {ConnectItem[]} localItems
  * @param {ConnectItem[]} remoteItems
- * @returns {SyncConflict[]}
+ * @returns {{ conflicts: SyncConflict[], pushLocal: ConnectItem[], pullRemote: ConnectItem[] }}
  */
-export function detectSyncConflicts(localItems, remoteItems) {
+export function resolveSyncConflicts(localItems, remoteItems) {
   const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
-  /** @type {SyncConflict[]} */
-  const conflicts = [];
+  const resolution = { conflicts: [], pushLocal: [], pullRemote: [] };
 
   for (const local of localItems) {
     const remote = remoteById.get(local.id);
     if (!remote) {
       continue;
     }
-    if (itemFingerprint(local) !== itemFingerprint(remote)) {
-      conflicts.push({ itemId: local.id, title: local.title, local, remote });
+    if (itemFingerprint(local) === itemFingerprint(remote)) {
+      continue;
+    }
+    switch (compareItemRecency(local, remote)) {
+      case "local":
+        resolution.pushLocal.push(local);
+        break;
+      case "remote":
+        resolution.pullRemote.push(remote);
+        break;
+      default:
+        resolution.conflicts.push({ itemId: local.id, title: local.title, local, remote });
     }
   }
 
-  return conflicts;
+  return resolution;
+}
+
+/**
+ * @param {ConnectItem[]} localItems
+ * @param {ConnectItem[]} remoteItems
+ * @returns {SyncConflict[]}
+ */
+export function detectSyncConflicts(localItems, remoteItems) {
+  return resolveSyncConflicts(localItems, remoteItems).conflicts;
+}
+
+/**
+ * @param {ConnectItem[]} localItems
+ * @param {ConnectItem[]} remoteItems
+ * @returns {{ create: ConnectItem[], overwriteRemote: ConnectItem[], pull: ConnectItem[], conflicts: SyncConflict[] }}
+ */
+export function planCloudSync(localItems, remoteItems) {
+  const localById = new Map(localItems.map((item) => [item.id, item]));
+  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+  const resolution = resolveSyncConflicts(localItems, remoteItems);
+
+  const create = localItems.filter((local) => !remoteById.has(local.id));
+  const remoteOnly = remoteItems.filter((remote) => !localById.has(remote.id));
+
+  return {
+    create,
+    overwriteRemote: resolution.pushLocal,
+    pull: [...remoteOnly, ...resolution.pullRemote],
+    conflicts: resolution.conflicts,
+  };
 }
 
 /** @param {Record<string, unknown>} item */
@@ -75,6 +146,8 @@ export function connectItemFromApi(item) {
     password: fieldValue(item, "PASSWORD"),
     body: fieldValue(item, undefined, "notes") || fieldValue(item, undefined, "body"),
     notes: fieldValue(item, undefined, "notes"),
+    revision: typeof item.version === "number" ? item.version : null,
+    updatedAt: item.updatedAt != null ? String(item.updatedAt) : null,
   };
 }
 
@@ -178,7 +251,7 @@ async function fetchRemoteItems(apiBaseUrl, accessToken, vaultId) {
 export async function checkSyncConflicts(config, sessionCookie, localItems) {
   const accessToken = await loginAndGetAccessToken(config, sessionCookie);
   const remoteItems = await fetchRemoteItems(config.apiBaseUrl, accessToken, config.vaultId);
-  return detectSyncConflicts(localItems, remoteItems);
+  return planCloudSync(localItems, remoteItems).conflicts;
 }
 
 /** @typedef {(item: ConnectItem) => Promise<void>} SyncPullHandler */
@@ -193,45 +266,52 @@ export async function checkSyncConflicts(config, sessionCookie, localItems) {
 export async function runCloudSync(config, sessionCookie, localItems, onPull) {
   const accessToken = await loginAndGetAccessToken(config, sessionCookie);
   const remoteItems = await fetchRemoteItems(config.apiBaseUrl, accessToken, config.vaultId);
-  const conflicts = detectSyncConflicts(localItems, remoteItems);
-  const conflictIds = new Set(conflicts.map((c) => c.itemId));
-
-  const localById = new Map(localItems.map((item) => [item.id, item]));
-  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+  const plan = planCloudSync(localItems, remoteItems);
 
   let pushed = 0;
-  for (const local of localItems) {
-    if (conflictIds.has(local.id)) {
-      continue;
+  // Local-only items: create them on the remote.
+  for (const local of plan.create) {
+    const createRes = await fetch(`${config.apiBaseUrl}/v1/vaults/${config.vaultId}/items`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(connectItemToCreateBody(local, { id: local.id })),
+    });
+    if (!createRes.ok) {
+      throw new Error(`createItem failed (${createRes.status})`);
     }
-    if (!remoteById.has(local.id)) {
-      const createRes = await fetch(`${config.apiBaseUrl}/v1/vaults/${config.vaultId}/items`, {
-        method: "POST",
+    pushed += 1;
+  }
+
+  // One-sided edits where the local copy is newer: overwrite the remote.
+  for (const local of plan.overwriteRemote) {
+    const replaceRes = await fetch(
+      `${config.apiBaseUrl}/v1/vaults/${config.vaultId}/items/${local.id}`,
+      {
+        method: "PUT",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(connectItemToCreateBody(local, { id: local.id })),
-      });
-      if (!createRes.ok) {
-        throw new Error(`createItem failed (${createRes.status})`);
-      }
-      pushed += 1;
+        body: JSON.stringify(connectItemToCreateBody(local)),
+      },
+    );
+    if (!replaceRes.ok) {
+      throw new Error(`replaceItem failed (${replaceRes.status})`);
     }
+    pushed += 1;
   }
 
+  // Remote-only items and remote-newer edits: apply to local.
   let pulled = 0;
-  for (const remote of remoteItems) {
-    if (conflictIds.has(remote.id)) {
-      continue;
-    }
-    if (!localById.has(remote.id)) {
-      await onPull(remote);
-      pulled += 1;
-    }
+  for (const remote of plan.pull) {
+    await onPull(remote);
+    pulled += 1;
   }
 
-  return { pushed, pulled, conflicts };
+  return { pushed, pulled, conflicts: plan.conflicts };
 }
 
 /**

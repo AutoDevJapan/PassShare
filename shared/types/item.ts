@@ -18,6 +18,14 @@ export type ConnectItem = {
   password?: string | null;
   body?: string | null;
   notes?: string | null;
+  /**
+   * Server-monotonic revision (Connect API `Item.version`). Used by sync to
+   * pick the newer side of a one-sided edit. Optional so locally-built items
+   * that have never round-tripped through the API stay valid.
+   */
+  revision?: number | null;
+  /** ISO timestamp of the last server-side change (Connect API `Item.updatedAt`). */
+  updatedAt?: string | null;
 };
 
 export type ItemFormValues = {

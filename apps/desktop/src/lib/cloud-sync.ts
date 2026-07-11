@@ -2,7 +2,7 @@ import { ConnectClient } from "@passshare/connect";
 import type { ConnectItem } from "@shared/types/item.js";
 import { formValuesFromItem } from "@shared/types/item.js";
 import { connectItemFromApi, connectItemToCreateBody } from "./connect-items";
-import { detectSyncConflicts, type SyncConflict } from "@shared/lib/sync-conflicts";
+import { detectSyncConflicts, planCloudSync, type SyncConflict } from "@shared/lib/sync-conflicts";
 import {
   SyncError,
   executeSyncTasks,
@@ -114,7 +114,7 @@ export async function checkSyncConflicts(
 ): Promise<SyncConflict[]> {
   const client = await loginAndGetClient(config);
   const remoteItems = await fetchRemoteItems(client, config.vaultId);
-  return detectSyncConflicts(localItems, remoteItems);
+  return planCloudSync(localItems, remoteItems).conflicts;
 }
 
 export type SyncPullHandler = (item: ConnectItem) => Promise<void>;
@@ -127,18 +127,12 @@ export async function runCloudSync(
 ): Promise<SyncRunResult> {
   const client = await loginAndGetClient(config);
   const remoteItems = await fetchRemoteItems(client, config.vaultId);
-  const conflicts = detectSyncConflicts(localItems, remoteItems);
-  const conflictIds = new Set(conflicts.map((c) => c.itemId));
-
-  const localById = new Map(localItems.map((item) => [item.id, item]));
-  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+  const plan = planCloudSync(localItems, remoteItems);
 
   const tasks: SyncTask[] = [];
 
-  for (const local of localItems) {
-    if (conflictIds.has(local.id) || remoteById.has(local.id)) {
-      continue;
-    }
+  // Local-only items: create them on the remote.
+  for (const local of plan.create) {
     tasks.push({
       itemId: local.id,
       title: local.title,
@@ -153,10 +147,22 @@ export async function runCloudSync(
     });
   }
 
-  for (const remote of remoteItems) {
-    if (conflictIds.has(remote.id) || localById.has(remote.id)) {
-      continue;
-    }
+  // One-sided edits where the local copy is newer: overwrite the remote.
+  for (const local of plan.overwriteRemote) {
+    tasks.push({
+      itemId: local.id,
+      title: local.title,
+      direction: "push",
+      run: () =>
+        client
+          .replaceItem(config.vaultId, local.id, connectItemToCreateBody(formValuesFromItem(local)))
+          .then(() => undefined),
+    });
+  }
+
+  // Remote-only items and one-sided edits where the remote copy is newer:
+  // apply to local.
+  for (const remote of plan.pull) {
     tasks.push({
       itemId: remote.id,
       title: remote.title,
@@ -170,7 +176,7 @@ export async function runCloudSync(
   return {
     pushed: summary.pushed,
     pulled: summary.pulled,
-    conflicts,
+    conflicts: plan.conflicts,
     outcomes: summary.outcomes,
     failures: summary.failures,
   };
