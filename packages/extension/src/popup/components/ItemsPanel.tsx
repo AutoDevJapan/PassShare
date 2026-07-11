@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ConnectItem } from "@shared/types/item.js";
+import { copyTextWithAutoClear } from "@shared/ui/clipboard-auto-clear.js";
 import { connectItemFromApi } from "../../lib/connect-items";
 import { useAuthSession } from "../hooks/useAuthSession";
 import { useExtensionLabels } from "../hooks/useExtensionLabels";
@@ -53,7 +54,10 @@ export function ItemsPanel() {
   }, [items, query]);
 
   async function copyValue(label: string, value: string) {
-    await navigator.clipboard.writeText(value);
+    // Parity with desktop/mobile/web: copy through the shared helper so the
+    // secret is wiped from the OS clipboard after the default clear delay
+    // instead of lingering indefinitely.
+    await copyTextWithAutoClear(value);
     setCopied(label);
     window.setTimeout(() => setCopied(null), 1500);
   }
@@ -65,7 +69,7 @@ export function ItemsPanel() {
     });
     if (response?.ok && typeof response.password === "string") {
       setGenerated(response.password);
-      await navigator.clipboard.writeText(response.password);
+      await copyTextWithAutoClear(response.password);
     }
   }
 
