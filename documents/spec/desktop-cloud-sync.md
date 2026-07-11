@@ -25,6 +25,15 @@
 
 同一 `item.id` が両方に存在し、内容フィンガープリント（title / category / フィールド / tags）が異なる場合に競合。
 
+### マージベース追跡（#382）
+
+片側編集を自動同期するため、同期成功時に item ごとの **base revision**（Connect `Item.version`）をローカルに保存する（desktop は `localStorage` の `passshare.desktop.cloudSync.baseRevisions`）。
+
+- Connect API の revision はサーバ単調増加のため、**remote revision が base から不変**であれば remote は base のままだと証明できる。内容が相違していればそれは **local 単独編集**であり、自動 push（`overwriteRemote`）する。
+- **remote revision が base より進んでいる**場合は remote が変化しており、local も変化しているか確証が持てないため、保守的に conflict とする（データ損失を避ける）。
+- base 未記録の item は従来どおり `compareItemRecency` にフォールバックする。
+- **base fingerprint は平文の秘密情報を含む**ため、暗号化境界（`.pbox`）の外（`localStorage` 等）へは絶対に保存しない。desktop が保存するのは非機微な revision 整数のみ。純関数側（`resolveWithBase`）は fingerprint 付き base もサポートするが、これはテスト／将来の vault 保持型コンシューマ用途に限る。
+
 ## 受入基準
 
 - [x] ADR 007 に沿った双方向同期 MVP
@@ -42,6 +51,7 @@ Quality Gate `docker-e2e`（`backend/test/cloud-sync.integration.test.js`）が 
 | 競合検出 | `detects conflicts...` | 同一 id・異なるフィンガープリントで `checkSyncConflicts` が 1 件 |
 | 競合解決（ローカル優先） | `detects conflicts...` | `resolveConflictKeepLocal` で remote が local に一致 |
 | 競合解決（クラウド優先） | `detects conflicts...` | `resolveConflictKeepRemote` で `onPull` に remote が渡る |
+| マージベース追跡（#382） | `auto-pushes a local one-sided edit...` | 初回同期で base revision 記録 → local 単独編集を自動 push（conflict 0 件） |
 | Auth + Connect トークン | `before` + 各テスト | signup → session cookie → `/api/auth/connect-token` → Bearer |
 
 実装ミラー: `backend/test/helpers/desktop-cloud-sync-flow.js`（`apps/desktop/src/lib/cloud-sync.ts` 相当）
