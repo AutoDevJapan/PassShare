@@ -13,10 +13,11 @@ import {
 import { generatePassword } from "../lib/password-generator";
 import {
   clearAllAuthStorage,
-  loadConnectToken,
   loadRefreshToken,
+  loadStoredConnectToken,
   saveConnectToken,
 } from "../lib/storage";
+import { bootstrapConnectSession } from "@shared/lib/connect-session";
 import { createCachedLookup } from "../lib/cached-lookup";
 
 /**
@@ -33,26 +34,35 @@ const listCredentialMatches = createCachedLookup<CredentialMatch[]>({
 });
 
 async function getConnectClient(): Promise<ConnectClient | null> {
-  const refreshToken = await loadRefreshToken();
-  if (!refreshToken) {
+  const result = await bootstrapConnectSession(
+    {
+      async load() {
+        const refreshToken = await loadRefreshToken();
+        if (!refreshToken) {
+          return null;
+        }
+        const connect = await loadStoredConnectToken();
+        return {
+          refreshToken,
+          connectAccessToken: connect?.token ?? "",
+          connectExpiresAt: connect?.expiresAt ?? "",
+        };
+      },
+      save: (session) => saveConnectToken(session.connectAccessToken, session.connectExpiresAt),
+      async clear() {
+        await clearAllAuthStorage();
+        // The stored user is gone; drop any cached credential matches too.
+        listCredentialMatches.invalidate();
+      },
+    },
+    { fetchCurrentUser, refreshConnectToken },
+  );
+
+  if (!result) {
     return null;
   }
 
-  const user = await fetchCurrentUser(refreshToken);
-  if (!user) {
-    await clearAllAuthStorage();
-    listCredentialMatches.invalidate();
-    return null;
-  }
-
-  let accessToken = await loadConnectToken();
-  if (!accessToken) {
-    const refreshed = await refreshConnectToken(refreshToken);
-    accessToken = refreshed.connectAccessToken;
-    await saveConnectToken(refreshed.connectAccessToken, refreshed.connectExpiresAt);
-  }
-
-  return new ConnectClient({ host: getApiBaseUrl(), token: accessToken });
+  return new ConnectClient({ host: getApiBaseUrl(), token: result.accessToken });
 }
 
 async function fetchCredentialMatches(

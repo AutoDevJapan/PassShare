@@ -26,6 +26,7 @@ import {
   loadAuthSession,
   saveAuthSession,
 } from "../lib/secure-storage";
+import { bootstrapConnectSession } from "@shared/lib/connect-session";
 
 type AuthSessionContextValue = {
   user: AuthUser | null;
@@ -53,44 +54,27 @@ async function persistAuthSession(response: MobileAuthResponse): Promise<Connect
   });
 }
 
-function isConnectTokenUsable(session: { connectAccessToken: string; connectExpiresAt: string }): boolean {
-  if (!session.connectAccessToken) {
-    return false;
-  }
-  const expiresAt = Date.parse(session.connectExpiresAt);
-  return Number.isNaN(expiresAt) || expiresAt > Date.now();
-}
-
 async function buildConnectClientFromStorage(reason: string): Promise<{
   user: AuthUser | null;
   client: ConnectClient | null;
 }> {
-  // Single biometric unlock: the whole session comes back in one read.
-  const session = await loadAuthSession(reason);
-  if (!session) {
-    return { user: null, client: null };
-  }
+  const result = await bootstrapConnectSession(
+    {
+      // Single biometric unlock: the whole session comes back in one read.
+      load: () => loadAuthSession(reason),
+      save: saveAuthSession,
+      clear: clearAuthSession,
+    },
+    { fetchCurrentUser, refreshConnectToken },
+  );
 
-  const user = await fetchCurrentUser(session.refreshToken);
-  if (!user) {
-    await clearAuthSession();
+  if (!result) {
     return { user: null, client: null };
-  }
-
-  let accessToken = session.connectAccessToken;
-  if (!isConnectTokenUsable(session)) {
-    const refreshed = await refreshConnectToken(session.refreshToken);
-    accessToken = refreshed.connectAccessToken;
-    await saveAuthSession({
-      refreshToken: session.refreshToken,
-      connectAccessToken: refreshed.connectAccessToken,
-      connectExpiresAt: refreshed.connectExpiresAt,
-    });
   }
 
   return {
-    user,
-    client: new ConnectClient({ host: getApiBaseUrl(), token: accessToken }),
+    user: result.user,
+    client: new ConnectClient({ host: getApiBaseUrl(), token: result.accessToken }),
   };
 }
 

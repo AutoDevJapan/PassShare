@@ -27,6 +27,8 @@ export function connectItemFromApi(item: Item): ConnectItem {
     password: fieldValue(item, "PASSWORD"),
     body: fieldValue(item, undefined, "notes") || fieldValue(item, undefined, "body"),
     notes: fieldValue(item, undefined, "notes"),
+    revision: item.version,
+    updatedAt: item.updatedAt ?? null,
   };
 }
 

@@ -22,11 +22,12 @@ import {
 } from "../../lib/auth-api";
 import {
   clearAllAuthStorage,
-  loadConnectToken,
   loadRefreshToken,
+  loadStoredConnectToken,
   saveConnectToken,
   saveRefreshToken,
 } from "../../lib/storage";
+import { bootstrapConnectSession } from "@shared/lib/connect-session";
 
 type AuthSessionContextValue = {
   user: AuthUser | null;
@@ -43,27 +44,33 @@ async function buildConnectClientFromStorage(): Promise<{
   user: AuthUser | null;
   client: ConnectClient | null;
 }> {
-  const refreshToken = await loadRefreshToken();
-  if (!refreshToken) {
-    return { user: null, client: null };
-  }
+  const result = await bootstrapConnectSession(
+    {
+      async load() {
+        const refreshToken = await loadRefreshToken();
+        if (!refreshToken) {
+          return null;
+        }
+        const connect = await loadStoredConnectToken();
+        return {
+          refreshToken,
+          connectAccessToken: connect?.token ?? "",
+          connectExpiresAt: connect?.expiresAt ?? "",
+        };
+      },
+      save: (session) => saveConnectToken(session.connectAccessToken, session.connectExpiresAt),
+      clear: clearAllAuthStorage,
+    },
+    { fetchCurrentUser, refreshConnectToken },
+  );
 
-  const user = await fetchCurrentUser(refreshToken);
-  if (!user) {
-    await clearAllAuthStorage();
+  if (!result) {
     return { user: null, client: null };
-  }
-
-  let accessToken = await loadConnectToken();
-  if (!accessToken) {
-    const refreshed = await refreshConnectToken(refreshToken);
-    accessToken = refreshed.connectAccessToken;
-    await saveConnectToken(refreshed.connectAccessToken, refreshed.connectExpiresAt);
   }
 
   return {
-    user,
-    client: new ConnectClient({ host: getApiBaseUrl(), token: accessToken }),
+    user: result.user,
+    client: new ConnectClient({ host: getApiBaseUrl(), token: result.accessToken }),
   };
 }
 
