@@ -55,6 +55,14 @@
 - refresh 手順（stg のみ）: `pg_dump`（prd）→ 対象 DB で `DROP SCHEMA public CASCADE` → `pg_restore`（`--single-transaction --exit-on-error`）
 - 各 Postgres サービス（`postgres-dev` / `postgres-stg` / `postgres-prd-v2`）には **TCP proxy（port 5432）** が stg refresh 用に必要。未設定時は `railway-db-replica.mjs` が Railway API で自動作成する
 
+### ログイン throttle / lockout ストア（#378）
+
+- ログイン失敗ロックアウト（`login_failures`）と per-IP スロットル（`login_ip_requests`）の状態は **既存の PostgreSQL を流用**して共有する。**Redis は追加しない**（新規インフラ依存を増やさない方針）
+- これにより backend を水平スケールしても **多重インスタンス間でロックアウト/スロットルが共有**され、デプロイ・再起動をまたいで **状態が維持**される
+- ストア選択は `backend/src/auth/login-guard-store.js` が担う。既定は `memory-*` / `pg-*` の auth store と同じく **`DATABASE_URL` の有無**（pool あり → pg / なし → memory）。環境変数 `LOGIN_GUARD_STORE`（`pg` | `memory`）で明示上書き可能
+- **local / test はインメモリのまま**（依存追加なしで動作）。TTL は `LOGIN_LOCKOUT_MS` / `LOGIN_IP_WINDOW_MS` に対応し、`expires_at` フィルタ＋opportunistic sweep でストア側失効
+- テーブルは `backend/src/db/auth-schema.js`（auth store migration）で作成。実 DB を使う共有検証は `backend/test/login-guard-pg.integration.test.js`（Docker backend-e2e で実行）
+
 ### Dev seed（local / preview / dev）
 
 | 項目 | 値 |

@@ -1,6 +1,7 @@
 import express from "express";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
+import { createLoginGuardStore } from "./auth/login-guard-store.js";
 import { resolveDbSslConfig } from "./config/db-ssl.js";
 import { createRequireMetricsAuth } from "./config/metrics-auth.js";
 import { resolveTrustProxyHops } from "./config/trust-proxy.js";
@@ -18,6 +19,7 @@ import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
  *   pool?: import('pg').Pool | null,
  *   store?: import('./store/memory-store.js').ConnectStore,
  *   authStore?: import('./auth/index.js').AuthStore,
+ *   loginGuardStore?: import('./auth/login-guard-store.js').LoginGuardStore,
  * }} [options]
  */
 export async function createApp(options = {}) {
@@ -39,6 +41,10 @@ export async function createApp(options = {}) {
 
   const connectStore = options.store ?? (await createStore(pool));
   const authStore = options.authStore ?? (await createAuthStore(pool));
+  // Login throttle / lockout state: shared + restart-durable on Postgres,
+  // process-local in memory otherwise (#378). The backing tables are created by
+  // the auth store migration, so this runs after `createAuthStore`.
+  const loginGuardStore = options.loginGuardStore ?? createLoginGuardStore(pool);
 
   const ownsStores = !options.store && !options.authStore;
   if (ownsStores && isDevSeedEnvironment(appEnv)) {
@@ -114,7 +120,7 @@ export async function createApp(options = {}) {
       type: ["application/json", "application/json-patch+json"],
     }),
   );
-  app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv }));
+  app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore }));
   const requireConnectAuth = createRequireConnectAuth({ authStore, appEnv });
   app.use(
     "/v1",
