@@ -11,7 +11,7 @@
     "@playwright/test": "^1.60.0",
     "@vitest/coverage-v8": "^4.1.7",
     "dependency-cruiser": "^18.0.0",
-    "knip": "^6.14.2",
+    "knip": "^6.33.0",
     "typedoc": "^0.28.19",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
