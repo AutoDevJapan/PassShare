@@ -23,6 +23,17 @@ for (const locale of VISUAL_LOCALES) {
       await expect(page.locator("html")).toHaveAttribute("lang", locale);
       await expect(page.getByRole("heading", { name: pageDef.heading }).first()).toBeVisible();
 
+      if (pageDef.name === "landing") {
+        const sections = page.locator("#quick-start, #features, #migration, #comparison, #get-started");
+        await expect(sections).toHaveCount(5);
+        for (const section of await sections.all()) {
+          await expect(section).not.toContainText("landing.");
+          if (locale !== "ja") {
+            await expect(section).not.toContainText(/[\u3040-\u30ff\u4e00-\u9fff]/u);
+          }
+        }
+      }
+
       const overflow = await page.evaluate(() => {
         const root = document.documentElement;
         return root.scrollWidth - root.clientWidth;
