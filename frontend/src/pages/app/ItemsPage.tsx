@@ -18,7 +18,9 @@ export function ItemsPage() {
   const { vaultId = "" } = useParams();
   const { t } = useI18n();
   const labels = useItemLabels();
-  const { connectClient, connectLoading } = useAuthSession();
+  const { user, connectClient, connectLoading, refreshConnect } = useAuthSession();
+  const activeScope = useRef("");
+  activeScope.current = `${user?.id ?? ""}:${vaultId}`;
   const [vaultName, setVaultName] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
   const [documents, setDocuments] = useState<Record<string, Item>>({});
@@ -58,6 +60,8 @@ export function ItemsPage() {
     setItems([]);
     setDocuments({});
     if (!connectClient || !vaultId) {
+      setItemsLoading(false);
+      setError(t("app.item.loadError"));
       return;
     }
     setError(null);
@@ -91,7 +95,22 @@ export function ItemsPage() {
     setFormValues(emptyFormValues());
     setImportMessage(null);
     setExportMessage(null);
-  }, [vaultId, connectClient]);
+  }, [vaultId, user?.id]);
+
+  async function handleReload() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    const scope = activeScope.current;
+    try {
+      // Acquire fresh scopes and credentials, including after a token expired.
+      const client = await refreshConnect();
+      if (!client && scope === activeScope.current) setError(t("app.item.loadError"));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
 
   async function handleCreate(values: ItemFormValues) {
     if (!connectClient || !itemsReady || busyRef.current) {
@@ -100,15 +119,15 @@ export function ItemsPage() {
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    const generation = loadGeneration.current;
+    const scope = activeScope.current;
     try {
       await connectClient.createItem(vaultId, connectItemToCreateBody(values));
-      if (generation !== loadGeneration.current) return;
+      if (scope !== activeScope.current) return;
       setMode(null);
       setFormValues(emptyFormValues());
       await loadItems();
     } catch {
-      if (generation === loadGeneration.current) setError(t("app.item.saveError"));
+      if (scope === activeScope.current) setError(t("app.item.saveError"));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -122,17 +141,17 @@ export function ItemsPage() {
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    const generation = loadGeneration.current;
+    const scope = activeScope.current;
     try {
       await connectClient.replaceItem(vaultId, editingItem.id, connectItemToCreateBody(values, editingItem));
-      if (generation !== loadGeneration.current) return;
+      if (scope !== activeScope.current) return;
       setMode(null);
       setEditingItem(null);
       setFormValues(emptyFormValues());
       await loadItems();
     } catch (err) {
       const conflict = err instanceof Error && "status" in err && err.status === 409;
-      if (generation === loadGeneration.current) setError(t(conflict ? "app.item.conflictError" : "app.item.saveError"));
+      if (scope === activeScope.current) setError(t(conflict ? "app.item.conflictError" : "app.item.saveError"));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -146,12 +165,12 @@ export function ItemsPage() {
     busyRef.current = true;
     setBusy(true);
     setError(null);
-    const generation = loadGeneration.current;
+    const scope = activeScope.current;
     try {
       await connectClient.deleteItem(vaultId, itemId);
-      if (generation === loadGeneration.current) await loadItems();
+      if (scope === activeScope.current) await loadItems();
     } catch {
-      if (generation === loadGeneration.current) setError(t("app.item.deleteError"));
+      if (scope === activeScope.current) setError(t("app.item.deleteError"));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -173,21 +192,21 @@ export function ItemsPage() {
     setImportMessage(null);
     busyRef.current = true;
     setBusy(true);
-    const generation = loadGeneration.current;
+    const scope = activeScope.current;
     let imported = 0;
     try {
       const text = await file.text();
       const parsed = parseOnepasswordCsv(text);
       for (const row of parsed) {
-        if (generation !== loadGeneration.current) return;
+        if (scope !== activeScope.current) return;
         await connectClient.createItem(vaultId, connectItemToCreateBody(row));
         imported += 1;
       }
-      if (generation !== loadGeneration.current) return;
+      if (scope !== activeScope.current) return;
       setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
       await loadItems();
     } catch {
-      if (generation === loadGeneration.current) {
+      if (scope === activeScope.current) {
         // Show successfully created rows before reporting the partial failure.
         const reloadGeneration = loadGeneration.current + 1;
         await loadItems();
@@ -207,14 +226,14 @@ export function ItemsPage() {
     setImportMessage(null);
     busyRef.current = true;
     setBusy(true);
-    const generation = loadGeneration.current;
+    const scope = activeScope.current;
     try {
       const result = await import1puxFile(connectClient, vaultId, file);
-      if (generation !== loadGeneration.current) return;
+      if (scope !== activeScope.current) return;
       setImportMessage(labels.import1puxSuccess.replace("{count}", String(result.imported)));
       await loadItems();
     } catch {
-      if (generation === loadGeneration.current) {
+      if (scope === activeScope.current) {
         const reloadGeneration = loadGeneration.current + 1;
         await loadItems();
         if (reloadGeneration === loadGeneration.current) setError(t("app.item.import1puxError"));
@@ -248,7 +267,7 @@ export function ItemsPage() {
       </header>
 
       <div className="app-items-toolbar">
-        <button type="button" className="ps-button ps-button--secondary" disabled={itemsLoading || busy} onClick={() => void loadItems()}>
+        <button type="button" className="ps-button ps-button--secondary" disabled={itemsLoading || busy} onClick={() => void handleReload()}>
           {t("app.item.reload")}
         </button>
         <input

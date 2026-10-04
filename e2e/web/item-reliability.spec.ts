@@ -230,3 +230,47 @@ test("a delayed old list cannot hide a newly created password box", async ({ pag
   await expect(page.getByRole("heading", { name: "New box stays visible" })).toBeVisible();
   await expect(page.locator(".ps-card--form").getByRole("button", { name: /^Add$|^追加$/ })).toBeEnabled();
 });
+
+test("switching language during save does not discard the successful result or repeat it", async ({ page }) => {
+  const box = await openBox(page);
+  await page.goto(box.url);
+  const form = page.locator(".ps-card--form");
+  await expect(form.getByRole("button", { name: /^Add$|^追加$/ })).toBeEnabled();
+  await form.getByRole("textbox", { name: /^Title$|^タイトル$/ }).fill("Saved across language change");
+  await form.locator('input[type="password"]').fill("synthetic-only");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**${box.path}`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await gate;
+    await route.continue();
+  });
+  await form.getByRole("button", { name: /^Add$|^追加$/ }).click();
+  await expect(form.getByRole("button", { name: /^Add$|^追加$/ })).toBeDisabled();
+  await page.getByRole("button", { name: "日本語", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ja");
+  release();
+  await expect(page.getByText("Saved across language change", { exact: true })).toBeVisible();
+  await expect(form.getByRole("textbox", { name: "タイトル", exact: true })).toHaveValue("");
+  expect(await (await page.request.get(box.path, { headers: box.headers })).json()).toHaveLength(1);
+});
+
+test("refreshing after an account changed clears the previous account draft and items", async ({ page }) => {
+  const box = await openBox(page);
+  await page.goto(box.url);
+  const form = page.locator(".ps-card--form");
+  await expect(form.getByRole("button", { name: /^Add$|^追加$/ })).toBeEnabled();
+  await form.getByRole("textbox", { name: /^Title$|^タイトル$/ }).fill("Previous account draft");
+  await form.locator('input[type="password"]').fill("synthetic-only");
+  const csrf = await (await page.request.get("/api/auth/csrf")).json();
+  const otherAccount = await page.request.post("/api/auth/signup", {
+    headers: { "X-CSRF-Token": csrf.csrfToken },
+    data: { email: `other-${crypto.randomUUID()}@example.com`, password: "SyntheticTest123!" },
+  });
+  expect(otherAccount.status()).toBe(201);
+  await page.getByRole("button", { name: /Refresh list|一覧を更新/ }).click();
+  await expect(page.getByRole("alert")).toContainText(/Failed to load|読み込み|取得/);
+  await expect(form.getByRole("textbox", { name: /^Title$|^タイトル$/ })).toHaveValue("");
+  await expect(form.locator('input[type="password"]')).toHaveValue("");
+  await expect(form.getByRole("button", { name: /^Add$|^追加$/ })).toBeDisabled();
+});
