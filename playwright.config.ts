@@ -7,6 +7,8 @@ const backendServer = {
   env: {
     APP_ENV: "local",
     PORT: "8080",
+    DATABASE_URL: "",
+    OP_CONNECT_TOKEN: "",
   },
 };
 

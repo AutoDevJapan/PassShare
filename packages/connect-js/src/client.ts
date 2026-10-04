@@ -88,7 +88,7 @@ export class ConnectClient {
 
     const body = (await response.json().catch(() => ({}))) as { message?: string };
     if (!response.ok) {
-      throw new Error(body.message ?? `Connect API error ${response.status}`);
+      throw Object.assign(new Error(body.message ?? `Connect API error ${response.status}`), { status: response.status });
     }
     return body as T;
   }

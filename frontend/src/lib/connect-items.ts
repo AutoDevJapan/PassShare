@@ -32,31 +32,44 @@ export function connectItemFromApi(item: Item): ConnectItem {
   };
 }
 
-export function connectItemToCreateBody(values: ItemFormValues): Record<string, unknown> {
-  const tags = parseTagsInput(values.tags);
-  const fields: Array<Record<string, unknown>> = [];
+export function connectItemToCreateBody(values: ItemFormValues, original?: Item): Record<string, unknown> {
+  const tags = original && values.tags === (original.tags ?? []).join(", ")
+    ? original.tags ?? [] : parseTagsInput(values.tags);
+  const fields: Array<Record<string, unknown>> = (original?.fields ?? []).map((field) => ({ ...field }));
 
-  if (values.category === "LOGIN") {
-    fields.push(
-      { label: "username", type: "STRING", purpose: "USERNAME", value: values.username },
-      { label: "password", type: "CONCEALED", purpose: "PASSWORD", value: values.password },
-    );
-  } else if (values.category === "PASSWORD") {
-    fields.push({
-      label: "password",
-      type: "CONCEALED",
-      purpose: "PASSWORD",
-      value: values.password,
-    });
-  } else {
-    fields.push({ label: "notes", type: "STRING", value: values.body });
+  // Update only the fields exposed by the form. Imported fields, sections and
+  // metadata must survive a title/password edit, including their original IDs.
+  function updateField(label: string, value: string, purpose?: string) {
+    const index = fields.findIndex((field) => purpose
+      ? typeof field.purpose === "string" && field.purpose.toUpperCase() === purpose
+      : typeof field.label === "string" && field.label.toLowerCase() === label);
+    if (index >= 0) {
+      fields[index] = { ...fields[index], value };
+    } else if (value || !original) {
+      fields.push({ label, type: purpose === "PASSWORD" ? "CONCEALED" : "STRING", ...(purpose ? { purpose } : {}), value });
+    }
   }
 
-  if (values.notes && values.category !== "SECURE_NOTE") {
-    fields.push({ label: "notes", type: "STRING", value: values.notes });
+  if (values.category === "LOGIN") {
+    updateField("username", values.username, "USERNAME");
+    updateField("password", values.password, "PASSWORD");
+  } else if (values.category === "PASSWORD") {
+    updateField("password", values.password, "PASSWORD");
+  } else {
+    const notesField = original?.fields?.find((field) => field.label.toLowerCase() === "notes");
+    const bodyField = original?.fields?.find((field) => field.label.toLowerCase() === "body");
+    const bodyLabel = notesField?.value || !bodyField ? "notes" : "body";
+    updateField(bodyLabel, values.body);
+  }
+
+  if (values.category === "LOGIN" || values.category === "PASSWORD") {
+    if (values.notes || original?.fields?.some((field) => field.label.toLowerCase() === "notes")) {
+      updateField("notes", values.notes);
+    }
   }
 
   const body: Record<string, unknown> = {
+    ...original,
     title: values.title,
     category: values.category,
     fields,
@@ -64,8 +77,16 @@ export function connectItemToCreateBody(values: ItemFormValues): Record<string, 
     favorite: values.favorite,
   };
 
-  if (values.category === "LOGIN" && values.url.trim()) {
-    body.urls = [{ href: values.url.trim(), primary: true, label: "" }];
+  if (values.category === "LOGIN") {
+    const urls = (original?.urls ?? []).map((url) => ({ ...url }));
+    const primaryIndex = Math.max(0, urls.findIndex((url) => url.primary));
+    if (values.url.trim()) {
+      if (urls.length) urls[primaryIndex] = { ...urls[primaryIndex], href: values.url.trim() };
+      else urls.push({ href: values.url.trim(), primary: true, label: "" });
+    } else if (urls.length) {
+      urls.splice(primaryIndex, 1);
+    }
+    body.urls = urls;
   }
 
   return body;

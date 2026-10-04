@@ -27,7 +27,7 @@ export function exportOnepasswordCsv(items: ConnectItem[]): string {
       item.username ?? "",
       item.password ?? "",
       item.url ?? "",
-      item.notes ?? item.body ?? "",
+      item.notes || item.body || "",
       item.tags.join(", "),
     ];
     lines.push(row.map(escapeCsv).join(","));

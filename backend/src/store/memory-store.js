@@ -122,6 +122,9 @@ export function createMemoryStore() {
 
     async replaceItem(vaultId, itemId, body) {
       const row = await requireItem(vaultId, itemId);
+      if (body.version !== undefined && body.version !== (row.document.version ?? 1)) {
+        throw connectHttpError(409, "PS015: Item changed since it was read");
+      }
       const now = nowIso();
       const document = {
         ...body,

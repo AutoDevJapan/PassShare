@@ -74,6 +74,9 @@ export function normalizeItemFields(fields) {
  */
 export function normalizeItemBody(body) {
   const normalized = { ...body };
+  if (normalized.version !== undefined && (!Number.isSafeInteger(normalized.version) || normalized.version < 1)) {
+    throw connectHttpError(400, "PS015: Item version must be a positive safe integer");
+  }
   if (normalized.category !== undefined) {
     assertValidItemCategory(normalized);
     normalized.category = normalizeConnectCategory(normalized.category);

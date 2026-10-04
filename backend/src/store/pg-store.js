@@ -122,6 +122,10 @@ export function createPgStore(pool) {
 
     async replaceItem(vaultId, itemId, body) {
       const row = await requireItem(vaultId, itemId);
+      const expectedVersion = row.document.version ?? 1;
+      if (body.version !== undefined && body.version !== expectedVersion) {
+        throw connectHttpError(409, "PS015: Item changed since it was read");
+      }
       const now = nowIso();
       const document = {
         ...body,
@@ -131,15 +135,20 @@ export function createPgStore(pool) {
         updatedAt: now,
         version: (row.document.version ?? 1) + 1,
       };
-      await pool.query(
-        `UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz WHERE id = $3`,
-        [JSON.stringify(document), now, itemId],
+      const result = await pool.query(
+        `UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz
+         WHERE id = $3 AND COALESCE((document->>'version')::bigint, 1) = $4::bigint`,
+        [JSON.stringify(document), now, itemId, expectedVersion],
       );
+      if (result.rowCount === 0) {
+        throw connectHttpError(409, "PS015: Item changed since it was read");
+      }
       return document;
     },
 
     async patchItem(vaultId, itemId, patches) {
       const row = await requireItem(vaultId, itemId);
+      const expectedVersion = row.document.version ?? 1;
       let patched;
       try {
         patched = patchDocument(row.document, patches);
@@ -151,10 +160,14 @@ export function createPgStore(pool) {
       patched.vault = { id: vaultId };
       patched.updatedAt = nowIso();
       patched.version = (row.document.version ?? 1) + 1;
-      await pool.query(
-        `UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz WHERE id = $3`,
-        [JSON.stringify(patched), patched.updatedAt, itemId],
+      const result = await pool.query(
+        `UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz
+         WHERE id = $3 AND COALESCE((document->>'version')::bigint, 1) = $4::bigint`,
+        [JSON.stringify(patched), patched.updatedAt, itemId, expectedVersion],
       );
+      if (result.rowCount === 0) {
+        throw connectHttpError(409, "PS015: Item changed since it was read");
+      }
       return patched;
     },
 
