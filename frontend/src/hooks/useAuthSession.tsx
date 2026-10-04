@@ -33,13 +33,14 @@ type AuthSessionContextValue = {
 
 const AuthSessionContext = createContext<AuthSessionContextValue | null>(null);
 
-async function buildConnectClient(): Promise<{ user: AuthUser; client: ConnectClient } | null> {
+async function buildConnectClient(onUser: (user: AuthUser | null) => void): Promise<ConnectClient | null> {
   const user = await fetchCurrentUser();
+  onUser(user);
   if (!user) {
     return null;
   }
   const token = await fetchConnectToken();
-  return { user, client: new ConnectClient({ host: getApiBaseUrl(), token: token.accessToken }) };
+  return new ConnectClient({ host: getApiBaseUrl(), token: token.accessToken });
 }
 
 export function AuthSessionProvider({ children }: { children: ReactNode }) {
@@ -51,10 +52,9 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const refreshConnect = useCallback(async () => {
     setConnectLoading(true);
     try {
-      const connection = await buildConnectClient();
-      setUser(connection?.user ?? null);
-      setConnectClient(connection?.client ?? null);
-      return connection?.client ?? null;
+      const client = await buildConnectClient(setUser);
+      setConnectClient(client);
+      return client;
     } catch {
       setConnectClient(null);
       return null;
