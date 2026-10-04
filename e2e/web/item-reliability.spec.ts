@@ -175,3 +175,54 @@ test("secure note body survives editing and CSV export even with an empty notes 
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
   expect(Buffer.concat(chunks).toString("utf8")).toContain("Edited synthetic body");
 });
+
+test("a gateway failure after password box creation does not repeat the mutation", async ({ page }) => {
+  await openBox(page);
+  await page.goto("/app/vaults");
+  await expect(page.getByRole("link", { name: "My Password Box" })).toBeVisible();
+  let calls = 0;
+  await page.route("**/api/auth/vaults", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    calls += 1;
+    const committed = await route.fetch();
+    expect(committed.status()).toBe(201);
+    await route.fulfill({ status: 503, json: { message: "Synthetic gateway failure after commit" } });
+  });
+  await page.getByRole("textbox", { name: /New password box name|新しいパスワードボックス/ }).fill("Committed once");
+  await page.getByRole("button", { name: /^Create$|^作成$/ }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  expect(calls).toBe(1);
+  const freshToken = (await (await page.request.get("/api/auth/connect-token")).json()).accessToken;
+  const boxes = await (await page.request.get("/v1/vaults", { headers: { Authorization: `Bearer ${freshToken}` } })).json();
+  expect(boxes.filter((entry: { name: string }) => entry.name === "Committed once")).toHaveLength(1);
+});
+
+test("a delayed old list cannot hide a newly created password box", async ({ page }) => {
+  await openBox(page);
+  let firstRead = true;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/v1/vaults", async (route) => {
+    if (!firstRead || route.request().method() !== "GET") return route.continue();
+    firstRead = false;
+    const oldResponse = await route.fetch();
+    const oldList = await oldResponse.json();
+    expect(oldList).toHaveLength(1);
+    await gate;
+    await route.fulfill({ status: 200, json: oldList, headers: { "X-Synthetic-Stale-Read": "yes" } });
+  });
+  const staleResponse = page.waitForResponse((response) => response.headers()["x-synthetic-stale-read"] === "yes");
+  await page.goto("/app/vaults");
+  await page.getByRole("textbox", { name: /New password box name|新しいパスワードボックス/ }).fill("New box stays visible");
+  await page.getByRole("button", { name: /^Create$|^作成$/ }).click();
+  try {
+    await expect(page.getByRole("link", { name: "New box stays visible" })).toBeVisible();
+  } finally {
+    release();
+  }
+  await staleResponse;
+  await expect(page.getByRole("link", { name: "New box stays visible" })).toBeVisible();
+  await page.getByRole("link", { name: "New box stays visible" }).click();
+  await expect(page.getByRole("heading", { name: "New box stays visible" })).toBeVisible();
+  await expect(page.locator(".ps-card--form").getByRole("button", { name: /^Add$|^追加$/ })).toBeEnabled();
+});
