@@ -64,6 +64,24 @@ jobs:
         working-directory: backend
         run: pnpm test
 
+      - name: Verify production backend image
+        run: |
+          docker build --tag passshare-backend-ci:verify backend
+          docker run --rm --network none --cpus 1 --memory 768m \
+            --mount "type=bind,source=$PWD/backend/test,target=/app/test,readonly" \
+            passshare-backend-ci:verify node --test \
+            test/auth-api.test.js test/mobile-auth.test.js \
+            test/extension-auth.test.js test/connect-api.test.js \
+            test/connect-api-extended.test.js test/security-headers.test.js \
+            test/web-session.test.js
+
+      - name: Remove verification image
+        if: always()
+        run: |
+          if docker image inspect passshare-backend-ci:verify >/dev/null 2>&1; then
+            docker image rm passshare-backend-ci:verify
+          fi
+
   connect-types:
     name: Connect API types
     runs-on: ubuntu-latest
