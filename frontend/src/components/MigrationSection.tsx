@@ -1,10 +1,10 @@
 const STEPS = [
-  "他サービスからエクスポートした CSV / JSON を選択",
+  "1Password 形式の CSV または 1PUX を選択",
   "PassShare がフィールドをマッピング",
   "パスワードボックスにインポート完了",
 ];
 
-const SERVICES = ["1Password", "LastPass", "Bitwarden", "KeePass", "Chrome", "Firefox"];
+const SERVICES = ["1Password CSV", "1PUX"];
 
 export function MigrationSection() {
   return (
@@ -13,10 +13,9 @@ export function MigrationSection() {
         <p className="landing-section__eyebrow">Easy Migration</p>
         <h2 className="landing-section__title" id="migration-heading">
           かんたん移行
-          <span className="ps-badge landing-section__badge">Coming soon</span>
         </h2>
         <p className="landing-section__lead">
-          既存のパスワードマネージャーから PassShare へ移行する機能は v0.2 以降で提供予定です。
+          Web とデスクトップで 1Password 形式の CSV を取り込めます。Web とデスクトップのクラウド連携では 1PUX も取り込めます。他社の独自形式は対象外です。移行ファイルには秘密値が含まれるため、取込後は安全に扱ってください。
         </p>
 
         <ol className="landing-steps landing-steps--compact">
@@ -28,7 +27,7 @@ export function MigrationSection() {
           ))}
         </ol>
 
-        <div className="landing-tags" aria-label="対応予定サービス">
+        <div className="landing-tags" aria-label="対応する形式">
           {SERVICES.map((service) => (
             <span key={service} className="landing-tags__item">
               {service}

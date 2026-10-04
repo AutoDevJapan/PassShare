@@ -40,7 +40,7 @@ export const docsJa: LocaleDocs = {
         id: "signup",
         title: "1. アカウント作成",
         paragraphs: [
-          "Web ポータル（/app/signup）または Desktop アプリからアカウントを作成します。",
+          "Web ポータル（/app/signup）でクラウド用のアカウントを作成します。端末版の .pbox はアカウントなしで使えます。一般向けの配布は検証中です。",
           "マスターパスワードは PassShare サーバーに送信されません。端末上でパスワードボックスを暗号化するためにのみ使用されます。",
         ],
       },
@@ -48,8 +48,8 @@ export const docsJa: LocaleDocs = {
         id: "unlock",
         title: "2. パスワードボックスを開く",
         paragraphs: [
-          "Desktop では .pbox ファイルを選択し、マスターパスワードで解錠します。",
-          "Web ではログイン後、Connect API 経由でクラウド上のパスワードボックスにアクセスします。",
+          "Desktop では .pbox ファイルを選択し、マスターパスワードで開きます。クラウド用のアカウントパスワードとは別です。",
+          "Web ではログイン後、クラウド上のパスワードボックスにアクセスします。現在、項目の内容はサーバーとデータベースが扱う方式です。",
         ],
       },
       {
@@ -76,6 +76,7 @@ export const docsJa: LocaleDocs = {
         paragraphs: [
           "1Password からの移行: 1PUX インポートまたは 1Password CSV エクスポート → PassShare インポート。",
           "詳細はランディングページの移行セクションも参照してください。",
+          "CSV は平文です。追加フィールド・添付・複数 URL 等をすべて保全するバックアップではありません。移行後に内容を確認し、検証前に元データを消さないでください。",
         ],
       },
     ],
@@ -145,7 +146,7 @@ export const docsJa: LocaleDocs = {
         title: "2. サービス内容",
         paragraphs: [
           "PassShare はパスワードボックスの暗号化・保存・同期機能を提供します。",
-          "マスターパスワードおよびボックス内の秘密データは、設計上 PassShare サーバーで復号されません。",
+          "端末版の .pbox は端末で暗号化し、マスターパスワードをサーバーへ送りません。現在の Web・クラウド同期・Connect API は項目の内容をサーバーへ送り、サーバーとデータベースで扱います。クラウドはサーバーが秘密値を読めない方式ではありません。",
         ],
       },
       {
@@ -185,8 +186,8 @@ export const docsJa: LocaleDocs = {
       },
     ],
     legalReview: [
-      { label: "文書バージョン", value: "0.1.0-draft" },
-      { label: "最終更新", value: "2026-05-28" },
+      { label: "文書バージョン", value: "0.2.0-draft" },
+      { label: "最終更新", value: "2026-10-04" },
       { label: "法務レビュー", value: "未実施（草案）" },
       { label: "承認", value: "⏳ 本番公開前に法務確認必須" },
     ],
@@ -206,7 +207,7 @@ export const docsJa: LocaleDocs = {
         list: [
           "アカウント情報（メールアドレス、表示名）",
           "認証・セッション関連メタデータ（HttpOnly Cookie、Connect トークン識別子）",
-          "Connect API 経由の暗号化済み項目メタデータ（タイトル、カテゴリ等。パスワード本文は E2E 設計）",
+          "Connect API 経由の項目（タイトル・カテゴリ・ユーザー名・パスワード・メモ等。現在のクラウドはサーバーとデータベースが内容を扱います）",
           "アクセスログ（IP、User-Agent、タイムスタンプ — 秘密値は記録しません）",
         ],
         paragraphs: [],
@@ -248,8 +249,8 @@ export const docsJa: LocaleDocs = {
       },
     ],
     legalReview: [
-      { label: "文書バージョン", value: "0.1.0-draft" },
-      { label: "最終更新", value: "2026-05-28" },
+      { label: "文書バージョン", value: "0.2.0-draft" },
+      { label: "最終更新", value: "2026-10-04" },
       { label: "法務レビュー", value: "未実施（草案）" },
       { label: "承認", value: "⏳ 本番公開前に法務確認必須" },
     ],
@@ -263,7 +264,7 @@ export const docsJa: LocaleDocs = {
         title: "マスターパスワードを忘れた",
         paragraphs: [
           "マスターパスワードは PassShare サーバーに保存されません。復旧できない場合、パスワードボックス内のデータは復号できません。",
-          "Desktop でリカバリーシークレットを設定している場合は、ドキュメントのリカバリー手順を参照してください。",
+          "現在、緊急キットの値だけでボックスを開く機能はありません。端末版の .pbox のバックアップとマスターパスワードを安全に保管してください。",
         ],
       },
       {

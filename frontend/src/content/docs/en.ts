@@ -40,7 +40,7 @@ export const docsEn: LocaleDocs = {
         id: "signup",
         title: "1. Create an account",
         paragraphs: [
-          "Sign up from the web portal (/app/signup) or the Desktop app.",
+          "Create a cloud account on the web portal (/app/signup). Desktop .pbox files work without an account. Distribution for general users is still being verified.",
           "Your master password is never sent to PassShare servers. It only unlocks your password box on your device.",
         ],
       },
@@ -49,7 +49,7 @@ export const docsEn: LocaleDocs = {
         title: "2. Open a password box",
         paragraphs: [
           "On Desktop, select a .pbox file and unlock it with your master password.",
-          "On Web, sign in and access cloud password boxes through the Connect API.",
+          "On Web, sign in to access cloud password boxes. Item contents are handled by the server and database. Your account password is separate from the desktop master password.",
         ],
       },
       {
@@ -76,6 +76,7 @@ export const docsEn: LocaleDocs = {
         paragraphs: [
           "From 1Password: import 1PUX or 1Password CSV export into PassShare.",
           "See the landing page migration section for more detail.",
+          "CSV is plaintext and does not preserve every custom field, attachment, or URL. Verify imported contents before removing the source data. Keep a .pbox backup and your master password safe; the current recovery kit cannot open the box on its own.",
         ],
       },
     ],
@@ -142,7 +143,7 @@ export const docsEn: LocaleDocs = {
         title: "2. Service",
         paragraphs: [
           "PassShare provides encrypted password box storage and sync.",
-          "Master passwords and box secrets are not decrypted on PassShare servers by design.",
+          "Desktop .pbox files are encrypted on the device and the master password is not sent to the server. Web, cloud sync, and the Connect API send item contents to the server and database. The current cloud service is not end-to-end encrypted: the server can read item secrets.",
         ],
       },
       {
@@ -182,8 +183,8 @@ export const docsEn: LocaleDocs = {
       },
     ],
     legalReview: [
-      { label: "Document version", value: "0.1.0-draft" },
-      { label: "Last updated", value: "2026-05-28" },
+      { label: "Document version", value: "0.2.0-draft" },
+      { label: "Last updated", value: "2026-10-04" },
       { label: "Legal review", value: "Not completed (draft)" },
       { label: "Approval", value: "⏳ Legal sign-off required before production" },
     ],
@@ -203,7 +204,7 @@ export const docsEn: LocaleDocs = {
         list: [
           "Account data (email, display name)",
           "Auth/session metadata (HttpOnly cookies, Connect token identifiers)",
-          "Connect API item metadata (titles, categories — passwords remain E2E by design)",
+          "Connect API item contents, including titles, categories, usernames, passwords and notes. The current cloud server and database handle these contents.",
           "Access logs (IP, User-Agent, timestamps — no secrets logged)",
         ],
         paragraphs: [],
@@ -245,8 +246,8 @@ export const docsEn: LocaleDocs = {
       },
     ],
     legalReview: [
-      { label: "Document version", value: "0.1.0-draft" },
-      { label: "Last updated", value: "2026-05-28" },
+      { label: "Document version", value: "0.2.0-draft" },
+      { label: "Last updated", value: "2026-10-04" },
       { label: "Legal review", value: "Not completed (draft)" },
       { label: "Approval", value: "⏳ Legal sign-off required before production" },
     ],
@@ -260,7 +261,7 @@ export const docsEn: LocaleDocs = {
         title: "I forgot my master password",
         paragraphs: [
           "Master passwords are not stored on PassShare servers. Without it, box data cannot be decrypted.",
-          "If you configured a recovery secret on Desktop, follow the recovery documentation.",
+          "The current recovery kit cannot open a box without the master password. Keep a backup of your .pbox file and store your master password safely.",
         ],
       },
       {

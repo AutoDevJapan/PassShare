@@ -8,32 +8,32 @@ const ROWS: Row[] = [
   {
     feature: "パスワードボックス（マスターパスワード1つ）",
     passshare: "対応",
-    others: "各社対応",
+    others: "ボックスを開く方法とアカウント認証の違い",
   },
   {
     feature: "ローカル暗号化（ゼロナレッジ）",
     passshare: "対応",
-    others: "プランによる",
+    others: "端末とサーバーで秘密値を読める範囲",
   },
   {
     feature: "パスワード自動生成",
     passshare: "対応",
-    others: "対応",
+    others: "使える文字と長さ",
   },
   {
-    feature: "非 IT 向け UI",
-    passshare: "最優先",
-    others: "限定的",
+    feature: "使いやすさ",
+    passshare: "実際の操作で確認してください",
+    others: "体験版で日常の操作を確認",
   },
   {
-    feature: "緊急キット（リカバリ）",
-    passshare: "対応",
-    others: "各社異なる",
+    feature: "マスターパスワード紛失時の復旧",
+    passshare: "緊急キットの値だけでは復旧不可",
+    others: "方式と利用条件を確認",
   },
   {
     feature: "共有機能",
-    passshare: "v0.2 予定",
-    others: "有料プラン中心",
+    passshare: "Web に実装済み・販売前の検証中",
+    others: "招待・本人確認・権限取消の条件",
   },
 ];
 
@@ -46,7 +46,7 @@ export function ComparisonSection() {
           PassShare の位置づけ
         </h2>
         <p className="landing-section__lead">
-          MVP 機能に絞った比較です。個人利用・非 IT 向けのシンプルさを重視しています。
+          端末版の暗号化とクラウドの保管方式は異なります。クラウドはサーバーが項目の内容を扱う方式です。他社の対応状況は契約するプランの公式説明で確認してください。
         </p>
 
         <div className="landing-table-wrap">
@@ -55,7 +55,7 @@ export function ComparisonSection() {
               <tr>
                 <th scope="col">機能</th>
                 <th scope="col">PassShare</th>
-                <th scope="col">主要 PM 一般</th>
+                <th scope="col">契約前に確認すること</th>
               </tr>
             </thead>
             <tbody>

@@ -11,7 +11,7 @@ const FEATURES: Feature[] = [
   },
   {
     title: "ローカル暗号化",
-    description: "Argon2id + XChaCha20-Poly1305 で端末内に保存。サーバーに平文を送りません。",
+    description: "端末版の .pbox は Argon2id + XChaCha20-Poly1305 で暗号化します。クラウドを利用すると、項目の内容はサーバーにも送られます。",
   },
   {
     title: "パスワード生成",
@@ -26,8 +26,8 @@ const FEATURES: Feature[] = [
     description: "タイトル・URL・ユーザー名・パスワード・メモの CRUD に対応。",
   },
   {
-    title: "緊急キット",
-    description: "作成時に表示されるリカバリ用シークレットキーで、万が一の復旧に備えられます。",
+    title: "バックアップと復旧",
+    description: "端末版は .pbox のコピーとマスターパスワードを保管してください。現在、緊急キットの値だけで開く機能はありません。",
   },
   {
     title: "デスクトップアプリ",
@@ -35,8 +35,8 @@ const FEATURES: Feature[] = [
   },
   {
     title: "共有機能",
-    description: "PassShare の Share による共有。",
-    badge: "Coming soon",
+    description: "Web でチームを招待して共有できます。本人確認とクラウド暗号化の改善を進めています。販売前の検証対象です。",
+    badge: "検証中",
   },
 ];
 
@@ -46,7 +46,7 @@ export function FeaturesSection() {
       <div className="landing-section__inner">
         <p className="landing-section__eyebrow">Features</p>
         <h2 className="landing-section__title" id="features-heading">
-          MVP で使える機能
+          実装済みの機能と利用条件
         </h2>
         <p className="landing-section__lead">
           非 IT エンジニアが日常使いできるよう、必要な機能に絞って提供します。

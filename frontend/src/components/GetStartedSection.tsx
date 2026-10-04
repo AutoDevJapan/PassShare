@@ -11,13 +11,13 @@ export function GetStartedSection() {
           今すぐ、パスワードボックスを始めよう
         </h2>
         <p className="landing-section__lead">
-          完全無料でデスクトップアプリをダウンロード。ドキュメントでセットアップ手順も確認できます。
+          端末で保管する版とクラウド版の違いを確認してから、導入手順へ進んでください。
         </p>
         <div className="ps-actions landing-cta-band__actions">
           <a className="ps-button ps-button--primary" href="/docs">
             {t("hero.cta.docs")}
           </a>
-          <a className="ps-button ps-button--secondary" href="#download">
+          <a className="ps-button ps-button--secondary" href="/docs/user-guide">
             {t("hero.cta.download")}
           </a>
         </div>

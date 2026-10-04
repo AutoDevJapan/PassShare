@@ -27,7 +27,6 @@ type AuthErrorBody = {
   code?: string;
 };
 
-let csrfToken: string | null = null;
 
 // Railway backend cold-starts (idle wake / fresh deploy) briefly have no healthy
 // replica, so the edge proxy returns a transient 5xx before the container is
@@ -100,7 +99,6 @@ async function loadCsrfToken(): Promise<string> {
     throw new AuthApiError("Failed to fetch CSRF token");
   }
   const body = (await response.json()) as CsrfResponse;
-  csrfToken = body.csrfToken;
   return body.csrfToken;
 }
 
@@ -145,9 +143,6 @@ export async function signup(email: string, password: string): Promise<AuthUser>
     return parseAuthError(response);
   }
   const body = (await response.json()) as AuthResponse;
-  if (body.csrfToken) {
-    csrfToken = body.csrfToken;
-  }
   return body.user;
 }
 
@@ -160,9 +155,6 @@ export async function login(email: string, password: string): Promise<AuthUser> 
     return parseAuthError(response);
   }
   const body = (await response.json()) as AuthResponse;
-  if (body.csrfToken) {
-    csrfToken = body.csrfToken;
-  }
   return body.user;
 }
 
@@ -171,7 +163,6 @@ export async function logout(): Promise<void> {
   if (!response.ok && response.status !== 204) {
     return parseAuthError(response);
   }
-  csrfToken = null;
 }
 
 export async function fetchConnectToken(): Promise<ConnectTokenResponse> {

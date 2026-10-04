@@ -1,4 +1,4 @@
-import type { MessageKey } from "../../../shared/i18n/index";
+import type { MessageKey } from "@shared/i18n/index";
 
 export type SearchSection = {
   id: string;
@@ -8,7 +8,7 @@ export type SearchSection = {
 
 export const SEARCH_SECTIONS: SearchSection[] = [
   { id: "home", href: "#", labelKey: "search.sections.home" },
-  { id: "download", href: "#download", labelKey: "search.sections.download" },
+  { id: "download", href: "/docs/user-guide", labelKey: "search.sections.download" },
   { id: "quick-start", href: "#quick-start", labelKey: "search.sections.quickStart" },
   { id: "features", href: "#features", labelKey: "search.sections.features" },
   { id: "migration", href: "#migration", labelKey: "search.sections.migration" },

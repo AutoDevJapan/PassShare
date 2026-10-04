@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-29T13:49:22.329Z",
+  "generatedAt": "2026-10-04T09:24:50.105Z",
   "issue": 130,
   "frameCount": 30,
   "viewports": [
@@ -32,14 +32,14 @@
         "header.search.placeholder": "ページ内を検索…",
         "header.lang.ja": "日本語",
         "header.lang.en": "EN",
-        "header.cta.download": "Download",
-        "hero.badge": "完全無料",
+        "header.cta.download": "導入手順",
+        "hero.badge": "端末版とクラウド版",
         "hero.title.line1": "パスワードを、",
         "hero.title.line2": "かんたんに安全に。",
         "hero.lead.prefix": "非 IT 向けパスワードマネージャー。マスターパスワード1つで",
         "hero.lead.box": "パスワードボックス",
         "hero.lead.suffix": "を開き、ログイン情報を端末内に暗号化して保管します。",
-        "hero.cta.download": "Download",
+        "hero.cta.download": "導入手順を確認",
         "hero.cta.docs": "View Documentation",
         "footer.tagline.prefix": "非 IT 向けパスワードマネージャー。Tauri デスクトップアプリと Web ポータルで、",
         "footer.tagline.box": "パスワードボックス",
@@ -61,14 +61,14 @@
         "header.search.placeholder": "ページ内を検索…",
         "header.lang.ja": "日本語",
         "header.lang.en": "EN",
-        "header.cta.download": "Download",
-        "hero.badge": "完全無料",
+        "header.cta.download": "導入手順",
+        "hero.badge": "端末版とクラウド版",
         "hero.title.line1": "パスワードを、",
         "hero.title.line2": "かんたんに安全に。",
         "hero.lead.prefix": "非 IT 向けパスワードマネージャー。マスターパスワード1つで",
         "hero.lead.box": "パスワードボックス",
         "hero.lead.suffix": "を開き、ログイン情報を端末内に暗号化して保管します。",
-        "hero.cta.download": "Download",
+        "hero.cta.download": "導入手順を確認",
         "hero.cta.docs": "View Documentation",
         "footer.tagline.prefix": "非 IT 向けパスワードマネージャー。Tauri デスクトップアプリと Web ポータルで、",
         "footer.tagline.box": "パスワードボックス",
@@ -90,14 +90,14 @@
         "header.search.placeholder": "Search this page…",
         "header.lang.ja": "日本語",
         "header.lang.en": "EN",
-        "header.cta.download": "Download",
-        "hero.badge": "Free forever",
+        "header.cta.download": "Setup",
+        "hero.badge": "Desktop and cloud",
         "hero.title.line1": "Passwords,",
         "hero.title.line2": "simple and secure.",
         "hero.lead.prefix": "A password manager for non-IT users. One master password opens your",
         "hero.lead.box": "password box",
         "hero.lead.suffix": "and keeps login details encrypted on your device.",
-        "hero.cta.download": "Download",
+        "hero.cta.download": "View setup guide",
         "hero.cta.docs": "View Documentation",
         "footer.tagline.prefix": "A password manager for non-IT users. Manage your ",
         "footer.tagline.box": "password box",
@@ -119,14 +119,14 @@
         "header.search.placeholder": "Search this page…",
         "header.lang.ja": "日本語",
         "header.lang.en": "EN",
-        "header.cta.download": "Download",
-        "hero.badge": "Free forever",
+        "header.cta.download": "Setup",
+        "hero.badge": "Desktop and cloud",
         "hero.title.line1": "Passwords,",
         "hero.title.line2": "simple and secure.",
         "hero.lead.prefix": "A password manager for non-IT users. One master password opens your",
         "hero.lead.box": "password box",
         "hero.lead.suffix": "and keeps login details encrypted on your device.",
-        "hero.cta.download": "Download",
+        "hero.cta.download": "View setup guide",
         "hero.cta.docs": "View Documentation",
         "footer.tagline.prefix": "A password manager for non-IT users. Manage your ",
         "footer.tagline.box": "password box",
@@ -148,14 +148,14 @@
         "header.search.placeholder": "Поиск на странице…",
         "header.lang.ja": "日本語",
         "header.lang.en": "EN",
-        "header.cta.download": "Скачать",
-        "hero.badge": "Бесплатно",
+        "header.cta.download": "Установка",
+        "hero.badge": "Desktop и облако",
         "hero.title.line1": "Пароли —",
         "hero.title.line2": "просто и безопасно.",
         "hero.lead.prefix": "Менеджер паролей для обычных пользователей. Один мастер-пароль открывает",
         "hero.lead.box": "парольный бокс",
         "hero.lead.suffix": "и хранит данные для входа в зашифрованном виде на вашем устройстве.",
-        "hero.cta.download": "Скачать",
+        "hero.cta.download": "Руководство по установке",
         "hero.cta.docs": "Документация",
         "footer.tagline.prefix": "Менеджер паролей для обычных пользователей. Управляйте ",
         "footer.tagline.box": "парольным боксом",
@@ -177,14 +177,14 @@
         "header.search.placeholder": "Поиск на странице…",
         "header.lang.ja": "日本語",
         "header.lang.en": "EN",
-        "header.cta.download": "Скачать",
-        "hero.badge": "Бесплатно",
+        "header.cta.download": "Установка",
+        "hero.badge": "Desktop и облако",
         "hero.title.line1": "Пароли —",
         "hero.title.line2": "просто и безопасно.",
         "hero.lead.prefix": "Менеджер паролей для обычных пользователей. Один мастер-пароль открывает",
         "hero.lead.box": "парольный бокс",
         "hero.lead.suffix": "и хранит данные для входа в зашифрованном виде на вашем устройстве.",
-        "hero.cta.download": "Скачать",
+        "hero.cta.download": "Руководство по установке",
         "hero.cta.docs": "Документация",
         "footer.tagline.prefix": "Менеджер паролей для обычных пользователей. Управляйте ",
         "footer.tagline.box": "парольным боксом",
@@ -266,12 +266,11 @@
       "strings": {
         "header.nav.docs": "Документация",
         "footer.documentation": "Документация",
-        "docTitle": "Documentation",
-        "docLead": "User guides, extension install steps, legal documents, and FAQ for PassShare.",
+        "docTitle": "Документация",
+        "docLead": "Руководства пользователя, установка расширения, юридические документы и FAQ для PassShare.",
         "docSections": [
-          "User guide"
-        ],
-        "_fallback": "en"
+          "Руководство пользователя"
+        ]
       }
     },
     {
@@ -283,12 +282,11 @@
       "strings": {
         "header.nav.docs": "Документация",
         "footer.documentation": "Документация",
-        "docTitle": "Documentation",
-        "docLead": "User guides, extension install steps, legal documents, and FAQ for PassShare.",
+        "docTitle": "Документация",
+        "docLead": "Руководства пользователя, установка расширения, юридические документы и FAQ для PassShare.",
         "docSections": [
-          "User guide"
-        ],
-        "_fallback": "en"
+          "Руководство пользователя"
+        ]
       }
     },
     {
@@ -445,11 +443,10 @@
       "path": "/faq",
       "strings": {
         "docTitle": "FAQ",
-        "docLead": "Common questions and troubleshooting.",
+        "docLead": "Частые вопросы и устранение неполадок.",
         "docSections": [
-          "I forgot my master password"
-        ],
-        "_fallback": "en"
+          "Я забыл мастер-пароль"
+        ]
       }
     },
     {
@@ -460,11 +457,10 @@
       "path": "/faq",
       "strings": {
         "docTitle": "FAQ",
-        "docLead": "Common questions and troubleshooting.",
+        "docLead": "Частые вопросы и устранение неполадок.",
         "docSections": [
-          "I forgot my master password"
-        ],
-        "_fallback": "en"
+          "Я забыл мастер-пароль"
+        ]
       }
     },
     {
@@ -530,12 +526,11 @@
       "width": 1440,
       "path": "/terms",
       "strings": {
-        "docTitle": "Terms of service",
-        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docTitle": "Условия использования",
+        "docLead": "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API).",
         "docSections": [
-          "1. Acceptance"
-        ],
-        "_fallback": "en"
+          "1. Принятие условий"
+        ]
       }
     },
     {
@@ -545,12 +540,11 @@
       "width": 375,
       "path": "/terms",
       "strings": {
-        "docTitle": "Terms of service",
-        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docTitle": "Условия использования",
+        "docLead": "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API).",
         "docSections": [
-          "1. Acceptance"
-        ],
-        "_fallback": "en"
+          "1. Принятие условий"
+        ]
       }
     }
   ]

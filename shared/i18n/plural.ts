@@ -2,7 +2,7 @@ import type { Locale } from "./index";
 
 type ItemCountForms = {
   zero?: string;
-  one: string;
+  one?: string;
   two?: string;
   few?: string;
   many?: string;
