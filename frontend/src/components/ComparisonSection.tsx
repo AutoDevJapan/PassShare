@@ -6,13 +6,13 @@ type Row = {
 
 const ROWS: Row[] = [
   {
-    feature: "パスワードボックス（マスターパスワード1つ）",
+    feature: "端末版の .pbox（マスターパスワード1つ）",
     passshare: "対応",
     others: "ボックスを開く方法とアカウント認証の違い",
   },
   {
-    feature: "ローカル暗号化（ゼロナレッジ）",
-    passshare: "対応",
+    feature: "端末版の .pbox の暗号化",
+    passshare: "端末内で暗号化。クラウドはサーバーが内容を読める",
     others: "端末とサーバーで秘密値を読める範囲",
   },
   {
