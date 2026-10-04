@@ -201,6 +201,8 @@ test("a delayed old list cannot hide a newly created password box", async ({ pag
   await openBox(page);
   let firstRead = true;
   let release!: () => void;
+  let markOldRead!: () => void;
+  const oldReadReady = new Promise<void>((resolve) => { markOldRead = resolve; });
   const gate = new Promise<void>((resolve) => { release = resolve; });
   await page.route("**/v1/vaults", async (route) => {
     if (!firstRead || route.request().method() !== "GET") return route.continue();
@@ -208,11 +210,13 @@ test("a delayed old list cannot hide a newly created password box", async ({ pag
     const oldResponse = await route.fetch();
     const oldList = await oldResponse.json();
     expect(oldList).toHaveLength(1);
+    markOldRead();
     await gate;
     await route.fulfill({ status: 200, json: oldList, headers: { "X-Synthetic-Stale-Read": "yes" } });
   });
   const staleResponse = page.waitForResponse((response) => response.headers()["x-synthetic-stale-read"] === "yes");
   await page.goto("/app/vaults");
+  await oldReadReady;
   await page.getByRole("textbox", { name: /New password box name|新しいパスワードボックス/ }).fill("New box stays visible");
   await page.getByRole("button", { name: /^Create$|^作成$/ }).click();
   try {
