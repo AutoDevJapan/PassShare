@@ -670,7 +670,7 @@ mod smoke_tests {
         let original = std::fs::read(&path).expect("ciphertext");
         let start = Instant::now();
         let mut session = NativeLock::default();
-        assert!(session.unlock(session.begin_unlock().unwrap(), start));
+        assert!(session.unlock(session.begin_unlock(), start));
         let state = AppState {
             data: Mutex::new(BoxSession {
                 password_box: Some(pb),

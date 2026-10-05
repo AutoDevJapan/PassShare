@@ -472,8 +472,8 @@ fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
         saved.as_array().is_some_and(|items| items.len() == 1),
         "lock fixture count",
     )?;
-    // Reopen and close twice, without waiting for a polling tick. Each native
-    // transition has its own epoch and must destroy the secret-bearing UI.
+    // Reopen and close twice. Each native transition has its own epoch and
+    // must destroy the secret-bearing UI; the UI may also observe its poll.
     for _ in 0..2 {
         open_desktop_ui(&driver, &path, &master)?;
         ensure(
@@ -537,7 +537,7 @@ fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
     )?;
     driver.invoke("lock_password_box", json!({}))?;
     assert_locked_ui(&driver)?;
-    std::fs::write(output.join("desktop-auto-lock.json"), serde_json::to_vec_pretty(&json!({"nativeFlavor":"desktop","productionIdleSeconds":300,"measuredIdleSeconds":started.elapsed().as_secs_f64(),"manualRelockWithoutPoll":2,"secretUiBeforeLock":true,"secretUiAfterLock":false,"idleRequiresAuthentication":true,"lockedSecretCommandsRejected":true,"ciphertextPreserved":true,"backgroundAccepted":false,"physicalMobile":false,"syntheticOnly":true})).map_err(|_| "lock result encode")?).map_err(|_| "lock result write")?;
+    std::fs::write(output.join("desktop-auto-lock.json"), serde_json::to_vec_pretty(&json!({"nativeFlavor":"desktop","productionIdleSeconds":300,"measuredIdleSeconds":started.elapsed().as_secs_f64(),"manualRelockObserved":2,"secretUiBeforeLock":true,"secretUiAfterLock":false,"idleRequiresAuthentication":true,"lockedSecretCommandsRejected":true,"ciphertextPreserved":true,"backgroundAccepted":false,"physicalMobile":false,"syntheticOnly":true})).map_err(|_| "lock result encode")?).map_err(|_| "lock result write")?;
     println!("native desktop production idle acceptance succeeded");
     Ok(())
 }
