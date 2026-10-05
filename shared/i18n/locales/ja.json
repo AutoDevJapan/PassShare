@@ -336,5 +336,14 @@
   "landing.compare.share.check": "招待・本人確認・権限取消の条件",
   "landing.start.eyebrow": "導入手順へ",
   "landing.start.title": "パスワードボックスを始めよう",
-  "landing.start.lead": "端末で保管する版とクラウド版の違いを確認してから、導入手順へ進んでください。"
+  "landing.start.lead": "端末で保管する版とクラウド版の違いを確認してから、導入手順へ進んでください。",
+  "app.invitations.confirmationLabel": "本人確認コード",
+  "app.invitations.confirmationPlaceholder": "管理者から受け取ったコード",
+  "app.invitations.confirmationHelp": "会社の管理者から別の連絡方法で受け取ったコードを入力します。",
+  "app.invitations.confirmAccept": "確認して参加",
+  "app.share.confirmationHeading": "本人確認コード",
+  "app.share.confirmationHelp": "普段から使う連絡先や対面で、本人にだけ渡してください。",
+  "app.share.confirmationOnce": "このコードは一度だけ表示されます。作成し直す場合は招待を取り消してください。",
+  "app.share.confirmationDismiss": "コードを控えたので閉じる",
+  "app.invitations.confirmationError": "確認コードが正しくありません。管理者から受け取ったコードを確認してください。"
 }

@@ -25,6 +25,7 @@ type CsrfResponse = {
 type AuthErrorBody = {
   message?: string;
   code?: string;
+  error?: string;
 };
 
 // Railway backend cold-starts (idle wake / fresh deploy) briefly have no healthy
@@ -79,7 +80,7 @@ async function fetchWithRetry(input: string, init: RequestInit = {}): Promise<Re
 }
 
 export class AuthApiError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public readonly code?: string) {
     super(message);
     this.name = "AuthApiError";
   }
@@ -87,7 +88,7 @@ export class AuthApiError extends Error {
 
 async function parseAuthError(response: Response): Promise<never> {
   const body = (await response.json().catch(() => ({}))) as AuthErrorBody;
-  throw new AuthApiError(body.message ?? "Request failed");
+  throw new AuthApiError(body.message ?? "Request failed", body.error ?? body.code);
 }
 
 async function loadCsrfToken(): Promise<string> {
@@ -200,6 +201,7 @@ export type ShareInvitation = {
   role: string;
   expiresAt: string;
   createdAt?: string;
+  confirmationCode?: string;
 };
 
 export async function listVaultMembers(vaultId: string): Promise<VaultMember[]> {
@@ -258,9 +260,10 @@ export async function listPendingInvitations(): Promise<ShareInvitation[]> {
   return body.invitations;
 }
 
-export async function acceptInvitation(invitationId: string): Promise<{ vaultId: string; role: string }> {
+export async function acceptInvitation(invitationId: string, confirmationCode: string): Promise<{ vaultId: string; role: string }> {
   const response = await authFetch(`/api/auth/invitations/${invitationId}/accept`, {
     method: "POST",
+    body: JSON.stringify({ confirmationCode }),
   });
   if (!response.ok) {
     return parseAuthError(response);

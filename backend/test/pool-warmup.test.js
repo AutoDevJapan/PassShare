@@ -45,6 +45,7 @@ describe("DB pool warm-up on startup (#368)", () => {
   it("warms the pool with a single SELECT 1 when the DB is healthy", async () => {
     let queries = 0;
     const pool = {
+      async connect() { return { async query() { return { rows: [] }; }, release() {} }; },
       async query() {
         queries += 1;
         return { rows: [{ ok: 1 }] };
@@ -64,6 +65,7 @@ describe("DB pool warm-up on startup (#368)", () => {
   it("retries a transient warm-up failure, then succeeds", async () => {
     let attempts = 0;
     const pool = {
+      async connect() { return { async query() { return { rows: [] }; }, release() {} }; },
       async query() {
         attempts += 1;
         if (attempts < 2) {
@@ -86,6 +88,7 @@ describe("DB pool warm-up on startup (#368)", () => {
   it("is non-fatal when warm-up never succeeds; app still boots", async () => {
     let attempts = 0;
     const pool = {
+      async connect() { return { async query() { return { rows: [] }; }, release() {} }; },
       async query() {
         attempts += 1;
         throw new Error("db unreachable");

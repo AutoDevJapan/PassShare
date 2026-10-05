@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import {
   acceptInvitation,
+  AuthApiError,
   declineInvitation,
   listPendingInvitations,
   type ShareInvitation,
@@ -14,13 +15,15 @@ export function InvitationsPage() {
   const [invitations, setInvitations] = useState<ShareInvitation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [codes, setCodes] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setError(null);
     try {
       setInvitations(await listPendingInvitations());
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.invitations.loadError"));
+      setError(err instanceof AuthApiError && err.code === "PS045" ? t("app.invitations.confirmationError")
+        : err instanceof Error ? err.message : t("app.invitations.loadError"));
     }
   }, [t]);
 
@@ -32,11 +35,13 @@ export function InvitationsPage() {
     setBusyId(invitationId);
     setError(null);
     try {
-      await acceptInvitation(invitationId);
+      await acceptInvitation(invitationId, codes[invitationId]?.trim() ?? "");
+      setCodes((current) => { const next = { ...current }; delete next[invitationId]; return next; });
       await refreshConnect();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.invitations.loadError"));
+      setError(err instanceof AuthApiError && err.code === "PS045" ? t("app.invitations.confirmationError")
+        : err instanceof Error ? err.message : t("app.invitations.loadError"));
     } finally {
       setBusyId(null);
     }
@@ -80,18 +85,27 @@ export function InvitationsPage() {
               </p>
             </div>
             <div className="app-share-actions">
+              <label className="ps-label ps-label--full">
+                {t("app.invitations.confirmationLabel")}
+                <input className="ps-input" type="password" autoComplete="off" maxLength={43}
+                  aria-describedby={`confirmation-help-${invitation.id}`}
+                  value={codes[invitation.id] ?? ""} disabled={busyId !== null}
+                  placeholder={t("app.invitations.confirmationPlaceholder")}
+                  onChange={(event) => setCodes((current) => ({ ...current, [invitation.id]: event.target.value }))} />
+              </label>
+              <p id={`confirmation-help-${invitation.id}`}>{t("app.invitations.confirmationHelp")}</p>
               <button
                 type="button"
                 className="ps-button"
-                disabled={busyId === invitation.id}
+                disabled={busyId !== null || (codes[invitation.id]?.trim().length ?? 0) !== 43}
                 onClick={() => void handleAccept(invitation.id)}
               >
-                {t("app.invitations.accept")}
+                {t("app.invitations.confirmAccept")}
               </button>
               <button
                 type="button"
                 className="ps-button ps-button--secondary"
-                disabled={busyId === invitation.id}
+                disabled={busyId !== null}
                 onClick={() => void handleDecline(invitation.id)}
               >
                 {t("app.invitations.decline")}

@@ -6,6 +6,9 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[path = "acceptance/share.rs"]
+mod share_acceptance;
+
 struct Server {
     child: Child,
     port: u16,
@@ -17,7 +20,16 @@ impl Server {
         let mut command = Command::new("node");
         command
             .arg("src/index.js")
-            .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .current_dir(
+                std::env::var_os("PASSSHARE_ACCEPTANCE_BACKEND")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .parent()
+                            .unwrap()
+                            .to_path_buf()
+                    }),
+            )
             .env("PORT", port.to_string())
             .env("APP_ENV", "local")
             .env("PASSSHARE_MUTATIONS_BIN", &binary)
@@ -60,6 +72,23 @@ impl Drop for Server {
 }
 
 fn http(port: u16, method: &str, path: &str, token: &str, key: &str, body: &Value) -> (u16, Value) {
+    let (status, bytes) = http_bytes(port, method, path, token, key, body);
+    let data = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("JSON response")
+    };
+    (status, data)
+}
+
+fn http_bytes(
+    port: u16,
+    method: &str,
+    path: &str,
+    token: &str,
+    key: &str,
+    body: &Value,
+) -> (u16, Vec<u8>) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect synthetic API");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
@@ -99,15 +128,16 @@ fn http(port: u16, method: &str, path: &str, token: &str, key: &str, body: &Valu
         .unwrap()
         .parse()
         .unwrap();
-    let data = if bytes.len() == split + 4 {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes[split + 4..]).expect("JSON response")
-    };
-    (status, data)
+    (status, bytes[split + 4..].to_vec())
 }
 
 fn main() {
+    if let Ok(database) = std::env::var("DATABASE_URL") {
+        assert_eq!(
+            database, "postgresql://passshare:passshare@127.0.0.1:5432/passshare",
+            "acceptance requires the isolated CI service database"
+        );
+    }
     let external_port = std::env::args()
         .nth(1)
         .map(|value| value.parse::<u16>().expect("external fixture port"));
@@ -291,6 +321,7 @@ fn main() {
         .0 == 409,
         "modified box draft remains conflict"
     );
-    println!("native HTTP acceptance passed: exact/modified/parallel create, durable replay when PostgreSQL is configured, scoped denial, full edit preservation, stale version, box identity");
+    share_acceptance::run(port, nonce, &refresh, &box_id, &path);
+    println!("native HTTP acceptance passed: create/edit/box identity and invitation proof, no proof/list leak, concurrent accept, revoke, member/token/attachment denial");
     drop(server);
 }

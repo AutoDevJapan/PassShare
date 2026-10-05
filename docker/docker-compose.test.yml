@@ -42,7 +42,9 @@ services:
       DATABASE_URL: postgresql://passshare:passshare@postgres:5432/passshare
       OP_CONNECT_TOKEN: test-connect-token
       OP_CLI_BIN: /app/target/release/op
+      PASSSHARE_MUTATIONS_BIN: /app/backend/native/target/release/passshare-mutations
     command: >
       sh -c "cargo build -p op-cli --release &&
+             cargo build --manifest-path backend/native/Cargo.toml --release --locked --bin passshare-mutations &&
              pnpm --dir backend install --frozen-lockfile &&
              node --test backend/test/pg-integration.test.js backend/test/login-guard-pg.integration.test.js backend/test/op-cli-e2e.test.js backend/test/cloud-sync.integration.test.js backend/test/cross-client.integration.test.js backend/test/vault-invitation.integration.test.js backend/test/connect-token-revocation.integration.test.js"

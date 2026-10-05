@@ -82,6 +82,7 @@ describe(
         member.sessionCookie,
         "POST",
         `/api/auth/invitations/${invite.id}/accept`,
+      { confirmationCode: invite.confirmationCode },
       );
       assert.equal(acceptRes.status, 200);
 
@@ -106,6 +107,7 @@ describe(
         member.sessionCookie,
         "POST",
         `/api/auth/invitations/${invite.id}/accept`,
+      { confirmationCode: invite.confirmationCode },
       );
       assert.notEqual(secondAccept.status, 500, "re-accept must not 500");
     });

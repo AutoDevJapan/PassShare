@@ -20,7 +20,7 @@ export async function nativeMutation(input) {
   });
   if (reply.status !== 200) {
     const error = connectHttpError(reply.status, reply.message);
-    error.code = reply.status === 409 ? "PS015" : "PS018";
+    error.code = reply.code ?? (reply.status === 409 ? "PS015" : "PS018");
     throw error;
   }
   return reply.body;

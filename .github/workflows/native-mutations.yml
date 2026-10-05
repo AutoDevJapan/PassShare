@@ -69,6 +69,11 @@ jobs:
         with:
           node-version: '22'
       - run: pnpm --dir backend install --frozen-lockfile
+      - name: Install the PostgreSQL acceptance client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+          psql --version
       - run: cargo build --manifest-path backend/native/Cargo.toml --release --locked
       - name: Verify atomic PostgreSQL operations and restart
         run: backend/native/target/release/acceptance

@@ -4,6 +4,7 @@ import { applySchemaWithAdvisoryLock } from "../db/migration-lock.js";
 import { SESSION_TTL_MS, CONNECT_TOKEN_TTL_MS, INVITATION_TTL_MS } from "./constants.js";
 import { authHttpError } from "./errors.js";
 import { generateToken, hashToken } from "./tokens.js";
+import { nativeMutation } from "../lib/native-mutations.js";
 
 // Arbitrary fixed key for the advisory lock guarding auth schema migration.
 // Distinct from the connect store's MIGRATION_LOCK_KEY so the two migrations
@@ -200,26 +201,32 @@ export function createPgAuthStore(pool) {
       }
     },
 
-    async removeVaultMember(vaultId, targetUserId) {
-      const membership = await this.getVaultMembership(targetUserId, vaultId);
-      if (!membership) {
-        throw authHttpError(404, "PS035", "Member not found");
-      }
-      if (membership.role === "owner") {
-        const owners = await this.countVaultOwners(vaultId);
-        if (owners <= 1) {
-          throw authHttpError(400, "PS036", "Cannot remove the last owner");
+    async removeVaultMember(vaultId, targetUserId, actorUserId) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT id FROM connect_vaults WHERE id = $1 FOR UPDATE", [vaultId]);
+        const actor = (await client.query(
+          "SELECT role FROM vault_memberships WHERE vault_id = $1 AND user_id = $2", [vaultId, actorUserId])).rows[0];
+        if (actor?.role !== "owner") throw authHttpError(403, "PS032", "Password box owner access required");
+        const membership = (await client.query(
+          "SELECT role FROM vault_memberships WHERE vault_id = $1 AND user_id = $2", [vaultId, targetUserId])).rows[0];
+        if (!membership) throw authHttpError(404, "PS035", "Member not found");
+        if (membership.role === "owner") {
+          const owners = (await client.query(
+            "SELECT COUNT(*)::int AS count FROM vault_memberships WHERE vault_id = $1 AND role = 'owner'", [vaultId])).rows[0].count;
+          if (owners <= 1) throw authHttpError(400, "PS036", "Cannot remove the last owner");
         }
+        await client.query("DELETE FROM vault_memberships WHERE vault_id = $1 AND user_id = $2", [vaultId, targetUserId]);
+        await client.query("DELETE FROM connect_tokens WHERE user_id = $1", [targetUserId]);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
       }
-      await pool.query(
-        "DELETE FROM vault_memberships WHERE vault_id = $1 AND user_id = $2",
-        [vaultId, targetUserId],
-      );
-      // Invalidate the removed member's outstanding connect tokens so their
-      // snapshotted vault access does not linger for the token TTL.
-      await this.deleteConnectTokensForUser(targetUserId);
     },
-
     async createVaultInvitation({ vaultId, inviterId, inviteeEmail, role }) {
       const existingMember = await pool.query(
         `SELECT 1 FROM vault_memberships vm
@@ -233,11 +240,13 @@ export function createPgAuthStore(pool) {
 
       const id = randomUUID();
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
+      const confirmationCode = generateToken();
+      const { confirmationHash } = await nativeMutation({command: "invitation-proof", confirmationCode});
       try {
         await pool.query(
-          `INSERT INTO vault_invitations (id, vault_id, inviter_id, invitee_email, role, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6::timestamptz)`,
-          [id, vaultId, inviterId, inviteeEmail, role, expiresAt.toISOString()],
+          `INSERT INTO vault_invitations (id, vault_id, inviter_id, invitee_email, role, expires_at, confirmation_hash)
+           VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7)`,
+          [id, vaultId, inviterId, inviteeEmail, role, expiresAt.toISOString(), confirmationHash],
         );
       } catch (error) {
         if (error && typeof error === "object" && "code" in error && error.code === "23505") {
@@ -254,6 +263,7 @@ export function createPgAuthStore(pool) {
         role,
         status: "pending",
         expires_at: expiresAt.toISOString(),
+        confirmationCode,
       };
     },
 
@@ -295,59 +305,41 @@ export function createPgAuthStore(pool) {
       }
     },
 
-    async acceptVaultInvitation(invitationId, userId) {
-      const user = await this.findUserById(userId);
-      if (!user) {
-        throw authHttpError(404, "PS022", "User not found");
-      }
-
-      const invitationResult = await pool.query(
-        `SELECT id, vault_id, invitee_email, role, status, expires_at
-         FROM vault_invitations
-         WHERE id = $1`,
-        [invitationId],
-      );
-      const invitation = invitationResult.rows[0];
-      if (!invitation || invitation.status !== "pending") {
-        throw authHttpError(404, "PS039", "Invitation not found");
-      }
-      if (new Date(invitation.expires_at).getTime() <= Date.now()) {
-        throw authHttpError(410, "PS040", "Invitation has expired");
-      }
-      if (invitation.invitee_email !== user.email) {
-        throw authHttpError(403, "PS041", "Invitation is for a different email address");
-      }
-
-      // Pin the transaction to a single connection. `pool.query` may hand each
-      // statement a different pooled connection, so BEGIN/COMMIT/ROLLBACK would
-      // not wrap the INSERT/UPDATE atomically and could leak an open transaction
-      // onto a connection reused by an unrelated request.
+    async acceptVaultInvitation(invitationId, userId, confirmationCode) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        // Serialize membership changes on the box, then invitation responses on
+        // the invitation. A revoked row is read only after the revoker commits.
         await client.query(
-          `INSERT INTO vault_memberships (user_id, vault_id, role)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (user_id, vault_id) DO NOTHING`,
-          [userId, invitation.vault_id, invitation.role],
-        );
+          `SELECT cv.id FROM connect_vaults cv
+           JOIN vault_invitations vi ON vi.vault_id = cv.id
+           WHERE vi.id = $1 FOR UPDATE OF cv`, [invitationId]);
+        const row = (await client.query(
+          "SELECT * FROM vault_invitations WHERE id = $1 FOR UPDATE", [invitationId])).rows[0];
+        const user = (await client.query("SELECT email FROM users WHERE id = $1", [userId])).rows[0];
+        if (!user) throw authHttpError(404, "PS022", "User not found");
+        const inviter = row ? (await client.query(
+          "SELECT role FROM vault_memberships WHERE vault_id = $1 AND user_id = $2",
+          [row.vault_id, row.inviter_id])).rows[0] : null;
+        const result = await nativeMutation({command: "invitation-accept", confirmationCode, email: user.email,
+          inviterRole: inviter?.role, nowMs: Date.now(), invitation: row ? {...row, expiresMs: new Date(row.expires_at).getTime()} : null});
+        const updated = await client.query(
+          `UPDATE vault_invitations SET status = 'accepted', responded_at = NOW()
+           WHERE id = $1 AND status = 'pending' AND expires_at > clock_timestamp() RETURNING id`, [invitationId]);
+        if (!updated.rowCount) throw authHttpError(410, "PS040", "Invitation has expired");
         await client.query(
-          `UPDATE vault_invitations
-           SET status = 'accepted', responded_at = NOW()
-           WHERE id = $1`,
-          [invitationId],
-        );
+          `INSERT INTO vault_memberships (user_id, vault_id, role) VALUES ($1, $2, $3)
+           ON CONFLICT (user_id, vault_id) DO NOTHING`, [userId, row.vault_id, result.role]);
         await client.query("COMMIT");
+        return result;
       } catch (error) {
         await client.query("ROLLBACK").catch(() => {});
         throw error;
       } finally {
         client.release();
       }
-
-      return { vaultId: invitation.vault_id, role: invitation.role };
     },
-
     async declineVaultInvitation(invitationId, userId) {
       const user = await this.findUserById(userId);
       if (!user) {
