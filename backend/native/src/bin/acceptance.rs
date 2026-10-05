@@ -91,15 +91,6 @@ fn http_bytes(
     key: &str,
     body: &Value,
 ) -> (u16, Vec<u8>) {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect synthetic API");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    let payload = if body.is_null() {
-        String::new()
-    } else {
-        body.to_string()
-    };
     let authorization = if token.is_empty() {
         String::new()
     } else {
@@ -110,7 +101,33 @@ fn http_bytes(
     } else {
         format!("Idempotency-Key: {key}\r\n")
     };
-    write!(stream,"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nx-passshare-client: mobile\r\n{authorization}{operation}Content-Length: {}\r\n\r\n{payload}",payload.len()).unwrap();
+    let headers = format!("x-passshare-client: mobile\r\n{authorization}{operation}");
+    let (status, _, bytes) = http_raw(port, method, path, &headers, body);
+    (status, bytes)
+}
+
+fn http_raw(
+    port: u16,
+    method: &str,
+    path: &str,
+    extra: &str,
+    body: &Value,
+) -> (u16, String, Vec<u8>) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect synthetic API");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let payload = if body.is_null() {
+        String::new()
+    } else {
+        body.to_string()
+    };
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\n\r\n{payload}",
+        payload.len()
+    )
+    .unwrap();
     let mut bytes = Vec::new();
     stream
         .take(4 * 1024 * 1024)
@@ -130,7 +147,7 @@ fn http_bytes(
         .unwrap()
         .parse()
         .unwrap();
-    (status, bytes[split + 4..].to_vec())
+    (status, headers.to_owned(), bytes[split + 4..].to_vec())
 }
 
 fn main() {

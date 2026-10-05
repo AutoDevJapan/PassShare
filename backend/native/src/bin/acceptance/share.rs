@@ -343,6 +343,72 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
             403,
             "legacy membership is not proof of identity"
         );
+        let (status, limited) = http(
+            port,
+            "GET",
+            "/api/auth/connect-token",
+            session,
+            "",
+            &Value::Null,
+        );
+        assert_eq!(status, 200);
+        let limited_access = limited["accessToken"].as_str().unwrap();
+        let token_hash = format!("{:x}", Sha256::digest(limited_access.as_bytes()));
+        assert_eq!(sql(&format!("SELECT NOT(vault_ids ? '{box_id}') FROM connect_tokens WHERE token_hash='{token_hash}'")),"t","issued scope excludes the unconfirmed box");
+        assert_eq!(
+            http(port, "GET", items, limited_access, "", &Value::Null).0,
+            403,
+            "new token excludes unconfirmed shared box"
+        );
+        assert_eq!(
+            http(
+                port,
+                "GET",
+                &format!("/api/auth/vaults/{box_id}/members"),
+                session,
+                "",
+                &Value::Null
+            )
+            .0,
+            403
+        );
+        let (status, owner_token) = http(
+            port,
+            "GET",
+            "/api/auth/connect-token",
+            owner,
+            "",
+            &Value::Null,
+        );
+        assert_eq!(status, 200);
+        let owner_access = owner_token["accessToken"].as_str().unwrap();
+        let (status, before_denied) = http(port, "GET", items, owner_access, "", &Value::Null);
+        assert_eq!(status, 200);
+        assert_eq!(
+            http(
+                port,
+                "POST",
+                items,
+                access,
+                "unconfirmed-operation-0001",
+                &json!({"title":"Must not be saved","category":"LOGIN"})
+            )
+            .0,
+            403
+        );
+        let (status, kept) = http(
+            port,
+            "GET",
+            items,
+            owner_token["accessToken"].as_str().unwrap(),
+            "",
+            &Value::Null,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(
+            kept, before_denied,
+            "denied save leaves the complete item collection unchanged"
+        );
         assert_eq!(
             http(port, "GET", &content_path, access, "", &Value::Null).0,
             403

@@ -1,5 +1,5 @@
-use super::http;
 use super::share_acceptance::{sql, uuid, Gate};
+use super::{http, http_raw};
 use serde_json::{json, Value};
 use std::{thread, time::Duration};
 
@@ -12,6 +12,98 @@ fn account(port: u16, path: &str, email: &str, password: &str) -> (u16, Value) {
         "",
         &json!({"email":email,"password":password}),
     )
+}
+
+fn cookie(headers: &str, name: &str) -> String {
+    let prefix = format!("set-cookie: {name}=");
+    headers
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with(&prefix))
+        .expect("synthetic cookie issued")
+        .split_once(':')
+        .unwrap()
+        .1
+        .trim()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+fn web_cookie_rotation(port: u16, nonce: u128) {
+    let (status, csrf_headers, csrf_bytes) =
+        http_raw(port, "GET", "/api/auth/csrf", "", &Value::Null);
+    assert_eq!(status, 200);
+    let csrf: Value = serde_json::from_slice(&csrf_bytes).unwrap();
+    let csrf_cookie = cookie(&csrf_headers, "passshare_csrf");
+    let csrf_token = csrf["csrfToken"].as_str().unwrap();
+    let email = format!("cookie-password-{nonce}@example.test");
+    let old = format!("Synthetic-Cookie-Old-{nonce}!");
+    let next = format!("Synthetic-Cookie-Next-{nonce}!");
+    let headers = format!("Cookie: {csrf_cookie}\r\nX-CSRF-Token: {csrf_token}\r\n");
+    let (status, session_headers, _) = http_raw(
+        port,
+        "POST",
+        "/api/auth/signup",
+        &headers,
+        &json!({"email":email,"password":old}),
+    );
+    assert_eq!(status, 201);
+    let session = cookie(&session_headers, "passshare_session");
+    let headers = format!("Cookie: {session}; {csrf_cookie}\r\nX-CSRF-Token: {csrf_token}\r\n");
+    assert_eq!(
+        http_raw(
+            port,
+            "POST",
+            "/api/auth/password/change",
+            &headers,
+            &json!({"currentPassword":"Wrong-Synthetic-Cookie!","newPassword":next})
+        )
+        .0,
+        401
+    );
+    let name = format!("cookie_cleanup_failure_{nonce}");
+    if std::env::var_os("DATABASE_URL").is_some() {
+        sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic cookie cleanup failure'; END $$; CREATE TRIGGER {name} BEFORE DELETE ON login_failures FOR EACH ROW WHEN(OLD.email='{email}') EXECUTE FUNCTION {name}();"));
+    }
+    let (status, cleared, _) = http_raw(
+        port,
+        "POST",
+        "/api/auth/password/change",
+        &headers,
+        &json!({"currentPassword":old,"newPassword":next}),
+    );
+    assert_eq!(
+        status, 204,
+        "committed web change survives auxiliary failure"
+    );
+    for name in ["passshare_session", "passshare_csrf"] {
+        let prefix = format!("set-cookie: {name}=");
+        assert!(
+            cleared
+                .lines()
+                .any(|line| line.to_ascii_lowercase().starts_with(&prefix)
+                    && line.contains("Max-Age=0")),
+            "both web cookies cleared"
+        );
+    }
+    if std::env::var_os("DATABASE_URL").is_some() {
+        sql(&format!(
+            "DROP TRIGGER {name} ON login_failures; DROP FUNCTION {name}();"
+        ));
+    }
+    assert_eq!(
+        http_raw(
+            port,
+            "GET",
+            "/api/auth/me",
+            &format!("Cookie: {session}\r\n"),
+            &Value::Null
+        )
+        .0,
+        401
+    );
+    assert_eq!(account(port, "/api/auth/login", &email, &next).0, 200);
 }
 
 struct Trigger(String);
@@ -277,6 +369,7 @@ pub fn run(port: u16, nonce: u128) {
         .0,
         401
     );
+    web_cookie_rotation(port, nonce);
     let isolated_port = std::net::TcpListener::bind(("127.0.0.1", 0))
         .unwrap()
         .local_addr()
