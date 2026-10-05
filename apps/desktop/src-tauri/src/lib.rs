@@ -340,14 +340,7 @@ fn update_item(
                 item.set_field_by_label("notes", &notes)
                     .map_err(map_error)?;
             }
-            item.urls.clear();
-            if let Some(url) = url.filter(|value| !value.is_empty()) {
-                item.urls.push(ItemUrl {
-                    label: String::new(),
-                    primary: true,
-                    href: url,
-                });
-            }
+            update_primary_url(&mut item.urls, url);
         }
         ItemCategory::Password => {
             if let Some(password) = password {
@@ -381,6 +374,32 @@ fn update_item(
     pb.update_item(item.clone()).map_err(map_error)?;
     pb.save(&master_password).map_err(map_error)?;
     Ok(ItemDto::from(&item))
+}
+
+// Use the same primary-or-first selection as ItemDto. None is an omitted edit;
+// an explicit empty string removes only the selected URL, never the whole list.
+fn update_primary_url(urls: &mut Vec<ItemUrl>, url: Option<String>) {
+    let Some(href) = url else {
+        return;
+    };
+    let selected = urls
+        .iter()
+        .position(|entry| entry.primary)
+        .or_else(|| (!urls.is_empty()).then_some(0));
+    match selected {
+        Some(index) if href.is_empty() => {
+            urls.remove(index);
+        }
+        Some(index) => {
+            urls[index].href = href;
+        }
+        None if !href.is_empty() => urls.push(ItemUrl {
+            label: String::new(),
+            primary: true,
+            href,
+        }),
+        None => {}
+    }
 }
 
 #[tauri::command]
@@ -565,6 +584,145 @@ mod smoke_tests {
         ] {
             parse_category(category).expect(category);
         }
+    }
+
+    #[test]
+    fn smoke_edit_primary_url_preserves_other_urls_labels_and_item_data() {
+        let id = ConnectId::generate().expect("box id");
+        let mut original =
+            Item::new_login(id, "Imported login", "fixture-password").expect("login item");
+        original.fields.push(
+            Field::new("Imported extra", FieldType::String, "keep field").expect("extra field"),
+        );
+        original.urls = vec![
+            ItemUrl {
+                label: "Secondary".into(),
+                primary: false,
+                href: "https://secondary.example/".into(),
+            },
+            ItemUrl {
+                label: "Primary".into(),
+                primary: true,
+                href: "https://primary.example/".into(),
+            },
+            ItemUrl {
+                label: "Other primary".into(),
+                primary: true,
+                href: "https://third.example/".into(),
+            },
+        ];
+        assert_eq!(
+            ItemDto::from(&original).url.as_deref(),
+            Some("https://primary.example/")
+        );
+
+        for omitted_or_same in [None, Some("https://primary.example/".into())] {
+            let mut edited = original.clone();
+            update_primary_url(&mut edited.urls, omitted_or_same);
+            assert_eq!(
+                edited, original,
+                "an untouched URL must preserve the entire item"
+            );
+        }
+        let mut edited = original.clone();
+        update_primary_url(&mut edited.urls, Some("https://changed.example/".into()));
+        let mut expected = original.clone();
+        expected.urls[1].href = "https://changed.example/".into();
+        assert_eq!(edited, expected);
+
+        let mut cleared = original.clone();
+        update_primary_url(&mut cleared.urls, Some(String::new()));
+        let mut expected = original.clone();
+        expected.urls.remove(1);
+        assert_eq!(cleared, expected);
+
+        let mut no_primary = original.clone();
+        for url in &mut no_primary.urls {
+            url.primary = false;
+        }
+        assert_eq!(
+            ItemDto::from(&no_primary).url.as_deref(),
+            Some("https://secondary.example/")
+        );
+        let mut first_edited = no_primary.clone();
+        update_primary_url(
+            &mut first_edited.urls,
+            Some("https://first.example/".into()),
+        );
+        let mut expected = no_primary.clone();
+        expected.urls[0].href = "https://first.example/".into();
+        assert_eq!(first_edited, expected);
+        let mut first_cleared = no_primary.clone();
+        update_primary_url(&mut first_cleared.urls, Some(String::new()));
+        no_primary.urls.remove(0);
+        assert_eq!(first_cleared, no_primary);
+
+        let mut empty = Vec::new();
+        update_primary_url(&mut empty, None);
+        update_primary_url(&mut empty, Some(String::new()));
+        assert!(empty.is_empty());
+        update_primary_url(&mut empty, Some("https://new.example/".into()));
+        assert_eq!(
+            empty,
+            vec![ItemUrl {
+                label: String::new(),
+                primary: true,
+                href: "https://new.example/".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn smoke_edited_primary_url_and_untouched_data_survive_save_reopen() {
+        let (dir, path) = temp_box("edit-primary-url");
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut original = Item::new_login(
+            pb.vault().expect("box").id.clone(),
+            "Imported login",
+            "fixture-password",
+        )
+        .expect("login item");
+        let section_id = ConnectId::generate().expect("section id");
+        original
+            .sections
+            .push(passshare_core::domain::field::Section {
+                id: section_id.clone(),
+                label: "Imported section".into(),
+            });
+        let mut extra = Field::new("Extra", FieldType::String, "keep field").expect("extra field");
+        extra.section = Some(passshare_core::domain::field::SectionReference { id: section_id });
+        original.fields.push(extra);
+        original.urls = vec![
+            ItemUrl {
+                label: "Secondary".into(),
+                primary: false,
+                href: "https://secondary.example/".into(),
+            },
+            ItemUrl {
+                label: "Primary".into(),
+                primary: true,
+                href: "https://primary.example/".into(),
+            },
+        ];
+        original.tags = vec!["imported".into()];
+        original.favorite = true;
+        pb.add_item(original.clone()).expect("add");
+        let mut edited = original.clone();
+        // This helper is the URL mutation used by the native update_item command.
+        update_primary_url(&mut edited.urls, Some("https://changed.example/".into()));
+        pb.update_item(edited).expect("update");
+        pb.save(MASTER_PASSWORD).expect("save");
+        drop(pb);
+
+        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let mut expected = original;
+        expected.urls[1].href = "https://changed.example/".into();
+        assert_eq!(
+            pb.get_item(&expected.id.to_string()).expect("read edited"),
+            &expected
+        );
+        drop(pb);
+        std::fs::remove_dir_all(dir).expect("remove test files");
     }
 
     // MVP ATDD: タイトルで検索すると一致するログイン情報のみ返る
