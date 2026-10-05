@@ -22,6 +22,8 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
   const scope = useRef("");
   scope.current = `${user?.id ?? ""}:${vaultId}`;
   const createOperation = useRef<string | null>(null);
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
   const [vaultName, setVaultName] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
   const [documents, setDocuments] = useState<Record<string, Item>>({});
@@ -82,15 +84,18 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
   }, [loadItems]);
 
   async function handleCreate(values: ItemFormValues) {
-    if (!connectClient) {
+    if (!connectClient || busyRef.current) {
       return;
     }
+    busyRef.current = true;
+    setBusy(true);
     const active = scope.current;
     createOperation.current ??= crypto.randomUUID();
     try {
       await connectClient.createItem(vaultId, connectItemToCreateBody(values), createOperation.current);
     } catch (err) { const conflict = err instanceof Error && "status" in err && err.status === 409;
       if (active === scope.current) setError(t(conflict ? "app.item.createConflictError" : "app.item.createResultUnknown")); return; }
+    finally { busyRef.current = false; setBusy(false); }
     if (active !== scope.current) return;
     createOperation.current = null;
     setMode(null);
@@ -99,12 +104,15 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
   }
 
   async function handleUpdate(values: ItemFormValues) {
-    if (!connectClient || !editingId || !editingItem) {
+    if (!connectClient || !editingId || !editingItem || busyRef.current) {
       return;
     }
+    busyRef.current = true;
+    setBusy(true);
     const active = scope.current;
     try { await connectClient.editItemForm(vaultId, editingId, editingItem.version, values); }
     catch { if (active === scope.current) setError(t("app.item.saveError")); return; }
+    finally { busyRef.current = false; setBusy(false); }
     if (active !== scope.current) return;
     setMode(null);
     setEditingId(null);
@@ -122,7 +130,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
   }
 
   function startEdit(item: ConnectItem) {
-    if (!documents[item.id]) return;
+    if (busyRef.current || !documents[item.id]) return;
     createOperation.current = null;
     setMode("edit");
     setEditingId(item.id);
@@ -162,6 +170,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
         {mode === "edit" ? (
           <ItemForm
             mode="edit"
+            disabled={busy}
             values={formValues}
             labels={labels}
             onChange={setFormValues}
@@ -178,6 +187,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
         ) : (
           <ItemForm
             mode="create"
+            disabled={busy}
             values={formValues}
             labels={labels}
             onChange={setFormValues}

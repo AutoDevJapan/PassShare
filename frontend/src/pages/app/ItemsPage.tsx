@@ -183,8 +183,8 @@ export function ItemsPage() {
   }
 
   function startEdit(item: ConnectItem) {
-    createOperation.current = null;
     if (busyRef.current || itemsLoading || !documents[item.id]) return;
+    createOperation.current = null;
     setMode("edit");
     setEditingItem(documents[item.id]);
     setFormValues(formValuesFromItem(item));
