@@ -79,6 +79,7 @@ export type ItemOverview = {
 };
 
 export type Item = ItemOverview & {
+  favorite?: boolean;
   fields?: Array<{
     id?: string;
     label: string;

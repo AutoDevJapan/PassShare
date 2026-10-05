@@ -1,0 +1,62 @@
+{
+  "todo": 1342,
+  "parent": 1197,
+  "source_commit": "6525462471191fe917a00c28e6256843bfb7a747",
+  "dockerfile_sha256": "4e2091a7f4f6ecab586e4aac63d9fdb604c6cc57f567624922704823479eb517",
+  "lock_sha256": "9b7ea495854421273cf32bb15a2c89bdd0852dd777a902d04b8079c84c6963c9",
+  "image_id": "sha256:1ba3e53b46efc3c2e20069bef0395363f6e5bb88c929b57a7d50a4e0df93b9fd",
+  "base_image_digest": "sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6",
+  "built": true,
+  "backend_tests": {
+    "native_argon2": "signup/login executed",
+    "passed": 44,
+    "failed": 0,
+    "skipped": 0,
+    "transport": "container-local HTTP",
+    "store": "memory"
+  },
+  "manifest_mismatch_rejected": true,
+  "preparation_failure": "first readonly fixture failed EROFS before lock validation; log retained",
+  "production_dependencies": [
+    {
+      "name": "argon2",
+      "version": "0.44.0",
+      "matches": true
+    },
+    {
+      "name": "express",
+      "version": "5.2.1",
+      "matches": true
+    },
+    {
+      "name": "fast-json-patch",
+      "version": "3.1.1",
+      "matches": true
+    },
+    {
+      "name": "pg",
+      "version": "8.22.0",
+      "matches": true
+    },
+    {
+      "name": "unzipper",
+      "version": "0.12.5",
+      "matches": true
+    }
+  ],
+  "startup_listening": true,
+  "cleanup": {
+    "containers_absent": true,
+    "networks_created": 0,
+    "volumes_created": 0,
+    "image_tag_absent": true
+  },
+  "limitations": [
+    "no PostgreSQL execution for this image",
+    "no Railway deployment",
+    "no GUI/SDK/client acceptance",
+    "base image remains tag-selected; digest recorded only",
+    "independent review and latest CI pending"
+  ],
+  "finished_at": "2026-10-04T23:33:51.6346568+09:00"
+}
