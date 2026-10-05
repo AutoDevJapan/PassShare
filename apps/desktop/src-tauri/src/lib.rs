@@ -9,7 +9,7 @@ use passshare_core::{
     domain::field::{Field, FieldType},
     domain::item::{ItemCategory, ItemUrl, VaultReference},
     generator::PasswordGeneratorOptions,
-    Item, PassShareError, PasswordBox, PasswordBoxState,
+    Item, PassShareError, PasswordBox, PasswordBoxState, SavedChange,
 };
 use serde::Serialize;
 use tauri::State;
@@ -298,8 +298,8 @@ fn add_item(
         item.set_favorite(favorite);
     }
 
-    pb.add_item(item.clone()).map_err(map_error)?;
-    pb.save(&master_password).map_err(map_error)?;
+    pb.apply_and_save(SavedChange::Add(&item), &master_password)
+        .map_err(map_error)?;
     Ok(ItemDto::from(&item))
 }
 
@@ -371,8 +371,8 @@ fn update_item(
         item.set_favorite(favorite);
     }
 
-    pb.update_item(item.clone()).map_err(map_error)?;
-    pb.save(&master_password).map_err(map_error)?;
+    pb.apply_and_save(SavedChange::Update(&item), &master_password)
+        .map_err(map_error)?;
     Ok(ItemDto::from(&item))
 }
 
@@ -412,8 +412,8 @@ fn delete_item(
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
-    pb.delete_item(&id).map_err(map_error)?;
-    pb.save(&master_password).map_err(map_error)?;
+    pb.apply_and_save(SavedChange::Delete(&id), &master_password)
+        .map_err(map_error)?;
     Ok(())
 }
 
@@ -427,8 +427,9 @@ fn import_onepassword_csv(
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
-    let count = pb.import_onepassword_csv(&csv_data).map_err(map_error)?;
-    pb.save(&master_password).map_err(map_error)?;
+    let count = pb
+        .apply_and_save(SavedChange::ImportCsv(&csv_data), &master_password)
+        .map_err(map_error)?;
     Ok(count)
 }
 
@@ -468,8 +469,8 @@ fn upsert_sync_item(
     )
     .map_err(map_error)?;
 
-    pb.upsert_sync_item(item.clone()).map_err(map_error)?;
-    pb.save(&master_password).map_err(map_error)?;
+    pb.apply_and_save(SavedChange::Upsert(&item), &master_password)
+        .map_err(map_error)?;
     Ok(ItemDto::from(&item))
 }
 

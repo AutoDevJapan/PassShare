@@ -26,6 +26,16 @@ pub enum PasswordBoxState {
     Unlocked,
 }
 
+/// A complete mutation that becomes visible only after its encrypted save succeeds.
+#[derive(Clone, Copy)]
+pub enum SavedChange<'a> {
+    Add(&'a Item),
+    Update(&'a Item),
+    Delete(&'a str),
+    ImportCsv(&'a str),
+    Upsert(&'a Item),
+}
+
 pub struct PasswordBox {
     path: PathBuf,
     state: PasswordBoxState,
@@ -34,6 +44,46 @@ pub struct PasswordBox {
 }
 
 impl PasswordBox {
+    /// Stage the change separately from the live box and publish it only after
+    /// the atomic file replacement succeeds. Errors and panic unwinding discard
+    /// the staged box, whose Drop implementation scrubs its plaintext secrets.
+    /// Returns the number of affected items (the imported count for CSV).
+    pub fn apply_and_save(
+        &mut self,
+        change: SavedChange<'_>,
+        master_password: &str,
+    ) -> Result<usize, PassShareError> {
+        self.ensure_unlocked()?;
+        let mut staged = Self {
+            path: self.path.clone(),
+            state: self.state,
+            payload: self.payload.clone(),
+            salt: self.salt,
+        };
+        let count = match change {
+            SavedChange::Add(item) => {
+                staged.add_item(item.clone())?;
+                1
+            }
+            SavedChange::Update(item) => {
+                staged.update_item(item.clone())?;
+                1
+            }
+            SavedChange::Delete(id) => {
+                staged.delete_item(id)?;
+                1
+            }
+            SavedChange::ImportCsv(csv) => staged.import_onepassword_csv(csv)?,
+            SavedChange::Upsert(item) => {
+                staged.upsert_sync_item(item.clone())?;
+                1
+            }
+        };
+        staged.save(master_password)?;
+        std::mem::swap(&mut self.payload, &mut staged.payload);
+        Ok(count)
+    }
+
     pub fn create(path: impl AsRef<Path>, master_password: &str) -> Result<Self, PassShareError> {
         let path = path.as_ref().to_path_buf();
         let vault_name = default_vault_name(&path);
@@ -157,6 +207,7 @@ impl PasswordBox {
             .iter()
             .position(|i| i.id == item.id)
             .ok_or(PassShareError::ItemNotFound)?;
+        scrub_item_fields(&mut self.payload.items[pos]);
         self.payload.items[pos] = item;
         self.payload.vault.updated_at = chrono::Utc::now();
         Ok(())
@@ -166,7 +217,14 @@ impl PasswordBox {
         self.ensure_unlocked()?;
         let connect_id = ConnectId::from_str(id)?;
         let len_before = self.payload.items.len();
-        self.payload.items.retain(|i| i.id != connect_id);
+        self.payload.items.retain_mut(|item| {
+            if item.id == connect_id {
+                scrub_item_fields(item);
+                false
+            } else {
+                true
+            }
+        });
         if self.payload.items.len() == len_before {
             return Err(PassShareError::ItemNotFound);
         }
@@ -208,6 +266,7 @@ impl PasswordBox {
             .iter()
             .position(|existing| existing.id == item.id)
         {
+            scrub_item_fields(&mut self.payload.items[pos]);
             self.payload.items[pos] = item;
         } else {
             self.payload.items.push(item);
@@ -272,9 +331,7 @@ impl PasswordBox {
     /// without moving every secret behind a `Zeroizing` newtype.
     fn zeroize_secrets(&mut self) {
         for item in &mut self.payload.items {
-            for field in &mut item.fields {
-                field.value.zeroize();
-            }
+            scrub_item_fields(item);
         }
         if let Some(secret) = self.payload.recovery_secret.as_mut() {
             secret.zeroize();
@@ -303,6 +360,16 @@ impl Drop for PasswordBox {
     }
 }
 
+// Scrub before replacement/removal as well as whole-box teardown: Drop can only
+// reach items still in the payload, not String buffers already released by Vec.
+fn scrub_item_fields(item: &mut Item) {
+    for field in &mut item.fields {
+        field.value.zeroize();
+    }
+    #[cfg(test)]
+    saved_change_tests::observe_scrubbed_item(item);
+}
+
 fn default_vault_name(path: &Path) -> String {
     path.file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -311,6 +378,10 @@ fn default_vault_name(path: &Path) -> String {
 }
 
 use std::str::FromStr;
+
+#[cfg(test)]
+#[path = "password_box_saved_tests.rs"]
+mod saved_change_tests;
 
 #[cfg(test)]
 mod tests {
