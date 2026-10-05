@@ -78,10 +78,38 @@ fn proxy_prefixes_precede_spa_and_authenticated_responses_are_not_cached() {
     }));
 }
 
+fn sync_values_match(source: &str) -> bool {
+    [
+        ("production", "prd"),
+        ("stgBranch", "stg"),
+        ("development", "dev"),
+        ("previewDefault", "dev"),
+    ]
+    .iter()
+    .all(|(scope, environment)| {
+        source
+            .split_once(&format!("{scope}: {{"))
+            .and_then(|(_, tail)| tail.split_once('}'))
+            .is_some_and(|(block, _)| {
+                block.matches("VITE_API_BASE_URL:").count() == 1
+                    && block.contains(&format!("VITE_API_BASE_URL: '/backend/{environment}'"))
+            })
+    })
+}
+
 #[test]
-fn environment_sync_keeps_auth_and_connect_on_same_origin() {
-    for environment in ["prd", "stg", "dev"] {
-        assert!(ENV_SYNC.contains(&format!("VITE_API_BASE_URL: '/backend/{environment}'")));
-    }
+fn environment_sync_keeps_each_of_four_scopes_on_its_own_origin_prefix() {
+    assert!(sync_values_match(ENV_SYNC));
     assert!(!ENV_SYNC.contains("VITE_API_BASE_URL: 'https://"));
+}
+
+#[test]
+fn swapping_production_and_staging_or_development_to_production_is_rejected() {
+    let swapped = ENV_SYNC
+        .replace("'/backend/prd'", "'temporary'")
+        .replace("'/backend/stg'", "'/backend/prd'")
+        .replace("'temporary'", "'/backend/stg'");
+    assert!(!sync_values_match(&swapped));
+    let dev_to_production = ENV_SYNC.replace("'/backend/dev'", "'/backend/prd'");
+    assert!(!sync_values_match(&dev_to_production));
 }
