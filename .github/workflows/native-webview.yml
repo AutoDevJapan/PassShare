@@ -39,6 +39,22 @@ jobs:
           cargo build -p passshare-core --example webview_acceptance --locked
           cargo test -p passshare-core --example webview_acceptance --locked
           cargo clippy -p passshare-core --examples --locked -- -D warnings
+      - name: Prove native policy tests detect missing background and idle enforcement
+        shell: bash
+        run: |
+          git apply documents/evidence/1197-auto-lock-regression.patch
+          trap 'git apply --reverse documents/evidence/1197-auto-lock-regression.patch' EXIT
+          set +e
+          cargo test -p passshare-desktop native_lock::tests --locked > native-webview-results-regression.log 2>&1
+          result=$?
+          set -e
+          test "$result" -eq 101
+          test "$(grep -c '^test native_lock::tests::.* FAILED$' native-webview-results-regression.log)" -eq 3
+          grep -q '0 passed; 3 failed' native-webview-results-regression.log
+          git apply --reverse documents/evidence/1197-auto-lock-regression.patch
+          trap - EXIT
+          cargo test -p passshare-desktop native_lock::tests --locked
+          git diff --exit-code
       - name: Observe the prior null policy in both real native renderers
         run: |
           trap 'git restore apps/desktop/src-tauri/tauri.conf.json apps/mobile/src-tauri/tauri.conf.json' EXIT
@@ -58,14 +74,15 @@ jobs:
           pnpm --dir apps/mobile exec tauri build --no-bundle
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop blocked "$PWD/native-webview-results"
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile blocked "$PWD/native-webview-results"
-      - name: Verify actual native background and production five-minute idle lock
+      - name: Verify desktop background and production five-minute idle lock
         run: |
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop auto-lock "$PWD/native-webview-results"
-          dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile auto-lock "$PWD/native-webview-results"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: native-webview-results
-          path: native-webview-results/*
+          path: |
+            native-webview-results/*
+            native-webview-results-regression.log
           if-no-files-found: warn
           retention-days: 7

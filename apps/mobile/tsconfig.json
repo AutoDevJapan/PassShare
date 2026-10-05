@@ -17,13 +17,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "resolveJsonModule": true,
-    "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../../shared/*"],
-      "react": ["./node_modules/@types/react/index.d.ts"],
-      "react/*": ["./node_modules/@types/react/*"],
-      "@passshare/connect": ["./node_modules/@passshare/connect"]
+      "@shared/*": ["../../shared/*"]
     }
   },
   "include": ["src", "../../shared/types", "../../shared/ui"]

@@ -10,14 +10,21 @@ export function bindNativeLock(bridge: NativeBridge | null, onLocked: () => void
   let disposed = false;
   let lastInput = 0;
   let wasUnlocked = false;
+  let notified = false;
   let unlisten: (() => void) | undefined;
-  const lock = () => { if (!disposed) onLocked(); };
+  const lock = () => {
+    wasUnlocked = false;
+    if (!disposed && !notified) {
+      notified = true;
+      onLocked();
+    }
+  };
   void listen("passshare-locked", lock).then((stop) => {
     if (disposed) stop(); else unlisten = stop;
   }).catch(lock);
   const activity = (event: Event) => {
-    if (!event.isTrusted || document.hidden || Date.now() - lastInput < 1000) return;
-    lastInput = Date.now();
+    if (!event.isTrusted || document.hidden || performance.now() - lastInput < 1000) return;
+    lastInput = performance.now();
     void invoke<boolean>("native_activity").then((open) => {
       if (!open && wasUnlocked) lock();
     }).catch(lock);
@@ -38,6 +45,7 @@ export function bindNativeLock(bridge: NativeBridge | null, onLocked: () => void
   const poll = window.setInterval(() => {
     void invoke<boolean>("native_is_unlocked").then((open) => {
       if (!open && wasUnlocked) lock();
+      if (open) notified = false;
       wasUnlocked = open;
     }).catch(lock);
   }, 1000);

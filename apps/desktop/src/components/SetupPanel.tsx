@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDesktopLabels } from "../hooks/useDesktopLabels";
 import { createPasswordBox, openPasswordBox } from "../tauri";
 import { formatTauriError } from "../errors";
@@ -27,6 +27,11 @@ export function SetupPanel({
   const [busy, setBusy] = useState(false);
   const [recoverySecret, setRecoverySecret] = useState<string | null>(null);
   const [biometricReady, setBiometricReady] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +84,7 @@ export function SetupPanel({
     clearMessage();
     try {
       const recovery = await createPasswordBox(boxPath.trim(), masterPassword);
+      if (!mounted.current) return;
       if (recovery) {
         setRecoverySecret(recovery);
         return;
@@ -102,8 +108,10 @@ export function SetupPanel({
     clearMessage();
     try {
       const password = await unlockWithBiometric(boxPath.trim());
+      if (!mounted.current) return;
       onMasterPasswordChange(password);
       await openPasswordBox(boxPath.trim(), password);
+      if (!mounted.current) return;
       showMessage(labels.setup.successBiometricOpened, "success");
       onUnlocked();
     } catch (err) {
@@ -127,6 +135,7 @@ export function SetupPanel({
     clearMessage();
     try {
       await openPasswordBox(boxPath.trim(), masterPassword);
+      if (!mounted.current) return;
       showMessage(labels.setup.successOpened, "success");
       onUnlocked();
     } catch (err) {

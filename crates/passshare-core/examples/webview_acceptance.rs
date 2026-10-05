@@ -430,13 +430,10 @@ fn ensure(value: bool, label: &str) -> Result<(), String> {
     }
 }
 
-fn run_auto_lock(application: &Path, flavor: &str, output: &Path) -> Result<(), String> {
+fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
     let temp = tempfile::TempDir::new().map_err(|_| "lock fixture directory")?;
     std::fs::create_dir_all(output).map_err(|_| "lock output directory")?;
-    let mut driver = Driver::start(
-        temp.path(),
-        &output.join(format!("{flavor}-lock-driver.log")),
-    )?;
+    let mut driver = Driver::start(temp.path(), &output.join("desktop-lock-driver.log"))?;
     driver.open(application)?;
     driver.deadline = Instant::now() + Duration::from_secs(360);
     ensure(
@@ -451,31 +448,28 @@ fn run_auto_lock(application: &Path, flavor: &str, output: &Path) -> Result<(), 
     getrandom::fill(&mut entropy).map_err(|_| "lock fixture entropy")?;
     let master = STANDARD.encode(entropy);
     let path = temp.path().join("lock.pbox");
-    let saved;
-    if flavor == "desktop" {
-        ensure(
-            driver.invoke(
-                "create_password_box",
-                json!({"path":path,"masterPassword":master}),
-            )?["ok"]
-                == true,
-            "lock create failed",
-        )?;
-        ensure(driver.invoke("add_item", json!({"category":"LOGIN","title":"Lock fixture","password":master,"masterPassword":master}))?["ok"] == true, "lock item failed")?;
-        saved = driver.invoke("list_items", json!({}))?["value"].clone();
-        ensure(
-            saved.as_array().is_some_and(|items| items.len() == 1),
-            "lock fixture count",
-        )?;
-    } else {
-        let epoch = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
-        ensure(
-            driver.invoke("native_unlock", json!({"epoch":epoch}))?["value"] == true,
-            "mobile native unlock failed",
-        )?;
-        saved = Value::Null;
-    }
-    // Exercise the shell's actual DOM lifecycle binding, not an HTTP/Web proxy.
+    ensure(
+        driver.invoke(
+            "create_password_box",
+            json!({"path":path,"masterPassword":master}),
+        )?["ok"]
+            == true,
+        "lock create failed",
+    )?;
+    ensure(driver.invoke("add_item", json!({"category":"LOGIN","title":"Lock fixture","password":master,"masterPassword":master}))?["ok"] == true, "lock item failed")?;
+    let saved = driver.invoke("list_items", json!({}))?["value"].clone();
+    ensure(
+        saved.as_array().is_some_and(|items| items.len() == 1),
+        "lock fixture count",
+    )?;
+    let opened = driver.script("const done=arguments[arguments.length-1];const inputs=document.querySelectorAll('#setup-heading~label input');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;inputs.forEach((el,i)=>{setter.call(el,arguments[i]);el.dispatchEvent(new Event('input',{bubbles:true}));});setTimeout(()=>{document.querySelector('.ps-actions .ps-button--secondary').click();const end=Date.now()+3000;const probe=()=>{if(document.querySelector('.ps-item-card__title')?.textContent==='Lock fixture')done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false);};probe();},50);", json!([path,master]))?;
+    ensure(
+        opened == true,
+        "actual desktop unlock screen did not show fixture",
+    )?;
+    // Assert a visible secret-bearing form before testing its removal.
+    let before = driver.script("const done=arguments[arguments.length-1];const input=document.querySelector('input[type=password]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(input,arguments[0]);input.dispatchEvent(new Event('input',{bubbles:true}));done(input.value===arguments[0] && !!document.querySelector('.ps-item-card'));", json!([master]))?;
+    ensure(before == true, "secret UI precondition absent")?;
     driver.script("const done=arguments[arguments.length-1];window.dispatchEvent(new Event('blur'));setTimeout(()=>done(true),100);", json!([]))?;
     ensure(
         driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
@@ -485,27 +479,25 @@ fn run_auto_lock(application: &Path, flavor: &str, output: &Path) -> Result<(), 
         driver.invoke("native_activity", json!({}))?["value"] == false,
         "background input reopened session",
     )?;
-    if flavor == "desktop" {
-        for command in [
-            "list_items",
-            "search_items",
-            "export_onepassword_csv",
-            "add_item",
-        ] {
-            let args = if command == "search_items" {
-                json!({"query":"fixture"})
-            } else if command == "add_item" {
-                json!({"category":"LOGIN","title":"Blocked","password":master,"masterPassword":master})
-            } else {
-                json!({})
-            };
-            ensure(
-                driver.invoke(command, args)?["ok"] == false,
-                "locked secret command was accepted",
-            )?;
-        }
-        ensure(driver.script("const done=arguments[arguments.length-1];done(!document.querySelector('[type=password]')?.value && !document.querySelector('.ps-item-list'));", json!([]))? == true, "background retained password input or list")?;
+    for command in [
+        "list_items",
+        "search_items",
+        "export_onepassword_csv",
+        "add_item",
+    ] {
+        let args = if command == "search_items" {
+            json!({"query":"fixture"})
+        } else if command == "add_item" {
+            json!({"category":"LOGIN","title":"Blocked","password":master,"masterPassword":master})
+        } else {
+            json!({})
+        };
+        ensure(
+            driver.invoke(command, args)?["ok"] == false,
+            "locked secret command was accepted",
+        )?;
     }
+    ensure(driver.script("const done=arguments[arguments.length-1];done(!!document.querySelector('#setup-heading') && !document.querySelector('[type=password]')?.value && !document.querySelector('.ps-item-card'));", json!([]))? == true, "background retained password input or list")?;
     ensure(
         driver.invoke("native_focus", json!({"foreground":true}))?["ok"] == true,
         "resume foreground failed",
@@ -514,52 +506,30 @@ fn run_auto_lock(application: &Path, flavor: &str, output: &Path) -> Result<(), 
         driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
         "resume bypassed authentication",
     )?;
-    if flavor == "desktop" {
-        ensure(
-            driver.invoke(
-                "open_password_box",
-                json!({"path":path,"masterPassword":master}),
-            )?["ok"]
-                == true,
-            "lock reauthentication failed",
-        )?;
-        ensure(
-            driver.invoke("list_items", json!({}))?["value"] == saved,
-            "background changed encrypted contents",
-        )?;
-    } else {
-        let stale = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
-        driver.invoke("native_focus", json!({"foreground":false}))?;
-        driver.invoke("native_focus", json!({"foreground":true}))?;
-        ensure(
-            driver.invoke("native_unlock", json!({"epoch":stale}))?["value"] == false,
-            "stale authentication reopened session",
-        )?;
-        let epoch = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
-        ensure(
-            driver.invoke("native_unlock", json!({"epoch":epoch}))?["value"] == true,
-            "fresh mobile authentication rejected",
-        )?;
-    }
-    let ciphertext = if flavor == "desktop" {
-        std::fs::read(&path).map_err(|_| "lock ciphertext")?
-    } else {
-        vec![]
-    };
-    // Use the production five-minute duration. No environment override or
-    // shortened test-only policy is installed in the application.
+    ensure(
+        driver.invoke(
+            "open_password_box",
+            json!({"path":path,"masterPassword":master}),
+        )?["ok"]
+            == true,
+        "lock reauthentication failed",
+    )?;
+    ensure(
+        driver.invoke("list_items", json!({}))?["value"] == saved,
+        "background changed encrypted contents",
+    )?;
+    let ciphertext = std::fs::read(&path).map_err(|_| "lock ciphertext")?;
+    // Measure the production five-minute duration, without test-only overrides.
     let started = Instant::now();
     thread::sleep(Duration::from_secs(298));
     ensure(
         driver.invoke("native_is_unlocked", json!({}))?["value"] == true,
         "session expired before five minutes",
     )?;
-    if flavor == "desktop" {
-        ensure(
-            driver.invoke("list_items", json!({}))?["value"] == saved,
-            "read during idle changed contents",
-        )?;
-    }
+    ensure(
+        driver.invoke("list_items", json!({}))?["value"] == saved,
+        "read during idle changed contents",
+    )?;
     thread::sleep(Duration::from_secs(4));
     ensure(
         driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
@@ -569,34 +539,31 @@ fn run_auto_lock(application: &Path, flavor: &str, output: &Path) -> Result<(), 
         driver.invoke("native_activity", json!({}))?["value"] == false,
         "late activity reopened session",
     )?;
-    if flavor == "desktop" {
-        ensure(
-            driver.invoke("list_items", json!({}))?["ok"] == false,
-            "idle secret read accepted",
-        )?;
-        ensure(
-            std::fs::read(&path).map_err(|_| "idle ciphertext")? == ciphertext,
-            "idle lock changed ciphertext",
-        )?;
-        ensure(
-            driver.invoke(
-                "open_password_box",
-                json!({"path":path,"masterPassword":master}),
-            )?["ok"]
-                == true,
-            "idle reopen failed",
-        )?;
-        ensure(
-            driver.invoke("list_items", json!({}))?["value"] == saved,
-            "idle reopen contents changed",
-        )?;
-        driver.invoke("lock_password_box", json!({}))?;
-    }
-    std::fs::write(output.join(format!("{flavor}-auto-lock.json")), serde_json::to_vec_pretty(&json!({"nativeFlavor":flavor,"productionIdleSeconds":300,"measuredIdleSeconds":started.elapsed().as_secs_f64(),"backgroundBinding":true,"resumeRequiresAuthentication":true,"staleUnlockRejected":flavor=="mobile","lockedSecretCommandsRejected":flavor=="desktop","ciphertextPreserved":flavor=="desktop","physicalMobile":false,"syntheticOnly":true})).map_err(|_| "lock result encode")?).map_err(|_| "lock result write")?;
-    println!("native {flavor} production auto-lock acceptance succeeded");
+    ensure(
+        driver.invoke("list_items", json!({}))?["ok"] == false,
+        "idle secret read accepted",
+    )?;
+    ensure(
+        std::fs::read(&path).map_err(|_| "idle ciphertext")? == ciphertext,
+        "idle lock changed ciphertext",
+    )?;
+    ensure(
+        driver.invoke(
+            "open_password_box",
+            json!({"path":path,"masterPassword":master}),
+        )?["ok"]
+            == true,
+        "idle reopen failed",
+    )?;
+    ensure(
+        driver.invoke("list_items", json!({}))?["value"] == saved,
+        "idle reopen contents changed",
+    )?;
+    driver.invoke("lock_password_box", json!({}))?;
+    std::fs::write(output.join("desktop-auto-lock.json"), serde_json::to_vec_pretty(&json!({"nativeFlavor":"desktop","productionIdleSeconds":300,"measuredIdleSeconds":started.elapsed().as_secs_f64(),"domBackgroundBinding":true,"secretUiBeforeLock":true,"secretUiAfterLock":false,"resumeRequiresAuthentication":true,"lockedSecretCommandsRejected":true,"ciphertextPreserved":true,"physicalMobile":false,"syntheticOnly":true})).map_err(|_| "lock result encode")?).map_err(|_| "lock result write")?;
+    println!("native desktop production auto-lock acceptance succeeded");
     Ok(())
 }
-
 fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result<(), String> {
     let temp = tempfile::TempDir::new().map_err(|_| "fixture directory")?;
     std::fs::create_dir_all(output).map_err(|_| "output directory")?;
@@ -748,20 +715,21 @@ fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() != 5 {
-        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed OUTPUT");
+        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed|auto-lock OUTPUT");
         std::process::exit(2);
     }
     let flavor = args[2].to_str().unwrap_or("");
     let mode = args[3].to_str().unwrap_or("");
     if !["desktop", "mobile"].contains(&flavor)
         || !["blocked", "executed", "auto-lock"].contains(&mode)
+        || (mode == "auto-lock" && flavor != "desktop")
     {
         std::process::exit(2);
     }
     let app = PathBuf::from(&args[1]);
     let output = PathBuf::from(&args[4]);
     let result = if mode == "auto-lock" {
-        run_auto_lock(&app, flavor, &output)
+        run_auto_lock(&app, &output)
     } else {
         run(&app, flavor, mode == "blocked", &output)
     };

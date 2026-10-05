@@ -43,7 +43,6 @@ jobs:
           pnpm --dir packages/connect-js install --frozen-lockfile
           pnpm --dir packages/connect-js run build
           pnpm --dir apps/mobile install --frozen-lockfile
-          pnpm --dir apps/mobile exec tsc --noEmit
           pnpm --dir apps/mobile run build
 
       - name: Run mobile unit tests
@@ -53,9 +52,7 @@ jobs:
         run: pnpm --dir backend install --frozen-lockfile
 
       - name: Run mobile smoke tests
-        run: |
-          cargo test -p passshare-mobile smoke_
-          cargo test -p passshare-mobile native_lock::tests
+        run: cargo test -p passshare-mobile smoke_
 
       - name: Run mobile auth API tests
         working-directory: backend

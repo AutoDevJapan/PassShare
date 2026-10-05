@@ -21,82 +21,97 @@ mod native_lock;
 use native_lock::NativeLock;
 
 struct AppState {
-    box_path: Mutex<Option<PathBuf>>,
-    password_box: Mutex<Option<PasswordBox>>,
-    session: Mutex<NativeLock>,
+    data: Mutex<BoxSession>,
 }
 
-// Keep the policy mutex until the data operation finishes. Focus/idle locking
-// and reads/writes therefore cannot expose data from different lock generations.
-struct BoxAccess<'a> {
-    _session: MutexGuard<'a, NativeLock>,
-    password_box: MutexGuard<'a, Option<PasswordBox>>,
+#[derive(Default)]
+struct BoxSession {
+    password_box: Option<PasswordBox>,
+    session: NativeLock,
 }
 
-impl Deref for BoxAccess<'_> {
+impl Deref for BoxSession {
     type Target = Option<PasswordBox>;
     fn deref(&self) -> &Self::Target {
         &self.password_box
     }
 }
-
-impl DerefMut for BoxAccess<'_> {
+impl DerefMut for BoxSession {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.password_box
     }
 }
 
-impl AppState {
-    fn access(&self) -> Result<BoxAccess<'_>, String> {
-        let mut session = self.session.lock().map_err(|_| "内部エラー")?;
-        let mut password_box = self.password_box.lock().map_err(|_| "内部エラー")?;
-        if !session.is_unlocked(Instant::now()) {
-            if let Some(pb) = password_box.as_mut() {
+impl BoxSession {
+    // Every deadline observation also erases the decrypted box in the same
+    // critical section, including input racing the timer at the idle boundary.
+    fn check_and_wipe(&mut self, now: Instant) -> bool {
+        let open = self.session.is_unlocked(now);
+        if !open {
+            if let Some(pb) = self.password_box.as_mut() {
                 pb.lock();
             }
+        }
+        open
+    }
+}
+
+impl AppState {
+    fn access(&self) -> Result<MutexGuard<'_, BoxSession>, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        if !data.check_and_wipe(Instant::now()) {
             return Err(PassShareError::BoxLocked.to_string());
         }
-        Ok(BoxAccess {
-            _session: session,
-            password_box,
-        })
+        Ok(data)
     }
 
     fn lock(&self, foreground: Option<bool>) -> Result<(), String> {
-        let mut session = self.session.lock().map_err(|_| "内部エラー")?;
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         if let Some(foreground) = foreground {
-            session.focus(foreground);
+            data.session.focus(foreground);
         } else {
-            session.lock();
+            data.session.lock();
         }
-        if !session.is_unlocked(Instant::now()) {
-            if let Some(pb) = self.password_box.lock().map_err(|_| "内部エラー")?.as_mut() {
-                pb.lock();
-            }
-        }
+        data.check_and_wipe(Instant::now());
         Ok(())
     }
 
+    fn activity(&self, now: Instant) -> Result<bool, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        if !data.check_and_wipe(now) {
+            return Ok(false);
+        }
+        Ok(data.session.activity(now))
+    }
+
+    fn expire(&self) -> Result<bool, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        let was_open = data
+            .password_box
+            .as_ref()
+            .is_some_and(|pb| pb.state() == PasswordBoxState::Unlocked);
+        Ok(!data.check_and_wipe(Instant::now()) && was_open)
+    }
+
     fn begin_unlock(&self) -> Result<u64, String> {
-        self.session
+        self.data
             .lock()
             .map_err(|_| "内部エラー")?
+            .session
             .begin_unlock()
             .ok_or_else(|| PassShareError::BoxLocked.to_string())
     }
 
-    fn finish_unlock(&self, epoch: u64, mut pb: PasswordBox, path: PathBuf) -> Result<(), String> {
-        let mut session = self.session.lock().map_err(|_| "内部エラー")?;
-        if !session.unlock(epoch, Instant::now()) {
+    fn finish_unlock(&self, epoch: u64, mut pb: PasswordBox) -> Result<(), String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        if !data.session.unlock(epoch, Instant::now()) {
             pb.lock();
             return Err(PassShareError::BoxLocked.to_string());
         }
-        *self.box_path.lock().map_err(|_| "内部エラー")? = Some(path);
-        *self.password_box.lock().map_err(|_| "内部エラー")? = Some(pb);
+        data.password_box = Some(pb);
         Ok(())
     }
 }
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ItemDto {
@@ -276,7 +291,7 @@ fn create_password_box(
     let path = PathBuf::from(path);
     let pb = PasswordBox::create(&path, &master_password).map_err(map_error)?;
     let recovery = pb.recovery_secret().map_err(map_error)?.map(String::from);
-    state.finish_unlock(epoch, pb, path)?;
+    state.finish_unlock(epoch, pb)?;
     Ok(recovery)
 }
 
@@ -289,7 +304,7 @@ fn open_password_box(
     let epoch = state.begin_unlock()?;
     let path = PathBuf::from(path);
     let pb = PasswordBox::open(&path, &master_password).map_err(map_error)?;
-    state.finish_unlock(epoch, pb, path)?;
+    state.finish_unlock(epoch, pb)?;
     Ok(())
 }
 
@@ -569,11 +584,7 @@ fn lock_password_box(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn native_activity(state: State<'_, AppState>) -> Result<bool, String> {
-    Ok(state
-        .session
-        .lock()
-        .map_err(|_| "内部エラー")?
-        .activity(Instant::now()))
+    state.activity(Instant::now())
 }
 
 #[tauri::command]
@@ -592,9 +603,7 @@ pub fn run() {
         .plugin(tauri_plugin_biometry::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
-            box_path: Mutex::new(None),
-            password_box: Mutex::new(None),
-            session: Mutex::new(NativeLock::default()),
+            data: Mutex::new(BoxSession::default()),
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Focused(foreground) = event {
@@ -610,16 +619,7 @@ pub fn run() {
             std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_secs(1));
                 let state = handle.state::<AppState>();
-                let Ok(mut session) = state.session.lock() else {
-                    continue;
-                };
-                if session.expire(Instant::now()) {
-                    if let Ok(mut pb) = state.password_box.lock() {
-                        if let Some(pb) = pb.as_mut() {
-                            pb.lock();
-                        }
-                    }
-                    drop(session);
+                if state.expire().unwrap_or(false) {
                     let _ = handle.emit("passshare-locked", ());
                 }
             });
@@ -654,6 +654,67 @@ mod smoke_tests {
     use std::path::PathBuf;
 
     const MASTER_PASSWORD: &str = "TestPass123!";
+
+    #[test]
+    fn smoke_native_idle_input_erases_without_ui_poll() {
+        let (dir, path) = temp_box("idle-input");
+        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        add_login(&mut pb, "Idle fixture", "must be erased", None, None, &[]);
+        pb.save(MASTER_PASSWORD).expect("save");
+        let original = std::fs::read(&path).expect("ciphertext");
+        let start = Instant::now();
+        let mut session = NativeLock::default();
+        assert!(session.unlock(session.begin_unlock().unwrap(), start));
+        let state = AppState {
+            data: Mutex::new(BoxSession {
+                password_box: Some(pb),
+                session,
+            }),
+        };
+        assert!(!state
+            .activity(start + Duration::from_secs(300))
+            .expect("activity"));
+        {
+            let data = state.data.lock().expect("state");
+            let pb = data.password_box.as_ref().expect("box");
+            assert_eq!(pb.state(), PasswordBoxState::Locked);
+            assert!(pb.list_connect_items().is_err());
+        }
+        assert!(state.access().is_err());
+        assert_eq!(
+            std::fs::read(&path).expect("ciphertext after lock"),
+            original
+        );
+        let reopened = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        assert_eq!(
+            reopened.list_connect_items().expect("items")[0].title,
+            "Idle fixture"
+        );
+        drop(reopened);
+        drop(state);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn smoke_native_background_rejects_pending_open() {
+        let (dir, path) = temp_box("pending-open");
+        let pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let state = AppState {
+            data: Mutex::new(BoxSession::default()),
+        };
+        let epoch = state.begin_unlock().expect("begin");
+        state.lock(Some(false)).expect("background");
+        state.lock(Some(true)).expect("foreground");
+        assert!(state.finish_unlock(epoch, pb).is_err());
+        assert!(state.access().is_err());
+        let reopened = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        state
+            .finish_unlock(state.begin_unlock().expect("fresh begin"), reopened)
+            .expect("fresh open");
+        assert!(state.access().is_ok());
+        drop(state);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
 
     fn temp_box(name: &str) -> (PathBuf, PathBuf) {
         let dir =

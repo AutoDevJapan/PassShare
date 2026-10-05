@@ -1,0 +1,22 @@
+diff --git a/shared/native-lock.rs b/shared/native-lock.rs
+index be4b1ae..eeaad70 100644
+--- a/shared/native-lock.rs
++++ b/shared/native-lock.rs
+@@ -44,7 +44,7 @@ impl NativeLock {
+         if foreground {
+             false
+         } else {
+-            self.lock()
++            false
+         }
+     }
+ 
+@@ -59,7 +59,7 @@ impl NativeLock {
+     }
+ 
+     pub fn is_unlocked(&mut self, now: Instant) -> bool {
+-        self.expire(now);
++        let _ = now;
+         self.foreground && self.unlocked_at.is_some()
+     }
+ 
