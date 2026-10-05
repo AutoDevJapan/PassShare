@@ -7,7 +7,7 @@
 
 PassShare v2.0 のリリースフロー:
 
-1. **main マージ** → dev Backend 自動デプロイ（prd レプリカ refresh 付き）
+1. **main マージ** → dev Backend 自動デプロイ（架空dev seed、本番レプリカのrefreshなし）
 2. **dev 検証 OK** → stg 手動デプロイ
 3. **stg 受入 OK** → prd 手動デプロイ
 4. tag / Desktop / CHANGELOG
@@ -54,10 +54,11 @@ git pull origin main
 
 1. stg 受入チェックリスト ✅
 2. CHANGELOG `[Unreleased]` 更新済み
+3. 配備前のバックアップ取得済みで、対象・由来・取得時刻・復元可能な範囲を確認済み。満たせない間は下記Run workflowを起動しない
 
 1. GitHub → Actions → **Deploy Production Backend** → Run workflow
 2. 確認入力: `deploy-prd`
-3. prd DB snapshot（artifact 保存）→ production backend デプロイ
+3. ジョブ内でsnapshot後に配備へ進む。途中で上記の前提を確認する停止はない。実DB dumpをGitHub artifactへ保存せず回収する処理で、永続した本番保全を保証しない
 4. smoke:
    ```powershell
    $env:STG_BACKEND_URL = "https://pass-share-backend-production.up.railway.app"
@@ -72,8 +73,8 @@ git pull origin main
 ### Backend（Railway）
 
 1. Railway Dashboard → 対象環境 → Deployments
-2. 直前の green デプロイを **Redeploy**
-3. `/health` と `/health/db` を確認
+2. 現DBスキーマとの互換性と必要な認証修正を維持する版を確認して **Redeploy**。単に直前の成功版へ戻さない
+3. `/health` と `/health/db`、現在の資格による保存と旧資格の拒否を確認
 
 ### Frontend（Vercel）
 
@@ -82,8 +83,9 @@ git pull origin main
 
 ### DB
 
-- prd デプロイ artifact の snapshot から `pg_restore`（Run ID 付き dump）
-- PITR — Railway プラン依存 + [secret-rotation.md](./secret-rotation.md)
+- 稼働DBと現在の更新を先に保全し、別の隔離DBへ復元する。公開artifactの実DB dumpを復元元にしない
+- 本番の現在の永続DB・日次保持設定は[運用Runbook](./operations.md#railway-postgresql)で照合する。元PG16へ戻して新しい更新を消さない
+- PITRは対象サービスの実設定を確認して利用する。本番の有効化は未実施。復元した古い資格・退会・取消・鍵を現在の記録へ合わせ、全経路の拒否と認可を確認するまで再開しない
 
 ## Hotfix
 
@@ -104,3 +106,9 @@ git pull origin main
 - [staging-acceptance.md](./staging-acceptance.md)
 - [secret-rotation.md](./secret-rotation.md)
 - [ADR 008](../adr/008-deploy-pipeline-dev-first.md)
+
+## 固定ソースの配備記録（2026-10-06）
+
+共有ToDo1177では既存Railway CLIのOAuthログインを使用し、APIキー指定のワークフローを起動していない。全42検査が成功したmain `e7d076c0449b3a233f015c3b6e003ab2796e8bd9` を変更のない専用作業フォルダーから対象プロジェクト・本番環境・backendサービスのIDを明示して配備した。実際のアップロード先、Dockerfileによるnative build、稼働44ソースファイルの一致と正式API15項目を確認した。
+
+先に本番の手動snapshotを取得した。切替前の保全先snapshot復元で元8表の件数・全文指紋が一致した証拠と、配備後のsource一致・API資格失効は別の判定である。この限定経路をstaging全受入、署名された配布物、全クライアント、契約上の提供開始と同一に扱わない。[匿名証拠](../audits/evidence/1177-live-operations-20261006.json)と[復旧手順](./operations.md)を参照する。
