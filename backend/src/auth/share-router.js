@@ -33,6 +33,7 @@ export function createShareRouter({ authStore, connectStore }) {
           email: row.email,
           role: row.role,
           joinedAt: row.created_at,
+          identityConfirmed: row.identity_confirmed,
         })),
       });
     } catch (error) {

@@ -1,6 +1,16 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+pub const MEMBERSHIP_SCHEMA: &str = r#"
+ALTER TABLE vault_memberships ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+UPDATE vault_memberships SET confirmed_at=created_at WHERE role='owner' AND confirmed_at IS NULL;
+CREATE OR REPLACE FUNCTION passshare_membership_active(role TEXT, confirmed_at TIMESTAMPTZ)
+RETURNS BOOLEAN LANGUAGE SQL IMMUTABLE AS $$ SELECT role='owner' OR confirmed_at IS NOT NULL $$;
+CREATE OR REPLACE FUNCTION passshare_expire_invites(box_id VARCHAR, user_email TEXT)
+RETURNS VOID LANGUAGE SQL AS $$ UPDATE vault_invitations SET status='expired', responded_at=NOW()
+WHERE vault_id=box_id AND invitee_email=user_email AND status='pending' AND expires_at<=clock_timestamp() $$;
+"#;
+
 fn error(status: u16, code: &str, message: &str) -> Value {
     json!({"status":status,"code":code,"message":message})
 }

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
 import { generateConnectId } from "../lib/connect.js";
 import { isTokenAuthClient } from "./client.js";
 import { clearCsrfCookie, issueCsrfToken, requireCsrf } from "./csrf.js";
@@ -9,6 +10,8 @@ import { hashPassword, verifyPassword } from "./password.js";
 import { createInvitationsRouter, createShareRouter } from "./share-router.js";
 import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
+import { nativeMutation } from "../lib/native-mutations.js";
+import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS } from "./rate-limit-constants.js";
 
 /**
  * @param {object} deps
@@ -23,6 +26,11 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   const router = Router();
   const sessionGuard = requireSession(authStore);
   const loginGuard = createLoginGuard({ store: loginGuardStore });
+  // Cheap per-process protection before session DB lookup; the existing shared
+  // throttle below remains authoritative across replicas and restarts.
+  const passwordChangeThrottle = rateLimit({ windowMs:LOGIN_IP_WINDOW_MS,
+    limit:LOGIN_IP_MAX_REQUESTS, standardHeaders:"draft-6", legacyHeaders:false,
+    message:{error:"PS029",message:"Too many requests. Try again later."} });
 
   router.get("/csrf", (_req, res) => {
     const csrfToken = issueCsrfToken(res, appEnv);
@@ -52,8 +60,8 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       });
       await authStore.addVaultMembership(user.id, vaultId, "owner");
 
-      const session = await authStore.createSession(user.id);
-      const connectToken = await authStore.createConnectToken(user.id);
+      const session = await authStore.createSession(user.id, user.password_hash);
+      const connectToken = await authStore.createConnectToken(user.id, "session", session.sessionId);
 
       if (isTokenAuthClient(req)) {
         res.status(201).json(toMobileAuthResponse({ user, session, connectToken }));
@@ -93,8 +101,8 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       await loginGuard.clearFailures(email);
-      const session = await authStore.createSession(user.id);
-      const connectToken = await authStore.createConnectToken(user.id);
+      const session = await authStore.createSession(user.id, user.password_hash);
+      const connectToken = await authStore.createConnectToken(user.id, "session", session.sessionId);
 
       if (isTokenAuthClient(req)) {
         res.json(toMobileAuthResponse({ user, session, connectToken }));
@@ -134,7 +142,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       const expiresAt = await authStore.refreshSession(session.id);
-      const connectToken = await authStore.createConnectToken(session.user_id);
+      const connectToken = await authStore.createConnectToken(session.user_id, "session", session.id);
       res.json({
         sessionExpiresAt: expiresAt,
         connectAccessToken: connectToken.accessToken,
@@ -162,6 +170,34 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
     }
   });
 
+  router.post("/password/change", passwordChangeThrottle, sessionGuard, requireCsrf, async (req, res) => {
+    try {
+      const clientIp = resolveClientIp(req);
+      await loginGuard.assertIpAllowed(clientIp);
+      await loginGuard.recordIpRequest(clientIp);
+      const user = await authStore.findUserById(req.auth.userId);
+      if (!user) throw authHttpError(401, "PS024", "Session is invalid or expired");
+      await loginGuard.assertNotLocked(user.email);
+      const currentPassword = req.body?.currentPassword;
+      const nextPassword = req.body?.newPassword;
+      await nativeMutation({command:"account-password-input", currentPassword, newPassword:nextPassword});
+      if (!await verifyPassword(user.password_hash, currentPassword)) {
+        await loginGuard.recordFailure(user.email);
+        throw authHttpError(401, "PS026", "Invalid email or password");
+      }
+      const nextHash = await hashPassword(nextPassword);
+      await authStore.changePassword(req.auth.userId, req.auth.sessionId, user.password_hash, nextHash);
+      // Credential rotation is already committed. Ancillary throttle cleanup
+      // must never report a failed change or retain the old cookie afterward.
+      await loginGuard.clearFailures(user.email).catch(() => {});
+      if (!parseBearerToken(req)) {
+        clearSessionCookie(res, appEnv);
+        clearCsrfCookie(res, appEnv);
+      }
+      res.status(204).end();
+    } catch (error) { sendAuthError(res, error); }
+  });
+
   router.post("/refresh", sessionGuard, requireCsrf, async (req, res) => {
     try {
       const expiresAt = await authStore.refreshSession(req.auth.sessionId);
@@ -185,7 +221,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   router.get("/connect-token", sessionGuard, async (req, res) => {
     try {
-      const token = await authStore.createConnectToken(req.auth.userId);
+      const token = await authStore.createConnectToken(req.auth.userId, "session", req.auth.sessionId);
       res.json({
         accessToken: token.accessToken,
         expiresIn: token.expiresIn,
