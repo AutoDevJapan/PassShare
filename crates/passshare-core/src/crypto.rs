@@ -26,6 +26,13 @@ pub const KDF_MIN_PARALLELISM: u32 = 1;
 pub struct MasterKey([u8; 32]);
 
 impl MasterKey {
+    /// Generate an account root key locally, independently of authentication.
+    pub fn generate() -> Result<Self, PassShareError> {
+        let mut key = [0u8; 32];
+        fill(&mut key).map_err(|_| PassShareError::Internal("Key generation failed".into()))?;
+        Ok(Self(key))
+    }
+
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }

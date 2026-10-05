@@ -1,8 +1,9 @@
+pub mod cloud_crypto;
 pub mod crypto;
 pub mod domain;
 pub mod error;
-pub mod generator;
 pub mod export;
+pub mod generator;
 pub mod import;
 pub mod migration;
 pub mod password_box;
