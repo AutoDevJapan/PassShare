@@ -773,6 +773,10 @@ impl Runner {
                 .is_some_and(|expected| saved["version"].as_u64() == Some(expected)),
         )?;
         report.check(
+            "reapproved_owner_PUT_requested_title",
+            saved["title"] == edit["title"],
+        )?;
+        report.check(
             "PUT_preserves_additional_data",
             ["fields", "urls", "tags", "sections"]
                 .iter()

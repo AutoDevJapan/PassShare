@@ -93,7 +93,7 @@ CI. Tests cover guards, full JSON and fixture loss, exact negative statuses,
 missing/empty snapshot data, anonymous report counts, omitted-purge reopening gate,
 private temporary cleanup, and real owned child stop/reaping during panic unwind.
 The ignored `tests::child_fixture` is launched only by lifecycle tests. There are
-9 ordinary tests and **one ignored fixture** on Linux; report it as ignored,
+11 ordinary tests and **one ignored fixture** on Linux; report it as ignored,
 never as a passed test. Test execution and actual counts must come from CI.
 
 Run the normal container, then a separate invocation with
@@ -102,5 +102,13 @@ Normal cleanup drops only DBs it successfully created. The control must return 1
 `completed=false`, `failure_class=check_failed`, and a failed check named
 `reopen_gate_credentials_and_current_accounts_clean`. It must never reach
 `reconciled_official_API_ready`; cleanup still reaps Node and removes dump/owned DBs.
+
+CI passes both reports to the Rust validator (`--validate-report positive|negative`
+on bounded stdin, no database operations). The validator requires each named
+cleanup result exactly once. Negative mode refuses any reopening-ready result,
+even a failed one, and requires the failed closed-service gate and incomplete
+RTO. Positive mode requires the end-to-end data, write, denial, source and cleanup
+results and completed synthetic RTO. Unit mutations add a premature reopening
+result or remove all cleanup results; both must be rejected.
 If DBs pre-exist, the runner fails instead of deleting them; parent must remove its
 own disposable container/volumes/network after every run (including force termination).

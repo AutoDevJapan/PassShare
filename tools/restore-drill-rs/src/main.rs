@@ -1,4 +1,5 @@
 //! Verification-only runner. Not a product CLI or a customer recovery tool.
+mod report_validation;
 mod scenario;
 
 use reqwest::blocking::Client;
@@ -661,6 +662,18 @@ fn execute(report: &mut Report, inputs: &Inputs) -> Result<()> {
 }
 
 fn main() {
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.len() == 3 && args[1] == "--validate-report" {
+        let mode = args[2].as_str();
+        let mut bytes = Vec::new();
+        let read = std::io::stdin().take(LIMIT + 1).read_to_end(&mut bytes);
+        let valid = read.is_ok()
+            && bytes.len() as u64 <= LIMIT
+            && matches!(mode, "positive" | "negative")
+            && serde_json::from_slice::<Value>(&bytes)
+                .is_ok_and(|r| report_validation::validate(&r, mode == "negative"));
+        std::process::exit(if valid { 0 } else { 1 });
+    }
     // Panic diagnostics can contain input values; report only the static class.
     std::panic::set_hook(Box::new(|_| {}));
     let env = std::env::vars_os()

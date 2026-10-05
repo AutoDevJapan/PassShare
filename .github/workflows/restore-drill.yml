@@ -65,7 +65,8 @@ jobs:
             --env "DRILL_SOURCE_SHA=$SOURCE_COMMIT" \
             --env "DRILL_BACKEND_SHA256=$(git ls-files -z backend/src backend/native | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)" \
             "passshare-restore-1177:${GITHUB_RUN_ID}" > restore-drill-report.json
-          jq -e '.completed == true and .check_count > 40 and .passed_count == .check_count' restore-drill-report.json
+          docker run --rm -i --network none --memory 256m --cpus 1 \
+            "passshare-restore-1177:${GITHUB_RUN_ID}" --validate-report positive < restore-drill-report.json
           docker stop "$drill_api" >/dev/null
           docker rm -v "$drill_api"
           set +e
@@ -80,7 +81,8 @@ jobs:
           drill_status=$?
           set -e
           test "$drill_status" -eq 1
-          jq -e '.completed == false and .failure_class == "check_failed" and any(.checks[]; .name == "reopen_gate_credentials_and_current_accounts_clean" and .passed == false) and ([.checks[] | select(.name | startswith("cleanup_")) | .passed] | all)' restore-drill-negative-control.json
+          docker run --rm -i --network none --memory 256m --cpus 1 \
+            "passshare-restore-1177:${GITHUB_RUN_ID}" --validate-report negative < restore-drill-negative-control.json
 
       - name: Recover only this run's verification resources
         if: always()
