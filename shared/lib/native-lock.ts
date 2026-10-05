@@ -1,61 +1,55 @@
-// Thin event/IPC binding; the deadline and unlock generation live in Rust.
+// Thin event/IPC binding; idle policy and transition generations live in Rust.
+export type NativeStatus = { epoch: number; unlocked: boolean };
 type NativeBridge = {
   invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
-  listen: (event: string, handler: () => void) => Promise<() => void>;
+  listen: (event: string, handler: (event: { payload: NativeStatus }) => void) => Promise<() => void>;
 };
 
-export function bindNativeLock(bridge: NativeBridge | null, onLocked: () => void): () => void {
-  if (!bridge) return () => {};
-  const { invoke, listen } = bridge;
+export function bindNativeLock(bridge: NativeBridge | null, onLocked: () => void) {
   let disposed = false;
-  let lastInput = 0;
-  let wasUnlocked = false;
-  let notified = false;
+  let lastInput = -Infinity;
+  let latestEpoch = -1;
+  let lastLockedEpoch = -1;
   let unlisten: (() => void) | undefined;
-  const lock = () => {
-    wasUnlocked = false;
-    if (!disposed && !notified) {
-      notified = true;
+  const accept = (status: NativeStatus) => {
+    if (disposed || status.epoch < latestEpoch) return;
+    if (latestEpoch === -1 && status.epoch === 0 && !status.unlocked) {
+      latestEpoch = 0;
+      lastLockedEpoch = 0;
+      return;
+    }
+    latestEpoch = status.epoch;
+    if (!status.unlocked && status.epoch > lastLockedEpoch) {
+      lastLockedEpoch = status.epoch;
       onLocked();
     }
   };
-  void listen("passshare-locked", lock).then((stop) => {
+  if (!bridge) return { accept, dispose: () => { disposed = true; } };
+  const { invoke, listen } = bridge;
+  const failure = () => { if (!disposed) onLocked(); };
+  void listen("passshare-locked", (event) => accept(event.payload)).then((stop) => {
     if (disposed) stop(); else unlisten = stop;
-  }).catch(lock);
+  }).catch(failure);
   const activity = (event: Event) => {
-    if (!event.isTrusted || document.hidden || performance.now() - lastInput < 1000) return;
+    if (!event.isTrusted || document.hidden || !document.hasFocus() || performance.now() - lastInput < 1000) return;
     lastInput = performance.now();
-    void invoke<boolean>("native_activity").then((open) => {
-      if (!open && wasUnlocked) lock();
-    }).catch(lock);
+    const epoch = latestEpoch;
+    void invoke<boolean>("native_activity").then(() => invoke<NativeStatus>("native_session_status")).then(accept).catch(() => {
+      if (epoch === latestEpoch) failure();
+    });
   };
-  const focus = () => {
-    void invoke("native_focus", { foreground: !document.hidden }).catch(lock);
-  };
-  const blur = () => {
-    lock();
-    void invoke("native_focus", { foreground: false }).catch(lock);
-  };
-  const visibility = () => { if (document.hidden) blur(); else focus(); };
-  document.addEventListener("visibilitychange", visibility);
-  window.addEventListener("blur", blur);
-  window.addEventListener("focus", focus);
   for (const name of ["pointerdown", "keydown", "wheel"]) document.addEventListener(name, activity, { passive: true });
-  // Recover the UI even if a lock event was emitted before the listener existed.
+  // Epoch ordering rejects late poll results from a previous authentication.
   const poll = window.setInterval(() => {
-    void invoke<boolean>("native_is_unlocked").then((open) => {
-      if (!open && wasUnlocked) lock();
-      if (open) notified = false;
-      wasUnlocked = open;
-    }).catch(lock);
+    const epoch = latestEpoch;
+    void invoke<NativeStatus>("native_session_status").then(accept).catch(() => {
+      if (epoch === latestEpoch) failure();
+    });
   }, 1000);
-  return () => {
+  return { accept, dispose: () => {
     disposed = true;
     unlisten?.();
     window.clearInterval(poll);
-    document.removeEventListener("visibilitychange", visibility);
-    window.removeEventListener("blur", blur);
-    window.removeEventListener("focus", focus);
     for (const name of ["pointerdown", "keydown", "wheel"]) document.removeEventListener(name, activity);
-  };
+  } };
 }

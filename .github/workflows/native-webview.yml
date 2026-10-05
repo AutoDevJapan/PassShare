@@ -39,7 +39,7 @@ jobs:
           cargo build -p passshare-core --example webview_acceptance --locked
           cargo test -p passshare-core --example webview_acceptance --locked
           cargo clippy -p passshare-core --examples --locked -- -D warnings
-      - name: Prove native policy tests detect missing background and idle enforcement
+      - name: Prove native policy tests detect missing idle and manual-lock enforcement
         shell: bash
         run: |
           git apply documents/evidence/1197-auto-lock-regression.patch
@@ -74,7 +74,7 @@ jobs:
           pnpm --dir apps/mobile exec tauri build --no-bundle
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop blocked "$PWD/native-webview-results"
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile blocked "$PWD/native-webview-results"
-      - name: Verify desktop background and production five-minute idle lock
+      - name: Verify desktop manual relock and production five-minute idle lock
         run: |
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop auto-lock "$PWD/native-webview-results"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

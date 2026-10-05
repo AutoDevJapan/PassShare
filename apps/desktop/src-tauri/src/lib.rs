@@ -24,6 +24,12 @@ struct AppState {
     data: Mutex<BoxSession>,
 }
 
+#[derive(Clone, Serialize)]
+struct NativeStatus {
+    epoch: u64,
+    unlocked: bool,
+}
+
 #[derive(Default)]
 struct BoxSession {
     password_box: Option<PasswordBox>,
@@ -57,6 +63,14 @@ impl BoxSession {
 }
 
 impl AppState {
+    fn status(&self) -> Result<NativeStatus, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        let unlocked = data.check_and_wipe(Instant::now());
+        Ok(NativeStatus {
+            epoch: data.session.epoch(),
+            unlocked,
+        })
+    }
     fn access(&self) -> Result<MutexGuard<'_, BoxSession>, String> {
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         if !data.check_and_wipe(Instant::now()) {
@@ -65,17 +79,12 @@ impl AppState {
         Ok(data)
     }
 
-    fn lock(&self, foreground: Option<bool>) -> Result<(), String> {
+    fn lock(&self) -> Result<(), String> {
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
-        if let Some(foreground) = foreground {
-            data.session.focus(foreground);
-        } else {
-            data.session.lock();
-        }
+        data.session.lock();
         data.check_and_wipe(Instant::now());
         Ok(())
     }
-
     fn activity(&self, now: Instant) -> Result<bool, String> {
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         if !data.check_and_wipe(now) {
@@ -94,12 +103,12 @@ impl AppState {
     }
 
     fn begin_unlock(&self) -> Result<u64, String> {
-        self.data
+        Ok(self
+            .data
             .lock()
             .map_err(|_| "内部エラー")?
             .session
-            .begin_unlock()
-            .ok_or_else(|| PassShareError::BoxLocked.to_string())
+            .begin_unlock())
     }
 
     fn finish_unlock(&self, epoch: u64, mut pb: PasswordBox) -> Result<(), String> {
@@ -578,8 +587,12 @@ fn generate_password(length: Option<usize>) -> String {
 }
 
 #[tauri::command]
-fn lock_password_box(state: State<'_, AppState>) -> Result<(), String> {
-    state.lock(None)
+fn lock_password_box(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.lock()?;
+    if let Ok(status) = state.status() {
+        let _ = app.emit("passshare-locked", status);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -593,8 +606,8 @@ fn native_is_unlocked(state: State<'_, AppState>) -> bool {
 }
 
 #[tauri::command]
-fn native_focus(foreground: bool, state: State<'_, AppState>) -> Result<(), String> {
-    state.lock(Some(foreground))
+fn native_session_status(state: State<'_, AppState>) -> Result<NativeStatus, String> {
+    state.status()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -605,22 +618,15 @@ pub fn run() {
         .manage(AppState {
             data: Mutex::new(BoxSession::default()),
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Focused(foreground) = event {
-                let state = window.state::<AppState>();
-                let _ = state.lock(Some(*foreground));
-                if !foreground {
-                    let _ = window.emit("passshare-locked", ());
-                }
-            }
-        })
         .setup(|app| {
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_secs(1));
                 let state = handle.state::<AppState>();
                 if state.expire().unwrap_or(false) {
-                    let _ = handle.emit("passshare-locked", ());
+                    if let Ok(status) = state.status() {
+                        let _ = handle.emit("passshare-locked", status);
+                    }
                 }
             });
             Ok(())
@@ -641,7 +647,7 @@ pub fn run() {
             lock_password_box,
             native_activity,
             native_is_unlocked,
-            native_focus,
+            native_session_status,
         ])
         .run(tauri::generate_context!())
         .expect("PassShare desktop failed to start");
@@ -696,15 +702,14 @@ mod smoke_tests {
     }
 
     #[test]
-    fn smoke_native_background_rejects_pending_open() {
+    fn smoke_native_manual_lock_rejects_pending_open() {
         let (dir, path) = temp_box("pending-open");
         let pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
         let state = AppState {
             data: Mutex::new(BoxSession::default()),
         };
         let epoch = state.begin_unlock().expect("begin");
-        state.lock(Some(false)).expect("background");
-        state.lock(Some(true)).expect("foreground");
+        state.lock().expect("manual lock");
         assert!(state.finish_unlock(epoch, pb).is_err());
         assert!(state.access().is_err());
         let reopened = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");

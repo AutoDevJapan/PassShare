@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MatrixBackground } from "../../../shared/ui/MatrixBackground";
 import type { AppView } from "./types";
-import { getState } from "./tauri";
-import { bindNativeLock } from "../../../shared/lib/native-lock";
+import { bindNativeLock, type NativeStatus } from "../../../shared/lib/native-lock";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AppHeader } from "./components/AppHeader";
@@ -15,6 +14,7 @@ export function App() {
   const [masterPassword, setMasterPassword] = useState("");
   const [lockGeneration, setLockGeneration] = useState(0);
   const generation = useRef(0);
+  const nativeBinding = useRef<ReturnType<typeof bindNativeLock> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,8 +22,9 @@ export function App() {
     async function syncState() {
       const current = generation.current;
       try {
-        const state = await getState();
-        if (!cancelled && current === generation.current && state === "unlocked") {
+        const status = await invoke<NativeStatus>("native_session_status");
+        nativeBinding.current?.accept(status);
+        if (!cancelled && current === generation.current && status.unlocked) {
           setView("main");
         }
       } catch {
@@ -45,11 +46,21 @@ export function App() {
     setView("setup");
   }
 
-  useEffect(() => bindNativeLock(isTauri() ? { invoke, listen } : null, handleLocked), []);
+  useEffect(() => {
+    const binding = bindNativeLock(isTauri() ? { invoke, listen } : null, handleLocked);
+    nativeBinding.current = binding;
+    return () => { binding.dispose(); nativeBinding.current = null; };
+  }, []);
 
   async function handleUnlocked() {
     const current = generation.current;
-    if (await getState() === "unlocked" && current === generation.current) setView("main");
+    const status = await invoke<NativeStatus>("native_session_status");
+    nativeBinding.current?.accept(status);
+    if (status.unlocked && current === generation.current) setView("main");
+  }
+
+  async function handleManualLocked() {
+    nativeBinding.current?.accept(await invoke<NativeStatus>("native_session_status"));
   }
 
   return (
@@ -67,7 +78,7 @@ export function App() {
             onUnlocked={() => void handleUnlocked()}
           />
         ) : (
-          <MainPanel boxPath={boxPath} masterPassword={masterPassword} onLocked={handleLocked} />
+          <MainPanel boxPath={boxPath} masterPassword={masterPassword} onLocked={() => void handleManualLocked()} />
         )}
       </main>
     </div>
