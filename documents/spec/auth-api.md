@@ -190,12 +190,19 @@ SSOT: [passshare-share.md](./passshare-share.md)
 | GET | `/vaults/:vaultId/members` | List members (owner / member) |
 | PATCH | `/vaults/:vaultId/members/:userId` | Change role (`member` only, owner) |
 | DELETE | `/vaults/:vaultId/members/:userId` | Remove member (owner) |
-| POST | `/vaults/:vaultId/invitations` | Invite by email (owner) |
+| POST | `/vaults/:vaultId/invitations` | Invite by email (owner); returns one-time `confirmationCode` |
 | GET | `/vaults/:vaultId/invitations` | Pending invitations (owner) |
 | DELETE | `/vaults/:vaultId/invitations/:id` | Revoke invitation (owner) |
 | GET | `/invitations` | Pending invitations for current user |
-| POST | `/invitations/:id/accept` | Accept invitation |
+| POST | `/invitations/:id/accept` | Confirm intended account using `{ confirmationCode }` |
 | POST | `/invitations/:id/decline` | Decline invitation |
+
+The owner delivers the confirmation code through an independently verified channel.
+Knowing the invitee email or invitation ID is insufficient to join. The code is returned only
+on creation; invitation lists contain neither the code nor its stored hash. Cookie-authenticated
+mutations require CSRF validation. Legacy unconfirmed memberships are denied until the intended
+account accepts a new invitation with valid proof; their existing items and files are retained.
+See the sharing SSOT above for replacement, revocation, expiry and migration rules.
 
 ## Mobile client flow (Issue [#80](https://github.com/AutoDevJapan/PassShare/issues/80))
 

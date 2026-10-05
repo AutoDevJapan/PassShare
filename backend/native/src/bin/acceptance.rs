@@ -10,6 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod password_acceptance;
 #[path = "acceptance/share.rs"]
 mod share_acceptance;
+#[path = "acceptance/web_share.rs"]
+mod web_share_acceptance;
 
 struct Server {
     child: Child,
@@ -341,6 +343,7 @@ fn main() {
         "modified box draft remains conflict"
     );
     share_acceptance::run(port, nonce, &refresh, &box_id, &path);
+    web_share_acceptance::run(port, nonce);
     password_acceptance::run(port, nonce);
     println!("native HTTP acceptance passed: create/edit/box identity and invitation proof, no proof/list leak, concurrent accept, revoke, member/token/attachment denial");
     drop(server);
