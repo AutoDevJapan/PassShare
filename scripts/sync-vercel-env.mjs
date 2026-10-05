@@ -9,19 +9,19 @@ const API_BASE = 'https://api.vercel.com/v10/projects';
 const ENV_VALUES = {
   production: {
     VITE_APP_ENV: 'prd',
-    VITE_API_BASE_URL: 'https://pass-share-backend-production.up.railway.app',
+    VITE_API_BASE_URL: '/backend/prd',
   },
   development: {
     VITE_APP_ENV: 'dev',
-    VITE_API_BASE_URL: 'https://pass-share-backend-development.up.railway.app',
+    VITE_API_BASE_URL: '/backend/dev',
   },
   previewDefault: {
     VITE_APP_ENV: 'preview',
-    VITE_API_BASE_URL: 'https://pass-share-backend-development.up.railway.app',
+    VITE_API_BASE_URL: '/backend/dev',
   },
   stgBranch: {
     VITE_APP_ENV: 'stg',
-    VITE_API_BASE_URL: 'https://pass-share-backend-staging.up.railway.app',
+    VITE_API_BASE_URL: '/backend/stg',
   },
 };
 

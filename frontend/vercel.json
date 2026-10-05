@@ -2,6 +2,15 @@
   "installCommand": "pnpm --dir ../packages/connect-js install --frozen-lockfile && pnpm --dir ../packages/connect-js run build && pnpm install --frozen-lockfile",
   "headers": [
     {
+      "source": "/backend/:environment/:path*",
+      "headers": [
+        {
+          "value": "no-store",
+          "key": "Cache-Control"
+        }
+      ]
+    },
+    {
       "source": "/(.*)",
       "headers": [
         {
@@ -33,8 +42,22 @@
   ],
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
+      "has": [
+        {
+          "value": "pass-share.bm1314.net",
+          "type": "host"
+        }
+      ],
+      "source": "/backend/prd/:path*",
+      "destination": "https://pass-share-backend-production.up.railway.app/:path*"
+    },
+    {
+      "source": "/backend/stg/:path*",
+      "destination": "https://pass-share-backend-staging.up.railway.app/:path*"
+    },
+    {
+      "source": "/backend/dev/:path*",
+      "destination": "https://pass-share-backend-development.up.railway.app/:path*"
     },
     {
       "source": "/((?!assets/).*)",
