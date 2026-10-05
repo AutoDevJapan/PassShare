@@ -1,0 +1,16 @@
+[package]
+name = "passshare-mutations"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+serde_json = "1"
+sha2 = "0.10"
+
+[[bin]]
+name = "passshare-mutations"
+path = "src/main.rs"

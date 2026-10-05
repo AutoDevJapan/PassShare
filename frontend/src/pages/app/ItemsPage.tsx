@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Item } from "@passshare/connect";
 import { Link, useParams } from "react-router-dom";
 import { ConnectItemList } from "@shared/ui/ConnectItemList.js";
 import { ItemForm } from "@shared/ui/ItemForm.js";
@@ -17,13 +18,22 @@ export function ItemsPage() {
   const { vaultId = "" } = useParams();
   const { t } = useI18n();
   const labels = useItemLabels();
-  const { connectClient, connectLoading } = useAuthSession();
+  const { user, connectClient, connectLoading, refreshConnect } = useAuthSession();
+  const activeScope = useRef("");
+  activeScope.current = `${user?.id ?? ""}:${vaultId}`;
   const [vaultName, setVaultName] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
+  const [documents, setDocuments] = useState<Record<string, Item>>({});
+  const [itemsLoading, setItemsLoading] = useState(true);
+  const [itemsReady, setItemsReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const createOperation = useRef<string | null>(null);
+  const loadGeneration = useRef(0);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"create" | "edit" | null>("create");
   const [formValues, setFormValues] = useState<ItemFormValues>(emptyFormValues());
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
@@ -39,102 +49,209 @@ export function ItemsPage() {
       (item) =>
         item.title.toLowerCase().includes(normalized) ||
         item.username?.toLowerCase().includes(normalized) ||
+        item.url?.toLowerCase().includes(normalized) ||
         item.tags.some((tag) => tag.toLowerCase().includes(normalized)),
     );
   }, [items, query]);
 
   const loadItems = useCallback(async () => {
+    const generation = ++loadGeneration.current;
+    setItemsLoading(true);
+    setItemsReady(false);
+    setItems([]);
+    setDocuments({});
     if (!connectClient || !vaultId) {
+      setItemsLoading(false);
+      setError(t("app.item.loadError"));
       return;
     }
     setError(null);
     try {
       const vault = await connectClient.getVault(vaultId);
-      setVaultName(vault.name);
       const overviews = await connectClient.listItems(vaultId);
       const details = await Promise.all(
         overviews.map((overview) => connectClient.getItem(vaultId, overview.id)),
       );
+      if (generation !== loadGeneration.current) return;
+      setVaultName(vault.name);
+      setDocuments(Object.fromEntries(details.map((item) => [item.id, item])));
       setItems(details.map(connectItemFromApi));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.item.loadError"));
+      setItemsReady(true);
+    } catch {
+      if (generation === loadGeneration.current) setError(t("app.item.loadError"));
+    } finally {
+      if (generation === loadGeneration.current) setItemsLoading(false);
     }
   }, [connectClient, vaultId, t]);
 
   useEffect(() => {
     void loadItems();
+    return () => { loadGeneration.current += 1; };
   }, [loadItems]);
 
+  useEffect(() => {
+    createOperation.current = null;
+    setVaultName("");
+    setMode("create");
+    setEditingItem(null);
+    setFormValues(emptyFormValues());
+    setImportMessage(null);
+    setExportMessage(null);
+  }, [vaultId, user?.id]);
+
+  async function handleReload() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    const scope = activeScope.current;
+    try {
+      // Acquire fresh scopes and credentials, including after a token expired.
+      const client = await refreshConnect();
+      if (!client && scope === activeScope.current) setError(t("app.item.loadError"));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
   async function handleCreate(values: ItemFormValues) {
-    if (!connectClient) {
+    if (!connectClient || !itemsReady || busyRef.current) {
       return;
     }
-    await connectClient.createItem(vaultId, connectItemToCreateBody(values));
-    setMode(null);
-    setFormValues(emptyFormValues());
-    await loadItems();
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    const scope = activeScope.current;
+    try {
+      createOperation.current ??= crypto.randomUUID();
+      await connectClient.createItem(vaultId, connectItemToCreateBody(values), createOperation.current);
+      if (scope !== activeScope.current) return;
+      createOperation.current = null;
+      setMode(null);
+      setFormValues(emptyFormValues());
+      await loadItems();
+    } catch (err) {
+      const conflict = err instanceof Error && "status" in err && err.status === 409;
+      if (scope === activeScope.current) setError(t(conflict ? "app.item.createConflictError" : "app.item.createResultUnknown"));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
   }
 
   async function handleUpdate(values: ItemFormValues) {
-    if (!connectClient || !editingId) {
+    if (!connectClient || !editingItem || !itemsReady || busyRef.current) {
       return;
     }
-    await connectClient.replaceItem(vaultId, editingId, connectItemToCreateBody(values));
-    setMode(null);
-    setEditingId(null);
-    setFormValues(emptyFormValues());
-    await loadItems();
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    const scope = activeScope.current;
+    try {
+      await connectClient.editItemForm(vaultId, editingItem.id, editingItem.version, values);
+      if (scope !== activeScope.current) return;
+      setMode(null);
+      setEditingItem(null);
+      setFormValues(emptyFormValues());
+      await loadItems();
+    } catch (err) {
+      const conflict = err instanceof Error && "status" in err && err.status === 409;
+      if (scope === activeScope.current) setError(t(conflict ? "app.item.conflictError" : "app.item.saveError"));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
   }
 
   async function handleDelete(itemId: string) {
-    if (!connectClient || !window.confirm(labels.confirmDelete)) {
+    if (!connectClient || !itemsReady || busyRef.current || !window.confirm(labels.confirmDelete)) {
       return;
     }
-    await connectClient.deleteItem(vaultId, itemId);
-    await loadItems();
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    const scope = activeScope.current;
+    try {
+      await connectClient.deleteItem(vaultId, itemId);
+      if (scope === activeScope.current) await loadItems();
+    } catch {
+      if (scope === activeScope.current) setError(t("app.item.deleteError"));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
   }
 
   function startEdit(item: ConnectItem) {
+    if (busyRef.current || itemsLoading || !documents[item.id]) return;
+    createOperation.current = null;
     setMode("edit");
-    setEditingId(item.id);
+    setEditingItem(documents[item.id]);
     setFormValues(formValuesFromItem(item));
   }
 
   async function handleCsvImport(file: File) {
-    if (!connectClient) {
+    if (!connectClient || !itemsReady || busyRef.current) {
       return;
     }
     setError(null);
     setImportMessage(null);
+    busyRef.current = true;
+    setBusy(true);
+    const scope = activeScope.current;
+    let imported = 0;
     try {
       const text = await file.text();
       const parsed = parseOnepasswordCsv(text);
       for (const row of parsed) {
+        if (scope !== activeScope.current) return;
         await connectClient.createItem(vaultId, connectItemToCreateBody(row));
+        imported += 1;
       }
+      if (scope !== activeScope.current) return;
       setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
       await loadItems();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.item.importError"));
+    } catch {
+      if (scope === activeScope.current) {
+        // Show successfully created rows before reporting the partial failure.
+        const reloadGeneration = loadGeneration.current + 1;
+        await loadItems();
+        if (reloadGeneration === loadGeneration.current) setError(t("app.item.importPartialError").replace("{count}", String(imported)));
+      }
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   }
 
   async function handle1puxImport(file: File) {
-    if (!connectClient) {
+    if (!connectClient || !itemsReady || busyRef.current) {
       return;
     }
     setError(null);
     setImportMessage(null);
+    busyRef.current = true;
+    setBusy(true);
+    const scope = activeScope.current;
     try {
       const result = await import1puxFile(connectClient, vaultId, file);
+      if (scope !== activeScope.current) return;
       setImportMessage(labels.import1puxSuccess.replace("{count}", String(result.imported)));
       await loadItems();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.item.importError"));
+    } catch {
+      if (scope === activeScope.current) {
+        const reloadGeneration = loadGeneration.current + 1;
+        await loadItems();
+        if (reloadGeneration === loadGeneration.current) setError(t("app.item.import1puxError"));
+      }
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   }
 
   function handleExportCsv() {
+    if (!itemsReady || busyRef.current || !window.confirm(t("app.item.exportWarning"))) return;
     downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(items));
     setExportMessage(labels.exportSuccess);
   }
@@ -156,6 +273,9 @@ export function ItemsPage() {
       </header>
 
       <div className="app-items-toolbar">
+        <button type="button" className="ps-button ps-button--secondary" disabled={itemsLoading || busy} onClick={() => void handleReload()}>
+          {t("app.item.reload")}
+        </button>
         <input
           className="ps-input"
           type="search"
@@ -164,13 +284,13 @@ export function ItemsPage() {
           onChange={(event) => setQuery(event.target.value)}
           aria-label={labels.searchPlaceholder}
         />
-        <button type="button" className="ps-button" onClick={() => fileInputRef.current?.click()}>
+        <button type="button" className="ps-button" disabled={!itemsReady || busy} onClick={() => fileInputRef.current?.click()}>
           {labels.importCsv}
         </button>
-        <button type="button" className="ps-button ps-button--secondary" onClick={() => puxInputRef.current?.click()}>
+        <button type="button" className="ps-button ps-button--secondary" disabled={!itemsReady || busy} onClick={() => puxInputRef.current?.click()}>
           {labels.import1pux}
         </button>
-        <button type="button" className="ps-button ps-button--secondary" onClick={handleExportCsv}>
+        <button type="button" className="ps-button ps-button--secondary" disabled={!itemsReady || busy} onClick={handleExportCsv}>
           {labels.exportCsv}
         </button>
         <input
@@ -216,11 +336,12 @@ export function ItemsPage() {
               mode="edit"
               values={formValues}
               labels={labels}
+              disabled={!itemsReady || busy}
               onChange={setFormValues}
               onSubmit={(values) => void handleUpdate(values)}
               onCancel={() => {
                 setMode("create");
-                setEditingId(null);
+                setEditingItem(null);
                 setFormValues(emptyFormValues());
               }}
               onGeneratePassword={() =>
@@ -232,6 +353,7 @@ export function ItemsPage() {
               mode="create"
               values={formValues}
               labels={labels}
+              disabled={!itemsReady || busy}
               onChange={setFormValues}
               onSubmit={(values) => void handleCreate(values)}
               onGeneratePassword={() =>
@@ -248,7 +370,7 @@ export function ItemsPage() {
             onEdit={startEdit}
             onDelete={(id) => void handleDelete(id)}
           />
-          {filteredItems.length === 0 ? <p>{labels.emptyList}</p> : null}
+          {itemsLoading ? <p role="status">{t("session.loading")}</p> : itemsReady && filteredItems.length === 0 ? <p>{labels.emptyList}</p> : null}
         </div>
       </div>
     </section>

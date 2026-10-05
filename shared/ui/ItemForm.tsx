@@ -8,6 +8,7 @@ type ItemFormProps = {
   values: ItemFormValues;
   labels: ItemUiLabels;
   error?: string;
+  disabled?: boolean;
   onChange: (values: ItemFormValues) => void;
   onSubmit: (values: ItemFormValues) => void;
   onCancel?: () => void;
@@ -19,6 +20,7 @@ export function ItemForm({
   values,
   labels,
   error,
+  disabled = false,
   onChange,
   onSubmit,
   onCancel,
@@ -30,7 +32,7 @@ export function ItemForm({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit(values);
+    if (!disabled) onSubmit(values);
   }
 
   const showLoginFields = values.category === "LOGIN";
@@ -40,6 +42,7 @@ export function ItemForm({
 
   return (
     <form className="ps-card ps-card--form" onSubmit={handleSubmit}>
+      <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <h3 className="ps-heading-3">{mode === "create" ? labels.addHeading : labels.editHeading}</h3>
 
       <CategoryPicker
@@ -113,7 +116,7 @@ export function ItemForm({
             {labels.fieldBody}
             <textarea
               className="ps-input ps-textarea"
-              required
+              required={mode === "create"}
               rows={5}
               value={values.body}
               onChange={(event) => updateField("body", event.target.value)}
@@ -165,6 +168,7 @@ export function ItemForm({
       </div>
 
       {error ? <p className="ps-status ps-status--error">{error}</p> : null}
+      </fieldset>
     </form>
   );
 }

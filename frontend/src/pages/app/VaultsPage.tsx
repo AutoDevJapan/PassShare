@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import { formatVaultItemCount } from "@shared/i18n/index";
@@ -8,44 +8,66 @@ import { useAuthSession } from "../../hooks/useAuthSession";
 
 export function VaultsPage() {
   const { t, locale } = useI18n();
-  const { connectClient, connectLoading, refreshConnect } = useAuthSession();
+  const { user, connectClient, connectLoading, refreshConnect } = useAuthSession();
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const createOperation = useRef<string | null>(null);
+  const userScope = useRef(user?.id);
+  userScope.current = user?.id;
+  const loadGeneration = useRef(0);
 
-  const loadVaults = useCallback(async () => {
-    if (!connectClient) {
+  const loadVaults = useCallback(async (client = connectClient) => {
+    const generation = ++loadGeneration.current;
+    if (!client) {
+      setVaults([]);
       return;
     }
     setError(null);
     try {
-      setVaults(await connectClient.listVaults());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.vault.loadError"));
+      const nextVaults = await client.listVaults();
+      if (generation === loadGeneration.current) setVaults(nextVaults);
+    } catch {
+      if (generation === loadGeneration.current) setError(t("app.vault.loadError"));
     }
   }, [connectClient, t]);
 
   useEffect(() => {
+    createOperation.current = null;
+    setName("");
+    setVaults([]);
+  }, [user?.id]);
+
+  useEffect(() => {
     void loadVaults();
+    return () => { loadGeneration.current += 1; };
   }, [loadVaults]);
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
-    if (!name.trim()) {
+    if (!name.trim() || creatingRef.current) {
       return;
     }
     setCreating(true);
+    creatingRef.current = true;
     setError(null);
+    const actor = user?.id;
     try {
-      await createPasswordBox(name.trim());
-      await refreshConnect();
+      createOperation.current ??= crypto.randomUUID();
+      await createPasswordBox(name.trim(), createOperation.current);
+      if (userScope.current !== actor) return;
+      createOperation.current = null;
       setName("");
-      await loadVaults();
+      const client = await refreshConnect();
+      if (client) await loadVaults(client);
+      else setError(t("app.vault.loadError"));
     } catch (err) {
-      setError(err instanceof AuthApiError ? err.message : t("app.vault.createError"));
+      if (userScope.current === actor) setError(err instanceof AuthApiError ? err.message : t("app.vault.createError"));
     } finally {
       setCreating(false);
+      creatingRef.current = false;
     }
   }
 

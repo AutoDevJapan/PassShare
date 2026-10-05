@@ -6,6 +6,7 @@ import {
   readRequestBodyBuffer,
 } from "../lib/1pux-import.js";
 import { normalizeItemBody } from "../lib/categories.js";
+import { nativeMutation } from "../lib/native-mutations.js";
 import { connectHttpError } from "../middleware/connect-errors.js";
 
 /** @param {import('../store/memory-store.js').ConnectStore} store */
@@ -87,8 +88,18 @@ export function createVaultRoutes(store, options = {}) {
 }
 
 /** @param {import('../store/memory-store.js').ConnectStore} store */
-export function createItemRoutes(store) {
+export function createItemRoutes(store, { mutateOnce } = {}) {
   const router = Router({ mergeParams: true });
+
+  router.put("/:itemUuid/form", async (req, res, next) => {
+    try {
+      const { vaultUuid, itemUuid } = req.params;
+      const original = await store.getItem(vaultUuid, itemUuid);
+      const body = await nativeMutation({ command: "edit", original,
+        version: req.body?.version, values: req.body?.values });
+      res.json(await store.replaceItem(vaultUuid, itemUuid, normalizeItemBody(body)));
+    } catch (err) { next(err); }
+  });
 
   router.get("/", async (req, res, next) => {
     try {
@@ -101,6 +112,13 @@ export function createItemRoutes(store) {
 
   router.post("/", async (req, res, next) => {
     try {
+      if (req.headers["idempotency-key"] && mutateOnce) {
+        const item = await mutateOnce({ actor: req.connectAuth?.userId ?? "legacy",
+          resource: req.params.vaultUuid, operation: "item",
+          key: req.headers["idempotency-key"], request: req.body ?? {} });
+        res.status(201).json(item);
+        return;
+      }
       const body = normalizeItemBody(req.body ?? {});
       const item = await store.createItem(req.params.vaultUuid, body);
       res.status(201).json(item);
@@ -236,13 +254,13 @@ export function createFileRoutes(store) {
 
 /** @param {import('../store/memory-store.js').ConnectStore} store @param {object} [options] */
 export function createConnectRouter(store, options = {}) {
-  const { requireVaultAccess = (_req, _res, next) => next() } = options;
+  const { requireVaultAccess = (_req, _res, next) => next(), mutateOnce } = options;
   const router = Router();
   router.use("/vaults", createVaultRoutes(store, { requireVaultAccess }));
   router.use(
     "/vaults/:vaultUuid/items",
     requireVaultAccess,
-    createItemRoutes(store),
+    createItemRoutes(store, { mutateOnce }),
   );
   router.use(
     "/vaults/:vaultUuid/items/:itemUuid/files",

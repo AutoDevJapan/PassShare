@@ -38,9 +38,10 @@ export class ConnectClient {
     return this.request<Item>(`/vaults/${vaultId}/items/${itemId}`);
   }
 
-  async createItem(vaultId: string, item: Record<string, unknown>): Promise<Item> {
+  async createItem(vaultId: string, item: Record<string, unknown>, operationKey?: string): Promise<Item> {
     return this.request<Item>(`/vaults/${vaultId}/items`, {
       method: "POST",
+      ...(operationKey ? { headers: { "Idempotency-Key": operationKey } } : {}),
       body: JSON.stringify(item),
     });
   }
@@ -49,6 +50,12 @@ export class ConnectClient {
     return this.request<Item>(`/vaults/${vaultId}/items/${itemId}`, {
       method: "PUT",
       body: JSON.stringify(item),
+    });
+  }
+
+  async editItemForm(vaultId: string, itemId: string, version: number, values: object): Promise<Item> {
+    return this.request<Item>(`/vaults/${vaultId}/items/${itemId}/form`, {
+      method: "PUT", body: JSON.stringify({ version, values }),
     });
   }
 
@@ -88,7 +95,7 @@ export class ConnectClient {
 
     const body = (await response.json().catch(() => ({}))) as { message?: string };
     if (!response.ok) {
-      throw new Error(body.message ?? `Connect API error ${response.status}`);
+      throw Object.assign(new Error(body.message ?? `Connect API error ${response.status}`), { status: response.status });
     }
     return body as T;
   }

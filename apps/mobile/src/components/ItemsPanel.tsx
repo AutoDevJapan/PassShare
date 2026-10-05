@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Item } from "@passshare/connect";
 import { ConnectItemList } from "@shared/ui/ConnectItemList.js";
 import { ItemForm } from "@shared/ui/ItemForm.js";
 import type { ConnectItem, ItemFormValues } from "@shared/types/item.js";
@@ -17,13 +18,20 @@ type Props = {
 export function ItemsPanel({ vaultId, onBack }: Props) {
   const { t } = useI18n();
   const labels = useItemLabels();
-  const { connectClient, connectLoading } = useAuthSession();
+  const { user, connectClient, connectLoading } = useAuthSession();
+  const scope = useRef("");
+  scope.current = `${user?.id ?? ""}:${vaultId}`;
+  const createOperation = useRef<string | null>(null);
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
   const [vaultName, setVaultName] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
+  const [documents, setDocuments] = useState<Record<string, Item>>({});
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"create" | "edit" | null>("create");
   const [formValues, setFormValues] = useState<ItemFormValues>(emptyFormValues());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const filteredItems = useMemo(() => {
@@ -44,46 +52,77 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
       return;
     }
     setError(null);
+    const active = scope.current;
     try {
       const vault = await connectClient.getVault(vaultId);
+      if (active !== scope.current) return;
       setVaultName(vault.name);
       const overviews = await connectClient.listItems(vaultId);
       const details = await Promise.all(
         overviews.map((overview) => connectClient.getItem(vaultId, overview.id)),
       );
+      if (active !== scope.current) return;
       setItems(details.map(connectItemFromApi));
+      setDocuments(Object.fromEntries(details.map((item) => [item.id, item])));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.item.loadError"));
+      if (active === scope.current) setError(t("app.item.loadError"));
     }
   }, [connectClient, vaultId, t]);
+
+  useEffect(() => {
+    createOperation.current = null;
+    setDocuments({});
+    setItems([]);
+    setEditingId(null);
+    setEditingItem(null);
+    setFormValues(emptyFormValues());
+    setMode("create");
+  }, [user?.id, vaultId]);
 
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
 
   async function handleCreate(values: ItemFormValues) {
-    if (!connectClient) {
+    if (!connectClient || busyRef.current) {
       return;
     }
-    await connectClient.createItem(vaultId, connectItemToCreateBody(values));
+    busyRef.current = true;
+    setBusy(true);
+    const active = scope.current;
+    createOperation.current ??= crypto.randomUUID();
+    try {
+      await connectClient.createItem(vaultId, connectItemToCreateBody(values), createOperation.current);
+    } catch (err) { const conflict = err instanceof Error && "status" in err && err.status === 409;
+      if (active === scope.current) setError(t(conflict ? "app.item.createConflictError" : "app.item.createResultUnknown")); return; }
+    finally { busyRef.current = false; setBusy(false); }
+    if (active !== scope.current) return;
+    createOperation.current = null;
     setMode(null);
     setFormValues(emptyFormValues());
     await loadItems();
   }
 
   async function handleUpdate(values: ItemFormValues) {
-    if (!connectClient || !editingId) {
+    if (!connectClient || !editingId || !editingItem || busyRef.current) {
       return;
     }
-    await connectClient.replaceItem(vaultId, editingId, connectItemToCreateBody(values));
+    busyRef.current = true;
+    setBusy(true);
+    const active = scope.current;
+    try { await connectClient.editItemForm(vaultId, editingId, editingItem.version, values); }
+    catch { if (active === scope.current) setError(t("app.item.saveError")); return; }
+    finally { busyRef.current = false; setBusy(false); }
+    if (active !== scope.current) return;
     setMode(null);
     setEditingId(null);
+    setEditingItem(null);
     setFormValues(emptyFormValues());
     await loadItems();
   }
 
   async function handleDelete(itemId: string) {
-    if (!connectClient || !window.confirm(labels.confirmDelete)) {
+    if (!connectClient || busyRef.current || !window.confirm(labels.confirmDelete)) {
       return;
     }
     await connectClient.deleteItem(vaultId, itemId);
@@ -91,8 +130,11 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
   }
 
   function startEdit(item: ConnectItem) {
+    if (busyRef.current || !documents[item.id]) return;
+    createOperation.current = null;
     setMode("edit");
     setEditingId(item.id);
+    setEditingItem(documents[item.id]);
     setFormValues(formValuesFromItem(item));
   }
 
@@ -128,13 +170,16 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
         {mode === "edit" ? (
           <ItemForm
             mode="edit"
+            disabled={busy}
             values={formValues}
             labels={labels}
             onChange={setFormValues}
             onSubmit={(values) => void handleUpdate(values)}
             onCancel={() => {
+              if (busyRef.current) return;
               setMode("create");
               setEditingId(null);
+              setEditingItem(null);
               setFormValues(emptyFormValues());
             }}
             onGeneratePassword={() =>
@@ -144,6 +189,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
         ) : (
           <ItemForm
             mode="create"
+            disabled={busy}
             values={formValues}
             labels={labels}
             onChange={setFormValues}

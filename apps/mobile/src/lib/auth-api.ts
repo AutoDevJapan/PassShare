@@ -112,10 +112,10 @@ export async function mobileLogout(refreshToken: string): Promise<void> {
   }
 }
 
-export async function createPasswordBox(refreshToken: string, name: string): Promise<void> {
+export async function createPasswordBox(refreshToken: string, name: string, operationKey?: string): Promise<void> {
   const response = await fetch(`${getApiBaseUrl()}/api/auth/vaults`, {
     method: "POST",
-    headers: mobileHeaders(refreshToken),
+    headers: { ...mobileHeaders(refreshToken), ...(operationKey ? { "Idempotency-Key": operationKey } : {}) },
     body: JSON.stringify({ name }),
   });
   if (!response.ok) {

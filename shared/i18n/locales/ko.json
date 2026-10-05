@@ -1,4 +1,13 @@
 {
+  "app.item.conflictError": "Someone else updated this item. Your input is kept. Refresh the list to check the latest version, then cancel editing and reopen the item.",
+  "app.item.createConflictError": "The previous creation result differs from this draft. Your input is kept. Refresh the list and inspect the saved item.",
+  "app.item.createResultUnknown": "The save result could not be confirmed. Your input is kept. Retry the same input to check the result of this operation.",
+  "app.item.deleteError": "Could not delete. Check your connection and permissions, then try again.",
+  "app.item.exportWarning": "CSV contains passwords in plaintext and does not preserve every custom field, attachment, or URL. Export CSV?",
+  "app.item.import1puxError": "1PUX import failed. Some items may have been created. Check the list before importing again.",
+  "app.item.importPartialError": "Import stopped after creating {count} items. Check the list before importing again.",
+  "app.item.reload": "Refresh list",
+  "app.item.saveError": "Could not save. Your input is kept. Check your connection and permissions, then try again.",
   "app.auth.loginLink": "Back to sign in",
   "app.auth.loginTitle": "Sign in",
   "app.auth.resetDescription": "Email-based password reset is coming soon. Contact support if you need help.",

@@ -34,8 +34,8 @@ type AuthErrorBody = {
 const RETRY_MAX_ATTEMPTS = 4; // initial attempt + 3 retries
 const RETRY_BASE_DELAY_MS = 300;
 const RETRY_MAX_DELAY_MS = 3000;
-// A 5xx from the gateway means the request never reached app logic, so retrying
-// is safe regardless of HTTP method.
+// A gateway failure can occur after the backend committed a mutation. Only
+// retry reads: repeating a create/invite can duplicate an already-saved result.
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -58,7 +58,7 @@ async function fetchWithRetry(input: string, init: RequestInit = {}): Promise<Re
     const isLastAttempt = attempt >= RETRY_MAX_ATTEMPTS - 1;
     try {
       const response = await fetch(input, init);
-      if (RETRYABLE_STATUS.has(response.status) && !isLastAttempt) {
+      if (idempotent && RETRYABLE_STATUS.has(response.status) && !isLastAttempt) {
         await delay(backoffDelayMs(attempt));
         continue;
       }
@@ -172,10 +172,11 @@ export async function fetchConnectToken(): Promise<ConnectTokenResponse> {
   return (await response.json()) as ConnectTokenResponse;
 }
 
-export async function createPasswordBox(name: string): Promise<{ vaultId: string; name: string }> {
+export async function createPasswordBox(name: string, operationKey?: string): Promise<{ vaultId: string; name: string }> {
   const response = await authFetch("/api/auth/vaults", {
     method: "POST",
     body: JSON.stringify({ name }),
+    ...(operationKey ? { headers: { "Idempotency-Key": operationKey } } : {}),
   });
   if (!response.ok) {
     return parseAuthError(response);

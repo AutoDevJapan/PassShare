@@ -57,7 +57,7 @@ export async function updateItem(input: {
     id,
     title: values.title.trim(),
     password: values.password || null,
-    url: values.url.trim() || null,
+    url: values.url.trim(),
     username: values.username.trim() || null,
     notes: values.notes.trim() || null,
     body: values.body.trim() || null,

@@ -25,5 +25,6 @@ export function connectHttpError(status, message) {
   error.status = status;
   // @ts-expect-error attach message
   error.message = message;
+  error.code = /^PS\d{3}/.exec(message)?.[0] ?? "PS000";
   return error;
 }

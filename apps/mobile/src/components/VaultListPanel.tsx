@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Vault } from "@passshare/connect";
 import { formatVaultItemCount } from "@shared/i18n/index";
 import { useI18n } from "@shared/i18n/I18nProvider";
@@ -12,7 +12,10 @@ type Props = {
 
 export function VaultListPanel({ onSelectVault }: Props) {
   const { t, locale } = useI18n();
-  const { connectClient, connectLoading, refreshConnect } = useAuthSession();
+  const { user, connectClient, connectLoading, refreshConnect } = useAuthSession();
+  const createOperation = useRef<string | null>(null);
+  const userScope = useRef(user?.id);
+  userScope.current = user?.id;
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -23,12 +26,20 @@ export function VaultListPanel({ onSelectVault }: Props) {
       return;
     }
     setError(null);
+    const actor = userScope.current;
     try {
-      setVaults(await connectClient.listVaults());
+      const next = await connectClient.listVaults();
+      if (userScope.current === actor) setVaults(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("app.vault.loadError"));
     }
   }, [connectClient, t]);
+
+  useEffect(() => {
+    createOperation.current = null;
+    setName("");
+    setVaults([]);
+  }, [user?.id]);
 
   useEffect(() => {
     void loadVaults();
@@ -36,22 +47,26 @@ export function VaultListPanel({ onSelectVault }: Props) {
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
-    if (!name.trim()) {
+    if (!name.trim() || creating) {
       return;
     }
     setCreating(true);
     setError(null);
+    const actor = user?.id;
     try {
       const session = await loadAuthSession(t("mobile.lock.biometricReason"));
       if (!session?.refreshToken) {
         throw new AuthApiError("Session expired");
       }
-      await createPasswordBox(session.refreshToken, name.trim());
+      createOperation.current ??= crypto.randomUUID();
+      await createPasswordBox(session.refreshToken, name.trim(), createOperation.current);
+      if (userScope.current !== actor) return;
+      createOperation.current = null;
       await refreshConnect();
       setName("");
       await loadVaults();
     } catch (err) {
-      setError(err instanceof AuthApiError ? err.message : t("app.vault.createError"));
+      if (userScope.current === actor) setError(err instanceof AuthApiError ? err.message : t("app.vault.createError"));
     } finally {
       setCreating(false);
     }
