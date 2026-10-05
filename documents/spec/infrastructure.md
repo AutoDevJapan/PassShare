@@ -10,7 +10,8 @@
 | Backend Service | `29539998-d8d9-4e41-82a5-f71ca223f96c` |
 | postgres-dev | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
 | postgres-stg | `7234bbc3-c482-4009-9c88-03063521ffd1` |
-| postgres-prd-v2 | `1509c487-cf03-4c50-8c9d-8781d53ee19a`（production 用） |
+| 本番の現稼働DB | `4fdfda2d-ed50-4396-9797-25ea7720f720`、passshare-postgres-preserved-1177（PG18、永続volume） |
+| postgres-prd-v2 | `1509c487-cf03-4c50-8c9d-8781d53ee19a`（旧本番、切替後の更新は同期されない） |
 | production env | `c1a3cdfc-9aa3-420d-b101-e6497714ccb9` |
 | staging env | `c807d209-0624-4e13-aff6-61332cd0bb29` |
 | preview env | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
@@ -102,7 +103,7 @@
 | 変数 | Production | Staging | Preview | Development |
 |------|-----------|---------|---------|-------------|
 | `VITE_APP_ENV` | `prd` | `stg`（stg ブランチ） | `preview` | `dev` |
-| `VITE_API_BASE_URL` | Railway prd API URL | Railway stg API URL | Railway dev API URL | Railway dev API URL |
+| `VITE_API_BASE_URL` | `/backend/prd` | `/backend/stg` | `/backend/dev` | `/backend/dev` |
 
 ### Preview 環境変数の自動同期
 
@@ -307,7 +308,7 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 
 - `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
 - Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
-- **backend の本番デプロイは GitHub Actions のみ** を使用する（Railway 側の GitHub 自動デプロイは無効化済み）
+- 通常のbackend本番配備は既存手動フローを使用する。2026-10-06の固定mainは、全CI・配備前snapshotを確認し既存OAuth CLIで配備した。必要な現設定・稼働source・資格失効を照合する手順は[本番リリースRunbook](../runbooks/production-release.md#固定ソースの配備記録2026-10-06)を参照する。Railway側のGitHub自動配備は今回有効化していない
 - デプロイ CI は `scripts/railway-deploy-with-replica.sh` → `scripts/railway-deploy-ci.sh`（`railway-deploy-preflight.mjs` + DB replica + `railway up --detach` + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
 - **Preview deploy**（`deploy-preview.yml`）は `@railway/cli@3.20.2` を使用（account token + `--project` フラグ）。v4 は Project Token 必須のため preview のみ v3 を pin。
 - `RAILWAY_TOKEN` は `RAILWAY_PROJECT_TOKEN`（推奨）または `RAILWAY_API_TOKEN` から export する（#208）。
@@ -373,3 +374,11 @@ Then development backend がデプロイされ postgres-dev に dev seed が適�
 
 - [ADR 001: Vercel + Railway 環境構成](../adr/001-vercel-railway-environments.md)
 - [MVP 機能仕様](./feature-passshare-mvp.md)
+
+## 2026-10-06の現設定との照合
+
+本番backendの稼働接続は新しい永続PG18へ切替済み。日次保持6日の設定と手動snapshotの復元は[運用記録](../audits/operations-readiness.md#2026-10-06の再現可能な演習とrailway実検証)へ保存した。元8表の保全と、固定e7の稼働44ファイル・実API15項目は別の確認である。
+
+旧本番DBを参照する履歴やprovision用の例を、現在の稼働先として採用しない。既存GitHub配備・レプリカ用の保存先IDとPostgreSQLクライアントの互換性は、この切替で検証したものではない。これらの処理を起動する前に、対象IDが現稼働DBであることと、dump取得側のバージョンがPG18を扱えることを確認する。未確認のジョブ内dumpを永続バックアップと数えない。
+
+Webの同一サイト経路は[認証経路の仕様](./web-auth-routing.md)を参照する。元のRailway絶対URLをブラウザから使用すると、SameSite=Lax Cookieが別サイト扱いで拒否される。環境別の相対接頭辞とVercel外部rewriteを使用し、本番接頭辞は正式ホストだけへ許可する。ソース設定とVercelの実build値は別々に照合する。
