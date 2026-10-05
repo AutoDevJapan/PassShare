@@ -36,11 +36,13 @@ export function createMemoryAuthStore() {
 
     async findUserByEmail(email) {
       const userId = userIdByEmail.get(email);
-      return userId ? usersById.get(userId) ?? null : null;
+      const user = userId ? usersById.get(userId) : null;
+      return user ? { ...user } : null;
     },
 
     async findUserById(userId) {
-      return usersById.get(userId) ?? null;
+      const user = usersById.get(userId);
+      return user ? { ...user } : null;
     },
 
     async createUser({ email, passwordHash, id: requestedId }) {
@@ -52,7 +54,7 @@ export function createMemoryAuthStore() {
       const user = { id, email, password_hash: passwordHash, created_at: createdAt };
       usersById.set(id, user);
       userIdByEmail.set(email, id);
-      return user;
+      return { ...user };
     },
 
     async addVaultMembership(userId, vaultId, role = "owner") {
@@ -72,8 +74,9 @@ export function createMemoryAuthStore() {
       return memberships.filter((m) => m.user_id === userId).map((m) => m.vault_id);
     },
 
-    async createSession(userId) {
-      requireUser(userId);
+    async createSession(userId, expectedPasswordHash) {
+      const user = requireUser(userId);
+      if (user.password_hash !== expectedPasswordHash) throw authHttpError(401, "PS024", "Session is invalid or expired");
       const sessionToken = generateToken();
       const tokenHash = hashToken(sessionToken);
       const id = randomUUID();
@@ -113,9 +116,13 @@ export function createMemoryAuthStore() {
       sessionIdByTokenHash.delete(session.token_hash);
     },
 
-    async createConnectToken(userId, label = "session") {
+    async createConnectToken(userId, label = "session", sessionId) {
       requireUser(userId);
       const vaultIds = await this.listVaultIdsForUser(userId);
+      const session = sessionsById.get(sessionId);
+      if (!session || session.user_id !== userId || new Date(session.expires_at).getTime() <= Date.now()) {
+        throw authHttpError(401, "PS024", "Session is invalid or expired");
+      }
       const accessToken = generateToken();
       const tokenHash = hashToken(accessToken);
       const id = randomUUID();
@@ -145,6 +152,23 @@ export function createMemoryAuthStore() {
           connectTokensById.delete(id);
           connectTokenIdByHash.delete(row.token_hash);
         }
+      }
+    },
+
+    async changePassword(userId, sessionId, expectedHash, nextHash) {
+      const user = requireUser(userId);
+      const session = sessionsById.get(sessionId);
+      await nativeMutation({command: "account-password-change", currentHash: user.password_hash,
+        verifiedHash: expectedHash, nextHash, sessionExists: !!session && session.user_id === userId && new Date(session.expires_at).getTime() > Date.now()});
+      if (user.password_hash !== expectedHash || !sessionsById.has(sessionId) || new Date(session.expires_at).getTime() <= Date.now()) {
+        throw authHttpError(401, "PS024", "Session is invalid or expired");
+      }
+      user.password_hash = nextHash;
+      for (const [id, row] of sessionsById) {
+        if (row.user_id === userId) { sessionsById.delete(id); sessionIdByTokenHash.delete(row.token_hash); }
+      }
+      for (const [id, row] of connectTokensById) {
+        if (row.user_id === userId) { connectTokensById.delete(id); connectTokenIdByHash.delete(row.token_hash); }
       }
     },
 

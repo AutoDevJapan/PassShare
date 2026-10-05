@@ -1,3 +1,4 @@
+pub mod account;
 pub mod create;
 pub mod edit;
 pub mod share;
@@ -6,6 +7,8 @@ use serde_json::{json, Value};
 
 pub fn dispatch(input: &Value) -> Value {
     match input.get("command").and_then(Value::as_str) {
+        Some("account-password-input") => account::validate_input(input),
+        Some("account-password-change") => account::authorize_change(input),
         Some("invitation-proof") => share::prepare(input),
         Some("invitation-accept") => share::accept(input),
         Some("schema") => json!({"status":200,"body":create::SCHEMA}),

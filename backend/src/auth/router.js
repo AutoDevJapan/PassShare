@@ -9,6 +9,7 @@ import { hashPassword, verifyPassword } from "./password.js";
 import { createInvitationsRouter, createShareRouter } from "./share-router.js";
 import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
+import { nativeMutation } from "../lib/native-mutations.js";
 
 /**
  * @param {object} deps
@@ -52,8 +53,8 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       });
       await authStore.addVaultMembership(user.id, vaultId, "owner");
 
-      const session = await authStore.createSession(user.id);
-      const connectToken = await authStore.createConnectToken(user.id);
+      const session = await authStore.createSession(user.id, user.password_hash);
+      const connectToken = await authStore.createConnectToken(user.id, "session", session.sessionId);
 
       if (isTokenAuthClient(req)) {
         res.status(201).json(toMobileAuthResponse({ user, session, connectToken }));
@@ -93,8 +94,8 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       await loginGuard.clearFailures(email);
-      const session = await authStore.createSession(user.id);
-      const connectToken = await authStore.createConnectToken(user.id);
+      const session = await authStore.createSession(user.id, user.password_hash);
+      const connectToken = await authStore.createConnectToken(user.id, "session", session.sessionId);
 
       if (isTokenAuthClient(req)) {
         res.json(toMobileAuthResponse({ user, session, connectToken }));
@@ -134,7 +135,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       const expiresAt = await authStore.refreshSession(session.id);
-      const connectToken = await authStore.createConnectToken(session.user_id);
+      const connectToken = await authStore.createConnectToken(session.user_id, "session", session.id);
       res.json({
         sessionExpiresAt: expiresAt,
         connectAccessToken: connectToken.accessToken,
@@ -162,6 +163,32 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
     }
   });
 
+  router.post("/password/change", sessionGuard, requireCsrf, async (req, res) => {
+    try {
+      const clientIp = resolveClientIp(req);
+      await loginGuard.assertIpAllowed(clientIp);
+      await loginGuard.recordIpRequest(clientIp);
+      const user = await authStore.findUserById(req.auth.userId);
+      if (!user) throw authHttpError(401, "PS024", "Session is invalid or expired");
+      await loginGuard.assertNotLocked(user.email);
+      const currentPassword = req.body?.currentPassword;
+      const nextPassword = req.body?.newPassword;
+      await nativeMutation({command:"account-password-input", currentPassword, newPassword:nextPassword});
+      if (!await verifyPassword(user.password_hash, currentPassword)) {
+        await loginGuard.recordFailure(user.email);
+        throw authHttpError(401, "PS026", "Invalid email or password");
+      }
+      const nextHash = await hashPassword(nextPassword);
+      await authStore.changePassword(req.auth.userId, req.auth.sessionId, user.password_hash, nextHash);
+      await loginGuard.clearFailures(user.email);
+      if (!parseBearerToken(req)) {
+        clearSessionCookie(res, appEnv);
+        clearCsrfCookie(res, appEnv);
+      }
+      res.status(204).end();
+    } catch (error) { sendAuthError(res, error); }
+  });
+
   router.post("/refresh", sessionGuard, requireCsrf, async (req, res) => {
     try {
       const expiresAt = await authStore.refreshSession(req.auth.sessionId);
@@ -185,7 +212,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   router.get("/connect-token", sessionGuard, async (req, res) => {
     try {
-      const token = await authStore.createConnectToken(req.auth.userId);
+      const token = await authStore.createConnectToken(req.auth.userId, "session", req.auth.sessionId);
       res.json({
         accessToken: token.accessToken,
         expiresIn: token.expiresIn,

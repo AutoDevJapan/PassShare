@@ -6,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-fn sql(statement: &str) -> String {
+pub(super) fn sql(statement: &str) -> String {
     // This fixture operates only on the CI service database. It never discovers
     // a production connection or executes SQL against arbitrary DATABASE_URLs.
     let database = std::env::var("DATABASE_URL").unwrap();
@@ -32,17 +32,17 @@ fn sql(statement: &str) -> String {
     String::from_utf8(result.stdout).unwrap().trim().to_owned()
 }
 
-fn uuid(value: &Value) -> &str {
+pub(super) fn uuid(value: &Value) -> &str {
     let id = value.as_str().unwrap();
     assert!(id.len() == 36 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'));
     id
 }
 
-struct Gate {
+pub(super) struct Gate {
     child: Child,
 }
 impl Gate {
-    fn hold(key: u32) -> Self {
+    pub(super) fn hold(key: u32) -> Self {
         let database = std::env::var("DATABASE_URL").unwrap();
         let child = Command::new("psql")
             .args([
@@ -83,7 +83,7 @@ impl Gate {
         }
         gate
     }
-    fn release(&mut self) {
+    pub(super) fn release(&mut self) {
         writeln!(self.child.stdin.as_mut().unwrap(), "COMMIT;").unwrap();
         drop(self.child.stdin.take());
         assert!(self.child.wait().unwrap().success(), "release lock gate");

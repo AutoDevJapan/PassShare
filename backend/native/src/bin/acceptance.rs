@@ -6,6 +6,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[path = "acceptance/password.rs"]
+mod password_acceptance;
 #[path = "acceptance/share.rs"]
 mod share_acceptance;
 
@@ -322,6 +324,7 @@ fn main() {
         "modified box draft remains conflict"
     );
     share_acceptance::run(port, nonce, &refresh, &box_id, &path);
+    password_acceptance::run(port, nonce);
     println!("native HTTP acceptance passed: create/edit/box identity and invitation proof, no proof/list leak, concurrent accept, revoke, member/token/attachment denial");
     drop(server);
 }
