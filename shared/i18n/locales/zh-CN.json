@@ -344,5 +344,6 @@
   "app.share.confirmationHeading": "Confirmation code",
   "app.share.confirmationHelp": "Give this code only to the person through a known contact or in person.",
   "app.share.confirmationOnce": "This code is shown only once. Revoke the invitation if you need to create another.",
-  "app.share.confirmationDismiss": "I saved the code; dismiss"
+  "app.share.confirmationDismiss": "I saved the code; dismiss",
+  "app.invitations.confirmationError": "The confirmation code is incorrect. Check the code received from the owner."
 }

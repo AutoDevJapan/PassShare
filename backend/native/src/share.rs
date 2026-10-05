@@ -20,7 +20,7 @@ fn digest(code: &Value) -> Option<String> {
 // Only the owner receives the random code at creation. The database and list
 // endpoints contain no usable proof. Deliver it to the person through a known,
 // independently verified channel, never to an address supplied by the claimant.
-pub fn secret(input: &Value) -> Value {
+pub fn prepare(input: &Value) -> Value {
     match digest(&input["confirmationCode"]) {
         Some(hash) => json!({"status":200,"body":{"confirmationHash":hash}}),
         None => error(400, "PS045", "Invalid invitation confirmation code"),
@@ -138,7 +138,7 @@ mod tests {
             json!("!".repeat(43)),
             Value::Null,
         ] {
-            assert_eq!(secret(&json!({"confirmationCode":code}))["status"], 400);
+            assert_eq!(prepare(&json!({"confirmationCode":code}))["status"], 400);
         }
     }
 }

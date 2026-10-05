@@ -240,7 +240,7 @@ export function createMemoryAuthStore() {
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS).toISOString();
       const confirmationCode = generateToken();
-      const { confirmationHash } = await nativeMutation({command: "invitation-secret", confirmationCode});
+      const { confirmationHash } = await nativeMutation({command: "invitation-proof", confirmationCode});
       if (invitations.some((inv) => inv.vault_id === vaultId && inv.invitee_email === inviteeEmail && inv.status === "pending")) {
         throw authHttpError(409, "PS038", "A pending invitation already exists for this email");
       }

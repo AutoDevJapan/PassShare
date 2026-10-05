@@ -20,7 +20,16 @@ impl Server {
         let mut command = Command::new("node");
         command
             .arg("src/index.js")
-            .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap())
+            .current_dir(
+                std::env::var_os("PASSSHARE_ACCEPTANCE_BACKEND")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .parent()
+                            .unwrap()
+                            .to_path_buf()
+                    }),
+            )
             .env("PORT", port.to_string())
             .env("APP_ENV", "local")
             .env("PASSSHARE_MUTATIONS_BIN", &binary)

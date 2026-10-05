@@ -344,5 +344,6 @@
   "app.share.confirmationHeading": "Код подтверждения",
   "app.share.confirmationHelp": "Передайте код только этому человеку через известный контакт или лично.",
   "app.share.confirmationOnce": "Код отображается только один раз. Чтобы создать новый, отмените приглашение.",
-  "app.share.confirmationDismiss": "Код сохранён — закрыть"
+  "app.share.confirmationDismiss": "Код сохранён — закрыть",
+  "app.invitations.confirmationError": "Неверный код подтверждения. Проверьте код, полученный от владельца."
 }

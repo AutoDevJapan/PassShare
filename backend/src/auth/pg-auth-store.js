@@ -241,7 +241,7 @@ export function createPgAuthStore(pool) {
       const id = randomUUID();
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
       const confirmationCode = generateToken();
-      const { confirmationHash } = await nativeMutation({command: "invitation-secret", confirmationCode});
+      const { confirmationHash } = await nativeMutation({command: "invitation-proof", confirmationCode});
       try {
         await pool.query(
           `INSERT INTO vault_invitations (id, vault_id, inviter_id, invitee_email, role, expires_at, confirmation_hash)

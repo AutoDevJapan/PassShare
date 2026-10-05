@@ -23,6 +23,7 @@ export function VaultSharePage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState<ShareInvitation | null>(null);
+  useEffect(() => { setConfirmation(null); }, [vaultId, user?.id]);
 
   const isOwner = members.some(
     (member) => member.userId === user?.id && member.role === "owner",
@@ -72,7 +73,7 @@ export function VaultSharePage() {
     setError(null);
     try {
       const invitation = await inviteToVault(vaultId, email.trim());
-      setConfirmation(invitation);
+      setConfirmation({ ...invitation, vaultId });
       setEmail("");
       await loadInvitations();
     } catch (err) {
@@ -154,7 +155,7 @@ export function VaultSharePage() {
         </form>
       ) : null}
 
-      {isOwner && confirmation?.confirmationCode ? (
+      {isOwner && confirmation?.vaultId === vaultId && confirmation.confirmationCode ? (
         <section className="ps-card app-share-section" role="status">
           <h2 className="ps-heading-3">{t("app.share.confirmationHeading")}</h2>
           <p>{confirmation.email}</p>

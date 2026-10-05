@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import {
   acceptInvitation,
+  AuthApiError,
   declineInvitation,
   listPendingInvitations,
   type ShareInvitation,
@@ -21,7 +22,8 @@ export function InvitationsPage() {
     try {
       setInvitations(await listPendingInvitations());
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.invitations.loadError"));
+      setError(err instanceof AuthApiError && err.code === "PS045" ? t("app.invitations.confirmationError")
+        : err instanceof Error ? err.message : t("app.invitations.loadError"));
     }
   }, [t]);
 
@@ -38,7 +40,8 @@ export function InvitationsPage() {
       await refreshConnect();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.invitations.loadError"));
+      setError(err instanceof AuthApiError && err.code === "PS045" ? t("app.invitations.confirmationError")
+        : err instanceof Error ? err.message : t("app.invitations.loadError"));
     } finally {
       setBusyId(null);
     }
@@ -82,14 +85,15 @@ export function InvitationsPage() {
               </p>
             </div>
             <div className="app-share-actions">
-              <label className="ps-label">
+              <label className="ps-label ps-label--full">
                 {t("app.invitations.confirmationLabel")}
                 <input className="ps-input" type="password" autoComplete="off" maxLength={43}
+                  aria-describedby={`confirmation-help-${invitation.id}`}
                   value={codes[invitation.id] ?? ""} disabled={busyId !== null}
                   placeholder={t("app.invitations.confirmationPlaceholder")}
                   onChange={(event) => setCodes((current) => ({ ...current, [invitation.id]: event.target.value }))} />
-                <span>{t("app.invitations.confirmationHelp")}</span>
               </label>
+              <p id={`confirmation-help-${invitation.id}`}>{t("app.invitations.confirmationHelp")}</p>
               <button
                 type="button"
                 className="ps-button"

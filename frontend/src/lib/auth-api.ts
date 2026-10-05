@@ -25,6 +25,7 @@ type CsrfResponse = {
 type AuthErrorBody = {
   message?: string;
   code?: string;
+  error?: string;
 };
 
 // Railway backend cold-starts (idle wake / fresh deploy) briefly have no healthy
@@ -79,7 +80,7 @@ async function fetchWithRetry(input: string, init: RequestInit = {}): Promise<Re
 }
 
 export class AuthApiError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public readonly code?: string) {
     super(message);
     this.name = "AuthApiError";
   }
@@ -87,7 +88,7 @@ export class AuthApiError extends Error {
 
 async function parseAuthError(response: Response): Promise<never> {
   const body = (await response.json().catch(() => ({}))) as AuthErrorBody;
-  throw new AuthApiError(body.message ?? "Request failed");
+  throw new AuthApiError(body.message ?? "Request failed", body.error ?? body.code);
 }
 
 async function loadCsrfToken(): Promise<string> {

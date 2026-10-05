@@ -164,6 +164,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .app-back-link {

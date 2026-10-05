@@ -344,5 +344,6 @@
   "app.share.confirmationHeading": "本人確認コード",
   "app.share.confirmationHelp": "普段から使う連絡先や対面で、本人にだけ渡してください。",
   "app.share.confirmationOnce": "このコードは一度だけ表示されます。作成し直す場合は招待を取り消してください。",
-  "app.share.confirmationDismiss": "コードを控えたので閉じる"
+  "app.share.confirmationDismiss": "コードを控えたので閉じる",
+  "app.invitations.confirmationError": "確認コードが正しくありません。管理者から受け取ったコードを確認してください。"
 }
