@@ -74,3 +74,25 @@ jobs:
         run: backend/native/target/release/acceptance
         env:
           DATABASE_URL: postgresql://passshare:passshare@127.0.0.1:5432/passshare
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+      - run: cargo build --manifest-path backend/native/Cargo.toml --release --locked --bin acceptance
+      - name: Build the actual API distribution image
+        run: docker build -t passshare-todo1163-api backend
+      - name: Verify native operations through the distribution image
+        run: |
+          docker run -d --name passshare-todo1163-api -p 127.0.0.1:8094:8080 -e APP_ENV=local passshare-todo1163-api
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8094/health >/dev/null; then break; fi
+            sleep 1
+          done
+          backend/native/target/release/acceptance 8094
+      - name: Remove the owned container and image
+        if: always()
+        run: |
+          if docker container inspect passshare-todo1163-api >/dev/null 2>&1; then docker rm -fv passshare-todo1163-api; fi
+          if docker image inspect passshare-todo1163-api >/dev/null 2>&1; then docker rmi -f passshare-todo1163-api; fi
+          test -z "$(docker ps -aq --filter name=passshare-todo1163-api)"

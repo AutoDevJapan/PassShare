@@ -108,18 +108,23 @@ fn http(port: u16, method: &str, path: &str, token: &str, key: &str, body: &Valu
 }
 
 fn main() {
-    let port = TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let external_port = std::env::args()
+        .nth(1)
+        .map(|value| value.parse::<u16>().expect("external fixture port"));
+    let port = external_port.unwrap_or_else(|| {
+        TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    });
     let executable = std::env::current_exe().unwrap();
     let binary = executable.parent().unwrap().join(if cfg!(windows) {
         "passshare-mutations.exe"
     } else {
         "passshare-mutations"
     });
-    let mut server = Server::start(port, binary);
+    let mut server = external_port.is_none().then(|| Server::start(port, binary));
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -188,8 +193,8 @@ fn main() {
         status == 200 && after.as_array().unwrap().len() == 3,
         "create count is exactly three"
     );
-    if std::env::var_os("DATABASE_URL").is_some() {
-        server = server.restart();
+    if std::env::var_os("DATABASE_URL").is_some() && server.is_some() {
+        server = Some(server.take().unwrap().restart());
         let (status, result) = http(port, "POST", &path, &token, "fixture-item-0001", &body);
         assert!(
             status == 201 && result == created,
