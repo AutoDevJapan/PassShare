@@ -54,10 +54,11 @@ git pull origin main
 
 1. stg 受入チェックリスト ✅
 2. CHANGELOG `[Unreleased]` 更新済み
+3. 配備前のバックアップ取得済みで、対象・由来・取得時刻・復元可能な範囲を確認済み。満たせない間は下記Run workflowを起動しない
 
 1. GitHub → Actions → **Deploy Production Backend** → Run workflow
 2. 確認入力: `deploy-prd`
-3. 配備前のバックアップ取得と復元可能な範囲を確認。実DB dumpをGitHub artifactへ保存しない。現行ワークフローはdump回収を行うが、永続した本番保全を保証しない
+3. ジョブ内でsnapshot後に配備へ進む。途中で上記の前提を確認する停止はない。実DB dumpをGitHub artifactへ保存せず回収する処理で、永続した本番保全を保証しない
 4. smoke:
    ```powershell
    $env:STG_BACKEND_URL = "https://pass-share-backend-production.up.railway.app"
