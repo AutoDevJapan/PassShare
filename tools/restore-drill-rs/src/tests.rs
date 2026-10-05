@@ -1,6 +1,20 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+#[cfg(target_os = "linux")]
+fn generated_credentials_use_os_entropy_without_a_fixed_password_prefix() {
+    let first = synthetic_password().unwrap();
+    let second = synthetic_password().unwrap();
+    assert_eq!(first.len(), 32);
+    assert_eq!(second.len(), 32);
+    assert_ne!(first, second);
+    assert!(first
+        .bytes()
+        .chain(second.bytes())
+        .all(|b| (33..=126).contains(&b)));
+}
+
 fn valid_inputs() -> Vec<(String, String)> {
     vec![
         (

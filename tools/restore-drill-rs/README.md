@@ -95,7 +95,7 @@ CI. Tests cover guards, full JSON and fixture loss, exact negative statuses,
 missing/empty snapshot data, anonymous report counts, omitted-purge reopening gate,
 private temporary cleanup, and real owned child stop/reaping during panic unwind.
 The ignored `tests::child_fixture` is launched only by lifecycle tests. There are
-11 ordinary tests and **one ignored fixture** on Linux; report it as ignored,
+12 ordinary tests and **one ignored fixture** on Linux; report it as ignored,
 never as a passed test. Test execution and actual counts must come from CI.
 
 Run the normal container, then a separate invocation with

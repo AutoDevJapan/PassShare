@@ -157,16 +157,14 @@ fn unix_ms() -> u64 {
 
 // Fresh credentials exist only in this disposable run's memory and synthetic DB.
 fn synthetic_password() -> Result<String> {
-    let mut entropy = [0u8; 16];
+    let mut entropy = [0u8; 32];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut file| file.read_exact(&mut entropy))
         .map_err(|_| Failure::Io)?;
-    let mut value = String::from("Aa!");
-    for byte in entropy {
-        use std::fmt::Write as _;
-        write!(&mut value, "{byte:02x}").map_err(|_| Failure::Io)?;
-    }
-    Ok(value)
+    Ok(entropy
+        .into_iter()
+        .map(|byte| char::from(33 + byte % 94))
+        .collect())
 }
 
 struct Report {
