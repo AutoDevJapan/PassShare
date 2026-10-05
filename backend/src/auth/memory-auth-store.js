@@ -195,7 +195,10 @@ export function createMemoryAuthStore() {
       membership.role = role;
     },
 
-    async removeVaultMember(vaultId, targetUserId) {
+    async removeVaultMember(vaultId, targetUserId, actorUserId) {
+      if (!memberships.some((m) => m.vault_id === vaultId && m.user_id === actorUserId && m.role === "owner")) {
+        throw authHttpError(403, "PS032", "Password box owner access required");
+      }
       const index = memberships.findIndex(
         (m) => m.vault_id === vaultId && m.user_id === targetUserId,
       );

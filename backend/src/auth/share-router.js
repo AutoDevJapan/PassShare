@@ -62,7 +62,7 @@ export function createShareRouter({ authStore, connectStore }) {
       await assertVaultExists(connectStore, vaultId);
       await requireVaultOwner(authStore, req.auth.userId, vaultId);
 
-      await authStore.removeVaultMember(vaultId, targetUserId);
+      await authStore.removeVaultMember(vaultId, targetUserId, req.auth.userId);
       res.status(204).end();
     } catch (error) {
       sendAuthError(res, error);

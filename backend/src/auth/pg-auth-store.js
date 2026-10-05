@@ -201,11 +201,14 @@ export function createPgAuthStore(pool) {
       }
     },
 
-    async removeVaultMember(vaultId, targetUserId) {
+    async removeVaultMember(vaultId, targetUserId, actorUserId) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         await client.query("SELECT id FROM connect_vaults WHERE id = $1 FOR UPDATE", [vaultId]);
+        const actor = (await client.query(
+          "SELECT role FROM vault_memberships WHERE vault_id = $1 AND user_id = $2", [vaultId, actorUserId])).rows[0];
+        if (actor?.role !== "owner") throw authHttpError(403, "PS032", "Password box owner access required");
         const membership = (await client.query(
           "SELECT role FROM vault_memberships WHERE vault_id = $1 AND user_id = $2", [vaultId, targetUserId])).rows[0];
         if (!membership) throw authHttpError(404, "PS035", "Member not found");
