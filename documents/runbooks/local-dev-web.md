@@ -13,6 +13,7 @@
 |--------|-----------|
 | Node.js | 22.x |
 | pnpm | 10.11.0（`corepack enable` 推奨） |
+| Rust | 1.86以降。`backend/native` の保存用実行ファイルを構築する |
 | Playwright | リポジトリ root の devDependency |
 
 PostgreSQL は **Playwright E2E では不要**（backend は in-memory store）。Connect API + PostgreSQL 統合は [Docker E2E](#postgresql-統合-docker) を参照。
@@ -27,6 +28,7 @@ node scripts/local-web-e2e.mjs
 
 内部で以下を実行:
 
+0. Rustの保存用実行ファイルを固定した依存一覧から構築し、APIへ実行先を渡す
 1. root / backend / connect-js / frontend の依存インストール
 2. connect-js ビルド
 3. Playwright Chromium インストール（未インストール時）
@@ -46,11 +48,19 @@ pnpm --dir frontend install --frozen-lockfile
 
 ### 2. Backend 起動（ターミナル 1）
 
+先に保存用のRust実行ファイルを構築します。このPCのエージェントはCargoの割当を確認してから実行します。正式Dockerイメージではビルドと配置をDockerfileが行います。
+
 ```powershell
+cargo build --manifest-path backend/native/Cargo.toml --release --locked --bin passshare-mutations
+$env:PASSSHARE_MUTATIONS_BIN = (Resolve-Path 'backend/native/target/release/passshare-mutations.exe').Path
 $env:APP_ENV = "local"
 $env:PORT = "8080"
 node backend/src/index.js
 ```
+
+Linux/macOSでは拡張子なしの `backend/native/target/release/passshare-mutations` を絶対パスで指定します。未配置なら新しい保存操作は503となり、入力を保持します。単にAPIのhealthが成功しても保存機能の導入確認にはしません。
+
+このPCでエージェントが実画面を検査する場合は、ログイン済みのオーナーのChromeに専用タブを作り、終わったら閉じます。CIのChromium検査と区別します。
 
 確認: http://127.0.0.1:8080/health → `{ "status": "ok" }`
 
