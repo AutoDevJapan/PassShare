@@ -180,6 +180,9 @@ jobs:
           pnpm --dir packages/connect-js run build
           pnpm --dir frontend install --frozen-lockfile
 
+      - name: Type-check frontend
+        run: pnpm --dir frontend exec tsc --noEmit
+
       - name: Build frontend
         run: pnpm --dir frontend run build
 

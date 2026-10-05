@@ -29,11 +29,9 @@ jobs:
         with:
           tool: cargo-audit
 
-      # Advisory DB is fetched live, so a CVE published after a PR opened would
-      # otherwise redden an unrelated PR. Non-blocking on PRs; hard gate on main
-      # and the nightly schedule (#325).
+      # Require the real audit result on PRs as well as main and scheduled runs.
+      # A passing job must not hide a failed dependency audit.
       - name: Run cargo-audit
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: cargo audit
 
   pnpm-audit:
@@ -80,11 +78,9 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ matrix.directory }}/package-lock.json
 
-      # Same policy as cargo-audit: a newly published npm advisory must not
-      # redden unrelated PRs. Non-blocking on PRs; hard gate on main + schedule.
+      # Keep the same audit gate for PR, main and scheduled runs.
       - name: pnpm audit (${{ matrix.directory }})
         if: steps.pm.outputs.manager == 'pnpm'
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
         working-directory: ${{ matrix.directory }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
@@ -92,7 +88,6 @@ jobs:
 
       - name: npm audit (${{ matrix.directory }})
         if: steps.pm.outputs.manager == 'npm'
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
         working-directory: ${{ matrix.directory }}
         run: |
           npm install --ignore-scripts
