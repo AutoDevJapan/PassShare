@@ -23,6 +23,7 @@ import {
 } from "../lib/auth-api";
 import {
   clearAuthSession,
+  clearMemorySession,
   loadAuthSession,
   saveAuthSession,
 } from "../lib/secure-storage";
@@ -38,6 +39,8 @@ type AuthSessionContextValue = {
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   refreshConnect: () => Promise<ConnectClient | null>;
+  suspend: () => void;
+  resume: () => Promise<boolean>;
 };
 
 const AuthSessionContext = createContext<AuthSessionContextValue | null>(null);
@@ -84,6 +87,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [connectClient, setConnectClient] = useState<ConnectClient | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const generation = useRef(0);
+  const suspended = useRef(false);
+  const suspend = useCallback(() => {
+    if (!suspended.current) generation.current += 1;
+    suspended.current = true;
+    clearMemorySession();
+    setConnectClient(null);
+  }, []);
 
   // Localised reason shown in the OS biometric prompt. Held in a ref so the
   // callbacks below can read the latest locale without being re-created.
@@ -91,11 +102,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   biometricReasonRef.current = t("mobile.lock.biometricReason");
 
   const refreshConnect = useCallback(async () => {
+    if (suspended.current) return null;
+    const current = generation.current;
     setConnectLoading(true);
     try {
       const { user: currentUser, client } = await buildConnectClientFromStorage(
         biometricReasonRef.current,
       );
+      if (current !== generation.current || suspended.current) return null;
       setUser(currentUser);
       setConnectClient(client);
       return client;
@@ -106,6 +120,12 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       setConnectLoading(false);
     }
   }, []);
+
+  const resume = useCallback(async () => {
+    suspended.current = false;
+    const client = await refreshConnect();
+    return client !== null && !suspended.current;
+  }, [refreshConnect]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -121,15 +141,21 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const login = useCallback(async (email: string, password: string) => {
+    const current = generation.current;
     const response = await mobileLogin(email, password);
     const client = await persistAuthSession(response);
+    if (current !== generation.current) return;
+    suspended.current = false;
     setUser(response.user);
     setConnectClient(client);
   }, []);
 
   const signup = useCallback(async (email: string, password: string) => {
+    const current = generation.current;
     const response = await mobileSignup(email, password);
     const client = await persistAuthSession(response);
+    if (current !== generation.current) return;
+    suspended.current = false;
     setUser(response.user);
     setConnectClient(client);
   }, []);
@@ -161,8 +187,10 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       logout,
       refresh,
       refreshConnect,
+      suspend,
+      resume,
     }),
-    [user, loading, connectClient, connectLoading, login, signup, logout, refresh, refreshConnect],
+    [user, loading, connectClient, connectLoading, login, signup, logout, refresh, refreshConnect, suspend, resume],
   );
 
   return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;

@@ -12,7 +12,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -58,6 +58,10 @@ jobs:
           pnpm --dir apps/mobile exec tauri build --no-bundle
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop blocked "$PWD/native-webview-results"
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile blocked "$PWD/native-webview-results"
+      - name: Verify actual native background and production five-minute idle lock
+        run: |
+          dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop auto-lock "$PWD/native-webview-results"
+          dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile auto-lock "$PWD/native-webview-results"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

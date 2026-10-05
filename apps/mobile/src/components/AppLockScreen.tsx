@@ -2,9 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { getPinLockState, hasAppPin, isValidPin, setAppPin, verifyAppPin } from "../lib/app-lock";
 import { authenticateBiometric, isBiometricAvailable } from "../lib/secure-storage";
 import { useMobileLabels } from "../hooks/useMobileLabels";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 type Props = {
-  onUnlocked: () => void;
+  onUnlocked: (epoch: number) => void;
 };
 
 export function AppLockScreen({ onUnlocked }: Props) {
@@ -33,8 +34,9 @@ export function AppLockScreen({ onUnlocked }: Props) {
   async function unlockWithBiometric() {
     setError(null);
     try {
+      const epoch = isTauri() ? await invoke<number>("native_begin_unlock") : 0;
       await authenticateBiometric(labels.lockBiometric);
-      onUnlocked();
+      onUnlocked(epoch);
     } catch (err) {
       setError(err instanceof Error ? err.message : labels.lockLead);
     }
@@ -43,10 +45,12 @@ export function AppLockScreen({ onUnlocked }: Props) {
   async function handlePinUnlock(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    try {
+    const epoch = isTauri() ? await invoke<number>("native_begin_unlock") : 0;
     const result = await verifyAppPin(pin);
     if (result.status === "ok") {
       setLocked(false);
-      onUnlocked();
+      onUnlocked(epoch);
       return;
     }
     if (result.status === "locked") {
@@ -55,6 +59,9 @@ export function AppLockScreen({ onUnlocked }: Props) {
       return;
     }
     setError(labels.lockPinMismatch);
+    } catch {
+      setError(labels.lockLead);
+    }
   }
 
   async function handlePinSetup(event: FormEvent) {
@@ -71,14 +78,15 @@ export function AppLockScreen({ onUnlocked }: Props) {
       return;
     }
     try {
+      const epoch = isTauri() ? await invoke<number>("native_begin_unlock") : 0;
       await setAppPin(setupPin);
+      setNeedsSetup(false);
+      onUnlocked(epoch);
     } catch {
       // Unexpected failure (e.g. storage/crypto): surface it rather than swallow.
       setError(labels.lockSetupFailed);
       return;
     }
-    setNeedsSetup(false);
-    onUnlocked();
   }
 
   if (needsSetup === null) {

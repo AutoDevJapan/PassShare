@@ -24,6 +24,11 @@ let forcedBiometryApi: BiometryApi | null | undefined;
 // persist in plaintext where file, WebView, or XSS access could read it.
 const memoryStore = new Map<string, string>();
 
+/** Drop the in-process credential fallback when the native session is locked. */
+export function clearMemorySession(): void {
+  memoryStore.clear();
+}
+
 async function loadBiometryApi(): Promise<BiometryApi | null> {
   if (forcedBiometryApi !== undefined) {
     return forcedBiometryApi;

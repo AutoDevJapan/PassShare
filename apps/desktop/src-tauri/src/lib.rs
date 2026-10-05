@@ -1,6 +1,8 @@
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use passshare_core::domain::field::FieldPurpose;
@@ -12,11 +14,87 @@ use passshare_core::{
     Item, PassShareError, PasswordBox, PasswordBoxState, SavedChange,
 };
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, Manager, State};
+
+#[path = "../../../../shared/native-lock.rs"]
+mod native_lock;
+use native_lock::NativeLock;
 
 struct AppState {
     box_path: Mutex<Option<PathBuf>>,
     password_box: Mutex<Option<PasswordBox>>,
+    session: Mutex<NativeLock>,
+}
+
+// Keep the policy mutex until the data operation finishes. Focus/idle locking
+// and reads/writes therefore cannot expose data from different lock generations.
+struct BoxAccess<'a> {
+    _session: MutexGuard<'a, NativeLock>,
+    password_box: MutexGuard<'a, Option<PasswordBox>>,
+}
+
+impl Deref for BoxAccess<'_> {
+    type Target = Option<PasswordBox>;
+    fn deref(&self) -> &Self::Target {
+        &self.password_box
+    }
+}
+
+impl DerefMut for BoxAccess<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.password_box
+    }
+}
+
+impl AppState {
+    fn access(&self) -> Result<BoxAccess<'_>, String> {
+        let mut session = self.session.lock().map_err(|_| "内部エラー")?;
+        let mut password_box = self.password_box.lock().map_err(|_| "内部エラー")?;
+        if !session.is_unlocked(Instant::now()) {
+            if let Some(pb) = password_box.as_mut() {
+                pb.lock();
+            }
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        Ok(BoxAccess {
+            _session: session,
+            password_box,
+        })
+    }
+
+    fn lock(&self, foreground: Option<bool>) -> Result<(), String> {
+        let mut session = self.session.lock().map_err(|_| "内部エラー")?;
+        if let Some(foreground) = foreground {
+            session.focus(foreground);
+        } else {
+            session.lock();
+        }
+        if !session.is_unlocked(Instant::now()) {
+            if let Some(pb) = self.password_box.lock().map_err(|_| "内部エラー")?.as_mut() {
+                pb.lock();
+            }
+        }
+        Ok(())
+    }
+
+    fn begin_unlock(&self) -> Result<u64, String> {
+        self.session
+            .lock()
+            .map_err(|_| "内部エラー")?
+            .begin_unlock()
+            .ok_or_else(|| PassShareError::BoxLocked.to_string())
+    }
+
+    fn finish_unlock(&self, epoch: u64, mut pb: PasswordBox, path: PathBuf) -> Result<(), String> {
+        let mut session = self.session.lock().map_err(|_| "内部エラー")?;
+        if !session.unlock(epoch, Instant::now()) {
+            pb.lock();
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        *self.box_path.lock().map_err(|_| "内部エラー")? = Some(path);
+        *self.password_box.lock().map_err(|_| "内部エラー")? = Some(pb);
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -179,7 +257,9 @@ fn build_item_from_fields(
 
 #[tauri::command]
 fn get_state(state: State<'_, AppState>) -> Result<String, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let Ok(pb) = state.access() else {
+        return Ok("locked".into());
+    };
     Ok(match pb.as_ref().map(|b| b.state()) {
         Some(PasswordBoxState::Unlocked) => "unlocked".into(),
         Some(PasswordBoxState::Locked) | None => "locked".into(),
@@ -192,11 +272,11 @@ fn create_password_box(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
+    let epoch = state.begin_unlock()?;
     let path = PathBuf::from(path);
     let pb = PasswordBox::create(&path, &master_password).map_err(map_error)?;
     let recovery = pb.recovery_secret().map_err(map_error)?.map(String::from);
-    *state.box_path.lock().map_err(|_| "内部エラー")? = Some(path);
-    *state.password_box.lock().map_err(|_| "内部エラー")? = Some(pb);
+    state.finish_unlock(epoch, pb, path)?;
     Ok(recovery)
 }
 
@@ -206,16 +286,16 @@ fn open_password_box(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let epoch = state.begin_unlock()?;
     let path = PathBuf::from(path);
     let pb = PasswordBox::open(&path, &master_password).map_err(map_error)?;
-    *state.box_path.lock().map_err(|_| "内部エラー")? = Some(path);
-    *state.password_box.lock().map_err(|_| "内部エラー")? = Some(pb);
+    state.finish_unlock(epoch, pb, path)?;
     Ok(())
 }
 
 #[tauri::command]
 fn list_items(state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = state.access()?;
     let pb = pb
         .as_ref()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -229,7 +309,7 @@ fn list_items(state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
 
 #[tauri::command]
 fn search_items(query: String, state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = state.access()?;
     let pb = pb
         .as_ref()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -255,7 +335,7 @@ fn add_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -317,7 +397,7 @@ fn update_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -408,7 +488,7 @@ fn delete_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -423,7 +503,7 @@ fn import_onepassword_csv(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -435,7 +515,7 @@ fn import_onepassword_csv(
 
 #[tauri::command]
 fn export_onepassword_csv(state: State<'_, AppState>) -> Result<String, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = state.access()?;
     let pb = pb
         .as_ref()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -457,7 +537,7 @@ fn upsert_sync_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -484,11 +564,26 @@ fn generate_password(length: Option<usize>) -> String {
 
 #[tauri::command]
 fn lock_password_box(state: State<'_, AppState>) -> Result<(), String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
-    if let Some(pb) = guard.as_mut() {
-        pb.lock();
-    }
-    Ok(())
+    state.lock(None)
+}
+
+#[tauri::command]
+fn native_activity(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state
+        .session
+        .lock()
+        .map_err(|_| "内部エラー")?
+        .activity(Instant::now()))
+}
+
+#[tauri::command]
+fn native_is_unlocked(state: State<'_, AppState>) -> bool {
+    state.access().is_ok()
+}
+
+#[tauri::command]
+fn native_focus(foreground: bool, state: State<'_, AppState>) -> Result<(), String> {
+    state.lock(Some(foreground))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -499,6 +594,36 @@ pub fn run() {
         .manage(AppState {
             box_path: Mutex::new(None),
             password_box: Mutex::new(None),
+            session: Mutex::new(NativeLock::default()),
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(foreground) = event {
+                let state = window.state::<AppState>();
+                let _ = state.lock(Some(*foreground));
+                if !foreground {
+                    let _ = window.emit("passshare-locked", ());
+                }
+            }
+        })
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(1));
+                let state = handle.state::<AppState>();
+                let Ok(mut session) = state.session.lock() else {
+                    continue;
+                };
+                if session.expire(Instant::now()) {
+                    if let Ok(mut pb) = state.password_box.lock() {
+                        if let Some(pb) = pb.as_mut() {
+                            pb.lock();
+                        }
+                    }
+                    drop(session);
+                    let _ = handle.emit("passshare-locked", ());
+                }
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -514,6 +639,9 @@ pub fn run() {
             upsert_sync_item,
             generate_password,
             lock_password_box,
+            native_activity,
+            native_is_unlocked,
+            native_focus,
         ])
         .run(tauri::generate_context!())
         .expect("PassShare desktop failed to start");

@@ -28,7 +28,9 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Run desktop smoke tests
-        run: cargo test -p passshare-desktop smoke_
+        run: |
+          cargo test -p passshare-desktop smoke_
+          cargo test -p passshare-desktop native_lock::tests
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
@@ -43,6 +45,7 @@ jobs:
           pnpm --dir packages/connect-js install --frozen-lockfile
           pnpm --dir packages/connect-js run build
           pnpm --dir apps/desktop install --frozen-lockfile
+          pnpm --dir apps/desktop exec tsc --noEmit
           pnpm --dir apps/desktop run test
 
   build:

@@ -430,6 +430,173 @@ fn ensure(value: bool, label: &str) -> Result<(), String> {
     }
 }
 
+fn run_auto_lock(application: &Path, flavor: &str, output: &Path) -> Result<(), String> {
+    let temp = tempfile::TempDir::new().map_err(|_| "lock fixture directory")?;
+    std::fs::create_dir_all(output).map_err(|_| "lock output directory")?;
+    let mut driver = Driver::start(
+        temp.path(),
+        &output.join(format!("{flavor}-lock-driver.log")),
+    )?;
+    driver.open(application)?;
+    driver.deadline = Instant::now() + Duration::from_secs(360);
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
+        "restart did not begin locked",
+    )?;
+    ensure(
+        driver.invoke("native_focus", json!({"foreground":true}))?["ok"] == true,
+        "native foreground failed",
+    )?;
+    let mut entropy = [0u8; 32];
+    getrandom::fill(&mut entropy).map_err(|_| "lock fixture entropy")?;
+    let master = STANDARD.encode(entropy);
+    let path = temp.path().join("lock.pbox");
+    let saved;
+    if flavor == "desktop" {
+        ensure(
+            driver.invoke(
+                "create_password_box",
+                json!({"path":path,"masterPassword":master}),
+            )?["ok"]
+                == true,
+            "lock create failed",
+        )?;
+        ensure(driver.invoke("add_item", json!({"category":"LOGIN","title":"Lock fixture","password":master,"masterPassword":master}))?["ok"] == true, "lock item failed")?;
+        saved = driver.invoke("list_items", json!({}))?["value"].clone();
+        ensure(
+            saved.as_array().is_some_and(|items| items.len() == 1),
+            "lock fixture count",
+        )?;
+    } else {
+        let epoch = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+        ensure(
+            driver.invoke("native_unlock", json!({"epoch":epoch}))?["value"] == true,
+            "mobile native unlock failed",
+        )?;
+        saved = Value::Null;
+    }
+    // Exercise the shell's actual DOM lifecycle binding, not an HTTP/Web proxy.
+    driver.script("const done=arguments[arguments.length-1];window.dispatchEvent(new Event('blur'));setTimeout(()=>done(true),100);", json!([]))?;
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
+        "background did not lock",
+    )?;
+    ensure(
+        driver.invoke("native_activity", json!({}))?["value"] == false,
+        "background input reopened session",
+    )?;
+    if flavor == "desktop" {
+        for command in [
+            "list_items",
+            "search_items",
+            "export_onepassword_csv",
+            "add_item",
+        ] {
+            let args = if command == "search_items" {
+                json!({"query":"fixture"})
+            } else if command == "add_item" {
+                json!({"category":"LOGIN","title":"Blocked","password":master,"masterPassword":master})
+            } else {
+                json!({})
+            };
+            ensure(
+                driver.invoke(command, args)?["ok"] == false,
+                "locked secret command was accepted",
+            )?;
+        }
+        ensure(driver.script("const done=arguments[arguments.length-1];done(!document.querySelector('[type=password]')?.value && !document.querySelector('.ps-item-list'));", json!([]))? == true, "background retained password input or list")?;
+    }
+    ensure(
+        driver.invoke("native_focus", json!({"foreground":true}))?["ok"] == true,
+        "resume foreground failed",
+    )?;
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
+        "resume bypassed authentication",
+    )?;
+    if flavor == "desktop" {
+        ensure(
+            driver.invoke(
+                "open_password_box",
+                json!({"path":path,"masterPassword":master}),
+            )?["ok"]
+                == true,
+            "lock reauthentication failed",
+        )?;
+        ensure(
+            driver.invoke("list_items", json!({}))?["value"] == saved,
+            "background changed encrypted contents",
+        )?;
+    } else {
+        let stale = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+        driver.invoke("native_focus", json!({"foreground":false}))?;
+        driver.invoke("native_focus", json!({"foreground":true}))?;
+        ensure(
+            driver.invoke("native_unlock", json!({"epoch":stale}))?["value"] == false,
+            "stale authentication reopened session",
+        )?;
+        let epoch = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+        ensure(
+            driver.invoke("native_unlock", json!({"epoch":epoch}))?["value"] == true,
+            "fresh mobile authentication rejected",
+        )?;
+    }
+    let ciphertext = if flavor == "desktop" {
+        std::fs::read(&path).map_err(|_| "lock ciphertext")?
+    } else {
+        vec![]
+    };
+    // Use the production five-minute duration. No environment override or
+    // shortened test-only policy is installed in the application.
+    let started = Instant::now();
+    thread::sleep(Duration::from_secs(298));
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == true,
+        "session expired before five minutes",
+    )?;
+    if flavor == "desktop" {
+        ensure(
+            driver.invoke("list_items", json!({}))?["value"] == saved,
+            "read during idle changed contents",
+        )?;
+    }
+    thread::sleep(Duration::from_secs(4));
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
+        "production idle deadline did not lock",
+    )?;
+    ensure(
+        driver.invoke("native_activity", json!({}))?["value"] == false,
+        "late activity reopened session",
+    )?;
+    if flavor == "desktop" {
+        ensure(
+            driver.invoke("list_items", json!({}))?["ok"] == false,
+            "idle secret read accepted",
+        )?;
+        ensure(
+            std::fs::read(&path).map_err(|_| "idle ciphertext")? == ciphertext,
+            "idle lock changed ciphertext",
+        )?;
+        ensure(
+            driver.invoke(
+                "open_password_box",
+                json!({"path":path,"masterPassword":master}),
+            )?["ok"]
+                == true,
+            "idle reopen failed",
+        )?;
+        ensure(
+            driver.invoke("list_items", json!({}))?["value"] == saved,
+            "idle reopen contents changed",
+        )?;
+        driver.invoke("lock_password_box", json!({}))?;
+    }
+    std::fs::write(output.join(format!("{flavor}-auto-lock.json")), serde_json::to_vec_pretty(&json!({"nativeFlavor":flavor,"productionIdleSeconds":300,"measuredIdleSeconds":started.elapsed().as_secs_f64(),"backgroundBinding":true,"resumeRequiresAuthentication":true,"staleUnlockRejected":flavor=="mobile","lockedSecretCommandsRejected":flavor=="desktop","ciphertextPreserved":flavor=="desktop","physicalMobile":false,"syntheticOnly":true})).map_err(|_| "lock result encode")?).map_err(|_| "lock result write")?;
+    println!("native {flavor} production auto-lock acceptance succeeded");
+    Ok(())
+}
+
 fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result<(), String> {
     let temp = tempfile::TempDir::new().map_err(|_| "fixture directory")?;
     std::fs::create_dir_all(output).map_err(|_| "output directory")?;
@@ -586,12 +753,19 @@ fn main() {
     }
     let flavor = args[2].to_str().unwrap_or("");
     let mode = args[3].to_str().unwrap_or("");
-    if !["desktop", "mobile"].contains(&flavor) || !["blocked", "executed"].contains(&mode) {
+    if !["desktop", "mobile"].contains(&flavor)
+        || !["blocked", "executed", "auto-lock"].contains(&mode)
+    {
         std::process::exit(2);
     }
     let app = PathBuf::from(&args[1]);
     let output = PathBuf::from(&args[4]);
-    if let Err(error) = run(&app, flavor, mode == "blocked", &output) {
+    let result = if mode == "auto-lock" {
+        run_auto_lock(&app, flavor, &output)
+    } else {
+        run(&app, flavor, mode == "blocked", &output)
+    };
+    if let Err(error) = result {
         eprintln!("native acceptance failed: {error}");
         std::process::exit(1);
     }
