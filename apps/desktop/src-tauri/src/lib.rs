@@ -589,8 +589,9 @@ mod smoke_tests {
     #[test]
     fn smoke_edit_primary_url_preserves_other_urls_labels_and_item_data() {
         let id = ConnectId::generate().expect("box id");
+        let fixture_password = uuid::Uuid::new_v4().to_string();
         let mut original =
-            Item::new_login(id, "Imported login", "fixture-password").expect("login item");
+            Item::new_login(id, "Imported login", &fixture_password).expect("login item");
         original.fields.push(
             Field::new("Imported extra", FieldType::String, "keep field").expect("extra field"),
         );
@@ -676,10 +677,11 @@ mod smoke_tests {
     fn smoke_edited_primary_url_and_untouched_data_survive_save_reopen() {
         let (dir, path) = temp_box("edit-primary-url");
         let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let fixture_password = uuid::Uuid::new_v4().to_string();
         let mut original = Item::new_login(
             pb.vault().expect("box").id.clone(),
             "Imported login",
-            "fixture-password",
+            &fixture_password,
         )
         .expect("login item");
         let section_id = ConnectId::generate().expect("section id");
