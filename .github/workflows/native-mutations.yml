@@ -45,6 +45,7 @@ jobs:
           path: |
             backend/native/target/release/passshare-mutations*
             backend/native/target/release/acceptance*
+            backend/native/target/release/preview*
             backend/native/Cargo.lock
           if-no-files-found: error
   postgres:
