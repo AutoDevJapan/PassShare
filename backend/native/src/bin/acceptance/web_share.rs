@@ -85,7 +85,7 @@ pub fn run(port: u16, nonce: u128) {
     let invitations = format!("/api/auth/vaults/{box_id}/invitations");
     let members = format!("/api/auth/vaults/{box_id}/members");
     let items = format!("/v1/vaults/{box_id}/items");
-    let (status, _) = http(
+    let (status, created) = http(
         port,
         "POST",
         &items,
@@ -99,6 +99,22 @@ pub fn run(port: u16, nonce: u128) {
     let (status, stored_items) = http(port, "GET", &items, &owner_access, "", &Value::Null);
     assert_eq!(status, 200);
     assert_eq!(stored_items.as_array().unwrap().len(), 1);
+    let detail = format!("{items}/{}", created["id"].as_str().unwrap());
+    let (status, stored_detail) = http(port, "GET", &detail, &owner_access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert!(
+        stored_detail == created,
+        "the persisted baseline matches the complete created item"
+    );
+    assert!(
+        stored_detail["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field["id"] == "web-fixture"
+                && field["value"] == "synthetic-web-share-secret"),
+        "the persisted baseline includes the synthetic password"
+    );
     let (status, before) = owner.request(port, "GET", &members, &Value::Null);
     assert_eq!(status, 200);
     assert_eq!(before["members"].as_array().unwrap().len(), 1);
@@ -190,6 +206,10 @@ pub fn run(port: u16, nonce: u128) {
         http(port, "GET", &items, &before_access, "", &Value::Null).0,
         403
     );
+    assert_eq!(
+        http(port, "GET", &detail, &before_access, "", &Value::Null).0,
+        403
+    );
     let (status, unchanged) = owner.request(port, "GET", &members, &Value::Null);
     assert_eq!(status, 200);
     assert!(
@@ -205,7 +225,13 @@ pub fn run(port: u16, nonce: u128) {
     assert_eq!(status, 200);
     assert!(
         shared_items == stored_items,
-        "confirmed web member reads the actual retained item"
+        "confirmed web member sees the retained item overview"
+    );
+    let (status, shared_detail) = http(port, "GET", &detail, &after_access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert!(
+        shared_detail == stored_detail,
+        "confirmed web member reads the complete stored item including password"
     );
     let (status, joined) = owner.request(port, "GET", &members, &Value::Null);
     assert_eq!(status, 200);
@@ -234,16 +260,30 @@ pub fn run(port: u16, nonce: u128) {
         http(port, "GET", &items, &after_access, "", &Value::Null).0,
         401
     );
+    assert_eq!(
+        http(port, "GET", &detail, &after_access, "", &Value::Null).0,
+        401
+    );
     let removed_access = member.connect_token(port);
     assert_eq!(
         http(port, "GET", &items, &removed_access, "", &Value::Null).0,
         403,
         "new web token cannot restore removed membership"
     );
+    assert_eq!(
+        http(port, "GET", &detail, &removed_access, "", &Value::Null).0,
+        403
+    );
     let (status, retained_items) = http(port, "GET", &items, &owner_access, "", &Value::Null);
     assert_eq!(status, 200);
     assert!(
         retained_items == stored_items,
-        "sharing changes preserve the owner's complete item"
+        "sharing changes preserve the owner's item overview"
+    );
+    let (status, retained_detail) = http(port, "GET", &detail, &owner_access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert!(
+        retained_detail == stored_detail,
+        "sharing changes preserve the owner's complete item including password"
     );
 }
