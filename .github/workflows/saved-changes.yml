@@ -39,9 +39,18 @@ jobs:
         run: cargo test -p passshare-core --locked -- --test-threads=1
       - name: Check core lint
         run: cargo clippy -p passshare-core --all-targets --locked -- -D warnings
+      - name: Confirm resolved erasure features
+        shell: bash
+        run: |
+          cargo tree -p passshare-core -e features --locked > crypto-features.log
+          grep -q 'chacha20poly1305 feature "zeroize"' crypto-features.log
+          grep -q 'chacha20 feature "zeroize"' crypto-features.log
+          grep -q 'poly1305 feature "zeroize"' crypto-features.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: saved-changes-${{ matrix.os }}
-          path: regression.log
+          path: |
+            regression.log
+            crypto-features.log
           if-no-files-found: warn

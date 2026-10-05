@@ -396,7 +396,7 @@ mod tests {
             replaced.context = expected.clone();
             assert!(PasswordBoxKey::unwrap_for_owner(&replaced, &root, &expected).is_err());
         }
-        let owner_key = &root.as_bytes();
+        let owner_key = root.as_bytes();
         let (nonce, ciphertext) = seal(&key.0, owner_key, &item_context.aad().unwrap()).unwrap();
         let mixed = WrappedPasswordBoxKey {
             format: FORMAT,
