@@ -3,6 +3,8 @@
 use super::{http, http_raw};
 use serde_json::{json, Value};
 
+const FIELD_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 struct WebActor {
     cookies: String,
     csrf: String,
@@ -92,7 +94,7 @@ pub fn run(port: u16, nonce: u128) {
         &owner_access,
         "web-sharing-fixture-item",
         &json!({"title":"Synthetic web shared item","category":"LOGIN",
-            "fields":[{"id":"web-fixture","type":"CONCEALED","label":"password",
+            "fields":[{"id":FIELD_ID,"type":"CONCEALED","label":"password",
                 "value":"synthetic-web-share-secret"}]}),
     );
     assert_eq!(status, 201);
@@ -111,8 +113,7 @@ pub fn run(port: u16, nonce: u128) {
             .as_array()
             .unwrap()
             .iter()
-            .any(|field| field["id"] == "web-fixture"
-                && field["value"] == "synthetic-web-share-secret"),
+            .any(|field| field["id"] == FIELD_ID && field["value"] == "synthetic-web-share-secret"),
         "the persisted baseline includes the synthetic password"
     );
     let (status, before) = owner.request(port, "GET", &members, &Value::Null);
