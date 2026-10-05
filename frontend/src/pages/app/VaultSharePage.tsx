@@ -22,6 +22,7 @@ export function VaultSharePage() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState<ShareInvitation | null>(null);
 
   const isOwner = members.some(
     (member) => member.userId === user?.id && member.role === "owner",
@@ -64,13 +65,14 @@ export function VaultSharePage() {
 
   async function handleInvite(event: FormEvent) {
     event.preventDefault();
-    if (!vaultId || !email.trim()) {
+    if (busy || !vaultId || !email.trim()) {
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await inviteToVault(vaultId, email.trim());
+      const invitation = await inviteToVault(vaultId, email.trim());
+      setConfirmation(invitation);
       setEmail("");
       await loadInvitations();
     } catch (err) {
@@ -105,6 +107,7 @@ export function VaultSharePage() {
     setError(null);
     try {
       await revokeVaultInvitation(vaultId, invitationId);
+      if (confirmation?.id === invitationId) setConfirmation(null);
       await loadInvitations();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("app.share.loadError"));
@@ -149,6 +152,22 @@ export function VaultSharePage() {
             {t("app.share.inviteSubmit")}
           </button>
         </form>
+      ) : null}
+
+      {isOwner && confirmation?.confirmationCode ? (
+        <section className="ps-card app-share-section" role="status">
+          <h2 className="ps-heading-3">{t("app.share.confirmationHeading")}</h2>
+          <p>{confirmation.email}</p>
+          <p>{t("app.share.confirmationHelp")}</p>
+          <label className="ps-label">
+            {t("app.invitations.confirmationLabel")}
+            <input className="ps-input" readOnly value={confirmation.confirmationCode} autoComplete="off"
+              onFocus={(event) => event.target.select()} />
+          </label>
+          <p>{t("app.share.confirmationOnce")}</p>
+          <button type="button" className="ps-button ps-button--secondary"
+            onClick={() => setConfirmation(null)}>{t("app.share.confirmationDismiss")}</button>
+        </section>
       ) : null}
 
       <section className="ps-card app-share-section">

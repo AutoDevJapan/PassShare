@@ -336,5 +336,13 @@
   "landing.compare.share.check": "Invitation, identity and access revocation conditions",
   "landing.start.eyebrow": "Get started",
   "landing.start.title": "Get started with a password box",
-  "landing.start.lead": "Check the differences between device and cloud storage, then follow the setup guide."
+  "landing.start.lead": "Check the differences between device and cloud storage, then follow the setup guide.",
+  "app.invitations.confirmationLabel": "Confirmation code",
+  "app.invitations.confirmationPlaceholder": "Code from the owner",
+  "app.invitations.confirmationHelp": "Enter the code received from the owner through a separate, verified channel.",
+  "app.invitations.confirmAccept": "Confirm and join",
+  "app.share.confirmationHeading": "Confirmation code",
+  "app.share.confirmationHelp": "Give this code only to the person through a known contact or in person.",
+  "app.share.confirmationOnce": "This code is shown only once. Revoke the invitation if you need to create another.",
+  "app.share.confirmationDismiss": "I saved the code; dismiss"
 }

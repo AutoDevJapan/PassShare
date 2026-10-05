@@ -200,6 +200,7 @@ export type ShareInvitation = {
   role: string;
   expiresAt: string;
   createdAt?: string;
+  confirmationCode?: string;
 };
 
 export async function listVaultMembers(vaultId: string): Promise<VaultMember[]> {
@@ -258,9 +259,10 @@ export async function listPendingInvitations(): Promise<ShareInvitation[]> {
   return body.invitations;
 }
 
-export async function acceptInvitation(invitationId: string): Promise<{ vaultId: string; role: string }> {
+export async function acceptInvitation(invitationId: string, confirmationCode: string): Promise<{ vaultId: string; role: string }> {
   const response = await authFetch(`/api/auth/invitations/${invitationId}/accept`, {
     method: "POST",
+    body: JSON.stringify({ confirmationCode }),
   });
   if (!response.ok) {
     return parseAuthError(response);

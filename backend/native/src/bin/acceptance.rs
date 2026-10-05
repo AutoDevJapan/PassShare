@@ -63,6 +63,23 @@ impl Drop for Server {
 }
 
 fn http(port: u16, method: &str, path: &str, token: &str, key: &str, body: &Value) -> (u16, Value) {
+    let (status, bytes) = http_bytes(port, method, path, token, key, body);
+    let data = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("JSON response")
+    };
+    (status, data)
+}
+
+fn http_bytes(
+    port: u16,
+    method: &str,
+    path: &str,
+    token: &str,
+    key: &str,
+    body: &Value,
+) -> (u16, Vec<u8>) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect synthetic API");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
@@ -102,12 +119,7 @@ fn http(port: u16, method: &str, path: &str, token: &str, key: &str, body: &Valu
         .unwrap()
         .parse()
         .unwrap();
-    let data = if bytes.len() == split + 4 {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes[split + 4..]).expect("JSON response")
-    };
-    (status, data)
+    (status, bytes[split + 4..].to_vec())
 }
 
 fn main() {

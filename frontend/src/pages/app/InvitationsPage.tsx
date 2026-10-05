@@ -14,6 +14,7 @@ export function InvitationsPage() {
   const [invitations, setInvitations] = useState<ShareInvitation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [codes, setCodes] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setError(null);
@@ -32,7 +33,8 @@ export function InvitationsPage() {
     setBusyId(invitationId);
     setError(null);
     try {
-      await acceptInvitation(invitationId);
+      await acceptInvitation(invitationId, codes[invitationId]?.trim() ?? "");
+      setCodes((current) => { const next = { ...current }; delete next[invitationId]; return next; });
       await refreshConnect();
       await load();
     } catch (err) {
@@ -80,18 +82,26 @@ export function InvitationsPage() {
               </p>
             </div>
             <div className="app-share-actions">
+              <label className="ps-label">
+                {t("app.invitations.confirmationLabel")}
+                <input className="ps-input" type="password" autoComplete="off" maxLength={43}
+                  value={codes[invitation.id] ?? ""} disabled={busyId !== null}
+                  placeholder={t("app.invitations.confirmationPlaceholder")}
+                  onChange={(event) => setCodes((current) => ({ ...current, [invitation.id]: event.target.value }))} />
+                <span>{t("app.invitations.confirmationHelp")}</span>
+              </label>
               <button
                 type="button"
                 className="ps-button"
-                disabled={busyId === invitation.id}
+                disabled={busyId !== null || (codes[invitation.id]?.trim().length ?? 0) !== 43}
                 onClick={() => void handleAccept(invitation.id)}
               >
-                {t("app.invitations.accept")}
+                {t("app.invitations.confirmAccept")}
               </button>
               <button
                 type="button"
                 className="ps-button ps-button--secondary"
-                disabled={busyId === invitation.id}
+                disabled={busyId !== null}
                 onClick={() => void handleDecline(invitation.id)}
               >
                 {t("app.invitations.decline")}

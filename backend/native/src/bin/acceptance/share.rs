@@ -1,6 +1,129 @@
-use super::http;
+use super::{http, http_bytes};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::process::{Command, Stdio};
 use std::thread;
+use std::time::Duration;
+
+fn sql(statement: &str) -> String {
+    // This fixture operates only on the CI service database. It never discovers
+    // a production connection or executes SQL against arbitrary DATABASE_URLs.
+    let database = std::env::var("DATABASE_URL").unwrap();
+    assert_eq!(
+        database,
+        "postgresql://passshare:passshare@127.0.0.1:5432/passshare"
+    );
+    let result = Command::new("psql")
+        .args([
+            "-X",
+            "-qAt",
+            "--set",
+            "ON_ERROR_STOP=1",
+            "--dbname",
+            &database,
+            "--command",
+            statement,
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("synthetic PostgreSQL client");
+    assert!(result.status.success(), "synthetic SQL fixture failed");
+    String::from_utf8(result.stdout).unwrap().trim().to_owned()
+}
+
+fn uuid(value: &Value) -> &str {
+    let id = value.as_str().unwrap();
+    assert!(id.len() == 36 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'));
+    id
+}
+
+struct Pause(String);
+impl Drop for Pause {
+    fn drop(&mut self) {
+        sql(&format!(
+            "DROP TRIGGER IF EXISTS {} ON vault_invitations; DROP FUNCTION IF EXISTS {}();",
+            self.0, self.0
+        ));
+    }
+}
+
+fn response_races(
+    port: u16,
+    nonce: u128,
+    owner: &str,
+    member: &str,
+    email: &str,
+    invitations: &str,
+    scope: (&str, &str),
+) {
+    let (box_id, user_id) = scope;
+    for (index, first) in ["revoked", "accepted"].into_iter().enumerate() {
+        let (status, invite) = http(
+            port,
+            "POST",
+            invitations,
+            owner,
+            "",
+            &json!({"email":email}),
+        );
+        assert_eq!(status, 201);
+        let id = uuid(&invite["id"]);
+        let name = format!("acceptance_pause_{nonce}_{index}");
+        sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$; CREATE TRIGGER {name} BEFORE UPDATE ON vault_invitations FOR EACH ROW WHEN (NEW.id = '{id}' AND NEW.status = '{first}') EXECUTE FUNCTION {name}();"));
+        let pause = Pause(name);
+        let revoke_path = format!("{invitations}/{id}");
+        let accept_path = format!("/api/auth/invitations/{id}/accept");
+        let proof = json!({"confirmationCode":invite["confirmationCode"]});
+        let (first_method, first_path, first_token, first_body) = if first == "revoked" {
+            ("DELETE", revoke_path.clone(), owner.to_owned(), Value::Null)
+        } else {
+            (
+                "POST",
+                accept_path.clone(),
+                member.to_owned(),
+                proof.clone(),
+            )
+        };
+        let worker = thread::spawn(move || {
+            http(
+                port,
+                first_method,
+                &first_path,
+                &first_token,
+                "",
+                &first_body,
+            )
+            .0
+        });
+        let mut blocked = false;
+        for _ in 0..30 {
+            if sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND wait_event = 'PgSleep' AND query LIKE '%vault_invitations%')") == "t" {
+                blocked = true; break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            blocked,
+            "first response owns invitation lock while second starts"
+        );
+        let second_status = if first == "revoked" {
+            http(port, "POST", &accept_path, member, "", &proof).0
+        } else {
+            http(port, "DELETE", &revoke_path, owner, "", &Value::Null).0
+        };
+        let first_status = worker.join().unwrap();
+        assert_eq!(first_status, if first == "revoked" { 204 } else { 200 });
+        assert_eq!(second_status, 404, "only first response commits");
+        assert_eq!(
+            sql(&format!(
+                "SELECT status FROM vault_invitations WHERE id='{id}'"
+            )),
+            first
+        );
+        assert_eq!(sql(&format!("SELECT count(*) FROM vault_memberships WHERE user_id='{user_id}' AND vault_id='{box_id}'")), if first == "revoked" { "0" } else { "1" });
+        drop(pause);
+    }
+}
 
 pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
     let email = format!("share-{nonce}@example.test");
@@ -132,6 +255,26 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
     );
     assert_eq!(status, 201);
     let file_path = format!("{files}/{}", file["id"].as_str().unwrap());
+    let content_path = format!("{file_path}/content");
+    let (status, content) = http_bytes(port, "GET", &content_path, access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert_eq!(content, vec![0, 1, 254, 255], "actual attachment bytes");
+    let user_id = uuid(&member["user"]["id"]);
+    if std::env::var_os("DATABASE_URL").is_some() {
+        sql(&format!(
+            "DELETE FROM vault_memberships WHERE user_id='{user_id}' AND vault_id='{box_id}'"
+        ));
+        assert_eq!(
+            http(port, "GET", items, access, "", &Value::Null).0,
+            403,
+            "valid snapshot token loses current membership"
+        );
+        assert_eq!(
+            http(port, "GET", &content_path, access, "", &Value::Null).0,
+            403
+        );
+        sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES('{user_id}','{box_id}','member')"));
+    }
     let removal = format!(
         "/api/auth/vaults/{box_id}/members/{}",
         member["user"]["id"].as_str().unwrap()
@@ -149,6 +292,10 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
         http(port, "GET", &file_path, access, "", &Value::Null).0,
         401,
         "attachments use revoked token guard"
+    );
+    assert_eq!(
+        http(port, "GET", &content_path, access, "", &Value::Null).0,
+        401
     );
     let (_, fresh) = http(
         port,
@@ -168,6 +315,26 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
         http(port, "GET", &file_path, fresh, "", &Value::Null).0,
         403
     );
+    assert_eq!(
+        http(port, "GET", &content_path, fresh, "", &Value::Null).0,
+        403
+    );
+    if std::env::var_os("DATABASE_URL").is_some() {
+        let late = format!("synthetic-late-{nonce}");
+        let hash = format!("{:x}", Sha256::digest(late.as_bytes()));
+        // Model a token insert which used a pre-removal snapshot but completed
+        // after DELETE connect_tokens. It is valid; the live guard must deny it.
+        sql(&format!("INSERT INTO connect_tokens(id,user_id,token_hash,vault_ids,expires_at) VALUES('{user_id}','{user_id}','{hash}','[\"{box_id}\"]'::jsonb, NOW()+INTERVAL '1 hour')"));
+        assert_eq!(
+            http(port, "GET", items, &late, "", &Value::Null).0,
+            403,
+            "late snapshot token cannot grant removed access"
+        );
+        assert_eq!(
+            http(port, "GET", &content_path, &late, "", &Value::Null).0,
+            403
+        );
+    }
     let (status, invitation) = http(
         port,
         "POST",
@@ -203,4 +370,15 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
         404,
         "revoked proof cannot grant membership"
     );
+    if std::env::var_os("DATABASE_URL").is_some() {
+        response_races(
+            port,
+            nonce,
+            owner,
+            session,
+            &email,
+            &invitations,
+            (box_id, user_id),
+        );
+    }
 }

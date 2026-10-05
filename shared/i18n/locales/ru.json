@@ -336,5 +336,13 @@
   "landing.compare.share.check": "Условия приглашения, проверки личности и отзыва доступа",
   "landing.start.eyebrow": "Перейдите к настройке",
   "landing.start.title": "Начните пользоваться контейнером паролей",
-  "landing.start.lead": "Ознакомьтесь с различиями между хранением на устройстве и в облаке, затем перейдите к руководству по настройке."
+  "landing.start.lead": "Ознакомьтесь с различиями между хранением на устройстве и в облаке, затем перейдите к руководству по настройке.",
+  "app.invitations.confirmationLabel": "Код подтверждения",
+  "app.invitations.confirmationPlaceholder": "Код от владельца",
+  "app.invitations.confirmationHelp": "Введите код, полученный от владельца по отдельному проверенному каналу.",
+  "app.invitations.confirmAccept": "Подтвердить и присоединиться",
+  "app.share.confirmationHeading": "Код подтверждения",
+  "app.share.confirmationHelp": "Передайте код только этому человеку через известный контакт или лично.",
+  "app.share.confirmationOnce": "Код отображается только один раз. Чтобы создать новый, отмените приглашение.",
+  "app.share.confirmationDismiss": "Код сохранён — закрыть"
 }
