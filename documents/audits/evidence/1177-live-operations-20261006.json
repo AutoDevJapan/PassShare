@@ -9,7 +9,7 @@
     "cookie_signup_save_full_JSON_new_DB": true
   },
   "live_storage": {
-    "cutover_confirmed_at": "2026-10-05T15:45:55.6424980Z",
+    "cutover_confirmed_at": "2026-10-05T15:45:55.642498Z",
     "schedule_created_at": "2026-10-05T14:53:45.796Z",
     "preservation_rows_and_normalized_digests_match": true,
     "current_volume": "70b71256-4c1d-4ffa-bb8e-3e3e5a310d37",
@@ -35,7 +35,7 @@
     "customer_endpoint_approval": false
   },
   "integrated_main": {
-    "deployment_status": "pending; not a success claim",
+    "deployment_status": "SUCCESS",
     "negative_expected_gate_refusal": 1,
     "restore_workflow": 37338094325,
     "sha": "e7d076c0449b3a233f015c3b6e003ab2796e8bd9",
@@ -79,5 +79,18 @@
     "bucket_removed": 1,
     "PITR_target": "2026-10-05T14:08:16Z",
     "original_row_count": 2
+  },
+  "runtime_after_source": {
+    "GUI_all_clients_identity_keys_withdrawal_claim": false,
+    "at": "2026-10-06T01:28:48.0481994+09:00",
+    "checks_passed": 15,
+    "native_binary_executable_present": true,
+    "new_DB_save_full_JSON_array_order": true,
+    "owned_fixture_cleanup": true,
+    "checks_total": 15,
+    "source_sha": "e7d076c0449b3a233f015c3b6e003ab2796e8bd9",
+    "session_token_rows_purged": true,
+    "logout_204_old_cookie_401_old_connect_401": true,
+    "all44_runtime_source_files_match": true
   }
 }
