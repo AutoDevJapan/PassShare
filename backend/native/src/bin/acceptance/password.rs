@@ -224,5 +224,29 @@ pub fn run(port: u16, nonce: u128) {
         .0,
         401
     );
+    let mut throttled = false;
+    for _ in 0..30 {
+        let status = http(
+            port,
+            "POST",
+            "/api/auth/password/change",
+            "",
+            "",
+            &json!({}),
+        )
+        .0;
+        assert!(
+            status == 401 || status == 429,
+            "unauthenticated change never reaches hashing"
+        );
+        if status == 429 {
+            throttled = true;
+            break;
+        }
+    }
+    assert!(
+        throttled,
+        "the unauthenticated route is throttled before authorization"
+    );
     println!("credential acceptance passed: proof, all sessions/tokens revoked, fresh login; PostgreSQL additionally proves overlapping login/refresh cannot resurrect access");
 }
