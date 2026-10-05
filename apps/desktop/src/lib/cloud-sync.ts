@@ -228,7 +228,7 @@ export async function runCloudSync(
       direction: "push",
       run: () =>
         client
-          .replaceItem(config.vaultId, local.id, connectItemToCreateBody(formValuesFromItem(local)))
+          .editItemForm(config.vaultId, local.id, remoteItems.find((item) => item.id === local.id)!.revision!, formValuesFromItem(local))
           .then((replaced) => {
             recordBase(local.id, replaced.version);
           }),
@@ -266,10 +266,12 @@ export async function resolveConflictKeepLocal(
   local: ConnectItem,
 ): Promise<void> {
   const client = await loginAndGetClient(config);
-  await client.replaceItem(
+  const original = await client.getItem(config.vaultId, local.id);
+  await client.editItemForm(
     config.vaultId,
     local.id,
-    connectItemToCreateBody(formValuesFromItem(local)),
+    original.version,
+    formValuesFromItem(local),
   );
 }
 

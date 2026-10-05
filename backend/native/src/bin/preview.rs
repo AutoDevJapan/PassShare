@@ -145,13 +145,11 @@ fn main() {
     let port = args[3].parse::<u16>().expect("preview port");
     let state = Arc::new(State::default());
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("exclusive loopback port");
-    for incoming in listener.incoming() {
-        if let Ok(client) = incoming {
-            let root = root.clone();
-            let state = state.clone();
-            std::thread::spawn(move || {
-                let _ = handle(client, root, backend, state);
-            });
-        }
+    for client in listener.incoming().flatten() {
+        let root = root.clone();
+        let state = state.clone();
+        std::thread::spawn(move || {
+            let _ = handle(client, root, backend, state);
+        });
     }
 }
