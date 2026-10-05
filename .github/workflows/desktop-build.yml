@@ -77,6 +77,11 @@ jobs:
             apps/desktop/pnpm-lock.yaml
             packages/connect-js/pnpm-lock.yaml
 
+      - name: Use isolated Rust toolchain storage on macOS
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/passshare-1197-rustup" >> "$GITHUB_ENV"
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
