@@ -23,7 +23,7 @@ Security AuditのPRだけの失敗許容3箇所を外した。PR、main、夜間
 - 4パッケージの `install --frozen-lockfile --ignore-scripts` と `build`、SDKの導入・buildが成功した。
 - 既存 `pnpm --dir apps/desktop test` は41件、mobileは15件、extensionは41件で成功。失敗・省略0。Rustと実GUIの成功件数には数えない。
 - 最初のstandaloneのmain基準 `frontend tsc --noEmit` は失敗した。未使用csrf、favoriteの生成型、searchSectionsの参照、sharedのReact/SDKの解決、pluralの型を含む。以下の型修復後には、このPR単独で型検査とbuildが成功した。mainでの成功は未確認。
-- RustのTLS依存rustls 0.23.40はRUSTSEC-2026-0285で未修復。互換な修正版0.23.45以上への更新・Cargo audit・関連検査は、既存ToDo #1176のCargo割当で最初に実行する。この担当ではCargoを起動せず、Cargo.lockを手で書き換えない。
+- 2026-10-05 10:11 JST時点では、RustのTLS依存rustls 0.23.40がRUSTSEC-2026-0285で未修復だった。その時点の担当ではCargoを起動せず、Cargo.lockを手で書き換えていない。後続の修復は以下に記録する。
 
 原mainの失敗、初回試行、4監査JSONと3試験logは `D:/CC/Work/passshare-orch-20261005-063759/` に保存した。原PR #595のレビューは保全する。Rustの最終差分と型修復を合わせた候補の別モデルレビュー、最新全CI、mainの監査実成功まで #1560 / #1342 / #1197 は未完了。#1556の翻訳と原1515 / 1540 / 1558の固定レビュー対象を変更しない。
 
@@ -41,4 +41,12 @@ PR #592は二重作成の修復1482を待つため、この依存修復の検証
 
 初回buildはSDK build前のfrontend導入により、コピーされたSDKにdistがなく失敗した。SDK build後に同じoffline / frozen / ignore-scripts導入を行い、distの存在とbuild成功を確認した。CIはもともとこの正しい導入順序である。初回失敗ログも保全した。最終JSは446.87kB / gzip117.52kBで、これは翻訳PR未統合のサイズである。
 
-今回の実行記録は `D:/CC/Work/passshare-orch-20261005-095510/`。CargoとRust依存の更新は実行していない。Rust修復1176の割当後に最新親HEADから最小lock修復を受領し、最終全差分の別モデルレビュー、最新全CI、マージ後の同じmain SHAの実監査と受入を確認するまでDraftを維持する。
+この型修復の実行記録は `D:/CC/Work/passshare-orch-20261005-095510/`。この段階ではCargoとRust依存の更新は実行していない。最終全差分の別モデルレビュー、最新全CI、マージ後の同じmain SHAの実監査と受入を確認するまでDraftを維持する。
+
+## TLS依存の修復（2026-10-05、親1163・ToDo #1607）
+
+重いCargoビルドを実行せずに依存一覧を更新した。共有のCargoガードを通した `cargo update -p rustls --precise 0.23.45` は成功し、rustlsを0.23.40から0.23.45へ、依存するrustls-webpkiを0.103.13から0.103.15へ更新した。Cargo.lockの版とchecksumはCargoが生成したもので、手書きしていない。他の依存版は変更していない。修正版の範囲は [RustSecの公式情報](https://rustsec.org/advisories/RUSTSEC-2026-0285.html)と照合した。
+
+共有ガードを通した `cargo audit` とJSON出力はexit 0。RustSecの情報1290件（データベースコミット `ef6173c`）で523依存を検査し、拒否対象の脆弱性は0件だった。保守停止・unsound・yankedの許容された警告9件は残る。警告まで0件という意味ではない。依存を無視する設定や監査基準の変更は行っていない。
+
+この段階ではRustのコンパイル・テスト・実アプリを実行していない。更新後の全CIと最終18ファイルの別モデルレビューで確認する。既存の画面依存修復・型修復・PRで失敗を検出する変更を保持する。ToDo #1176はこのTLS更新を重ねず、端末の復旧・保存・配布の残条件を継続する。PR #599の取込修正も、実監査が成功する構成へ統合してから販売前の完了と判定する。
