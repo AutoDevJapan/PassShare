@@ -37,21 +37,25 @@ jobs:
           pnpm --dir apps/mobile run build
           rustfmt --edition 2021 --check crates/passshare-core/examples/webview_acceptance.rs
           cargo build -p passshare-core --example webview_acceptance --locked
+          cargo test -p passshare-core --example webview_acceptance --locked
           cargo clippy -p passshare-core --examples --locked -- -D warnings
       - name: Observe the prior null policy in both real native renderers
         run: |
+          trap 'git restore apps/desktop/src-tauri/tauri.conf.json apps/mobile/src-tauri/tauri.conf.json' EXIT
           for config in apps/desktop/src-tauri/tauri.conf.json apps/mobile/src-tauri/tauri.conf.json; do
             jq '.app.security.csp = null' "$config" > "$config.tmp"
             mv "$config.tmp" "$config"
           done
-          cargo build -p passshare-desktop -p passshare-mobile --release --locked
+          pnpm --dir apps/desktop exec tauri build --no-bundle
+          pnpm --dir apps/mobile exec tauri build --no-bundle
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop executed "$PWD/native-webview-results"
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile executed "$PWD/native-webview-results"
           git restore apps/desktop/src-tauri/tauri.conf.json apps/mobile/src-tauri/tauri.conf.json
           git diff --exit-code
       - name: Verify protected rendering, IPC, network and disk failure through native commands
         run: |
-          cargo build -p passshare-desktop -p passshare-mobile --release --locked
+          pnpm --dir apps/desktop exec tauri build --no-bundle
+          pnpm --dir apps/mobile exec tauri build --no-bundle
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop blocked "$PWD/native-webview-results"
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile blocked "$PWD/native-webview-results"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
