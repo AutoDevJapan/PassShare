@@ -6,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-fn sql(statement: &str) -> String {
+pub(super) fn sql(statement: &str) -> String {
     // This fixture operates only on the CI service database. It never discovers
     // a production connection or executes SQL against arbitrary DATABASE_URLs.
     let database = std::env::var("DATABASE_URL").unwrap();
@@ -32,17 +32,17 @@ fn sql(statement: &str) -> String {
     String::from_utf8(result.stdout).unwrap().trim().to_owned()
 }
 
-fn uuid(value: &Value) -> &str {
+pub(super) fn uuid(value: &Value) -> &str {
     let id = value.as_str().unwrap();
     assert!(id.len() == 36 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'));
     id
 }
 
-struct Gate {
+pub(super) struct Gate {
     child: Child,
 }
 impl Gate {
-    fn hold(key: u32) -> Self {
+    pub(super) fn hold(key: u32) -> Self {
         let database = std::env::var("DATABASE_URL").unwrap();
         let child = Command::new("psql")
             .args([
@@ -83,7 +83,7 @@ impl Gate {
         }
         gate
     }
-    fn release(&mut self) {
+    pub(super) fn release(&mut self) {
         writeln!(self.child.stdin.as_mut().unwrap(), "COMMIT;").unwrap();
         drop(self.child.stdin.take());
         assert!(self.child.wait().unwrap().success(), "release lock gate");
@@ -128,9 +128,9 @@ fn response_races(
         let id = uuid(&invite["id"]);
         let name = format!("acceptance_pause_{nonce}_{index}");
         let key = 6_000_000 + (nonce % 1_000_000) as u32 + index as u32;
-        let mut gate = Gate::hold(key);
         sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock({key}); RETURN NEW; END $$; CREATE TRIGGER {name} BEFORE UPDATE ON vault_invitations FOR EACH ROW WHEN (NEW.id = '{id}' AND NEW.status = '{first}') EXECUTE FUNCTION {name}();"));
         let pause = Pause(name);
+        let mut gate = Gate::hold(key);
         let revoke_path = format!("{invitations}/{id}");
         let accept_path = format!("/api/auth/invitations/{id}/accept");
         let proof = json!({"confirmationCode":invite["confirmationCode"]});
@@ -336,6 +336,148 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
     assert_eq!(content, vec![0, 1, 254, 255], "actual attachment bytes");
     let user_id = uuid(&member["user"]["id"]);
     if std::env::var_os("DATABASE_URL").is_some() {
+        sql(&format!("UPDATE vault_memberships SET confirmed_at=NULL WHERE user_id='{user_id}' AND vault_id='{box_id}'"));
+        sql(passshare_mutations::share::MEMBERSHIP_SCHEMA);
+        assert_eq!(
+            http(port, "GET", items, access, "", &Value::Null).0,
+            403,
+            "legacy membership is not proof of identity"
+        );
+        let (status, limited) = http(
+            port,
+            "GET",
+            "/api/auth/connect-token",
+            session,
+            "",
+            &Value::Null,
+        );
+        assert_eq!(status, 200);
+        let limited_access = limited["accessToken"].as_str().unwrap();
+        let token_hash = format!("{:x}", Sha256::digest(limited_access.as_bytes()));
+        assert_eq!(sql(&format!("SELECT NOT(vault_ids ? '{box_id}') FROM connect_tokens WHERE token_hash='{token_hash}'")),"t","issued scope excludes the unconfirmed box");
+        assert_eq!(
+            http(port, "GET", items, limited_access, "", &Value::Null).0,
+            403,
+            "new token excludes unconfirmed shared box"
+        );
+        assert_eq!(
+            http(
+                port,
+                "GET",
+                &format!("/api/auth/vaults/{box_id}/members"),
+                session,
+                "",
+                &Value::Null
+            )
+            .0,
+            403
+        );
+        let (status, owner_token) = http(
+            port,
+            "GET",
+            "/api/auth/connect-token",
+            owner,
+            "",
+            &Value::Null,
+        );
+        assert_eq!(status, 200);
+        let owner_access = owner_token["accessToken"].as_str().unwrap();
+        let (status, before_denied) = http(port, "GET", items, owner_access, "", &Value::Null);
+        assert_eq!(status, 200);
+        assert_eq!(
+            http(
+                port,
+                "POST",
+                items,
+                access,
+                "unconfirmed-operation-0001",
+                &json!({"title":"Must not be saved","category":"LOGIN"})
+            )
+            .0,
+            403
+        );
+        let (status, kept) = http(
+            port,
+            "GET",
+            items,
+            owner_token["accessToken"].as_str().unwrap(),
+            "",
+            &Value::Null,
+        );
+        assert_eq!(status, 200);
+        assert_eq!(
+            kept, before_denied,
+            "denied save leaves the complete item collection unchanged"
+        );
+        assert_eq!(
+            http(port, "GET", &content_path, access, "", &Value::Null).0,
+            403
+        );
+        let (status, expired) = http(
+            port,
+            "POST",
+            &invitations,
+            owner,
+            "",
+            &json!({"email":email}),
+        );
+        assert_eq!(
+            status, 201,
+            "owner can reverify an existing unconfirmed member without deleting data"
+        );
+        let expired_id = uuid(&expired["id"]);
+        sql(&format!("UPDATE vault_invitations SET expires_at=NOW()-INTERVAL '1 second' WHERE id='{expired_id}'"));
+        let (status, again) = http(
+            port,
+            "POST",
+            &invitations,
+            owner,
+            "",
+            &json!({"email":email}),
+        );
+        assert_eq!(
+            status, 201,
+            "expired pending invite cannot block reconfirmation"
+        );
+        assert_eq!(
+            http(
+                port,
+                "POST",
+                &format!("/api/auth/invitations/{expired_id}/accept"),
+                session,
+                "",
+                &json!({"confirmationCode":expired["confirmationCode"]})
+            )
+            .0,
+            404
+        );
+        let confirm = format!(
+            "/api/auth/invitations/{}/accept",
+            again["id"].as_str().unwrap()
+        );
+        assert_eq!(http(port, "POST", &confirm, session, "", &json!({})).0, 403);
+        assert_eq!(
+            http(
+                port,
+                "POST",
+                &confirm,
+                session,
+                "",
+                &json!({"confirmationCode":again["confirmationCode"]})
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            http(port, "GET", items, access, "", &Value::Null).0,
+            200,
+            "confirmed member resumes the same box"
+        );
+        assert_eq!(
+            http_bytes(port, "GET", &content_path, access, "", &Value::Null).1,
+            vec![0, 1, 254, 255],
+            "existing attachment data is retained"
+        );
         sql(&format!(
             "DELETE FROM vault_memberships WHERE user_id='{user_id}' AND vault_id='{box_id}'"
         ));

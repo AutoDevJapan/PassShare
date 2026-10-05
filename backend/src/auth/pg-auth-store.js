@@ -19,6 +19,8 @@ export function createPgAuthStore(pool) {
   return {
     async migrate() {
       await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY, AUTH_SCHEMA_SQL);
+      await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY,
+        await nativeMutation({command:"sharing-schema"}));
     },
 
     async findUserByEmail(email) {
@@ -57,8 +59,8 @@ export function createPgAuthStore(pool) {
 
     async addVaultMembership(userId, vaultId, role = "owner") {
       await pool.query(
-        `INSERT INTO vault_memberships (user_id, vault_id, role)
-         VALUES ($1, $2, $3)
+        `INSERT INTO vault_memberships (user_id, vault_id, role, confirmed_at)
+         VALUES ($1, $2, $3, CASE WHEN $3='owner' THEN NOW() ELSE NULL END)
          ON CONFLICT (user_id, vault_id) DO NOTHING`,
         [userId, vaultId, role],
       );
@@ -66,22 +68,24 @@ export function createPgAuthStore(pool) {
 
     async listVaultIdsForUser(userId) {
       const result = await pool.query(
-        "SELECT vault_id FROM vault_memberships WHERE user_id = $1 ORDER BY created_at ASC",
+        "SELECT vault_id FROM vault_memberships WHERE user_id = $1 AND passshare_membership_active(role,confirmed_at) ORDER BY created_at ASC",
         [userId],
       );
       return result.rows.map((row) => row.vault_id);
     },
 
-    async createSession(userId) {
+    async createSession(userId, expectedPasswordHash) {
       const sessionToken = generateToken();
       const tokenHash = hashToken(sessionToken);
       const id = randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-      await pool.query(
+      const result = await pool.query(
         `INSERT INTO sessions (id, user_id, token_hash, expires_at)
-         VALUES ($1, $2, $3, $4::timestamptz)`,
-        [id, userId, tokenHash, expiresAt.toISOString()],
+         SELECT $1, u.id, $3, $4::timestamptz FROM users u
+         WHERE u.id=$2 AND u.password_hash=$5 FOR SHARE OF u`,
+        [id, userId, tokenHash, expiresAt.toISOString(), expectedPasswordHash],
       );
+      if (!result.rowCount) throw authHttpError(401, "PS024", "Session is invalid or expired");
       return {
         sessionToken,
         sessionId: id,
@@ -118,26 +122,52 @@ export function createPgAuthStore(pool) {
       await pool.query("DELETE FROM sessions WHERE id = $1", [sessionId]);
     },
 
-    async createConnectToken(userId, label = "session") {
-      const vaultIds = await this.listVaultIdsForUser(userId);
+    async createConnectToken(userId, label = "session", sessionId) {
       const accessToken = generateToken();
       const tokenHash = hashToken(accessToken);
       const id = randomUUID();
       const expiresAt = new Date(Date.now() + CONNECT_TOKEN_TTL_MS);
-      await pool.query(
-        `INSERT INTO connect_tokens (id, user_id, token_hash, vault_ids, expires_at, label)
-         VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6)`,
-        [id, userId, tokenHash, JSON.stringify(vaultIds), expiresAt.toISOString(), label],
-      );
-      return {
-        accessToken,
-        expiresAt: expiresAt.toISOString(),
-        expiresIn: Math.floor(CONNECT_TOKEN_TTL_MS / 1000),
-        vaultIds,
-        tokenHash,
-      };
+      const client = await pool.connect();
+      let vaultIds;
+      try {
+        await client.query("BEGIN");
+        // The same user-row lock order is used by credential changes. A token
+        // minted before the change is deleted; a session after it is rejected.
+        await client.query("SELECT id FROM users WHERE id=$1 FOR SHARE", [userId]);
+        const session = await client.query(
+          "SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at > clock_timestamp() FOR SHARE",
+          [sessionId, userId]);
+        if (!session.rowCount) throw authHttpError(401, "PS024", "Session is invalid or expired");
+        vaultIds = (await client.query(
+          "SELECT vault_id FROM vault_memberships WHERE user_id=$1 AND passshare_membership_active(role,confirmed_at) ORDER BY created_at", [userId])).rows.map((row) => row.vault_id);
+        await client.query(
+          `INSERT INTO connect_tokens (id,user_id,token_hash,vault_ids,expires_at,label) VALUES($1,$2,$3,$4::jsonb,$5::timestamptz,$6)`,
+          [id,userId,tokenHash,JSON.stringify(vaultIds),expiresAt.toISOString(),label]);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally { client.release(); }
+      return { accessToken, expiresAt: expiresAt.toISOString(), expiresIn: Math.floor(CONNECT_TOKEN_TTL_MS / 1000), vaultIds, tokenHash };
     },
 
+    async changePassword(userId, sessionId, expectedHash, nextHash) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const user = (await client.query("SELECT password_hash FROM users WHERE id=$1 FOR UPDATE", [userId])).rows[0];
+        const session = await client.query("SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at > clock_timestamp() FOR SHARE", [sessionId,userId]);
+        await nativeMutation({command:"account-password-change", currentHash:user?.password_hash,
+          verifiedHash:expectedHash, nextHash, sessionExists:session.rowCount > 0});
+        await client.query("UPDATE users SET password_hash=$2 WHERE id=$1", [userId,nextHash]);
+        await client.query("DELETE FROM sessions WHERE user_id=$1", [userId]);
+        await client.query("DELETE FROM connect_tokens WHERE user_id=$1", [userId]);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally { client.release(); }
+    },
     async deleteConnectTokensForUser(userId) {
       await pool.query("DELETE FROM connect_tokens WHERE user_id = $1", [userId]);
     },
@@ -161,7 +191,7 @@ export function createPgAuthStore(pool) {
       const result = await pool.query(
         `SELECT user_id, vault_id, role, created_at
          FROM vault_memberships
-         WHERE user_id = $1 AND vault_id = $2`,
+         WHERE user_id = $1 AND vault_id = $2 AND passshare_membership_active(role,confirmed_at)`,
         [userId, vaultId],
       );
       return result.rows[0] ?? null;
@@ -169,7 +199,7 @@ export function createPgAuthStore(pool) {
 
     async listVaultMembers(vaultId) {
       const result = await pool.query(
-        `SELECT vm.user_id, vm.role, vm.created_at, u.email
+        `SELECT vm.user_id, vm.role, vm.created_at, u.email, passshare_membership_active(vm.role,vm.confirmed_at) AS identity_confirmed
          FROM vault_memberships vm
          JOIN users u ON u.id = vm.user_id
          WHERE vm.vault_id = $1
@@ -228,10 +258,11 @@ export function createPgAuthStore(pool) {
       }
     },
     async createVaultInvitation({ vaultId, inviterId, inviteeEmail, role }) {
+      await pool.query("SELECT passshare_expire_invites($1,$2)", [vaultId,inviteeEmail]);
       const existingMember = await pool.query(
         `SELECT 1 FROM vault_memberships vm
          JOIN users u ON u.id = vm.user_id
-         WHERE vm.vault_id = $1 AND u.email = $2`,
+         WHERE vm.vault_id = $1 AND u.email = $2 AND passshare_membership_active(vm.role,vm.confirmed_at)`,
         [vaultId, inviteeEmail],
       );
       if (existingMember.rowCount > 0) {
@@ -329,8 +360,8 @@ export function createPgAuthStore(pool) {
            WHERE id = $1 AND status = 'pending' AND expires_at > clock_timestamp() RETURNING id`, [invitationId]);
         if (!updated.rowCount) throw authHttpError(410, "PS040", "Invitation has expired");
         await client.query(
-          `INSERT INTO vault_memberships (user_id, vault_id, role) VALUES ($1, $2, $3)
-           ON CONFLICT (user_id, vault_id) DO NOTHING`, [userId, row.vault_id, result.role]);
+          `INSERT INTO vault_memberships (user_id, vault_id, role, confirmed_at) VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (user_id, vault_id) DO UPDATE SET confirmed_at=NOW() WHERE vault_memberships.role='member'`, [userId, row.vault_id, result.role]);
         await client.query("COMMIT");
         return result;
       } catch (error) {
