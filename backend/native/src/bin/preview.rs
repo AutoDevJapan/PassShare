@@ -10,6 +10,7 @@ use std::time::Duration;
 #[derive(Default)]
 struct State {
     fail: AtomicBool,
+    hold: AtomicBool,
     creates: AtomicU64,
     dropped: AtomicU64,
 }
@@ -57,6 +58,17 @@ fn handle(
         response(&mut client, "204 No Content", "text/plain", &[]);
         return Ok(());
     }
+    if path == "/__test/hold-response" && method == "POST" {
+        state.hold.store(true, Ordering::SeqCst);
+        state.fail.store(true, Ordering::SeqCst);
+        response(&mut client, "204 No Content", "text/plain", &[]);
+        return Ok(());
+    }
+    if path == "/__test/release-response" && method == "POST" {
+        state.hold.store(false, Ordering::SeqCst);
+        response(&mut client, "204 No Content", "text/plain", &[]);
+        return Ok(());
+    }
     if path == "/__test/state" {
         let output = format!(
             "{{\"creates\":{},\"dropped\":{},\"armed\":{}}}",
@@ -90,6 +102,14 @@ fn handle(
         let mut received = Vec::new();
         upstream.take(4 * 1024 * 1024).read_to_end(&mut received)?;
         let success = received.starts_with(b"HTTP/1.1 201 ");
+        if create && success {
+            for _ in 0..100 {
+                if !state.hold.load(Ordering::SeqCst) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
         if create && success && state.fail.swap(false, Ordering::SeqCst) {
             state.dropped.fetch_add(1, Ordering::SeqCst);
             response(

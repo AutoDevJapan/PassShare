@@ -122,7 +122,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
   }
 
   async function handleDelete(itemId: string) {
-    if (!connectClient || !window.confirm(labels.confirmDelete)) {
+    if (!connectClient || busyRef.current || !window.confirm(labels.confirmDelete)) {
       return;
     }
     await connectClient.deleteItem(vaultId, itemId);
@@ -176,8 +176,10 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
             onChange={setFormValues}
             onSubmit={(values) => void handleUpdate(values)}
             onCancel={() => {
+              if (busyRef.current) return;
               setMode("create");
               setEditingId(null);
+              setEditingItem(null);
               setFormValues(emptyFormValues());
             }}
             onGeneratePassword={() =>
