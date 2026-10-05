@@ -36,7 +36,7 @@ jobs:
           grep -q '2 passed; 6 failed' regression.log
           git diff --exit-code
       - name: Verify real encrypted save and reopen with the fixed implementation
-        run: cargo test -p passshare-core --locked
+        run: cargo test -p passshare-core --locked -- --test-threads=1
       - name: Check core lint
         run: cargo clippy -p passshare-core --all-targets --locked -- -D warnings
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
