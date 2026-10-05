@@ -18,6 +18,53 @@ const FORMAT: u32 = 1;
 const MAX_ITEM_BYTES: usize = 1024 * 1024;
 const TAG_BYTES: usize = 16;
 const MAX_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+const MAX_JSON_DEPTH: usize = 127;
+
+struct JsonSize(usize);
+impl Write for JsonSize {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let size = self.0.saturating_add(bytes.len());
+        if size > MAX_ITEM_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Item exceeds the encryption limit",
+            ));
+        }
+        self.0 = size;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+type JsonChildren<'a> = Box<dyn Iterator<Item = &'a Value> + 'a>;
+fn validate_depth(root: &Value) -> Result<()> {
+    let mut frames: Vec<JsonChildren<'_>> = vec![Box::new(std::iter::once(root))];
+    let mut visited = 0usize;
+    while let Some(frame) = frames.last_mut() {
+        let Some(value) = frame.next() else {
+            frames.pop();
+            continue;
+        };
+        visited += 1;
+        if visited > MAX_ITEM_BYTES {
+            return Err(CloudCryptoError::InvalidPayload);
+        }
+        let children: Option<JsonChildren<'_>> = match value {
+            Value::Array(array) => Some(Box::new(array.iter())),
+            Value::Object(object) => Some(Box::new(object.values())),
+            _ => None,
+        };
+        if let Some(children) = children {
+            if frames.len() > MAX_JSON_DEPTH {
+                return Err(CloudCryptoError::InvalidPayload);
+            }
+            frames.push(children);
+        }
+    }
+    Ok(())
+}
 
 struct LimitedJson(Zeroizing<Vec<u8>>);
 impl Write for LimitedJson {
@@ -125,7 +172,7 @@ fn seal(bytes: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<(String, String)> {
     let cipher =
         XChaCha20Poly1305::new_from_slice(key).map_err(|_| CloudCryptoError::InvalidEnvelope)?;
     let ciphertext = cipher
-        .encrypt(XNonce::from_slice(&nonce), Payload { msg: bytes, aad })
+        .encrypt(&XNonce::from(nonce), Payload { msg: bytes, aad })
         .map_err(|_| CloudCryptoError::AuthenticationFailed)?;
     Ok((BASE64.encode(nonce), BASE64.encode(ciphertext)))
 }
@@ -155,11 +202,15 @@ fn open(
     if ciphertext.len() < TAG_BYTES || ciphertext.len() > max + TAG_BYTES {
         return Err(CloudCryptoError::InvalidEnvelope);
     }
+    let nonce: [u8; 24] = nonce
+        .as_slice()
+        .try_into()
+        .map_err(|_| CloudCryptoError::InvalidEnvelope)?;
     let cipher =
         XChaCha20Poly1305::new_from_slice(key).map_err(|_| CloudCryptoError::InvalidEnvelope)?;
     cipher
         .decrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::from(nonce),
             Payload {
                 msg: &ciphertext,
                 aad,
@@ -190,7 +241,10 @@ impl PasswordBoxKey {
     pub fn encrypt_item(&self, item: &Value, context: &ItemContext) -> Result<EncryptedItem> {
         context.validate()?;
         check_item(item, context)?;
-        let mut bytes = LimitedJson(Zeroizing::new(Vec::new()));
+        validate_depth(item)?;
+        let mut size = JsonSize(0);
+        serde_json::to_writer(&mut size, item).map_err(|_| CloudCryptoError::InvalidPayload)?;
+        let mut bytes = LimitedJson(Zeroizing::new(Vec::with_capacity(size.0)));
         serde_json::to_writer(&mut bytes, item).map_err(|_| CloudCryptoError::InvalidPayload)?;
         let (nonce, ciphertext) = seal(&bytes.0, &self.0, &context.aad()?)?;
         Ok(EncryptedItem {
@@ -330,6 +384,30 @@ mod tests {
         let mut forged = wrapped.clone();
         forged.context.owner_account_id = Uuid::new_v4();
         assert!(PasswordBoxKey::unwrap_for_owner(&forged, &root, &forged.context).is_err());
+        for target in 0..2 {
+            let mut expected = context.clone();
+            if target == 0 {
+                expected.password_box_id = ConnectId::generate().unwrap();
+            } else {
+                expected.key_epoch += 1;
+            }
+            assert!(PasswordBoxKey::unwrap_for_owner(&wrapped, &root, &expected).is_err());
+            let mut replaced = wrapped.clone();
+            replaced.context = expected.clone();
+            assert!(PasswordBoxKey::unwrap_for_owner(&replaced, &root, &expected).is_err());
+        }
+        let owner_key = &root.as_bytes();
+        let (nonce, ciphertext) = seal(&key.0, owner_key, &item_context.aad().unwrap()).unwrap();
+        let mixed = WrappedPasswordBoxKey {
+            format: FORMAT,
+            context: context.clone(),
+            nonce,
+            ciphertext,
+        };
+        assert!(
+            PasswordBoxKey::unwrap_for_owner(&mixed, &root, &context).is_err(),
+            "item domain cannot be used as owner-key domain"
+        );
         assert!(PasswordBoxKey::unwrap_for_owner(
             &wrapped,
             &MasterKey::generate().unwrap(),
@@ -361,5 +439,32 @@ mod tests {
         assert!(key.encrypt_item(&item, &context).is_err());
         context.item_version = MAX_JSON_INTEGER + 1;
         assert!(key.encrypt_item(&json_item(&context), &context).is_err());
+    }
+    #[test]
+    fn depth_boundary_round_trips_and_excess_depth_never_seals() {
+        let (context, mut item) = fixture();
+        let key = PasswordBoxKey::generate().unwrap();
+        let mut nested = Value::Null;
+        for _ in 0..MAX_JSON_DEPTH - 1 {
+            nested = Value::Array(vec![nested]);
+        }
+        item["deep"] = nested;
+        let sealed = key.encrypt_item(&item, &context).unwrap();
+        assert!(key.decrypt_item(&sealed, &context).unwrap() == item);
+        item["deep"] = Value::Array(vec![item["deep"].take()]);
+        assert!(key.encrypt_item(&item, &context).is_err());
+    }
+    #[test]
+    fn serialization_never_reallocates_a_plaintext_buffer() {
+        let (context, item) = fixture();
+        check_item(&item, &context).unwrap();
+        let mut size = JsonSize(0);
+        serde_json::to_writer(&mut size, &item).unwrap();
+        let mut bytes = LimitedJson(Zeroizing::new(Vec::with_capacity(size.0)));
+        let pointer = bytes.0.as_ptr();
+        let capacity = bytes.0.capacity();
+        serde_json::to_writer(&mut bytes, &item).unwrap();
+        assert!(pointer == bytes.0.as_ptr() && capacity == bytes.0.capacity());
+        assert_eq!(bytes.0.len(), size.0);
     }
 }
