@@ -659,14 +659,19 @@ mod smoke_tests {
     use passshare_core::domain::item::ItemCategory;
     use std::path::PathBuf;
 
-    const MASTER_PASSWORD: &str = "TestPass123!";
-
+    fn fresh_master_password() -> String {
+        PasswordBox::generate_password(PasswordGeneratorOptions {
+            length: 32,
+            ..Default::default()
+        })
+    }
     #[test]
     fn smoke_native_idle_input_erases_without_ui_poll() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("idle-input");
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         add_login(&mut pb, "Idle fixture", "must be erased", None, None, &[]);
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
         let original = std::fs::read(&path).expect("ciphertext");
         let start = Instant::now();
         let mut session = NativeLock::default();
@@ -691,7 +696,7 @@ mod smoke_tests {
             std::fs::read(&path).expect("ciphertext after lock"),
             original
         );
-        let reopened = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let reopened = PasswordBox::open(&path, &master_password).expect("reopen");
         assert_eq!(
             reopened.list_connect_items().expect("items")[0].title,
             "Idle fixture"
@@ -703,8 +708,9 @@ mod smoke_tests {
 
     #[test]
     fn smoke_native_manual_lock_rejects_pending_open() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("pending-open");
-        let pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let pb = PasswordBox::create(&path, &master_password).expect("create");
         let state = AppState {
             data: Mutex::new(BoxSession::default()),
         };
@@ -712,7 +718,7 @@ mod smoke_tests {
         state.lock().expect("manual lock");
         assert!(state.finish_unlock(epoch, pb).is_err());
         assert!(state.access().is_err());
-        let reopened = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let reopened = PasswordBox::open(&path, &master_password).expect("reopen");
         state
             .finish_unlock(state.begin_unlock().expect("fresh begin"), reopened)
             .expect("fresh open");
@@ -751,13 +757,14 @@ mod smoke_tests {
 
     #[test]
     fn smoke_create_open_add_list_lock() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("smoke");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         add_login(&mut pb, "Smoke Login", "secret", None, None, &[]);
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("open");
+        let pb = PasswordBox::open(&path, &master_password).expect("open");
         let items = pb.list_connect_items().expect("list");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Smoke Login");
@@ -870,8 +877,9 @@ mod smoke_tests {
 
     #[test]
     fn smoke_edited_primary_url_and_untouched_data_survive_save_reopen() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("edit-primary-url");
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let fixture_password = uuid::Uuid::new_v4().to_string();
         let mut original = Item::new_login(
             pb.vault().expect("box").id.clone(),
@@ -908,10 +916,10 @@ mod smoke_tests {
         // This helper is the URL mutation used by the native update_item command.
         update_primary_url(&mut edited.urls, Some("https://changed.example/".into()));
         pb.update_item(edited).expect("update");
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
         drop(pb);
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let pb = PasswordBox::open(&path, &master_password).expect("reopen");
         let mut expected = original;
         expected.urls[1].href = "https://changed.example/".into();
         assert_eq!(
@@ -926,9 +934,10 @@ mod smoke_tests {
     // （タイトル / URL / ユーザー名 / タグの各軸をカバー）
     #[test]
     fn smoke_search_by_title_url_username_and_tag() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("search");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         add_login(
             &mut pb,
             "GitHub",
@@ -945,7 +954,7 @@ mod smoke_tests {
             Some("bob"),
             &["work"],
         );
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         let by_title = pb.search_connect_items("github").expect("title search");
         assert_eq!(by_title.len(), 1);
@@ -993,15 +1002,16 @@ mod smoke_tests {
     // MVP ATDD: 削除した項目は保存後・再オープン後も存在しない
     #[test]
     fn smoke_delete_item_persists_after_reopen() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("delete");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let keep = add_login(&mut pb, "Keep", "keep-pass", None, None, &[]);
         let remove = add_login(&mut pb, "Remove", "remove-pass", None, None, &[]);
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         pb.delete_item(&remove.id.to_string()).expect("delete");
-        pb.save(MASTER_PASSWORD).expect("save after delete");
+        pb.save(&master_password).expect("save after delete");
 
         assert_eq!(
             pb.delete_item(&remove.id.to_string()),
@@ -1009,7 +1019,7 @@ mod smoke_tests {
             "削除済み ID の再削除は ItemNotFound"
         );
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let pb = PasswordBox::open(&path, &master_password).expect("reopen");
         let items = pb.list_connect_items().expect("list");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, keep.id);
@@ -1020,11 +1030,12 @@ mod smoke_tests {
     // MVP ATDD: 間違ったマスターパスワードではエラーが返り、中身は読めない
     #[test]
     fn smoke_open_with_wrong_master_password_fails() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("wrongpass");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         add_login(&mut pb, "Secret Login", "top-secret", None, None, &[]);
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         let err = match PasswordBox::open(&path, "WrongPass456?") {
             Ok(_) => panic!("間違ったマスターパスワードで開けてしまった"),
@@ -1043,9 +1054,10 @@ mod smoke_tests {
     // 再オープン後も同じ値が保持される。閉じた状態では読めない
     #[test]
     fn smoke_recovery_kit_available_and_persisted() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("recovery");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let secret = pb
             .recovery_secret()
             .expect("recovery accessible")
@@ -1060,7 +1072,7 @@ mod smoke_tests {
             "閉じた状態では緊急キットを読めない"
         );
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let pb = PasswordBox::open(&path, &master_password).expect("reopen");
         assert_eq!(
             pb.recovery_secret().expect("recovery accessible"),
             Some(secret.as_str()),
@@ -1073,6 +1085,7 @@ mod smoke_tests {
     // 主要 category（CREDIT_CARD 等 7 種）が parse / CRUD をエラーなく通過する
     #[test]
     fn smoke_all_categories_crud_roundtrip() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("categories");
         let categories = [
             "LOGIN",
@@ -1084,7 +1097,7 @@ mod smoke_tests {
             "CUSTOM",
         ];
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let vault_id = pb.vault().expect("vault").id.clone();
 
         for name in categories {
@@ -1106,10 +1119,10 @@ mod smoke_tests {
             .expect(name);
             pb.add_item(item).expect(name);
         }
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         // Read: 全 category が API 文字列へ round-trip する
-        let mut pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let mut pb = PasswordBox::open(&path, &master_password).expect("reopen");
         let items = pb.list_connect_items().expect("list");
         assert_eq!(items.len(), categories.len());
         for name in categories {
@@ -1129,9 +1142,9 @@ mod smoke_tests {
         card.set_field_by_label("notesPlain", "4111 1111 1111 1111")
             .expect("set body");
         pb.update_item(card.clone()).expect("update");
-        pb.save(MASTER_PASSWORD).expect("save update");
+        pb.save(&master_password).expect("save update");
 
-        let pb2 = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen after update");
+        let pb2 = PasswordBox::open(&path, &master_password).expect("reopen after update");
         let updated = pb2.get_item(&card.id.to_string()).expect("get updated");
         assert_eq!(
             ItemDto::from(updated).body.as_deref(),
@@ -1143,7 +1156,7 @@ mod smoke_tests {
         for item in pb.list_connect_items().expect("list before delete") {
             pb.delete_item(&item.id.to_string()).expect("delete");
         }
-        pb.save(MASTER_PASSWORD).expect("save deletes");
+        pb.save(&master_password).expect("save deletes");
         assert!(pb.list_connect_items().expect("final list").is_empty());
 
         let _ = std::fs::remove_dir_all(dir);
