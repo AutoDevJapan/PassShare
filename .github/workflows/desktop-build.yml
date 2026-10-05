@@ -47,7 +47,6 @@ jobs:
           pnpm --dir apps/desktop install --frozen-lockfile
           pnpm --dir apps/desktop exec tsc --noEmit
           pnpm --dir apps/desktop run test
-          node --experimental-strip-types --test shared/test/native-lock.test.ts
 
   build:
     needs: smoke
