@@ -33,6 +33,21 @@ fn read_response(socket: &mut TcpStream, deadline: Instant) -> Result<Vec<u8>, S
             .map_err(|_| "read deadline")?;
         let count = socket.read(&mut buffer).map_err(|_| "response deadline")?;
         if count == 0 {
+            if let Some(split) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                let headers =
+                    std::str::from_utf8(&bytes[..split]).map_err(|_| "response header encoding")?;
+                if headers
+                    .lines()
+                    .skip(1)
+                    .filter_map(|line| line.split_once(':'))
+                    .any(|(name, _)| {
+                        name.eq_ignore_ascii_case("content-length")
+                            || name.eq_ignore_ascii_case("transfer-encoding")
+                    })
+                {
+                    return Err("incomplete framed response".into());
+                }
+            }
             break;
         }
         if bytes.len() + count > LIMIT {
@@ -75,6 +90,24 @@ fn read_response(socket: &mut TcpStream, deadline: Instant) -> Result<Vec<u8>, S
         }
     }
     Ok(bytes)
+}
+
+fn write_request(
+    socket: &mut TcpStream,
+    mut bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), String> {
+    while !bytes.is_empty() {
+        socket
+            .set_write_timeout(Some(remaining(deadline, Duration::from_secs(5))?))
+            .map_err(|_| "write deadline")?;
+        let written = socket.write(bytes).map_err(|_| "request write")?;
+        if written == 0 {
+            return Err("closed request stream".into());
+        }
+        bytes = &bytes[written..];
+    }
+    Ok(())
 }
 
 fn decode_chunks(input: &[u8]) -> Result<Option<Vec<u8>>, String> {
@@ -137,10 +170,8 @@ fn http(method: &str, path: &str, body: &Value, deadline: Instant) -> Result<Val
         .map_err(|_| "write deadline")?;
     let payload = serde_json::to_vec(body).map_err(|_| "request encoding")?;
     let headers = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:4444\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
-    socket
-        .write_all(headers.as_bytes())
-        .map_err(|_| "header write")?;
-    socket.write_all(&payload).map_err(|_| "body write")?;
+    write_request(&mut socket, headers.as_bytes(), deadline)?;
+    write_request(&mut socket, &payload, deadline)?;
     let bytes = read_response(&mut socket, deadline)?;
     let split = bytes
         .windows(4)
@@ -176,15 +207,19 @@ struct Driver {
 }
 impl Driver {
     #[cfg(unix)]
-    fn start(profile: &Path) -> Result<Self, String> {
+    fn start(profile: &Path, trace: &Path) -> Result<Self, String> {
         use std::os::unix::process::CommandExt;
         let mut command = Command::new("tauri-driver");
         command
             .env_clear()
             .process_group(0)
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        for name in ["PATH", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS"] {
+            .stderr(Stdio::from(
+                std::fs::File::create(trace).map_err(|_| "driver trace file")?,
+            ));
+        // XAUTHORITY is the ephemeral display cookie created by xvfb-run in CI,
+        // not an account credential or an owner browser profile.
+        for name in ["PATH", "DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
@@ -222,7 +257,7 @@ impl Driver {
     }
 
     #[cfg(not(unix))]
-    fn start(_: &Path) -> Result<Self, String> {
+    fn start(_: &Path, _: &Path) -> Result<Self, String> {
         Err("native acceptance requires isolated Linux CI".into())
     }
 
@@ -341,12 +376,8 @@ fn serve_fixture(socket: &mut TcpStream, requests: &AtomicUsize) -> Result<(), S
         .set_write_timeout(Some(remaining(deadline, Duration::from_secs(2))?))
         .map_err(|_| "fixture write deadline")?;
     let headers = format!("HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-    socket
-        .write_all(headers.as_bytes())
-        .map_err(|_| "fixture response")?;
-    socket
-        .write_all(body.as_bytes())
-        .map_err(|_| "fixture body")?;
+    write_request(socket, headers.as_bytes(), deadline)?;
+    write_request(socket, body.as_bytes(), deadline)?;
     Ok(())
 }
 
@@ -403,7 +434,13 @@ fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result
     let temp = tempfile::TempDir::new().map_err(|_| "fixture directory")?;
     std::fs::create_dir_all(output).map_err(|_| "output directory")?;
     let fixture = Fixture::start()?;
-    let mut driver = Driver::start(temp.path())?;
+    let mut driver = Driver::start(
+        temp.path(),
+        &output.join(format!(
+            "{flavor}-{}-driver.log",
+            if blocked { "protected" } else { "baseline" }
+        )),
+    )?;
     driver.open(application)?;
     let boot = driver.script("const done=arguments[arguments.length-1]; const end=Date.now()+3000; const probe=()=>{const cols=document.querySelectorAll('.matrix-rain__column');if(document.querySelector('input')&&cols.length===24){const css=getComputedStyle(cols[1]);const animation=matchMedia('(prefers-reduced-motion: reduce)').matches?'none':'matrix-fall';const el=document.createElement('div');el.setAttribute('style','color:rgb(1, 2, 3);position:fixed;left:7px;');document.body.append(el);const attr=getComputedStyle(el);const styleAttribute=attr.color==='rgb(1, 2, 3)'&&attr.left==='7px';el.remove();done({bridge:!!window.__TAURI_INTERNALS__,styleSheet:css.position==='absolute'&&css.animationName===animation,styleAttribute,inputs:document.querySelectorAll('input').length});}else if(Date.now()<end){setTimeout(probe,25)}else{done({failed:true})}};probe();", json!([]))?;
     ensure(
@@ -658,5 +695,41 @@ mod tests {
             assert_eq!(decode_chunks(prefix).unwrap(), None);
         }
         assert!(decode_chunks(b"garbage\r\n").is_err());
+    }
+
+    #[test]
+    fn premature_eof_rejects_valid_json_in_an_incomplete_frame() {
+        for reply in [
+            b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{\"value\":null}".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ne\r\n{\"value\":null}\r\n",
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let data = reply.to_vec();
+            let thread = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.write_all(&data).unwrap();
+            });
+            let mut socket = TcpStream::connect(address).unwrap();
+            assert!(read_response(&mut socket, Instant::now() + Duration::from_secs(2)).is_err());
+            thread.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn expired_write_deadline_does_not_send_any_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        assert!(write_request(
+            &mut client,
+            b"must-not-send",
+            Instant::now() - Duration::from_millis(1)
+        )
+        .is_err());
+        drop(client);
+        let mut bytes = Vec::new();
+        server.read_to_end(&mut bytes).unwrap();
+        assert!(bytes.is_empty());
     }
 }
