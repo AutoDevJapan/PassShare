@@ -85,6 +85,20 @@ pub fn run(port: u16, nonce: u128) {
     let invitations = format!("/api/auth/vaults/{box_id}/invitations");
     let members = format!("/api/auth/vaults/{box_id}/members");
     let items = format!("/v1/vaults/{box_id}/items");
+    let (status, _) = http(
+        port,
+        "POST",
+        &items,
+        &owner_access,
+        "web-sharing-fixture-item",
+        &json!({"title":"Synthetic web shared item","category":"LOGIN",
+            "fields":[{"id":"web-fixture","type":"CONCEALED","label":"password",
+                "value":"synthetic-web-share-secret"}]}),
+    );
+    assert_eq!(status, 201);
+    let (status, stored_items) = http(port, "GET", &items, &owner_access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert_eq!(stored_items.as_array().unwrap().len(), 1);
     let (status, before) = owner.request(port, "GET", &members, &Value::Null);
     assert_eq!(status, 200);
     assert_eq!(before["members"].as_array().unwrap().len(), 1);
@@ -187,9 +201,11 @@ pub fn run(port: u16, nonce: u128) {
     assert!(accepted == json!({"vaultId":box_id,"role":"member"}));
     assert_eq!(member.request(port, "POST", &accept, &proof).0, 404);
     let after_access = member.connect_token(port);
-    assert_eq!(
-        http(port, "GET", &items, &after_access, "", &Value::Null).0,
-        200
+    let (status, shared_items) = http(port, "GET", &items, &after_access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert!(
+        shared_items == stored_items,
+        "confirmed web member reads the actual retained item"
     );
     let (status, joined) = owner.request(port, "GET", &members, &Value::Null);
     assert_eq!(status, 200);
@@ -223,5 +239,11 @@ pub fn run(port: u16, nonce: u128) {
         http(port, "GET", &items, &removed_access, "", &Value::Null).0,
         403,
         "new web token cannot restore removed membership"
+    );
+    let (status, retained_items) = http(port, "GET", &items, &owner_access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert!(
+        retained_items == stored_items,
+        "sharing changes preserve the owner's complete item"
     );
 }
