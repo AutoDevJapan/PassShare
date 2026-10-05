@@ -290,4 +290,53 @@ describe("Connect API extended (#58)", () => {
     const badBody = await badRes.json();
     assert.match(badBody.message, /PS017/);
   });
+
+  for (const invalidIndex of [0, 1, 2]) {
+    it(`does not persist a 1PUX prefix when item ${invalidIndex + 1} is invalid (#598)`, async () => {
+      const listUrl = `${baseUrl}/v1/vaults/${VAULT_ID}/items`;
+      const headers = { Authorization: `Bearer ${TOKEN}` };
+      const readItems = async () => {
+        const response = await fetch(listUrl, { headers });
+        assert.equal(response.status, 200);
+        const overviews = await response.json();
+        return Promise.all(overviews.map(async ({ id }) => {
+          const itemResponse = await fetch(`${listUrl}/${id}`, { headers });
+          assert.equal(itemResponse.status, 200);
+          return itemResponse.json();
+        }));
+      };
+      const before = await readItems();
+      const source = [0, 1, 2].map((index) => ({
+        title: `Import validation ${invalidIndex}-${index}`,
+        category: index === invalidIndex ? "NOT_A_CATEGORY" : "LOGIN",
+        fields: [{ label: "username", type: "STRING", value: `fixture-${index}` }],
+      }));
+      const upload = (items) => fetch(`${baseUrl}/v1/vaults/${VAULT_ID}/imports/1pux`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ base64: Buffer.from(JSON.stringify({ items })).toString("base64") }),
+      });
+
+      const rejected = await upload(source);
+      assert.equal(rejected.status, 400);
+      assert.match((await rejected.json()).message, /PS018/);
+      assert.deepEqual(await readItems(), before);
+
+      source[invalidIndex].category = "LOGIN";
+      const retried = await upload(source);
+      assert.equal(retried.status, 201);
+      const result = await retried.json();
+      assert.equal(result.imported, 3);
+      assert.deepEqual(result.items.map(({ title }) => title), source.map(({ title }) => title));
+      const after = await readItems();
+      assert.equal(after.length, before.length + 3);
+      assert.deepEqual(after.filter(({ id }) => before.some((item) => item.id === id)), before);
+      assert.deepEqual(
+        after.filter(({ id }) => !before.some((item) => item.id === id)).map(({ title, category, fields }) => ({
+          title, category, fields: fields.map(({ label, type, value }) => ({ label, type, value })),
+        })),
+        source,
+      );
+    });
+  }
 });
