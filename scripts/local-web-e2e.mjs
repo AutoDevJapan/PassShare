@@ -27,7 +27,7 @@ function run(cmd, args, cwd = root) {
 }
 
 function main() {
-  run("cargo", ["build", "--manifest-path", "backend/native/Cargo.toml", "--release", "--locked", "--bin", "passshare-mutations"]);
+  run("cargo", ["build", "--manifest-path", "backend/native/Cargo.toml", "--target-dir", join(root, "backend", "native", "target"), "--release", "--locked", "--bin", "passshare-mutations"]);
   process.env.PASSSHARE_MUTATIONS_BIN = join(root, "backend", "native", "target", "release",
     process.platform === "win32" ? "passshare-mutations.exe" : "passshare-mutations");
   run("pnpm", ["install", "--frozen-lockfile"]);

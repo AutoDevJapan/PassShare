@@ -51,7 +51,7 @@ pnpm --dir frontend install --frozen-lockfile
 先に保存用のRust実行ファイルを構築します。このPCのエージェントはCargoの割当を確認してから実行します。正式Dockerイメージではビルドと配置をDockerfileが行います。
 
 ```powershell
-cargo build --manifest-path backend/native/Cargo.toml --release --locked --bin passshare-mutations
+cargo build --manifest-path backend/native/Cargo.toml --target-dir backend/native/target --release --locked --bin passshare-mutations
 $env:PASSSHARE_MUTATIONS_BIN = (Resolve-Path 'backend/native/target/release/passshare-mutations.exe').Path
 $env:APP_ENV = "local"
 $env:PORT = "8080"

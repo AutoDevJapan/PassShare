@@ -349,7 +349,7 @@
 }
 
 .ps-textarea {
-  min-height: 6rem;
+  min-height: calc(6rem + 2 * var(--ps-space-3) + 2px);
   resize: vertical;
 }
 
