@@ -27,7 +27,6 @@ type AuthErrorBody = {
   code?: string;
 };
 
-
 // Railway backend cold-starts (idle wake / fresh deploy) briefly have no healthy
 // replica, so the edge proxy returns a transient 5xx before the container is
 // listening. These retries absorb that window so the first request after idle

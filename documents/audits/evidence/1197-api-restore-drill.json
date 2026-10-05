@@ -1,0 +1,303 @@
+{
+  "source_commit": "df8c53a3e1dade29ff92672780026df6ce6092ec",
+  "synthetic_only": true,
+  "api_client": "PowerShell orchestration with container-local curl, mobile token protocol",
+  "checks": [
+    {
+      "name": "docker_network_is_internal",
+      "passed": true,
+      "at": "2026-10-04T13:20:31.8653975+00:00"
+    },
+    {
+      "name": "synthetic_postgres_ready_no_published_port",
+      "passed": true,
+      "at": "2026-10-04T13:20:33.5754178+00:00"
+    },
+    {
+      "name": "no_published_port_passshare-1197-source-220841",
+      "passed": true,
+      "at": "2026-10-04T13:20:34.2959786+00:00"
+    },
+    {
+      "name": "signup_owner@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:35.1956621+00:00"
+    },
+    {
+      "name": "signup_member@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:35.3906560+00:00"
+    },
+    {
+      "name": "signup_invitee@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:35.5838798+00:00"
+    },
+    {
+      "name": "signup_deleted@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:35.7823768+00:00"
+    },
+    {
+      "name": "owner_has_one_box",
+      "passed": true,
+      "at": "2026-10-04T13:20:35.9163663+00:00"
+    },
+    {
+      "name": "created_item_via_real_api",
+      "passed": true,
+      "at": "2026-10-04T13:20:36.0433300+00:00"
+    },
+    {
+      "name": "created_attachment_via_real_api",
+      "passed": true,
+      "at": "2026-10-04T13:20:36.1782286+00:00"
+    },
+    {
+      "name": "invited_member_via_real_api",
+      "passed": true,
+      "at": "2026-10-04T13:20:36.3092419+00:00"
+    },
+    {
+      "name": "accepted_member_via_real_api",
+      "passed": true,
+      "at": "2026-10-04T13:20:36.4302921+00:00"
+    },
+    {
+      "name": "member_reads_item_before_snapshot",
+      "passed": true,
+      "at": "2026-10-04T13:20:36.8112877+00:00"
+    },
+    {
+      "name": "pending_invitation_before_snapshot",
+      "passed": true,
+      "at": "2026-10-04T13:20:36.9387797+00:00"
+    },
+    {
+      "name": "source_member_removal",
+      "passed": true,
+      "at": "2026-10-04T13:20:37.3628775+00:00"
+    },
+    {
+      "name": "source_old_member_token_denied",
+      "passed": true,
+      "at": "2026-10-04T13:20:37.4866051+00:00"
+    },
+    {
+      "name": "source_pending_invitation_revoked",
+      "passed": true,
+      "at": "2026-10-04T13:20:37.6076345+00:00"
+    },
+    {
+      "name": "source_old_password_denied_after_simulated_change",
+      "passed": true,
+      "at": "2026-10-04T13:20:37.9654807+00:00"
+    },
+    {
+      "name": "source_deleted_account_denied",
+      "passed": true,
+      "at": "2026-10-04T13:20:38.1012895+00:00"
+    },
+    {
+      "name": "restored_ten_tables_exact_match_before_api",
+      "passed": true,
+      "at": "2026-10-04T13:20:38.9910006+00:00"
+    },
+    {
+      "name": "no_published_port_passshare-1197-restored-220841",
+      "passed": true,
+      "at": "2026-10-04T13:20:39.5343890+00:00"
+    },
+    {
+      "name": "unsafe_restore_resurrects_member_token",
+      "passed": true,
+      "at": "2026-10-04T13:20:40.5850772+00:00"
+    },
+    {
+      "name": "unsafe_restore_resurrects_owner_session",
+      "passed": true,
+      "at": "2026-10-04T13:20:40.7192730+00:00"
+    },
+    {
+      "name": "unsafe_restore_resurrects_old_password",
+      "passed": true,
+      "at": "2026-10-04T13:20:40.8975886+00:00"
+    },
+    {
+      "name": "unsafe_restore_resurrects_deleted_account",
+      "passed": true,
+      "at": "2026-10-04T13:20:41.0904988+00:00"
+    },
+    {
+      "name": "unsafe_restore_resurrects_revoked_invitation",
+      "passed": true,
+      "at": "2026-10-04T13:20:41.2176112+00:00"
+    },
+    {
+      "name": "restored_api_stopped_before_reconciliation",
+      "passed": true,
+      "at": "2026-10-04T13:20:44.5996511+00:00"
+    },
+    {
+      "name": "purge_and_current_account_reconciliation",
+      "passed": true,
+      "at": "2026-10-04T13:20:44.8460087+00:00"
+    },
+    {
+      "name": "no_published_port_passshare-1197-static-220841",
+      "passed": true,
+      "at": "2026-10-04T13:20:45.2480234+00:00"
+    },
+    {
+      "name": "staging_static_token_bypasses_database_purge",
+      "passed": true,
+      "at": "2026-10-04T13:20:45.6600466+00:00"
+    },
+    {
+      "name": "isolated_production_mode_api_restart",
+      "passed": true,
+      "at": "2026-10-04T13:20:49.4643504+00:00"
+    },
+    {
+      "name": "production_rejects_static_token",
+      "passed": true,
+      "at": "2026-10-04T13:20:49.6087828+00:00"
+    },
+    {
+      "name": "old_session_denied_owner@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:49.8959463+00:00"
+    },
+    {
+      "name": "old_session_denied_member@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:50.0301654+00:00"
+    },
+    {
+      "name": "old_session_denied_invitee@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:50.1507617+00:00"
+    },
+    {
+      "name": "old_session_denied_deleted@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:50.2700882+00:00"
+    },
+    {
+      "name": "old_owner_connect_denied",
+      "passed": true,
+      "at": "2026-10-04T13:20:50.4019235+00:00"
+    },
+    {
+      "name": "old_member_connect_denied",
+      "passed": true,
+      "at": "2026-10-04T13:20:50.5173994+00:00"
+    },
+    {
+      "name": "old_refresh_token_denied",
+      "passed": true,
+      "at": "2026-10-04T13:20:50.6519393+00:00"
+    },
+    {
+      "name": "old_owner_password_remains_denied",
+      "passed": true,
+      "at": "2026-10-04T13:20:50.9184491+00:00"
+    },
+    {
+      "name": "deleted_account_remains_denied",
+      "passed": true,
+      "at": "2026-10-04T13:20:51.0446721+00:00"
+    },
+    {
+      "name": "login_owner@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:51.2180313+00:00"
+    },
+    {
+      "name": "login_member@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:51.4160023+00:00"
+    },
+    {
+      "name": "login_invitee@example.invalid",
+      "passed": true,
+      "at": "2026-10-04T13:20:51.6122085+00:00"
+    },
+    {
+      "name": "current_owner_cannot_read_before_reapproval",
+      "passed": true,
+      "at": "2026-10-04T13:20:51.7415514+00:00"
+    },
+    {
+      "name": "former_member_cannot_read_with_fresh_token",
+      "passed": true,
+      "at": "2026-10-04T13:20:51.8561646+00:00"
+    },
+    {
+      "name": "revoked_invitation_cannot_be_accepted",
+      "passed": true,
+      "at": "2026-10-04T13:20:52.0081370+00:00"
+    },
+    {
+      "name": "reapproved_owner_recovers_exact_item",
+      "passed": true,
+      "at": "2026-10-04T13:20:52.4470031+00:00"
+    },
+    {
+      "name": "reapproved_owner_recovers_exact_attachment",
+      "passed": true,
+      "at": "2026-10-04T13:20:52.7102318+00:00"
+    },
+    {
+      "name": "reapproved_owner_can_save_with_version_increment",
+      "passed": true,
+      "at": "2026-10-04T13:20:52.8576200+00:00"
+    },
+    {
+      "name": "stale_edit_denied_after_recovery",
+      "passed": true,
+      "at": "2026-10-04T13:20:53.1080051+00:00"
+    },
+    {
+      "name": "former_member_still_denied_after_owner_reapproval",
+      "passed": true,
+      "at": "2026-10-04T13:20:53.2283235+00:00"
+    },
+    {
+      "name": "only_reapproved_owner_in_membership_api",
+      "passed": true,
+      "at": "2026-10-04T13:20:53.4592584+00:00"
+    },
+    {
+      "name": "source_unchanged_during_restore_and_api_checks",
+      "passed": true,
+      "at": "2026-10-04T13:20:53.7395359+00:00"
+    }
+  ],
+  "completed": true,
+  "dump_sha256": "EDE685740785FCA7519E0113F3A771B11BD9C576EDE7250AD54873087E412267",
+  "image_id": "sha256:8c64dfdb82348d5092e3ccd9559e8dbac032327d8c1d223ae14c86a321236538",
+  "cleanup": [
+    {
+      "name": "passshare-1197-db-220841",
+      "removed": true
+    },
+    {
+      "name": "passshare-1197-source-220841",
+      "removed": true
+    },
+    {
+      "name": "passshare-1197-restored-220841",
+      "removed": true
+    },
+    {
+      "name": "passshare-1197-static-220841",
+      "removed": true
+    },
+    {
+      "name": "passshare-1197-220841",
+      "removed": true
+    }
+  ],
+  "finished_at": "2026-10-04T13:20:55.9460963+00:00"
+}

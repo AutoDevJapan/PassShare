@@ -1,0 +1,110 @@
+{
+  "source_commit": "6525462471191fe917a00c28e6256843bfb7a747",
+  "image": "postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb",
+  "synthetic_only": true,
+  "checks": [
+    {
+      "name": "isolated_postgres_ready",
+      "passed": true,
+      "at": "2026-10-04T11:30:47.3402637+00:00"
+    },
+    {
+      "name": "no_network_or_published_ports",
+      "passed": true,
+      "at": "2026-10-04T11:30:47.4468140+00:00"
+    },
+    {
+      "name": "schema_extracted_backend/src/db/schema.js",
+      "passed": true,
+      "at": "2026-10-04T11:30:47.7066017+00:00"
+    },
+    {
+      "name": "schema_extracted_backend/src/db/auth-schema.js",
+      "passed": true,
+      "at": "2026-10-04T11:30:47.8411607+00:00"
+    },
+    {
+      "name": "all_ten_tables_exact_content_match",
+      "passed": true,
+      "at": "2026-10-04T11:30:49.4627483+00:00"
+    },
+    {
+      "name": "post_backup_write_not_restored",
+      "passed": true,
+      "at": "2026-10-04T11:30:49.5722938+00:00"
+    },
+    {
+      "name": "restored_roles_exact",
+      "passed": true,
+      "at": "2026-10-04T11:30:49.6800638+00:00"
+    },
+    {
+      "name": "backup_resurrects_membership_revoked_after_snapshot",
+      "passed": true,
+      "at": "2026-10-04T11:30:49.9156032+00:00"
+    },
+    {
+      "name": "rollback_restores_cascade_deletion",
+      "passed": true,
+      "at": "2026-10-04T11:30:50.2491054+00:00"
+    },
+    {
+      "name": "orphan_membership_rejected_by_foreign_key",
+      "passed": true,
+      "at": "2026-10-04T11:30:50.3546597+00:00"
+    },
+    {
+      "name": "database_read_only_role_can_read",
+      "passed": true,
+      "at": "2026-10-04T11:30:50.5540115+00:00"
+    },
+    {
+      "name": "database_read_only_role_cannot_write",
+      "passed": true,
+      "at": "2026-10-04T11:30:50.6539743+00:00"
+    },
+    {
+      "name": "snapshot_contains_old_credentials_requiring_purge",
+      "passed": true,
+      "at": "2026-10-04T11:30:50.8599645+00:00"
+    },
+    {
+      "name": "restored_credentials_and_invitations_invalidated",
+      "passed": true,
+      "at": "2026-10-04T11:30:51.0673373+00:00"
+    },
+    {
+      "name": "purge_preserves_items_and_attachments_with_no_access_grants",
+      "passed": true,
+      "at": "2026-10-04T11:30:51.1676666+00:00"
+    },
+    {
+      "name": "explicit_reapproval_excludes_revoked_member",
+      "passed": true,
+      "at": "2026-10-04T11:30:51.3752636+00:00"
+    },
+    {
+      "name": "source_unchanged_by_restore_and_purge",
+      "passed": true,
+      "at": "2026-10-04T11:30:51.4746419+00:00"
+    },
+    {
+      "name": "restart_preserves_restored_state",
+      "passed": true,
+      "at": "2026-10-04T11:30:52.3211707+00:00"
+    }
+  ],
+  "postgres_version": "PostgreSQL 16.14 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+  "dump_ms": 182.2488,
+  "restore_and_verification_ms": 520.1229,
+  "post_backup_rows_lost": 1,
+  "backup_age_at_verification_seconds": 1.1125518,
+  "stale_session_rows_before_purge": 1,
+  "stale_connect_token_rows_before_purge": 1,
+  "dump_sha256": "D5E66A274B7A625297FC70D65E994C34C2750CAAEB09DC4D2BCF5A39C4FBB31A",
+  "baseline_sha256": "3C69D999F77CA8D21C40EFD99B6E7FE96795DE3114627083816FA8E90CDE3553",
+  "dump_bytes": 22297,
+  "completed": true,
+  "container_removed": true,
+  "finished_at": "2026-10-04T11:30:52.7174299+00:00"
+}

@@ -65,9 +65,11 @@ export function createVaultRoutes(store, options = {}) {
       }
 
       const sourceItems = await parse1puxBuffer(zipBuffer);
+      // Reject invalid input before any item is persisted. Storage failures can
+      // still leave a partial import; this is not a batch transaction.
+      const bodies = sourceItems.map(map1puxItemToConnectBody);
       const created = [];
-      for (const sourceItem of sourceItems) {
-        const body = map1puxItemToConnectBody(sourceItem);
+      for (const body of bodies) {
         const item = await store.createItem(vaultUuid, body);
         created.push(item);
       }

@@ -1,0 +1,624 @@
+{
+  "task": 1537,
+  "parent": 1197,
+  "original_review": 1250,
+  "original_pr_head": "f2103998f985375352030815dd2819ce0478dcd6",
+  "source_commit": "df8c53a3e1dade29ff92672780026df6ce6092ec",
+  "source_unchanged": true,
+  "completed": true,
+  "acceptance_count": 54,
+  "failed": 0,
+  "owner_reapproval": "SQL only; API verifies subsequent authorization; real identity and production reapproval not tested",
+  "original_results_overwritten": false,
+  "fresh_auth_values_persisted": false,
+  "original_dedicated_image_tag_and_id_absent_before_build": true,
+  "cleanup": {
+    "containers_absent": true,
+    "networks_absent": true,
+    "image_tag_absent": true,
+    "image_id_absent": true,
+    "db_volume_removal_command": "owned container docker rm -v exit0; no independent mount-ID absence measurement"
+  },
+  "report": {
+    "source_commit": "df8c53a3e1dade29ff92672780026df6ce6092ec",
+    "synthetic_only": true,
+    "api_client": "PowerShell orchestration with container-local curl, mobile token protocol",
+    "checks": [
+      {
+        "name": "docker_network_is_internal",
+        "passed": true,
+        "at": "2026-10-05T05:51:44.0690337+09:00"
+      },
+      {
+        "name": "synthetic_postgres_ready_no_published_port",
+        "passed": true,
+        "at": "2026-10-05T05:51:45.9633986+09:00"
+      },
+      {
+        "name": "no_published_port_passshare-1537-source-054714",
+        "passed": true,
+        "at": "2026-10-05T05:51:46.6312361+09:00"
+      },
+      {
+        "name": "signup_owner@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:51:47.1394894+09:00"
+      },
+      {
+        "name": "signup_member@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:51:47.3267403+09:00"
+      },
+      {
+        "name": "signup_invitee@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:51:47.528909+09:00"
+      },
+      {
+        "name": "signup_deleted@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:51:47.7219656+09:00"
+      },
+      {
+        "name": "owner_has_one_box",
+        "passed": true,
+        "at": "2026-10-05T05:51:47.8313698+09:00"
+      },
+      {
+        "name": "created_item_via_real_api",
+        "passed": true,
+        "at": "2026-10-05T05:51:47.9729949+09:00"
+      },
+      {
+        "name": "created_attachment_via_real_api",
+        "passed": true,
+        "at": "2026-10-05T05:51:48.0805362+09:00"
+      },
+      {
+        "name": "invited_member_via_real_api",
+        "passed": true,
+        "at": "2026-10-05T05:51:48.1894278+09:00"
+      },
+      {
+        "name": "accepted_member_via_real_api",
+        "passed": true,
+        "at": "2026-10-05T05:51:48.4264285+09:00"
+      },
+      {
+        "name": "member_reads_item_before_snapshot",
+        "passed": true,
+        "at": "2026-10-05T05:51:48.9916713+09:00"
+      },
+      {
+        "name": "pending_invitation_before_snapshot",
+        "passed": true,
+        "at": "2026-10-05T05:51:49.1341392+09:00"
+      },
+      {
+        "name": "source_member_removal",
+        "passed": true,
+        "at": "2026-10-05T05:51:49.5716361+09:00"
+      },
+      {
+        "name": "source_old_member_token_denied",
+        "passed": true,
+        "at": "2026-10-05T05:51:49.6738484+09:00"
+      },
+      {
+        "name": "source_pending_invitation_revoked",
+        "passed": true,
+        "at": "2026-10-05T05:51:49.7748316+09:00"
+      },
+      {
+        "name": "source_old_password_denied_after_simulated_change",
+        "passed": true,
+        "at": "2026-10-05T05:51:50.0335941+09:00"
+      },
+      {
+        "name": "source_deleted_account_denied",
+        "passed": true,
+        "at": "2026-10-05T05:51:50.1443419+09:00"
+      },
+      {
+        "name": "restored_ten_tables_exact_match_before_api",
+        "passed": true,
+        "at": "2026-10-05T05:51:50.7150895+09:00"
+      },
+      {
+        "name": "no_published_port_passshare-1537-restored-054714",
+        "passed": true,
+        "at": "2026-10-05T05:51:51.068764+09:00"
+      },
+      {
+        "name": "unsafe_restore_resurrects_member_token",
+        "passed": true,
+        "at": "2026-10-05T05:51:51.2920101+09:00"
+      },
+      {
+        "name": "unsafe_restore_resurrects_owner_session",
+        "passed": true,
+        "at": "2026-10-05T05:51:51.455717+09:00"
+      },
+      {
+        "name": "unsafe_restore_resurrects_old_password",
+        "passed": true,
+        "at": "2026-10-05T05:51:51.6295332+09:00"
+      },
+      {
+        "name": "unsafe_restore_resurrects_deleted_account",
+        "passed": true,
+        "at": "2026-10-05T05:51:51.8185676+09:00"
+      },
+      {
+        "name": "unsafe_restore_resurrects_revoked_invitation",
+        "passed": true,
+        "at": "2026-10-05T05:51:51.9383047+09:00"
+      },
+      {
+        "name": "restored_api_stopped_before_reconciliation",
+        "passed": true,
+        "at": "2026-10-05T05:51:55.2883344+09:00"
+      },
+      {
+        "name": "purge_and_current_account_reconciliation",
+        "passed": true,
+        "at": "2026-10-05T05:51:55.5052327+09:00"
+      },
+      {
+        "name": "no_published_port_passshare-1537-static-054714",
+        "passed": true,
+        "at": "2026-10-05T05:51:55.8450183+09:00"
+      },
+      {
+        "name": "staging_static_token_bypasses_database_purge",
+        "passed": true,
+        "at": "2026-10-05T05:51:56.078712+09:00"
+      },
+      {
+        "name": "isolated_production_mode_api_restart",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.2066924+09:00"
+      },
+      {
+        "name": "production_rejects_static_token",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.3211382+09:00"
+      },
+      {
+        "name": "old_session_denied_owner@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.4269332+09:00"
+      },
+      {
+        "name": "old_session_denied_member@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.5383508+09:00"
+      },
+      {
+        "name": "old_session_denied_invitee@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.6458476+09:00"
+      },
+      {
+        "name": "old_session_denied_deleted@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.748292+09:00"
+      },
+      {
+        "name": "old_owner_connect_denied",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.8477994+09:00"
+      },
+      {
+        "name": "old_member_connect_denied",
+        "passed": true,
+        "at": "2026-10-05T05:52:00.9409878+09:00"
+      },
+      {
+        "name": "old_refresh_token_denied",
+        "passed": true,
+        "at": "2026-10-05T05:52:01.0454912+09:00"
+      },
+      {
+        "name": "old_owner_password_remains_denied",
+        "passed": true,
+        "at": "2026-10-05T05:52:01.2576859+09:00"
+      },
+      {
+        "name": "deleted_account_remains_denied",
+        "passed": true,
+        "at": "2026-10-05T05:52:01.35257+09:00"
+      },
+      {
+        "name": "login_owner@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:52:01.5692948+09:00"
+      },
+      {
+        "name": "login_member@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:52:01.7700419+09:00"
+      },
+      {
+        "name": "login_invitee@example.invalid",
+        "passed": true,
+        "at": "2026-10-05T05:52:01.9612348+09:00"
+      },
+      {
+        "name": "current_owner_cannot_read_before_reapproval",
+        "passed": true,
+        "at": "2026-10-05T05:52:02.0566142+09:00"
+      },
+      {
+        "name": "former_member_cannot_read_with_fresh_token",
+        "passed": true,
+        "at": "2026-10-05T05:52:02.1531848+09:00"
+      },
+      {
+        "name": "revoked_invitation_cannot_be_accepted",
+        "passed": true,
+        "at": "2026-10-05T05:52:02.2514756+09:00"
+      },
+      {
+        "name": "reapproved_owner_recovers_exact_item",
+        "passed": true,
+        "at": "2026-10-05T05:52:02.5704557+09:00"
+      },
+      {
+        "name": "reapproved_owner_recovers_exact_attachment",
+        "passed": true,
+        "at": "2026-10-05T05:52:02.8019332+09:00"
+      },
+      {
+        "name": "reapproved_owner_can_save_with_version_increment",
+        "passed": true,
+        "at": "2026-10-05T05:52:02.927667+09:00"
+      },
+      {
+        "name": "stale_edit_denied_after_recovery",
+        "passed": true,
+        "at": "2026-10-05T05:52:03.1605123+09:00"
+      },
+      {
+        "name": "former_member_still_denied_after_owner_reapproval",
+        "passed": true,
+        "at": "2026-10-05T05:52:03.258128+09:00"
+      },
+      {
+        "name": "only_reapproved_owner_in_membership_api",
+        "passed": true,
+        "at": "2026-10-05T05:52:03.3649573+09:00"
+      },
+      {
+        "name": "source_unchanged_during_restore_and_api_checks",
+        "passed": true,
+        "at": "2026-10-05T05:52:03.4642194+09:00"
+      }
+    ],
+    "completed": true,
+    "baseline_sha256": "8AC275DCA3DB89E6F3F9D667512DD585FB131E5F2DF3A3A71B93B6609B874BF0",
+    "dump_sha256": "3E84A7468824C3916F29273B5CF047D1DB01AE4E53EB861AF963F2FE12FDFFBD",
+    "dump_bytes": 24016,
+    "owner_reapproval": "SQL INSERT into synthetic restored DB; API verifies authorization after insertion only",
+    "image_id": "sha256:7456d345b6bfae33c66e3f0bd77d5abd64a3e9f8ce2edd8499b2534c600c9487",
+    "cleanup": [
+      {
+        "name": "passshare-1537-db-054714",
+        "removed": true
+      },
+      {
+        "name": "passshare-1537-source-054714",
+        "removed": true
+      },
+      {
+        "name": "passshare-1537-restored-054714",
+        "removed": true
+      },
+      {
+        "name": "passshare-1537-static-054714",
+        "removed": true
+      },
+      {
+        "name": "passshare-1537-054714",
+        "removed": true
+      },
+      {
+        "removed": true,
+        "kind": "owned_image_tag",
+        "name": "passshare-api-drill-1537-054714"
+      }
+    ],
+    "cleanup_passed": true,
+    "finished_at": "2026-10-05T05:52:08.8046238+09:00"
+  },
+  "artifact_sha256": [
+    {
+      "Path": "D:\\CC\\Work\\passshare-orch-20261005-054714\\api-restore-20261004-205143.json",
+      "Hash": "F74ED4FC02EFEDF12709693954B5C78E5FA0E2D4E6FF0169C37AE36822A6144D"
+    },
+    {
+      "Path": "D:\\CC\\Work\\passshare-orch-20261005-054714\\run-api-restore-drill-remediation-1537.ps1",
+      "Hash": "500D094634A001EEC0B736CC4C49D9B4B3D1B32ACBAADF0F650DCBFBE7384399"
+    },
+    {
+      "Path": "D:\\CC\\Work\\passshare-orch-20261004-220841\\run-api-restore-drill.ps1",
+      "Hash": "5BEF90C978C3FEC11ED60ED18CEA7F944B6C6988DD55C3ED09A5BA15E4D9E783"
+    },
+    {
+      "Path": "D:\\CC\\Work\\passshare-orch-20261004-202220\\review-594-result.md",
+      "Hash": "5DDF3AB55DCFBD0A0B15D555EF03D83D5BE62CC8228A6DFBBFE79529816576CB"
+    }
+  ],
+  "limits": [
+    "Mobile HTTP token protocol; no Web/GUI/SDK/full client acceptance",
+    "No production identity/reapproval/key restore/Railway/RTO/RPO acceptance",
+    "Review of new full PR diff, CI and main integration outstanding"
+  ],
+  "source_context_checks": [
+    {
+      "path": "package.json",
+      "source_sha256": "B53DC490A5522E377AB341C9633545725A3D547196E12CA65E21577EF7F7CD56",
+      "image_context_sha256": "B53DC490A5522E377AB341C9633545725A3D547196E12CA65E21577EF7F7CD56",
+      "equal": true
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "source_sha256": "9B7EA495854421273CF32BB15A2C89BDD0852DD777A902D04B8079C84C6963C9",
+      "image_context_sha256": "9B7EA495854421273CF32BB15A2C89BDD0852DD777A902D04B8079C84C6963C9",
+      "equal": true
+    },
+    {
+      "path": "src\\app.js",
+      "source_sha256": "1DC36B0AC449E5C10EB9699B29109A97E1C11E4E2EB0F260FDD4C4154EF1BD52",
+      "image_context_sha256": "1DC36B0AC449E5C10EB9699B29109A97E1C11E4E2EB0F260FDD4C4154EF1BD52",
+      "equal": true
+    },
+    {
+      "path": "src\\index.js",
+      "source_sha256": "37EA466142AD2D5677D29C34E965BF0D3FF56C176E76F5D6ACDC40601447C801",
+      "image_context_sha256": "37EA466142AD2D5677D29C34E965BF0D3FF56C176E76F5D6ACDC40601447C801",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\client.js",
+      "source_sha256": "235F9247C261C13BC7CF8BE0A69D61564EE72625F7189411AD36011F893A43AF",
+      "image_context_sha256": "235F9247C261C13BC7CF8BE0A69D61564EE72625F7189411AD36011F893A43AF",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\constants.js",
+      "source_sha256": "C46CA3526AA846CF5A543E105F2FD769ED972424B78DE6C0CA3E914E13D481CA",
+      "image_context_sha256": "C46CA3526AA846CF5A543E105F2FD769ED972424B78DE6C0CA3E914E13D481CA",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\csrf.js",
+      "source_sha256": "5C162FF67C5CC9C047BC805DEDACB1C4D8BF55A855B54EA757226F65EF920B76",
+      "image_context_sha256": "5C162FF67C5CC9C047BC805DEDACB1C4D8BF55A855B54EA757226F65EF920B76",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\errors.js",
+      "source_sha256": "536C93893CC6EB6A401E0F236742EAEBD14F44B0DE7171677B1C038752F5A7C9",
+      "image_context_sha256": "536C93893CC6EB6A401E0F236742EAEBD14F44B0DE7171677B1C038752F5A7C9",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\index.js",
+      "source_sha256": "58B1BA14F2081D13C637264229BDEED75F8BEA512834073B88188F7252CE33D5",
+      "image_context_sha256": "58B1BA14F2081D13C637264229BDEED75F8BEA512834073B88188F7252CE33D5",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\login-guard-store.js",
+      "source_sha256": "5C5893684C53125A88E9F1848AC9384730FF4A50F09E216EE92D5436766883E5",
+      "image_context_sha256": "5C5893684C53125A88E9F1848AC9384730FF4A50F09E216EE92D5436766883E5",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\login-guard.js",
+      "source_sha256": "F570E77BBF205F0B046C9C96113A496B6B0A379954234938C6C931B6365043E2",
+      "image_context_sha256": "F570E77BBF205F0B046C9C96113A496B6B0A379954234938C6C931B6365043E2",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\memory-auth-store.js",
+      "source_sha256": "214CB36C08F23CD69430796F80768DDE7E6EDD3DDD89BEEB6BDF1A333DCB6A56",
+      "image_context_sha256": "214CB36C08F23CD69430796F80768DDE7E6EDD3DDD89BEEB6BDF1A333DCB6A56",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\mobile-response.js",
+      "source_sha256": "3240DCFD374FCC782F1786D4693854F10BDCF0182DE74F0CF9A4ECE8EE38EE23",
+      "image_context_sha256": "3240DCFD374FCC782F1786D4693854F10BDCF0182DE74F0CF9A4ECE8EE38EE23",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\password.js",
+      "source_sha256": "817E37615E657843015D932860A08F8CD16E0852D9285BF626F09F709090D699",
+      "image_context_sha256": "817E37615E657843015D932860A08F8CD16E0852D9285BF626F09F709090D699",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\pg-auth-store.js",
+      "source_sha256": "E00814C841F1112137C0FD160FE286642B2E2DA6DC86B44F93D5E18BC5C42A02",
+      "image_context_sha256": "E00814C841F1112137C0FD160FE286642B2E2DA6DC86B44F93D5E18BC5C42A02",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\rate-limit-constants.js",
+      "source_sha256": "CCFCCB15681DE482009F10CFCA723B9DA489808596C6B6C45F8889ACCB777C4B",
+      "image_context_sha256": "CCFCCB15681DE482009F10CFCA723B9DA489808596C6B6C45F8889ACCB777C4B",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\router.js",
+      "source_sha256": "76D571227B5AEAC4573CB52DB89B600B0A2205B73FD54A471290F8BEB3B94AAA",
+      "image_context_sha256": "76D571227B5AEAC4573CB52DB89B600B0A2205B73FD54A471290F8BEB3B94AAA",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\session.js",
+      "source_sha256": "A1C3411CC8D6C50049EDFF44FD9D1D7D9CA96A4C2C221366768F0D7F9741B1F0",
+      "image_context_sha256": "A1C3411CC8D6C50049EDFF44FD9D1D7D9CA96A4C2C221366768F0D7F9741B1F0",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\share-router.js",
+      "source_sha256": "D88F909C5DA20C2E9D1DD4633B66A72A8BF3BE3E21EE61069AC81B791492A1AB",
+      "image_context_sha256": "D88F909C5DA20C2E9D1DD4633B66A72A8BF3BE3E21EE61069AC81B791492A1AB",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\tokens.js",
+      "source_sha256": "10CBB48E71D7C1027D36982E19805DC75AE6EB94A6E022902F90C78A83B391C3",
+      "image_context_sha256": "10CBB48E71D7C1027D36982E19805DC75AE6EB94A6E022902F90C78A83B391C3",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\validation.js",
+      "source_sha256": "4C6191F964BFA2A5D5451440AB922DDE47491B46D5F184ABD1A563466453BEF1",
+      "image_context_sha256": "4C6191F964BFA2A5D5451440AB922DDE47491B46D5F184ABD1A563466453BEF1",
+      "equal": true
+    },
+    {
+      "path": "src\\auth\\vault-access.js",
+      "source_sha256": "AF82B61043F8807089DBD4677FC3FD5CE87E6DDB9A4C1CE971298CAB87ED84A7",
+      "image_context_sha256": "AF82B61043F8807089DBD4677FC3FD5CE87E6DDB9A4C1CE971298CAB87ED84A7",
+      "equal": true
+    },
+    {
+      "path": "src\\config\\db-ssl.js",
+      "source_sha256": "A957177341D339297710DA172F8A049B0E12EF702D558B321E65C2663741163E",
+      "image_context_sha256": "A957177341D339297710DA172F8A049B0E12EF702D558B321E65C2663741163E",
+      "equal": true
+    },
+    {
+      "path": "src\\config\\metrics-auth.js",
+      "source_sha256": "24DA9DAF2423C8F31D935FA566CA2333306DDC602414A43FF41CCFC0761FAF57",
+      "image_context_sha256": "24DA9DAF2423C8F31D935FA566CA2333306DDC602414A43FF41CCFC0761FAF57",
+      "equal": true
+    },
+    {
+      "path": "src\\config\\trust-proxy.js",
+      "source_sha256": "6C6808175383D28A974CCD9FFFD42D44EC1D3A3EF865235F2293D8709F83024A",
+      "image_context_sha256": "6C6808175383D28A974CCD9FFFD42D44EC1D3A3EF865235F2293D8709F83024A",
+      "equal": true
+    },
+    {
+      "path": "src\\connect\\router.js",
+      "source_sha256": "D63CEC292D8F7EC6FC2325B74E86232D00C37CC7318C4A888C44DFD28B67DB9E",
+      "image_context_sha256": "D63CEC292D8F7EC6FC2325B74E86232D00C37CC7318C4A888C44DFD28B67DB9E",
+      "equal": true
+    },
+    {
+      "path": "src\\db\\auth-schema.js",
+      "source_sha256": "66B3375936F959C66AECB5268CC612BBDFD95B1535CB3C2DC204A87038E3D8CC",
+      "image_context_sha256": "66B3375936F959C66AECB5268CC612BBDFD95B1535CB3C2DC204A87038E3D8CC",
+      "equal": true
+    },
+    {
+      "path": "src\\db\\dev-seed.js",
+      "source_sha256": "8DD147A1159B8F372C7009C9AAD2E41E2A3B8744BB89DA5DED2516615013E7D7",
+      "image_context_sha256": "8DD147A1159B8F372C7009C9AAD2E41E2A3B8744BB89DA5DED2516615013E7D7",
+      "equal": true
+    },
+    {
+      "path": "src\\db\\migration-lock.js",
+      "source_sha256": "DB5A8BEFC4FF84A823DB6DA12F1D747EEF064ED0F07F945BC526A34359C217B0",
+      "image_context_sha256": "DB5A8BEFC4FF84A823DB6DA12F1D747EEF064ED0F07F945BC526A34359C217B0",
+      "equal": true
+    },
+    {
+      "path": "src\\db\\schema.js",
+      "source_sha256": "232145EFDF08F1B8DCA26B530AD6DFAA46E9C2984C9D70580F27DA3C0FD19680",
+      "image_context_sha256": "232145EFDF08F1B8DCA26B530AD6DFAA46E9C2984C9D70580F27DA3C0FD19680",
+      "equal": true
+    },
+    {
+      "path": "src\\lib\\1pux-import.js",
+      "source_sha256": "5D3BE7ECE199658DB6E455FF91AEC3828AD98A47BDA064553A8D1C0E922FC493",
+      "image_context_sha256": "5D3BE7ECE199658DB6E455FF91AEC3828AD98A47BDA064553A8D1C0E922FC493",
+      "equal": true
+    },
+    {
+      "path": "src\\lib\\categories.js",
+      "source_sha256": "A0497B094FEB4E7E14CA065F9B8F369D7CCD7DBAAD6BDFE5984420BEB80501EF",
+      "image_context_sha256": "A0497B094FEB4E7E14CA065F9B8F369D7CCD7DBAAD6BDFE5984420BEB80501EF",
+      "equal": true
+    },
+    {
+      "path": "src\\lib\\connect.js",
+      "source_sha256": "09B7D6EE49D0F65C4089BB35D17F7B23E3088D0425350C8507F342EEF06C251A",
+      "image_context_sha256": "09B7D6EE49D0F65C4089BB35D17F7B23E3088D0425350C8507F342EEF06C251A",
+      "equal": true
+    },
+    {
+      "path": "src\\lib\\json-patch.js",
+      "source_sha256": "D10D59A5E81C17A750F81B85BCCE2C80D0C55E903207A77A4D4616D3A6AAA8A2",
+      "image_context_sha256": "D10D59A5E81C17A750F81B85BCCE2C80D0C55E903207A77A4D4616D3A6AAA8A2",
+      "equal": true
+    },
+    {
+      "path": "src\\middleware\\connect-auth.js",
+      "source_sha256": "B3D3115650DB598DD28ADFD08AA448D2F173FBAC3325A2EE2E60422910752117",
+      "image_context_sha256": "B3D3115650DB598DD28ADFD08AA448D2F173FBAC3325A2EE2E60422910752117",
+      "equal": true
+    },
+    {
+      "path": "src\\middleware\\connect-errors.js",
+      "source_sha256": "FB3E5255CD05722B7E646479185067329FDDF4E235FD63C28BB459D07F146783",
+      "image_context_sha256": "FB3E5255CD05722B7E646479185067329FDDF4E235FD63C28BB459D07F146783",
+      "equal": true
+    },
+    {
+      "path": "src\\middleware\\require-connect-auth.js",
+      "source_sha256": "F52167BFD98E9A057107C30E467E3216C25ADAAF09F52500EE495BB5B332363E",
+      "image_context_sha256": "F52167BFD98E9A057107C30E467E3216C25ADAAF09F52500EE495BB5B332363E",
+      "equal": true
+    },
+    {
+      "path": "src\\middleware\\require-vault-access.js",
+      "source_sha256": "92C5F7E217DBF701F9B2EFF1E3E105C50E6A875E641F52273CCCAD25FF32565A",
+      "image_context_sha256": "92C5F7E217DBF701F9B2EFF1E3E105C50E6A875E641F52273CCCAD25FF32565A",
+      "equal": true
+    },
+    {
+      "path": "src\\middleware\\security-headers.js",
+      "source_sha256": "40E6526EEE4714FE9E020BA2F2A8DD7E9205C7624C3B81F95812E3A1D0833653",
+      "image_context_sha256": "40E6526EEE4714FE9E020BA2F2A8DD7E9205C7624C3B81F95812E3A1D0833653",
+      "equal": true
+    },
+    {
+      "path": "src\\middleware\\web-cors.js",
+      "source_sha256": "876FCA30F5ED28C3810EEF838D409A6E97401400B7F6D107081F1AE4F7EDE8D3",
+      "image_context_sha256": "876FCA30F5ED28C3810EEF838D409A6E97401400B7F6D107081F1AE4F7EDE8D3",
+      "equal": true
+    },
+    {
+      "path": "src\\middleware\\web-origin.js",
+      "source_sha256": "BA70B4FA396E420B82AB8CBBE147E79526BE78DFFEABB103ADE7661B61E0EDC8",
+      "image_context_sha256": "BA70B4FA396E420B82AB8CBBE147E79526BE78DFFEABB103ADE7661B61E0EDC8",
+      "equal": true
+    },
+    {
+      "path": "src\\store\\index.js",
+      "source_sha256": "8A1370766DE9FFB5A29EFEE278ABAF218B8B7CB6CAA42C600A9B040FEEEE197E",
+      "image_context_sha256": "8A1370766DE9FFB5A29EFEE278ABAF218B8B7CB6CAA42C600A9B040FEEEE197E",
+      "equal": true
+    },
+    {
+      "path": "src\\store\\memory-store.js",
+      "source_sha256": "BF475E16BC844A278B388EF4B18B38AA6BB34DEA85BE8AE9691C953CA886024B",
+      "image_context_sha256": "BF475E16BC844A278B388EF4B18B38AA6BB34DEA85BE8AE9691C953CA886024B",
+      "equal": true
+    },
+    {
+      "path": "src\\store\\pg-store.js",
+      "source_sha256": "D379AF63538476C65567DBCD2B82B8980A84D35E4B415F5C325E700584DA6E80",
+      "image_context_sha256": "D379AF63538476C65567DBCD2B82B8980A84D35E4B415F5C325E700584DA6E80",
+      "equal": true
+    }
+  ],
+  "report_artifact_path": "D:\\CC\\Work\\passshare-orch-20261005-054714\\api-restore-20261004-205143.json"
+}

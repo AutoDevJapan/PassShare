@@ -6,12 +6,12 @@ export function GetStartedSection() {
   return (
     <section className="landing-section landing-cta-band" id="get-started" aria-labelledby="get-started-heading">
       <div className="landing-section__inner landing-cta-band__inner">
-        <p className="landing-section__eyebrow">Get Started Now</p>
+        <p className="landing-section__eyebrow">{t("landing.start.eyebrow")}</p>
         <h2 className="landing-section__title" id="get-started-heading">
-          今すぐ、パスワードボックスを始めよう
+          {t("landing.start.title")}
         </h2>
         <p className="landing-section__lead">
-          端末で保管する版とクラウド版の違いを確認してから、導入手順へ進んでください。
+          {t("landing.start.lead")}
         </p>
         <div className="ps-actions landing-cta-band__actions">
           <a className="ps-button ps-button--primary" href="/docs">
