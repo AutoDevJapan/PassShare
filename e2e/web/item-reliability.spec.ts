@@ -84,7 +84,7 @@ test("failed save retains input and blocks duplicate submissions until completio
   await expect(form.getByRole("button", { name: /^Add$|^追加$/ })).toBeDisabled();
   await expect(form.getByRole("textbox", { name: /^Title$|^タイトル$/ })).toBeDisabled();
   release();
-  await expect(page.getByRole("alert")).toContainText(/Could not save|保存できません/);
+  await expect(page.getByRole("alert")).toContainText(/could not be confirmed|保存結果を確認できません/);
   await expect(form.getByRole("textbox", { name: /^Title$|^タイトル$/ })).toHaveValue("Keep this input");
   await expect(form.locator('input[type="password"]')).toHaveValue("synthetic-only");
   expect(calls).toBe(1);

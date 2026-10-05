@@ -132,7 +132,7 @@ export function ItemsPage() {
       await loadItems();
     } catch (err) {
       const conflict = err instanceof Error && "status" in err && err.status === 409;
-      if (scope === activeScope.current) setError(t(conflict ? "app.item.conflictError" : "app.item.saveError"));
+      if (scope === activeScope.current) setError(t(conflict ? "app.item.createConflictError" : "app.item.createResultUnknown"));
     } finally {
       busyRef.current = false;
       setBusy(false);

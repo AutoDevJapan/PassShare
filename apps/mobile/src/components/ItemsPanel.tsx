@@ -89,7 +89,8 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
     createOperation.current ??= crypto.randomUUID();
     try {
       await connectClient.createItem(vaultId, connectItemToCreateBody(values), createOperation.current);
-    } catch { if (active === scope.current) setError(t("app.item.saveError")); return; }
+    } catch (err) { const conflict = err instanceof Error && "status" in err && err.status === 409;
+      if (active === scope.current) setError(t(conflict ? "app.item.createConflictError" : "app.item.createResultUnknown")); return; }
     if (active !== scope.current) return;
     createOperation.current = null;
     setMode(null);
