@@ -1,0 +1,83 @@
+{
+  "no_raw_rows_dump_or_credential_values": true,
+  "runtime_before_source": {
+    "old_runtime_logout_lacks_connect_token_delete": true,
+    "old_connect_refused": false,
+    "owned_fixtures_removed": true,
+    "logout_204": true,
+    "old_cookie_401": true,
+    "cookie_signup_save_full_JSON_new_DB": true
+  },
+  "live_storage": {
+    "cutover_confirmed_at": "2026-10-05T15:45:55.6424980Z",
+    "schedule_created_at": "2026-10-05T14:53:45.796Z",
+    "preservation_rows_and_normalized_digests_match": true,
+    "current_volume": "70b71256-4c1d-4ffa-bb8e-3e3e5a310d37",
+    "schedule_retention_seconds": 518400,
+    "runtime_binding_verified_at": "2026-10-05T15:48:43Z",
+    "period_elapsed_verified": false,
+    "schedule_kind": "DAILY",
+    "source_after_cutover_not_synchronized": true,
+    "first_automatic_backup_verified": false,
+    "snapshot_restored_before_cutover": true,
+    "original_public_tables_compared": 8,
+    "old_source_service": "1509c487-cf03-4c50-8c9d-8781d53ee19a",
+    "before_source_backup": "310b2f92-062a-4a79-98f8-c338e5f50eb9",
+    "PITR_enabled": false,
+    "new_current_qualifications_items_zero_while_closed": true,
+    "old_source_retained": true,
+    "service": "4fdfda2d-ed50-4396-9797-25ea7720f720"
+  },
+  "support_candidate": {
+    "number_reply_closed_verified": true,
+    "issue": 608,
+    "first_number_display_failure_fixed_same_comment": true,
+    "customer_endpoint_approval": false
+  },
+  "integrated_main": {
+    "deployment_status": "pending; not a success claim",
+    "negative_expected_gate_refusal": 1,
+    "restore_workflow": 37338094325,
+    "sha": "e7d076c0449b3a233f015c3b6e003ab2796e8bd9",
+    "positive_passed": 99,
+    "checks_success": 42,
+    "source_deployment_id": "48d89a6d-8022-4aaf-87f0-c8ff3dd90a75"
+  },
+  "recorded_at": "2026-10-06T01:25:04.3338077+09:00",
+  "project": "PassShare",
+  "limits": [
+    "SQL current-account/owner reapproval simulation",
+    "no whole-client acceptance",
+    "encryption/key/withdrawal remain incomplete",
+    "no production or contractual RTO/RPO",
+    "retention setting not elapsed-period or customer retention agreement"
+  ],
+  "restore_main": {
+    "dump_bytes": 25805,
+    "workflows_success": 10,
+    "negative_passed": 57,
+    "checks_success": 39,
+    "restore_ms": 141,
+    "synthetic_service_RTO_ms": 2235,
+    "negative_expected_gate_refusal": 1,
+    "sha": "1d8c9ab8f19207778a852fa1a71adf46878cdd46",
+    "workflow": 37324912676,
+    "unit_ignored": 1,
+    "unit_passed": 12,
+    "positive_passed": 99,
+    "dump_ms": 121
+  },
+  "scope": "anonymous summary; original private records retained in task workspace",
+  "todo": 1177,
+  "railway_synthetic": {
+    "fork_row_count": 1,
+    "physical_volume_absence_claim": false,
+    "volumes_pending_provider_recovery": 3,
+    "services_removed": 2,
+    "Japanese_json_urls_and_binary_match": true,
+    "snapshot_own_service_restore": true,
+    "bucket_removed": 1,
+    "PITR_target": "2026-10-05T14:08:16Z",
+    "original_row_count": 2
+  }
+}
