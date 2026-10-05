@@ -1,6 +1,6 @@
 # PassShare インフラ構成 (SSOT)
 
-> 最終更新: 2026-07-11（prd フロントは custom domain `pass-share.bm1314.net` で配信、[#374](https://github.com/AutoDevJapan/PassShare/issues/374)）
+> 最終更新: 2026-10-06（prd フロントは custom domain `pass-share.bm1314.net` で配信、[#374](https://github.com/AutoDevJapan/PassShare/issues/374)）
 
 ## Railway プロジェクト ID
 
