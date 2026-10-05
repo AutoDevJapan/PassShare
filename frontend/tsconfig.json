@@ -18,7 +18,10 @@
     "noUncheckedSideEffectImports": true,
     "resolveJsonModule": true,
     "paths": {
-      "@shared/*": ["../shared/*"]
+      "@shared/*": ["../shared/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "@passshare/connect": ["../packages/connect-js/dist/client.d.ts"]
     }
   },
   "include": ["src"]

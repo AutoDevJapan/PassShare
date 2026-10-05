@@ -1,4 +1,4 @@
-import type { MessageKey } from "../../../shared/i18n/index";
+import type { MessageKey } from "@shared/i18n/index";
 
 export type SearchSection = {
   id: string;
