@@ -336,6 +336,82 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
     assert_eq!(content, vec![0, 1, 254, 255], "actual attachment bytes");
     let user_id = uuid(&member["user"]["id"]);
     if std::env::var_os("DATABASE_URL").is_some() {
+        sql(&format!("UPDATE vault_memberships SET confirmed_at=NULL WHERE user_id='{user_id}' AND vault_id='{box_id}'"));
+        sql(passshare_mutations::share::MEMBERSHIP_SCHEMA);
+        assert_eq!(
+            http(port, "GET", items, access, "", &Value::Null).0,
+            403,
+            "legacy membership is not proof of identity"
+        );
+        assert_eq!(
+            http(port, "GET", &content_path, access, "", &Value::Null).0,
+            403
+        );
+        let (status, expired) = http(
+            port,
+            "POST",
+            &invitations,
+            owner,
+            "",
+            &json!({"email":email}),
+        );
+        assert_eq!(
+            status, 201,
+            "owner can reverify an existing unconfirmed member without deleting data"
+        );
+        let expired_id = uuid(&expired["id"]);
+        sql(&format!("UPDATE vault_invitations SET expires_at=NOW()-INTERVAL '1 second' WHERE id='{expired_id}'"));
+        let (status, again) = http(
+            port,
+            "POST",
+            &invitations,
+            owner,
+            "",
+            &json!({"email":email}),
+        );
+        assert_eq!(
+            status, 201,
+            "expired pending invite cannot block reconfirmation"
+        );
+        assert_eq!(
+            http(
+                port,
+                "POST",
+                &format!("/api/auth/invitations/{expired_id}/accept"),
+                session,
+                "",
+                &json!({"confirmationCode":expired["confirmationCode"]})
+            )
+            .0,
+            404
+        );
+        let confirm = format!(
+            "/api/auth/invitations/{}/accept",
+            again["id"].as_str().unwrap()
+        );
+        assert_eq!(http(port, "POST", &confirm, session, "", &json!({})).0, 403);
+        assert_eq!(
+            http(
+                port,
+                "POST",
+                &confirm,
+                session,
+                "",
+                &json!({"confirmationCode":again["confirmationCode"]})
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            http(port, "GET", items, access, "", &Value::Null).0,
+            200,
+            "confirmed member resumes the same box"
+        );
+        assert_eq!(
+            http_bytes(port, "GET", &content_path, access, "", &Value::Null).1,
+            vec![0, 1, 254, 255],
+            "existing attachment data is retained"
+        );
         sql(&format!(
             "DELETE FROM vault_memberships WHERE user_id='{user_id}' AND vault_id='{box_id}'"
         ));

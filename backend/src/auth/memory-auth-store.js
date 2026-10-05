@@ -66,12 +66,13 @@ export function createMemoryAuthStore() {
           vault_id: vaultId,
           role,
           created_at: new Date().toISOString(),
+          confirmed_at: role === "owner" ? new Date().toISOString() : null,
         });
       }
     },
 
     async listVaultIdsForUser(userId) {
-      return memberships.filter((m) => m.user_id === userId).map((m) => m.vault_id);
+      return memberships.filter((m) => m.user_id === userId && (m.role === "owner" || m.confirmed_at)).map((m) => m.vault_id);
     },
 
     async createSession(userId, expectedPasswordHash) {
@@ -187,7 +188,7 @@ export function createMemoryAuthStore() {
 
     async getVaultMembership(userId, vaultId) {
       return (
-        memberships.find((m) => m.user_id === userId && m.vault_id === vaultId) ?? null
+        memberships.find((m) => m.user_id === userId && m.vault_id === vaultId && (m.role === "owner" || m.confirmed_at)) ?? null
       );
     },
 
@@ -201,6 +202,7 @@ export function createMemoryAuthStore() {
             role: m.role,
             created_at: m.created_at ?? new Date().toISOString(),
             email: user?.email ?? "",
+            identity_confirmed: m.role === "owner" || !!m.confirmed_at,
           };
         });
     },
@@ -241,8 +243,14 @@ export function createMemoryAuthStore() {
 
     async createVaultInvitation({ vaultId, inviterId, inviteeEmail, role }) {
       requireUser(inviterId);
+      for (const inv of invitations) {
+        if (inv.vault_id === vaultId && inv.invitee_email === inviteeEmail && inv.status === "pending" && new Date(inv.expires_at).getTime() <= Date.now()) {
+          inv.status="expired"; inv.responded_at=new Date().toISOString();
+        }
+      }
       const memberExists = memberships.some((m) => {
         if (m.vault_id !== vaultId) return false;
+        if (m.role !== "owner" && !m.confirmed_at) return false;
         const user = usersById.get(m.user_id);
         return user?.email === inviteeEmail;
       });
@@ -335,8 +343,10 @@ export function createMemoryAuthStore() {
         throw authHttpError(403, "PS032", "Invitation owner no longer has access");
       }
       if (!memberships.some((m) => m.user_id === userId && m.vault_id === invitation.vault_id)) {
-        memberships.push({ user_id: userId, vault_id: invitation.vault_id, role: result.role, created_at: new Date().toISOString() });
+        memberships.push({ user_id: userId, vault_id: invitation.vault_id, role: result.role, created_at: new Date().toISOString(), confirmed_at: new Date().toISOString() });
       }
+      const membership=memberships.find((m)=>m.user_id===userId && m.vault_id===invitation.vault_id);
+      membership.confirmed_at=new Date().toISOString();
       invitation.status = "accepted";
       invitation.responded_at = new Date().toISOString();
       return result;
