@@ -8,12 +8,15 @@ import { useAuthSession } from "../../hooks/useAuthSession";
 
 export function VaultsPage() {
   const { t, locale } = useI18n();
-  const { connectClient, connectLoading, refreshConnect } = useAuthSession();
+  const { user, connectClient, connectLoading, refreshConnect } = useAuthSession();
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
+  const createOperation = useRef<string | null>(null);
+  const userScope = useRef(user?.id);
+  userScope.current = user?.id;
   const loadGeneration = useRef(0);
 
   const loadVaults = useCallback(async (client = connectClient) => {
@@ -32,6 +35,11 @@ export function VaultsPage() {
   }, [connectClient, t]);
 
   useEffect(() => {
+    createOperation.current = null;
+    setName("");
+  }, [user?.id]);
+
+  useEffect(() => {
     void loadVaults();
     return () => { loadGeneration.current += 1; };
   }, [loadVaults]);
@@ -44,14 +52,18 @@ export function VaultsPage() {
     setCreating(true);
     creatingRef.current = true;
     setError(null);
+    const actor = user?.id;
     try {
-      await createPasswordBox(name.trim());
+      createOperation.current ??= crypto.randomUUID();
+      await createPasswordBox(name.trim(), createOperation.current);
+      if (userScope.current !== actor) return;
+      createOperation.current = null;
       setName("");
       const client = await refreshConnect();
       if (client) await loadVaults(client);
       else setError(t("app.vault.loadError"));
     } catch (err) {
-      setError(err instanceof AuthApiError ? err.message : t("app.vault.createError"));
+      if (userScope.current === actor) setError(err instanceof AuthApiError ? err.message : t("app.vault.createError"));
     } finally {
       setCreating(false);
       creatingRef.current = false;

@@ -13,6 +13,7 @@ import { requireVaultAccess } from "./middleware/require-vault-access.js";
 import { createSecurityHeadersMiddleware } from "./middleware/security-headers.js";
 import { createWebCorsMiddleware } from "./middleware/web-cors.js";
 import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
+import { createMutationStore } from "./store/mutation-store.js";
 
 // Best-effort DB pool warm-up: open the first connection during startup so the
 // first real request after a Railway cold-start (idle wake / fresh deploy) does
@@ -157,12 +158,13 @@ export async function createApp(options = {}) {
       type: ["application/json", "application/json-patch+json"],
     }),
   );
-  app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore }));
+  const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });
+  app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore, mutateOnce }));
   const requireConnectAuth = createRequireConnectAuth({ authStore, appEnv });
   app.use(
     "/v1",
     requireConnectAuth,
-    createConnectRouter(connectStore, { requireVaultAccess }),
+    createConnectRouter(connectStore, { requireVaultAccess, mutateOnce }),
   );
   app.use(connectErrorHandler);
 

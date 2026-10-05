@@ -28,6 +28,7 @@ export function ItemsPage() {
   const [itemsReady, setItemsReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const createOperation = useRef<string | null>(null);
   const loadGeneration = useRef(0);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"create" | "edit" | null>("create");
@@ -89,6 +90,7 @@ export function ItemsPage() {
   }, [loadItems]);
 
   useEffect(() => {
+    createOperation.current = null;
     setVaultName("");
     setMode("create");
     setEditingItem(null);
@@ -121,13 +123,16 @@ export function ItemsPage() {
     setError(null);
     const scope = activeScope.current;
     try {
-      await connectClient.createItem(vaultId, connectItemToCreateBody(values));
+      createOperation.current ??= crypto.randomUUID();
+      await connectClient.createItem(vaultId, connectItemToCreateBody(values), createOperation.current);
       if (scope !== activeScope.current) return;
+      createOperation.current = null;
       setMode(null);
       setFormValues(emptyFormValues());
       await loadItems();
-    } catch {
-      if (scope === activeScope.current) setError(t("app.item.saveError"));
+    } catch (err) {
+      const conflict = err instanceof Error && "status" in err && err.status === 409;
+      if (scope === activeScope.current) setError(t(conflict ? "app.item.conflictError" : "app.item.saveError"));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -143,7 +148,7 @@ export function ItemsPage() {
     setError(null);
     const scope = activeScope.current;
     try {
-      await connectClient.replaceItem(vaultId, editingItem.id, connectItemToCreateBody(values, editingItem));
+      await connectClient.editItemForm(vaultId, editingItem.id, editingItem.version, values);
       if (scope !== activeScope.current) return;
       setMode(null);
       setEditingItem(null);
@@ -178,6 +183,7 @@ export function ItemsPage() {
   }
 
   function startEdit(item: ConnectItem) {
+    createOperation.current = null;
     if (busyRef.current || itemsLoading || !documents[item.id]) return;
     setMode("edit");
     setEditingItem(documents[item.id]);

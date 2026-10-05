@@ -21,7 +21,7 @@ export function createWebCorsMiddleware(appEnv = "local") {
     }
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-CSRF-Token",
+      "Content-Type, Authorization, X-CSRF-Token, Idempotency-Key",
     );
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
 

@@ -19,7 +19,7 @@ import { parseEmail, parsePassword } from "./validation.js";
  *   Shared backing for the login throttle / lockout state. Defaults to a
  *   process-local in-memory store when omitted.
  */
-export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore }) {
+export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore, mutateOnce }) {
   const router = Router();
   const sessionGuard = requireSession(authStore);
   const loginGuard = createLoginGuard({ store: loginGuardStore });
@@ -201,6 +201,12 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
       if (!name) {
         throw authHttpError(400, "PS023", "Password box name is required");
+      }
+      if (req.headers["idempotency-key"] && mutateOnce) {
+        const result = await mutateOnce({ actor: req.auth.userId, resource: req.auth.userId,
+          operation: "box", key: req.headers["idempotency-key"], request: { name } });
+        res.status(201).json(result);
+        return;
       }
       const vaultId = generateConnectId();
       await connectStore.createVault({ id: vaultId, name });

@@ -172,10 +172,11 @@ export async function fetchConnectToken(): Promise<ConnectTokenResponse> {
   return (await response.json()) as ConnectTokenResponse;
 }
 
-export async function createPasswordBox(name: string): Promise<{ vaultId: string; name: string }> {
+export async function createPasswordBox(name: string, operationKey?: string): Promise<{ vaultId: string; name: string }> {
   const response = await authFetch("/api/auth/vaults", {
     method: "POST",
     body: JSON.stringify({ name }),
+    ...(operationKey ? { headers: { "Idempotency-Key": operationKey } } : {}),
   });
   if (!response.ok) {
     return parseAuthError(response);
