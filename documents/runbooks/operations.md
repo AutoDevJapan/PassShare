@@ -63,8 +63,8 @@ SSOT: [production-release.md](./production-release.md)
 
 | 環境 | インスタンス | バックアップ |
 |------|-------------|-------------|
-| prd | postgres-prd-v2（旧設計名。現サービス ID は未照合） | 有効化・成功履歴・保管期間・PITR の実設定は未確認 |
-| stg | postgres-stg（旧設計名。現サービス ID は未照合） | 同上。本番データを演習へ持ち込まない |
+| prd | postgres-prd-v2、`1509c487-cf03-4c50-8c9d-8781d53ee19a`（2026-10-05 Chromeで照合） | 有効化・成功履歴・保管期間・PITR の実設定は未確認 |
+| stg | postgres-stg、`7234bbc3-c482-4009-9c88-03063521ffd1`（同日照合） | 同上。本番データを演習へ持ち込まない |
 | dev/preview | postgres-dev | 開発用 — 本番データを置かない |
 
 ### バックアップ検証（四半期推奨）
