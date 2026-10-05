@@ -11,6 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod web_routing_tests;
 
 const BASE: &str = "http://127.0.0.1:8080";
 const NATIVE: &str = "/usr/local/bin/passshare-mutations";

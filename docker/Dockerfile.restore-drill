@@ -6,6 +6,8 @@ RUN cargo build --release --locked --bin passshare-mutations
 FROM rust:1-bookworm AS drill
 WORKDIR /drill
 COPY tools/restore-drill-rs ./
+COPY frontend/vercel.json /frontend/vercel.json
+COPY scripts/sync-vercel-env.mjs /scripts/sync-vercel-env.mjs
 RUN cargo test --locked && cargo build --release --locked --bin passshare-restore-drill
 
 FROM node:24-bookworm-slim AS backend
