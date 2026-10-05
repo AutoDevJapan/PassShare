@@ -147,6 +147,17 @@ pub fn run(port: u16, nonce: u128) {
         let login = thread::spawn(move || {
             account(port, "/api/auth/login", &email_for_login, &next_for_login)
         });
+        let session_for_mint = session.clone();
+        let mint = thread::spawn(move || {
+            http(
+                port,
+                "GET",
+                "/api/auth/connect-token",
+                &session_for_mint,
+                "",
+                &Value::Null,
+            )
+        });
         let refresh = thread::spawn(move || {
             http(
                 port,
@@ -179,6 +190,11 @@ pub fn run(port: u16, nonce: u128) {
         );
         assert_eq!(
             refresh.join().unwrap().0,
+            401,
+            "old session cannot refresh after the change"
+        );
+        assert_eq!(
+            mint.join().unwrap().0,
             401,
             "old session cannot mint a late token"
         );
