@@ -132,6 +132,12 @@ fn http_bytes(
 }
 
 fn main() {
+    if let Ok(database) = std::env::var("DATABASE_URL") {
+        assert_eq!(
+            database, "postgresql://passshare:passshare@127.0.0.1:5432/passshare",
+            "acceptance requires the isolated CI service database"
+        );
+    }
     let external_port = std::env::args()
         .nth(1)
         .map(|value| value.parse::<u16>().expect("external fixture port"));
