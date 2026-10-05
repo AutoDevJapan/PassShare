@@ -737,6 +737,17 @@ mod tests {
         );
         let counts: Vec<usize> = serde_json::from_slice(&result.stdout).expect("bridge counts");
         assert_eq!(counts, vec![0, 1, 1, 2, 3, 3]);
+        let result = Command::new("node")
+            .current_dir(root)
+            .args(["--experimental-strip-types", "--input-type=module", "-e", "import {bindNativeLock} from './shared/lib/native-lock.ts';let cleared=0;const binding=bindNativeLock(null,()=>{cleared+=1});binding.accept({epoch:3,unlocked:true});binding.accept({epoch:2,unlocked:false});const stale=cleared;binding.accept({epoch:4,unlocked:false});process.stdout.write(JSON.stringify([stale,cleared]));"])
+            .output().expect("late native result process");
+        assert!(
+            result.status.success(),
+            "late native result process must succeed"
+        );
+        let counts: Vec<usize> =
+            serde_json::from_slice(&result.stdout).expect("late native result counts");
+        assert_eq!(counts, vec![0, 1]);
     }
 
     #[test]
