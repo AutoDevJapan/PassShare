@@ -34,9 +34,9 @@ pub fn run(port: u16, nonce: u128) {
     assert_eq!(status, 200);
     let first_session = first["refreshToken"].as_str().unwrap();
     let before_token = first["connectAccessToken"].as_str().unwrap();
-    let (status, original_boxes) = http(port, "GET", "/v1/vaults", before_token, "", &Value::Null);
+    let (status, initial_boxes) = http(port, "GET", "/v1/vaults", before_token, "", &Value::Null);
     assert_eq!(status, 200);
-    let box_id = original_boxes[0]["id"].as_str().unwrap();
+    let box_id = initial_boxes[0]["id"].as_str().unwrap();
     let item_path = format!("/v1/vaults/{box_id}/items");
     let (status, original_item) = http(
         port,
@@ -48,6 +48,12 @@ pub fn run(port: u16, nonce: u128) {
     );
     assert_eq!(status, 201);
     let second_session = second["refreshToken"].as_str().unwrap();
+    let (status, original_boxes) = http(port, "GET", "/v1/vaults", before_token, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert_eq!(
+        original_boxes[0]["items"], 1,
+        "the retained baseline includes the prepared item"
+    );
     let change = json!({"currentPassword":old,"newPassword":next});
     assert_eq!(
         http(port, "POST", "/api/auth/password/change", "", "", &change).0,
