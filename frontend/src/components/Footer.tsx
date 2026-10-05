@@ -18,7 +18,7 @@ const FOOTER_COLUMNS: FooterColumn[] = [
     titleKey: "footer.product",
     links: [
       { labelKey: "footer.passwordBox", href: "#" },
-      { labelKey: "footer.download", href: "#download" },
+      { labelKey: "footer.download", href: "/docs/user-guide" },
       { labelKey: "footer.features", href: "#features" },
     ],
   },

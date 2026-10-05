@@ -70,7 +70,7 @@
 
 .doc-article__header h1 {
   margin: 0 0 var(--ps-space-4);
-  font-size: var(--ps-text-3xl);
+  font-size: clamp(1.375rem, 5vw, var(--ps-text-3xl));
 }
 
 .doc-article__lead {

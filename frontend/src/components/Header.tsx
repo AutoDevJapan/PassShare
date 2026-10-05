@@ -16,7 +16,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { id: "home", labelKey: "header.nav.home", href: "#", active: true },
   { id: "app", labelKey: "header.nav.app", href: "/app/vaults" },
-  { id: "download", labelKey: "header.nav.download", href: "#download" },
+  { id: "download", labelKey: "header.nav.download", href: "/docs/user-guide" },
   { id: "docs", labelKey: "header.nav.docs", href: "/docs" },
 ];
 

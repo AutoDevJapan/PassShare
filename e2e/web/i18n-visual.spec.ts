@@ -8,11 +8,13 @@ const PAGES = [
   { path: "/app/login", name: "login", heading: /Sign in|ログイン|Вход/i },
   { path: "/faq", name: "faq", heading: /FAQ|よくある質問/i },
   { path: "/terms", name: "terms", heading: /Terms|利用規約|Условия использования/i },
+  { path: "/privacy", name: "privacy", heading: /Privacy|プライバシー|Политика конфиденциальности/i },
+  { path: "/docs/user-guide", name: "user-guide", heading: /User guide|ユーザーガイド|Руководство пользователя/i },
 ] as const;
 
 for (const locale of VISUAL_LOCALES) {
   for (const pageDef of PAGES) {
-    test(`locale layout: ${pageDef.name} @ ${locale}`, async ({ page }) => {
+    test(`locale layout: ${pageDef.name} @ ${locale}`, async ({ page }, testInfo) => {
       await page.addInitScript((loc) => {
         window.localStorage.setItem("passshare.locale", loc);
       }, locale);
@@ -26,6 +28,13 @@ for (const locale of VISUAL_LOCALES) {
         return root.scrollWidth - root.clientWidth;
       });
       expect(overflow).toBeLessThanOrEqual(1);
+
+      if (["landing", "privacy", "user-guide"].includes(pageDef.name)) {
+        await page.screenshot({ path: testInfo.outputPath(`${pageDef.name}-${locale}.png`), fullPage: true });
+        await page.setViewportSize({ width: 320, height: 800 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+        await page.screenshot({ path: testInfo.outputPath(`${pageDef.name}-${locale}-320.png`), fullPage: true });
+      }
     });
   }
 }

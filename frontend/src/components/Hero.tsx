@@ -21,7 +21,7 @@ export function Hero() {
           {t("hero.lead.suffix")}
         </p>
         <div className="ps-actions landing-hero__actions">
-          <a className="ps-button ps-button--primary" href="#download">
+          <a className="ps-button ps-button--primary" href="/docs/user-guide">
             {t("hero.cta.download")}
           </a>
           <a className="ps-button ps-button--secondary" href="/docs">
