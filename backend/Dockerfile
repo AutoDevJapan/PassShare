@@ -1,7 +1,7 @@
 FROM rust:1-bookworm AS mutations
 WORKDIR /native
 COPY native ./
-RUN cargo build --release
+RUN cargo build --release --locked --bin passshare-mutations
 
 FROM node:24-bookworm-slim
 

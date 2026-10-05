@@ -37,6 +37,7 @@ export function VaultsPage() {
   useEffect(() => {
     createOperation.current = null;
     setName("");
+    setVaults([]);
   }, [user?.id]);
 
   useEffect(() => {

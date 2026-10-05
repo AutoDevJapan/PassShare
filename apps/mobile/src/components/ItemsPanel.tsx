@@ -50,17 +50,20 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
       return;
     }
     setError(null);
+    const active = scope.current;
     try {
       const vault = await connectClient.getVault(vaultId);
+      if (active !== scope.current) return;
       setVaultName(vault.name);
       const overviews = await connectClient.listItems(vaultId);
       const details = await Promise.all(
         overviews.map((overview) => connectClient.getItem(vaultId, overview.id)),
       );
+      if (active !== scope.current) return;
       setItems(details.map(connectItemFromApi));
       setDocuments(Object.fromEntries(details.map((item) => [item.id, item])));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("app.item.loadError"));
+      if (active === scope.current) setError(t("app.item.loadError"));
     }
   }, [connectClient, vaultId, t]);
 

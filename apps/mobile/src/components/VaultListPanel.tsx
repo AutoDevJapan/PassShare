@@ -26,8 +26,10 @@ export function VaultListPanel({ onSelectVault }: Props) {
       return;
     }
     setError(null);
+    const actor = userScope.current;
     try {
-      setVaults(await connectClient.listVaults());
+      const next = await connectClient.listVaults();
+      if (userScope.current === actor) setVaults(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("app.vault.loadError"));
     }
@@ -36,6 +38,7 @@ export function VaultListPanel({ onSelectVault }: Props) {
   useEffect(() => {
     createOperation.current = null;
     setName("");
+    setVaults([]);
   }, [user?.id]);
 
   useEffect(() => {

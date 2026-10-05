@@ -3,26 +3,28 @@ import { createPgStore } from "./pg-store.js";
 import { generateConnectId } from "../lib/connect.js";
 import { normalizeItemBody } from "../lib/categories.js";
 import { connectHttpError } from "../middleware/connect-errors.js";
+import { applySchemaWithAdvisoryLock } from "../db/migration-lock.js";
 
 // Persistence adapter only: scope, replay and payload decisions belong to Rust.
 export async function createMutationStore({ store, authStore, pool }) {
   const records = new Map();
   let memoryTail = Promise.resolve();
   if (pool && process.env.PASSSHARE_MUTATIONS_BIN) {
-    await pool.query(await nativeMutation({ command: "schema" }));
+    await applySchemaWithAdvisoryLock(pool, 4820123, await nativeMutation({ command: "schema" }));
   }
 
   async function execute(input, transactionStore, client, existing) {
-    if (input.actor !== "legacy" && input.operation === "item"
-      && !(await authStore.listVaultIdsForUser(input.actor)).includes(input.resource)) {
-      throw connectHttpError(403, "PS016: Access denied to password box");
+    async function requireCurrentMembership(boxId) {
+      const permitted = client
+        ? (await client.query("SELECT vault_id FROM vault_memberships WHERE user_id=$1 AND vault_id=$2 FOR KEY SHARE", [input.actor,boxId])).rowCount > 0
+        : (await authStore.listVaultIdsForUser(input.actor)).includes(boxId);
+      if (!permitted) throw connectHttpError(403, "PS016: Access denied to password box");
     }
+    if (input.actor !== "legacy" && input.operation === "item") await requireCurrentMembership(input.resource);
     let live = null;
     if (existing) {
       try {
-        if (input.operation === "box" && !(await authStore.listVaultIdsForUser(input.actor)).includes(existing.result.vaultId)) {
-          throw connectHttpError(403, "PS016: Access denied to password box");
-        }
+        if (input.operation === "box") await requireCurrentMembership(existing.result.vaultId);
         if (input.operation === "item") live = await transactionStore.getItem(input.resource, existing.result.id);
         else { const box = await transactionStore.getVault(existing.result.vaultId); live = { vaultId: box.id, name: box.name }; }
       } catch (error) { if (error?.status !== 404) throw error; }
