@@ -66,7 +66,7 @@ export function VaultSharePage() {
 
   async function handleInvite(event: FormEvent) {
     event.preventDefault();
-    if (busy || !vaultId || !email.trim()) {
+    if (busy || confirmation?.confirmationCode || !vaultId || !email.trim()) {
       return;
     }
     setBusy(true);
@@ -149,7 +149,7 @@ export function VaultSharePage() {
               placeholder={t("app.share.invitePlaceholder")}
             />
           </label>
-          <button type="submit" className="ps-button" disabled={busy || !email.trim()}>
+          <button type="submit" className="ps-button" disabled={busy || !!confirmation?.confirmationCode || !email.trim()}>
             {t("app.share.inviteSubmit")}
           </button>
         </form>

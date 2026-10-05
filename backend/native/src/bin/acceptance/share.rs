@@ -1,7 +1,8 @@
 use super::{http, http_bytes};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -37,6 +38,63 @@ fn uuid(value: &Value) -> &str {
     id
 }
 
+struct Gate {
+    child: Child,
+}
+impl Gate {
+    fn hold(key: u32) -> Self {
+        let database = std::env::var("DATABASE_URL").unwrap();
+        let child = Command::new("psql")
+            .args([
+                "-X",
+                "-qAt",
+                "--set",
+                "ON_ERROR_STOP=1",
+                "--dbname",
+                &database,
+            ])
+            .env(
+                "PGOPTIONS",
+                "-c statement_timeout=10000 -c idle_in_transaction_session_timeout=20000",
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("synthetic lock gate");
+        let mut gate = Self { child };
+        writeln!(
+            gate.child.stdin.as_mut().unwrap(),
+            "BEGIN; SELECT pg_advisory_xact_lock({key}); SELECT 'locked';"
+        )
+        .unwrap();
+        gate.child.stdin.as_mut().unwrap().flush().unwrap();
+        let mut output = BufReader::new(gate.child.stdout.take().unwrap());
+        let mut line = String::new();
+        loop {
+            line.clear();
+            assert!(
+                output.read_line(&mut line).unwrap() > 0,
+                "lock gate ended without owning lock"
+            );
+            if line.trim() == "locked" {
+                break;
+            }
+        }
+        gate
+    }
+    fn release(&mut self) {
+        writeln!(self.child.stdin.as_mut().unwrap(), "COMMIT;").unwrap();
+        drop(self.child.stdin.take());
+        assert!(self.child.wait().unwrap().success(), "release lock gate");
+    }
+}
+impl Drop for Gate {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
 struct Pause(String);
 impl Drop for Pause {
     fn drop(&mut self) {
@@ -69,7 +127,9 @@ fn response_races(
         assert_eq!(status, 201);
         let id = uuid(&invite["id"]);
         let name = format!("acceptance_pause_{nonce}_{index}");
-        sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$; CREATE TRIGGER {name} BEFORE UPDATE ON vault_invitations FOR EACH ROW WHEN (NEW.id = '{id}' AND NEW.status = '{first}') EXECUTE FUNCTION {name}();"));
+        let key = 6_000_000 + (nonce % 1_000_000) as u32 + index as u32;
+        let mut gate = Gate::hold(key);
+        sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock({key}); RETURN NEW; END $$; CREATE TRIGGER {name} BEFORE UPDATE ON vault_invitations FOR EACH ROW WHEN (NEW.id = '{id}' AND NEW.status = '{first}') EXECUTE FUNCTION {name}();"));
         let pause = Pause(name);
         let revoke_path = format!("{invitations}/{id}");
         let accept_path = format!("/api/auth/invitations/{id}/accept");
@@ -95,22 +155,37 @@ fn response_races(
             )
             .0
         });
+        let mut first_pid = None;
+        for _ in 0..30 {
+            let pid = sql(&format!("SELECT a.pid FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE l.locktype='advisory' AND l.objid={key} AND NOT l.granted AND a.query LIKE '%vault_invitations%'"));
+            if let Ok(pid) = pid.parse::<u32>() {
+                first_pid = Some(pid);
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let first_pid = first_pid.expect("first response owns row lock and waits on gate");
+        let (method, second_path, second_token, second_body) = if first == "revoked" {
+            ("POST", accept_path, member.to_owned(), proof)
+        } else {
+            ("DELETE", revoke_path, owner.to_owned(), Value::Null)
+        };
+        let second = thread::spawn(move || {
+            http(port, method, &second_path, &second_token, "", &second_body).0
+        });
         let mut blocked = false;
         for _ in 0..30 {
-            if sql("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE state = 'active' AND wait_event = 'PgSleep' AND query LIKE '%vault_invitations%')") == "t" {
+            if sql(&format!("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE {first_pid}=ANY(pg_blocking_pids(pid)) AND query LIKE '%vault_invitations%')")) == "t" {
                 blocked = true; break;
             }
             thread::sleep(Duration::from_millis(20));
         }
         assert!(
             blocked,
-            "first response owns invitation lock while second starts"
+            "second request is blocked by the first response transaction"
         );
-        let second_status = if first == "revoked" {
-            http(port, "POST", &accept_path, member, "", &proof).0
-        } else {
-            http(port, "DELETE", &revoke_path, owner, "", &Value::Null).0
-        };
+        gate.release();
+        let second_status = second.join().unwrap();
         let first_status = worker.join().unwrap();
         assert_eq!(first_status, if first == "revoked" { 204 } else { 200 });
         assert_eq!(second_status, 404, "only first response commits");
