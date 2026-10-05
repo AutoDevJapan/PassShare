@@ -97,11 +97,11 @@ test("failed save retains input and blocks duplicate submissions until completio
 test("failed detail load disables incomplete CSV export and can be retried", async ({ page }) => {
   const box = await openBox(page);
   const created = await (await page.request.post(box.path, { headers: box.headers, data: { title: "Existing record", category: "SECURE_NOTE", fields: [{ label: "notes", type: "STRING", value: "synthetic note" }] } })).json();
-  await page.route(`**${box.path}/${created.id}`, (route) => route.fulfill({ status: 503, json: { message: "Synthetic failure" } }));
+  await page.route(`**${box.path}/${created.id}/form`, (route) => route.fulfill({ status: 503, json: { message: "Synthetic failure" } }));
   await page.goto(box.url);
   await expect(page.getByRole("alert")).toContainText(/Failed to load|読み込み|取得/);
   await expect(page.getByRole("button", { name: /Export 1Password CSV|CSV.*エクスポート/ })).toBeDisabled();
-  await page.unroute(`**${box.path}/${created.id}`);
+  await page.unroute(`**${box.path}/${created.id}/form`);
   await page.getByRole("button", { name: /Refresh list|一覧を更新/ }).click();
   await expect(page.getByText("Existing record", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Export 1Password CSV|CSV.*エクスポート/ })).toBeEnabled();
