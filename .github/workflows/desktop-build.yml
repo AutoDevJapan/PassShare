@@ -101,5 +101,7 @@ jobs:
         with:
           name: desktop-${{ matrix.platform }}
           path: |
-            apps/desktop/src-tauri/target/release/bundle/**/*
-          if-no-files-found: warn
+            target/release/bundle/**/*
+            target/aarch64-apple-darwin/release/bundle/**/*
+          if-no-files-found: error
+          retention-days: 7

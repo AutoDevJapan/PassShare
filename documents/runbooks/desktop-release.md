@@ -6,7 +6,7 @@
 
 | Secret | 用途 |
 |--------|------|
-| `TAURI_SIGNING_PRIVATE_KEY` | Updater + Windows 署名（minisign 秘密鍵） |
+| `TAURI_SIGNING_PRIVATE_KEY` | 自動更新パッケージの署名（minisign 秘密鍵。Windowsの発行元署名とは別） |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 秘密鍵パスワード（任意） |
 | `APPLE_CERTIFICATE` | macOS 証明書（base64 `.p12`） |
 | `APPLE_CERTIFICATE_PASSWORD` | 証明書パスワード |
@@ -14,6 +14,8 @@
 | `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarization |
 
 シークレット未設定時は **未署名ビルド** が生成される（CI は green）。本番配布前に必ず設定する。
+
+Windowsの発行元署名は、別途Authenticode証明書と署名工程で確認する。自動更新用のminisign署名だけでWindowsの発行元署名を済ませたとは扱わない。署名・公開に必要な支出や契約は、検証できる候補と必要な条件をそろえてオーナーが判断する。署名の秘密値をログや報告へ出さない。
 
 ## ローカルビルド
 
@@ -39,3 +41,7 @@ cargo tauri build
 
 - `smoke`: `cargo test -p passshare-desktop smoke_`
 - `build`: macOS / Ubuntu / Windows で `tauri-action` 実行、インストーラ artifact アップロード
+
+Cargoのworkspace全体の出力先を使うため、成果物はリポジトリ直下の `target/release/bundle/`、macOS arm64は `target/aarch64-apple-darwin/release/bundle/` に生成される。`apps/desktop/src-tauri/target/` を探すと生成に成功しても成果物を保存できない。成果物が0件ならCIを失敗させ、3OSの成果物を7日間保存する。
+
+検証担当は、対象CIの実行番号とソースSHAを固定し、3OSの成果物が存在することと、取得したファイルのバイト数・SHA256を照合する。CIの成果物保存は一般公開や署名の証明ではない。対応OSでの署名・導入・起動・更新・削除を確認するまで、販売のM7を完了としない。
