@@ -221,7 +221,7 @@ impl Runner {
             "POST",
             &format!("/api/auth/invitations/{accepted_id}/accept"),
             &member.session,
-            Some(&json!({})),
+            Some(&json!({"confirmationCode":invitation["confirmationCode"]})),
             200,
             None,
         )?;

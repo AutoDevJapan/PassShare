@@ -22,10 +22,11 @@ export function createRequireConnectAuth({ authStore, appEnv = "local" }) {
 
     const connectToken = await authStore.findConnectTokenByHash(hashToken(token));
     if (connectToken) {
+      const currentVaultIds = await authStore.listVaultIdsForUser(connectToken.user_id);
       /** @type {ConnectAuthContext} */
       req.connectAuth = {
         userId: connectToken.user_id,
-        vaultIds: connectToken.vault_ids,
+        vaultIds: connectToken.vault_ids.filter((id) => currentVaultIds.includes(id)),
         legacy: false,
       };
       next();

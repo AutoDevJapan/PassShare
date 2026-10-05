@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { SESSION_TTL_MS, CONNECT_TOKEN_TTL_MS, INVITATION_TTL_MS } from "./constants.js";
 import { authHttpError } from "./errors.js";
 import { generateToken, hashToken } from "./tokens.js";
+import { nativeMutation } from "../lib/native-mutations.js";
 
 /** @returns {import('./index.js').AuthStore} */
 export function createMemoryAuthStore() {
@@ -202,7 +203,7 @@ export function createMemoryAuthStore() {
         throw authHttpError(404, "PS035", "Member not found");
       }
       if (memberships[index].role === "owner") {
-        const owners = await this.countVaultOwners(vaultId);
+        const owners = memberships.filter((m) => m.vault_id === vaultId && m.role === "owner").length;
         if (owners <= 1) {
           throw authHttpError(400, "PS036", "Cannot remove the last owner");
         }
@@ -235,6 +236,11 @@ export function createMemoryAuthStore() {
       const id = randomUUID();
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS).toISOString();
+      const confirmationCode = generateToken();
+      const { confirmationHash } = await nativeMutation({command: "invitation-secret", confirmationCode});
+      if (invitations.some((inv) => inv.vault_id === vaultId && inv.invitee_email === inviteeEmail && inv.status === "pending")) {
+        throw authHttpError(409, "PS038", "A pending invitation already exists for this email");
+      }
       const row = {
         id,
         vault_id: vaultId,
@@ -244,9 +250,10 @@ export function createMemoryAuthStore() {
         status: "pending",
         expires_at: expiresAt,
         created_at: createdAt,
+        confirmation_hash: confirmationHash,
       };
       invitations.push(row);
-      return row;
+      return { ...row, confirmationCode };
     },
 
     async listVaultInvitations(vaultId) {
@@ -287,22 +294,25 @@ export function createMemoryAuthStore() {
       invitation.responded_at = new Date().toISOString();
     },
 
-    async acceptVaultInvitation(invitationId, userId) {
+    async acceptVaultInvitation(invitationId, userId, confirmationCode) {
       const user = requireUser(userId);
       const invitation = invitations.find((inv) => inv.id === invitationId);
-      if (!invitation || invitation.status !== "pending") {
-        throw authHttpError(404, "PS039", "Invitation not found");
+      const inviter = memberships.find((m) => m.user_id === invitation?.inviter_id && m.vault_id === invitation?.vault_id);
+      const result = await nativeMutation({command: "invitation-accept", confirmationCode, email: user.email,
+        inviterRole: inviter?.role, nowMs: Date.now(), invitation: invitation ? {...invitation, expiresMs: new Date(invitation.expires_at).getTime()} : null});
+      // Native processing yields to other requests. Recheck mutable state before
+      // the synchronous commit so revoke/decline/removal can never be overwritten.
+      if (invitation.status !== "pending") throw authHttpError(404, "PS039", "Invitation not found");
+      if (new Date(invitation.expires_at).getTime() <= Date.now()) throw authHttpError(410, "PS040", "Invitation has expired");
+      if (!memberships.some((m) => m.user_id === invitation.inviter_id && m.vault_id === invitation.vault_id && m.role === "owner")) {
+        throw authHttpError(403, "PS032", "Invitation owner no longer has access");
       }
-      if (new Date(invitation.expires_at).getTime() <= Date.now()) {
-        throw authHttpError(410, "PS040", "Invitation has expired");
+      if (!memberships.some((m) => m.user_id === userId && m.vault_id === invitation.vault_id)) {
+        memberships.push({ user_id: userId, vault_id: invitation.vault_id, role: result.role, created_at: new Date().toISOString() });
       }
-      if (invitation.invitee_email !== user.email) {
-        throw authHttpError(403, "PS041", "Invitation is for a different email address");
-      }
-      await this.addVaultMembership(userId, invitation.vault_id, invitation.role);
       invitation.status = "accepted";
       invitation.responded_at = new Date().toISOString();
-      return { vaultId: invitation.vault_id, role: invitation.role };
+      return result;
     },
 
     async declineVaultInvitation(invitationId, userId) {

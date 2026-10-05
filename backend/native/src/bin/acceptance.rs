@@ -6,6 +6,9 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[path = "acceptance/share.rs"]
+mod share_acceptance;
+
 struct Server {
     child: Child,
     port: u16,
@@ -291,6 +294,7 @@ fn main() {
         .0 == 409,
         "modified box draft remains conflict"
     );
-    println!("native HTTP acceptance passed: exact/modified/parallel create, durable replay when PostgreSQL is configured, scoped denial, full edit preservation, stale version, box identity");
+    share_acceptance::run(port, nonce, &refresh, &box_id, &path);
+    println!("native HTTP acceptance passed: create/edit/box identity and invitation proof, no proof/list leak, concurrent accept, revoke, member/token/attachment denial");
     drop(server);
 }

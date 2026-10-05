@@ -161,6 +161,7 @@ describe("Vault share API (#100)", () => {
       member.sessionCookie,
       "POST",
       `/api/auth/invitations/${inviteBody.id}/accept`,
+      { confirmationCode: inviteBody.confirmationCode },
     );
     assert.equal(acceptRes.status, 200);
 
@@ -193,6 +194,7 @@ describe("Vault share API (#100)", () => {
       member.sessionCookie,
       "POST",
       `/api/auth/invitations/${inviteBody.id}/accept`,
+      { confirmationCode: inviteBody.confirmationCode },
     );
 
     const membersRes = await fetch(`${baseUrl}/api/auth/vaults/${vaultId}/members`, {
@@ -239,6 +241,7 @@ describe("Vault share API (#100)", () => {
       member.sessionCookie,
       "POST",
       `/api/auth/invitations/${inviteBody.id}/accept`,
+      { confirmationCode: inviteBody.confirmationCode },
     );
 
     const forbiddenRes = await authRequest(

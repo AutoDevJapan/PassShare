@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS vault_invitations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_vault_invitations_vault_id ON vault_invitations(vault_id);
+-- Legacy invitations cannot be accepted without independently delivered proof.
+ALTER TABLE vault_invitations ADD COLUMN IF NOT EXISTS confirmation_hash TEXT;
 CREATE INDEX IF NOT EXISTS idx_vault_invitations_invitee ON vault_invitations(invitee_email, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_invitations_pending_unique
   ON vault_invitations(vault_id, invitee_email)

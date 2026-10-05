@@ -118,6 +118,7 @@ export function createShareRouter({ authStore, connectStore }) {
         email: invitation.invitee_email,
         role: invitation.role,
         expiresAt: invitation.expires_at,
+        confirmationCode: invitation.confirmationCode,
       });
     } catch (error) {
       sendAuthError(res, error);
@@ -179,7 +180,7 @@ export function createInvitationsRouter({ authStore, connectStore }) {
 
   router.post("/:invitationId/accept", sessionGuard, requireCsrf, async (req, res) => {
     try {
-      const result = await authStore.acceptVaultInvitation(req.params.invitationId, req.auth.userId);
+      const result = await authStore.acceptVaultInvitation(req.params.invitationId, req.auth.userId, req.body?.confirmationCode);
       res.json(result);
     } catch (error) {
       sendAuthError(res, error);
