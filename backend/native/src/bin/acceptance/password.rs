@@ -129,9 +129,9 @@ pub fn run(port: u16, nonce: u128) {
         let user = uuid(&first["user"]["id"]);
         let key = 8_000_000 + (nonce % 1_000_000) as u32;
         let name = format!("credential_gate_{nonce}");
-        let mut gate = Gate::hold(key);
         sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock({key}); RETURN NEW; END $$; CREATE TRIGGER {name} BEFORE UPDATE ON users FOR EACH ROW WHEN(NEW.id='{user}') EXECUTE FUNCTION {name}();"));
         let trigger = Trigger(name);
+        let mut gate = Gate::hold(key);
         let session = current["refreshToken"].as_str().unwrap().to_owned();
         let (session_for_change, next_for_change) = (session.clone(), next.clone());
         let change = thread::spawn(move || {

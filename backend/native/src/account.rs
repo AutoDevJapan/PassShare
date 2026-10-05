@@ -18,7 +18,9 @@ pub fn validate_input(input: &Value) -> Value {
 // This decision executes against the user/session read inside the commit lock.
 // Output is an action only; no credentials are returned or logged by native IPC.
 pub fn authorize_change(input: &Value) -> Value {
-    let current = input["currentHash"].as_str();
+    let current = input["currentHash"]
+        .as_str()
+        .filter(|value| value.starts_with("$argon2id$") && (60..=512).contains(&value.len()));
     let expected = input["verifiedHash"].as_str();
     if input["sessionExists"] != true || current.is_none() || current != expected {
         return json!({"status":401,"code":"PS024","message":"Session is invalid or expired"});
@@ -38,7 +40,8 @@ pub fn authorize_change(input: &Value) -> Value {
 mod tests {
     use super::*;
     fn fixture() -> Value {
-        json!({"sessionExists":true,"currentHash":"old-synthetic-hash","verifiedHash":"old-synthetic-hash",
+        let old = format!("$argon2id${}", "a".repeat(80));
+        json!({"sessionExists":true,"currentHash":old,"verifiedHash":old,
           "nextHash":format!("$argon2id${}", "x".repeat(80))})
     }
     #[test]

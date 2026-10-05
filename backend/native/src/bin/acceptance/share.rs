@@ -128,9 +128,9 @@ fn response_races(
         let id = uuid(&invite["id"]);
         let name = format!("acceptance_pause_{nonce}_{index}");
         let key = 6_000_000 + (nonce % 1_000_000) as u32 + index as u32;
-        let mut gate = Gate::hold(key);
         sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock({key}); RETURN NEW; END $$; CREATE TRIGGER {name} BEFORE UPDATE ON vault_invitations FOR EACH ROW WHEN (NEW.id = '{id}' AND NEW.status = '{first}') EXECUTE FUNCTION {name}();"));
         let pause = Pause(name);
+        let mut gate = Gate::hold(key);
         let revoke_path = format!("{invitations}/{id}");
         let accept_path = format!("/api/auth/invitations/{id}/accept");
         let proof = json!({"confirmationCode":invite["confirmationCode"]});
