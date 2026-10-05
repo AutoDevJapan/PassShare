@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
 import { generateConnectId } from "../lib/connect.js";
 import { isTokenAuthClient } from "./client.js";
 import { clearCsrfCookie, issueCsrfToken, requireCsrf } from "./csrf.js";
@@ -10,6 +11,7 @@ import { createInvitationsRouter, createShareRouter } from "./share-router.js";
 import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
 import { nativeMutation } from "../lib/native-mutations.js";
+import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS } from "./rate-limit-constants.js";
 
 /**
  * @param {object} deps
@@ -24,6 +26,11 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   const router = Router();
   const sessionGuard = requireSession(authStore);
   const loginGuard = createLoginGuard({ store: loginGuardStore });
+  // Cheap per-process protection before session DB lookup; the existing shared
+  // throttle below remains authoritative across replicas and restarts.
+  const passwordChangeThrottle = rateLimit({ windowMs:LOGIN_IP_WINDOW_MS,
+    limit:LOGIN_IP_MAX_REQUESTS, standardHeaders:"draft-6", legacyHeaders:false,
+    message:{error:"PS029",message:"Too many requests. Try again later."} });
 
   router.get("/csrf", (_req, res) => {
     const csrfToken = issueCsrfToken(res, appEnv);
@@ -163,7 +170,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
     }
   });
 
-  router.post("/password/change", sessionGuard, requireCsrf, async (req, res) => {
+  router.post("/password/change", passwordChangeThrottle, sessionGuard, requireCsrf, async (req, res) => {
     try {
       const clientIp = resolveClientIp(req);
       await loginGuard.assertIpAllowed(clientIp);
