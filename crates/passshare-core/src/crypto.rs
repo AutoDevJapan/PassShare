@@ -81,7 +81,7 @@ pub fn encrypt(plaintext: &[u8], key: &MasterKey) -> Result<(Vec<u8>, [u8; 24]),
     let mut nonce = [0u8; 24];
     fill(&mut nonce).map_err(|e| PassShareError::Internal(e.to_string()))?;
     let ciphertext = cipher
-        .encrypt(XNonce::from_slice(&nonce), plaintext)
+        .encrypt(&XNonce::from(nonce), plaintext)
         .map_err(|e| PassShareError::Internal(e.to_string()))?;
     Ok((ciphertext, nonce))
 }
@@ -94,7 +94,7 @@ pub fn decrypt(
     let cipher = XChaCha20Poly1305::new_from_slice(key.as_bytes())
         .map_err(|e| PassShareError::Internal(e.to_string()))?;
     cipher
-        .decrypt(XNonce::from_slice(nonce), ciphertext)
+        .decrypt(&XNonce::from(*nonce), ciphertext)
         .map_err(|_| PassShareError::InvalidMasterPassword)
 }
 

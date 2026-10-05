@@ -207,6 +207,7 @@ impl PasswordBox {
             .iter()
             .position(|i| i.id == item.id)
             .ok_or(PassShareError::ItemNotFound)?;
+        scrub_item_fields(&mut self.payload.items[pos]);
         self.payload.items[pos] = item;
         self.payload.vault.updated_at = chrono::Utc::now();
         Ok(())
@@ -216,7 +217,14 @@ impl PasswordBox {
         self.ensure_unlocked()?;
         let connect_id = ConnectId::from_str(id)?;
         let len_before = self.payload.items.len();
-        self.payload.items.retain(|i| i.id != connect_id);
+        self.payload.items.retain_mut(|item| {
+            if item.id == connect_id {
+                scrub_item_fields(item);
+                false
+            } else {
+                true
+            }
+        });
         if self.payload.items.len() == len_before {
             return Err(PassShareError::ItemNotFound);
         }
@@ -258,6 +266,7 @@ impl PasswordBox {
             .iter()
             .position(|existing| existing.id == item.id)
         {
+            scrub_item_fields(&mut self.payload.items[pos]);
             self.payload.items[pos] = item;
         } else {
             self.payload.items.push(item);
@@ -322,9 +331,7 @@ impl PasswordBox {
     /// without moving every secret behind a `Zeroizing` newtype.
     fn zeroize_secrets(&mut self) {
         for item in &mut self.payload.items {
-            for field in &mut item.fields {
-                field.value.zeroize();
-            }
+            scrub_item_fields(item);
         }
         if let Some(secret) = self.payload.recovery_secret.as_mut() {
             secret.zeroize();
@@ -351,6 +358,16 @@ impl Drop for PasswordBox {
     fn drop(&mut self) {
         self.zeroize_secrets();
     }
+}
+
+// Scrub before replacement/removal as well as whole-box teardown: Drop can only
+// reach items still in the payload, not String buffers already released by Vec.
+fn scrub_item_fields(item: &mut Item) {
+    for field in &mut item.fields {
+        field.value.zeroize();
+    }
+    #[cfg(test)]
+    saved_change_tests::observe_scrubbed_item(item);
 }
 
 fn default_vault_name(path: &Path) -> String {

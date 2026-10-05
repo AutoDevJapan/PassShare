@@ -2,6 +2,23 @@ use super::*;
 use std::fs;
 use tempfile::TempDir;
 
+std::thread_local! {
+    // Test-only, same-thread observation of live buffers after wiping and before
+    // release. Store only the id and an empty-value flag, never a secret value.
+    static SCRUB_EVENTS: std::cell::RefCell<Vec<(String, bool)>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
+pub(super) fn observe_scrubbed_item(item: &Item) {
+    SCRUB_EVENTS.with_borrow_mut(|events| {
+        events.push((
+            item.id.to_string(),
+            item.fields.iter().all(|field| field.value.is_empty()),
+        ));
+    });
+}
+
 #[derive(Clone, Copy)]
 enum Operation {
     Add,
@@ -9,6 +26,7 @@ enum Operation {
     Delete,
     Import,
     Upsert,
+    UpsertNew,
 }
 
 // Fail the real atomic replacement, rather than mock a save error. The directory
@@ -55,6 +73,7 @@ fn failure_then_retry(operation: Operation) {
         Operation::Delete => SavedChange::Delete(&id),
         Operation::Import => SavedChange::ImportCsv(csv),
         Operation::Upsert => SavedChange::Upsert(&edited),
+        Operation::UpsertNew => SavedChange::Upsert(&added),
     };
     fs::rename(&path, &backup).unwrap();
     fs::create_dir(&path).unwrap();
@@ -74,7 +93,9 @@ fn failure_then_retry(operation: Operation) {
     let reopened = PasswordBox::open(&path, &master).unwrap();
     assert_eq!(reopened.payload, pb.payload);
     match operation {
-        Operation::Add => assert_eq!(reopened.payload.items, vec![original, added]),
+        Operation::Add | Operation::UpsertNew => {
+            assert_eq!(reopened.payload.items, vec![original, added]);
+        }
         Operation::Update | Operation::Upsert => {
             assert_eq!(reopened.payload.items, vec![edited]);
         }
@@ -118,6 +139,39 @@ fn saved_csv_failure_retry_imports_once() {
 #[test]
 fn saved_sync_failure_preserves_original() {
     failure_then_retry(Operation::Upsert);
+}
+
+#[test]
+fn saved_new_sync_failure_retry_adds_once() {
+    failure_then_retry(Operation::UpsertNew);
+}
+
+#[test]
+fn saved_replaced_and_removed_values_are_scrubbed_before_release() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("box.pbox");
+    let master = uuid::Uuid::new_v4().to_string();
+    let mut pb = PasswordBox::create(&path, &master).unwrap();
+    let original = Item::new_login(
+        pb.vault().unwrap().id.clone(),
+        "Original",
+        uuid::Uuid::new_v4().to_string(),
+    )
+    .unwrap();
+    let id = original.id.to_string();
+    for operation in [Operation::Update, Operation::Upsert, Operation::Delete] {
+        pb.upsert_sync_item(original.clone()).unwrap();
+        SCRUB_EVENTS.with_borrow_mut(Vec::clear);
+        match operation {
+            Operation::Update => pb.update_item(original.clone()).unwrap(),
+            Operation::Upsert => pb.upsert_sync_item(original.clone()).unwrap(),
+            Operation::Delete => pb.delete_item(&id).unwrap(),
+            _ => unreachable!(),
+        }
+        SCRUB_EVENTS.with_borrow(|events| assert_eq!(events.as_slice(), &[(id.clone(), true)]));
+    }
+    // The independent caller's original is not scrubbed by the mutation.
+    assert!(original.fields.iter().any(|field| !field.value.is_empty()));
 }
 
 #[test]

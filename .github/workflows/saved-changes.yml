@@ -21,7 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
       - name: Check changed Rust formatting
         run: rustfmt --edition 2021 --check crates/passshare-core/src/password_box.rs crates/passshare-core/src/password_box_saved_tests.rs apps/desktop/src-tauri/src/lib.rs
-      - name: Prove all five tests reject publishing before the save
+      - name: Prove all six save-failure tests reject publishing before the save
         shell: bash
         run: |
           git apply documents/evidence/1197-save-before-commit-regression.patch
@@ -32,8 +32,8 @@ jobs:
           cat regression.log
           git apply --reverse documents/evidence/1197-save-before-commit-regression.patch
           test "$result" -eq 101
-          test "$(grep -c '^test password_box::saved_change_tests::saved_.* FAILED$' regression.log)" -eq 5
-          grep -q '1 passed; 5 failed' regression.log
+          test "$(grep -c '^test password_box::saved_change_tests::saved_.* FAILED$' regression.log)" -eq 6
+          grep -q '2 passed; 6 failed' regression.log
           git diff --exit-code
       - name: Verify real encrypted save and reopen with the fixed implementation
         run: cargo test -p passshare-core --locked
