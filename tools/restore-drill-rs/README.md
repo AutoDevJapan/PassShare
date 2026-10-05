@@ -52,6 +52,8 @@ is copied to reports. Errors are static anonymous classes.
 Official HTTP signup, item creation through Rust native idempotency, sharing and
 acceptance create four synthetic accounts, two complete items (Japanese additional
 fields, concealed field, ordered URLs/sections/tags), and a 4-byte attachment.
+Account credentials are generated per run from the container OS random source
+and remain in memory and the disposable DB; no fixed account password is shipped.
 All ten original tables **and** the current native `mutation_operations` table
 must be present and populated. Unknown tables fail the inventory check so a schema
 change requires an explicit update rather than silently omitting data.

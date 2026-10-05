@@ -4,10 +4,6 @@ const OWNER: &str = "owner@example.invalid";
 const MEMBER: &str = "member@example.invalid";
 const INVITEE: &str = "invitee@example.invalid";
 const DELETED: &str = "deleted@example.invalid";
-const OLD_PASSWORD: &str = "SyntheticOwner123!";
-const CURRENT_PASSWORD: &str = "SyntheticCurrent123!";
-const INVITE_PASSWORD: &str = "SyntheticInvite123!";
-const DELETED_PASSWORD: &str = "SyntheticDeleted123!";
 
 struct Account {
     id: String,
@@ -78,6 +74,10 @@ impl Api {
 
 impl Runner {
     pub(super) fn run(&mut self, report: &mut Report, inputs: &Inputs) -> Result<()> {
+        let old_password = synthetic_password()?;
+        let current_password = synthetic_password()?;
+        let invite_password = synthetic_password()?;
+        let deleted_password = synthetic_password()?;
         report.check("fixed_synthetic_container_inputs", true)?;
         report.check(
             "official_backend_and_native_present",
@@ -108,27 +108,27 @@ impl Runner {
 
         let owner = self
             .api
-            .account(report, "source_owner_signup", true, OWNER, OLD_PASSWORD)?;
+            .account(report, "source_owner_signup", true, OWNER, &old_password)?;
         let member = self.api.account(
             report,
             "source_member_signup",
             true,
             MEMBER,
-            CURRENT_PASSWORD,
+            &current_password,
         )?;
         let invitee = self.api.account(
             report,
             "source_invitee_signup",
             true,
             INVITEE,
-            INVITE_PASSWORD,
+            &invite_password,
         )?;
         let deleted = self.api.account(
             report,
             "source_deleted_fixture_signup",
             true,
             DELETED,
-            DELETED_PASSWORD,
+            &deleted_password,
         )?;
         let boxes = self.api.json(
             report,
@@ -365,7 +365,7 @@ impl Runner {
             "POST",
             "/api/auth/login",
             "",
-            Some(&json!({"email": OWNER, "password": OLD_PASSWORD})),
+            Some(&json!({"email": OWNER, "password": &old_password})),
             401,
             None,
         )?;
@@ -375,7 +375,7 @@ impl Runner {
             "POST",
             "/api/auth/login",
             "",
-            Some(&json!({"email": DELETED, "password": DELETED_PASSWORD})),
+            Some(&json!({"email": DELETED, "password": &deleted_password})),
             401,
             None,
         )?;
@@ -490,7 +490,7 @@ impl Runner {
             "POST",
             "/api/auth/login",
             "",
-            Some(&json!({"email": OWNER, "password": OLD_PASSWORD})),
+            Some(&json!({"email": OWNER, "password": &old_password})),
             200,
             None,
         )?;
@@ -500,7 +500,7 @@ impl Runner {
             "POST",
             "/api/auth/login",
             "",
-            Some(&json!({"email": DELETED, "password": DELETED_PASSWORD})),
+            Some(&json!({"email": DELETED, "password": &deleted_password})),
             200,
             None,
         )?;
@@ -606,7 +606,7 @@ impl Runner {
             "POST",
             "/api/auth/login",
             "",
-            Some(&json!({"email": OWNER, "password": OLD_PASSWORD})),
+            Some(&json!({"email": OWNER, "password": &old_password})),
             401,
             None,
         )?;
@@ -616,7 +616,7 @@ impl Runner {
             "POST",
             "/api/auth/login",
             "",
-            Some(&json!({"email": DELETED, "password": DELETED_PASSWORD})),
+            Some(&json!({"email": DELETED, "password": &deleted_password})),
             401,
             None,
         )?;
@@ -625,21 +625,21 @@ impl Runner {
             "current_owner_login",
             false,
             OWNER,
-            CURRENT_PASSWORD,
+            &current_password,
         )?;
         let current_member = self.api.account(
             report,
             "current_former_member_login",
             false,
             MEMBER,
-            CURRENT_PASSWORD,
+            &current_password,
         )?;
         let current_invitee = self.api.account(
             report,
             "current_invitee_login",
             false,
             INVITEE,
-            INVITE_PASSWORD,
+            &invite_password,
         )?;
         self.api.json(
             report,
