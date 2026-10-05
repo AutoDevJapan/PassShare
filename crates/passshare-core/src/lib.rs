@@ -18,3 +18,4 @@ pub use export::export_onepassword_csv;
 pub use import::import_onepassword_csv;
 pub use password_box::PasswordBox;
 pub use password_box::PasswordBoxState;
+pub use password_box::SavedChange;

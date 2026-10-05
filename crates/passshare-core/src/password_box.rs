@@ -26,6 +26,16 @@ pub enum PasswordBoxState {
     Unlocked,
 }
 
+/// A complete mutation that becomes visible only after its encrypted save succeeds.
+#[derive(Clone, Copy)]
+pub enum SavedChange<'a> {
+    Add(&'a Item),
+    Update(&'a Item),
+    Delete(&'a str),
+    ImportCsv(&'a str),
+    Upsert(&'a Item),
+}
+
 pub struct PasswordBox {
     path: PathBuf,
     state: PasswordBoxState,
@@ -34,6 +44,46 @@ pub struct PasswordBox {
 }
 
 impl PasswordBox {
+    /// Stage the change separately from the live box and publish it only after
+    /// the atomic file replacement succeeds. Errors and panic unwinding discard
+    /// the staged box, whose Drop implementation scrubs its plaintext secrets.
+    /// Returns the number of affected items (the imported count for CSV).
+    pub fn apply_and_save(
+        &mut self,
+        change: SavedChange<'_>,
+        master_password: &str,
+    ) -> Result<usize, PassShareError> {
+        self.ensure_unlocked()?;
+        let mut staged = Self {
+            path: self.path.clone(),
+            state: self.state,
+            payload: self.payload.clone(),
+            salt: self.salt,
+        };
+        let count = match change {
+            SavedChange::Add(item) => {
+                staged.add_item(item.clone())?;
+                1
+            }
+            SavedChange::Update(item) => {
+                staged.update_item(item.clone())?;
+                1
+            }
+            SavedChange::Delete(id) => {
+                staged.delete_item(id)?;
+                1
+            }
+            SavedChange::ImportCsv(csv) => staged.import_onepassword_csv(csv)?,
+            SavedChange::Upsert(item) => {
+                staged.upsert_sync_item(item.clone())?;
+                1
+            }
+        };
+        staged.save(master_password)?;
+        std::mem::swap(&mut self.payload, &mut staged.payload);
+        Ok(count)
+    }
+
     pub fn create(path: impl AsRef<Path>, master_password: &str) -> Result<Self, PassShareError> {
         let path = path.as_ref().to_path_buf();
         let vault_name = default_vault_name(&path);
@@ -311,6 +361,10 @@ fn default_vault_name(path: &Path) -> String {
 }
 
 use std::str::FromStr;
+
+#[cfg(test)]
+#[path = "password_box_saved_tests.rs"]
+mod saved_change_tests;
 
 #[cfg(test)]
 mod tests {

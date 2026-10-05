@@ -1,0 +1,8 @@
+diff --git a/crates/passshare-core/src/password_box.rs b/crates/passshare-core/src/password_box.rs
+--- a/crates/passshare-core/src/password_box.rs
++++ b/crates/passshare-core/src/password_box.rs
+@@ -89,3 +89,3 @@
+-        staged.save(master_password)?;
+         std::mem::swap(&mut self.payload, &mut staged.payload);
++        self.save(master_password)?;
+         Ok(count)
