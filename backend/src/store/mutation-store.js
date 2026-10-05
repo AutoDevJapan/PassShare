@@ -16,7 +16,7 @@ export async function createMutationStore({ store, authStore, pool }) {
   async function execute(input, transactionStore, client, existing) {
     async function requireCurrentMembership(boxId) {
       const permitted = client
-        ? (await client.query("SELECT vault_id FROM vault_memberships WHERE user_id=$1 AND vault_id=$2 FOR KEY SHARE", [input.actor,boxId])).rowCount > 0
+        ? (await client.query("SELECT vault_id FROM vault_memberships WHERE user_id=$1 AND vault_id=$2 AND passshare_membership_active(role,confirmed_at) FOR SHARE", [input.actor,boxId])).rowCount > 0
         : (await authStore.listVaultIdsForUser(input.actor)).includes(boxId);
       if (!permitted) throw connectHttpError(403, "PS016: Access denied to password box");
     }

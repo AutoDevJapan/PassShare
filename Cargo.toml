@@ -38,3 +38,12 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# The KDF reference budget measures production-style crypto primitives, not
+# unoptimized dependency loops. Keep core test debug/overflow checks and all
+# security parameters/assertions; release uses the same size optimization.
+[profile.test.package.argon2]
+opt-level = "s"
+
+[profile.test.package.blake2]
+opt-level = "s"

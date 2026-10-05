@@ -190,6 +190,7 @@ export type VaultMember = {
   email: string;
   role: "owner" | "member";
   joinedAt: string;
+  identityConfirmed?: boolean;
 };
 
 export type ShareInvitation = {

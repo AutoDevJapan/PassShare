@@ -178,6 +178,7 @@ export function VaultSharePage() {
             <li key={member.userId} className="app-share-row">
               <span>
                 {member.email} — {roleLabel(member.role)}
+                {member.identityConfirmed === false ? ` (${t("app.share.identityPending")})` : ""}
               </span>
               {isOwner && member.role !== "owner" ? (
                 <button
