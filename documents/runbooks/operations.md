@@ -2,32 +2,39 @@
 
 > Issue [#115](https://github.com/AutoDevJapan/PassShare/issues/115)  
 > 親 Epic: [#37](https://github.com/AutoDevJapan/PassShare/issues/37)  
-> 最終更新: 2026-05-28
+> 最終更新: 2026-10-05
 
 ## 目的
 
 本番・ステージング環境の障害対応と PostgreSQL バックアップ検証手順を一本化する。
 
+実施済みの範囲は [復元演習の記録](../audits/operations-readiness.md) を参照する。架空 DB の18項目とモバイル用 HTTP 認証の54項目、その修復後の再実行が記録されている。本番の復元、全クライアント、本人確認、復号鍵、サービス RTO/RPO の合格記録ではない。[問い合わせ・解約の運用契約](../spec/support-data-lifecycle.md)も販売前の未達条件を含む。
+
 ## エスカレーション
 
 | 深刻度 | 例 | 初動 | 通知 |
 |--------|-----|------|------|
-| S1 | 本番全停止、データ漏洩疑い | 即時 rollback + secret rotation | 全員 |
-| S2 | `/health/db` 継続 503 | DB 接続調査 | オンコール |
-| S3 | 単一 PR デプロイ失敗 | CI / Railway ログ確認 | 担当者 |
+| S1 | 本番全停止、データ漏えい疑い | 外部要求と業務書込みを止め、障害時の状態を保持。アプリの版戻しと DB の復元を分けて判断 | 運用責任者。顧客への連絡先と通知基準は契約確定後に使用 |
+| S2 | `/health/db` 継続 503 | 接続と直近変更を調査。DB を変更せず原因を特定 | 運用担当者 |
+| S3 | 単一 PR デプロイ失敗 | 固定 HEAD の CI と配備記録を確認 | 変更担当者 |
+
+受付先・担当者・受付時間はまだ確定していない。自動で全員へ送信する運用や24時間対応を、この表から契約上の約束として扱わない。
 
 ## 障害対応フロー
 
 ```mermaid
 flowchart TD
   A[アラート / 報告] --> B{/health OK?}
-  B -->|No| C[Railway ログ + 直近 deploy rollback]
+  B -->|No| C[外部要求停止・状態保持・直近配備を調査]
   B -->|Yes| D{/health/db OK?}
-  D -->|No| E[DATABASE_URL 確認 → db-migration.md]
-  D -->|Yes| F[Connect 401 急増? → secret-rotation.md]
-  F --> G[Smoke: stg-smoke.mjs]
+  D -->|No| E[接続先の識別子と移行記録を確認]
+  D -->|Yes| F[認証失効・共有取消の履歴を確認]
+  F --> G[隔離環境で拒否と正常操作を確認]
   C --> G
   E --> G
+  G --> H{現資格・データ・鍵・全経路を照合済み?}
+  H -->|No| I[外部停止を維持・不足を記録]
+  H -->|Yes| J[運用責任者が切替を記録・再開後を監視]
 ```
 
 ### 初動チェックリスト
@@ -37,14 +44,16 @@ flowchart TD
 - [ ] `GET /metrics` — uptime / memory
 - [ ] Railway Deployments — 直近 green デプロイ特定
 - [ ] Vercel Production — 直前 deployment 確認
+- [ ] 外部停止を必要とする障害では、Web、SDK、CLI、デスクトップ、モバイル、拡張からの直通経路も停止済みか確認
+- [ ] 接続文字列・認証値・項目本文を問い合わせ、画面画像、ログに出さず、対象の識別子と時刻だけ記録
 
 ### Rollback
 
 | コンポーネント | 手順 |
 |---------------|------|
-| Backend | Railway → production → 前 green deploy を Redeploy |
-| Frontend | Vercel → Promote 前 Production deployment |
-| Desktop | GitHub Releases 前バージョンを再公開 |
+| Backend | 停止中の対象 DB スキーマとの互換性を確認し、適合する過去版への配備を記録。稼働 DB の上書き復元を兼ねない |
+| Frontend | API と保存形式の互換性を確認して、過去版への切替を判断 |
+| Desktop | 現在の保存ファイルを保持し、過去版が形式を読めることを架空データで確認。公開配布は既存の公開承認範囲で行う |
 
 SSOT: [production-release.md](./production-release.md)
 
@@ -54,27 +63,31 @@ SSOT: [production-release.md](./production-release.md)
 
 | 環境 | インスタンス | バックアップ |
 |------|-------------|-------------|
-| prd | postgres-prd-v2 | Railway 自動スナップショット + PITR（プラン依存） |
-| stg | postgres-stg | 同上 |
+| prd | postgres-prd-v2、`1509c487-cf03-4c50-8c9d-8781d53ee19a`（2026-10-05 Chromeで照合） | 有効化・成功履歴・保管期間・PITR の実設定は未確認 |
+| stg | postgres-stg、`7234bbc3-c482-4009-9c88-03063521ffd1`（同日照合） | 同上。本番データを演習へ持ち込まない |
 | dev/preview | postgres-dev | 開発用 — 本番データを置かない |
 
 ### バックアップ検証（四半期推奨）
 
-1. **stg 環境**でリストア演習（Railway Dashboard → Backups → Restore to new instance または PITR）
-2. 復元インスタンスに `DATABASE_URL` を一時設定
-3. Smoke:
-   ```powershell
-   $env:STG_BACKEND_URL = "https://<restored-backend>/..."
-   node scripts/stg-smoke.mjs
-   ```
-4. `pnpm --dir backend migrate:verify` — スキーマ一致
-5. 演習記録を下表に追記
+1. 既存設定を読む段階では、対象サービスとボリュームの ID、方式、有効なスケジュール、最後に成功した取得時刻、復元可能な範囲、保持設定を記録する。秘密設定は取得しない。未確認を「自動バックアップ済み」と表示しない。
+2. 新規の復元サービス・ボリューム・保存先を作る前に、既存の承認範囲と費用を確認する。新しい支出が必要なら、対象と費用・作業範囲を示してオーナーへ判断を依頼する。稼働サービスの通常の `Restore` を隔離演習の代わりに実行しない。
+3. 元データと接続を変更しない隔離復元先を用意し、取得時刻・復元先 ID・内容の由来を照合する。架空データで schema、全テーブル、追加フィールド、添付のハッシュ、版を検査する。本番 dump をソースリポジトリへ保存しない。
+4. 復元 API と外部接続を止めた状態で、[認証と共有の整理手順](../audits/operations-readiness.md#復旧担当が行う手順)を実施する。旧セッション・旧トークン・静的認証、招待、共有、古いパスワード、退会、削除、暗号鍵を現在の記録と照合する。SQL の権限登録を、本人確認や本番の再承認と読み替えない。
+5. 接続先を切り替えずに、全対象クライアントで旧資格の拒否、現在の所有者の認可、項目・添付・版の保持を確認する。正常系の smoke と schema 検査だけでは再開を許可しない。
+6. RTO は障害の開始から現在の資格で業務再開を確認した時刻まで測る。RPO は最後に復元できた業務更新と障害時点の差、および失われた更新の範囲を記録する。小さい DB の復元・比較時間とは分ける。外部停止、切替、本人確認や鍵の照合を省略した演習ではサービス値を未測定とする。
+7. 切替先のサービス ID について、契約に必要なバックアップ方式・保持設定・取得成功を確認する。PITR の復元先は通常の DB として起動し、元サービスのアーカイブ継続を引き継がない。継続に必要な設定と費用の承認がない場合は、その条件を未達として残し再開しない。この手順自体は有効化や支出を承認しない。
+8. 運用責任者が確認結果と切替を記録してから再開する。再開後の書込みを保持する。切替失敗時に古い DB を再適用せず、増えた更新を保全して停止へ戻る。
+9. 演習専用のコンテナ・ボリューム・イメージ、復元サービスと保存物は、演習結果の保全と用途を照合して回収する。他のサービスや本番バックアップをまとめて削除しない。
+
+2026-10-05 に確認した [Railway のボリュームバックアップ資料](https://docs.railway.com/volumes/backups)では、通常の復元は同一サービスのボリュームを差し替える変更として準備され、配備で反映される。一方、[PITR の資料](https://docs.railway.com/volumes/point-in-time-recovery)では、新しいサービスへ復元する。両者は異なる手順であり、PassShare の実環境で有効な方式を確認してから選ぶ。公式機能の説明は、その環境の設定や復元成功を証明しない。
 
 ### 演習記録
 
 | 日付 | 環境 | 方式 | 結果 | 実施者 |
 |------|------|------|------|--------|
-| | stg | PITR / snapshot | | |
+| 2026-10-04 | 架空 Docker DB | dump / 別 DB restore | DB18項目、HTTP54項目が成功。本番 RTO/RPO 未測定 | ToDo1177/1197、[証拠](../audits/operations-readiness.md) |
+| 2026-10-05 | 架空 Docker DB | 同じ候補の再実行 | HTTP54項目が成功。SQL の権限登録と本人確認を区別しイメージ回収を確認 | ToDo1537、[追加記録](../audits/evidence/1537-api-restore-remediation.json) |
+| 未実施 | Railway の現契約環境 | 有効方式を未確認 | 隔離復元と全クライアントを未検証 | ToDo1177/1197で継続 |
 
 ## 監視 SSOT
 
