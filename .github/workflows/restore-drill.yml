@@ -1,0 +1,115 @@
+name: Synthetic restore acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-restore-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  restore:
+    name: Synthetic restore (Rust + API + PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Build the formal backend and Rust acceptance runner
+        run: |
+          docker build --label cc.cleanup=verification --label cc.todo=1177 \
+            --label cc.project=PassShare --label "cc.job=ci-${GITHUB_RUN_ID}" \
+            --tag "passshare-restore-1177:${GITHUB_RUN_ID}" \
+            --file docker/Dockerfile.restore-drill .
+
+      - name: Restore synthetic data and verify qualification before reopening
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -eu
+          drill_network="passshare-restore-1177-${GITHUB_RUN_ID}"
+          drill_volume="passshare-restore-1177-${GITHUB_RUN_ID}"
+          drill_db="passshare-restore-1177-db-${GITHUB_RUN_ID}"
+          drill_api="passshare-restore-1177-api-${GITHUB_RUN_ID}"
+          docker network create --internal "$drill_network"
+          docker volume create --label cc.cleanup=verification --label cc.todo=1177 \
+            --label cc.project=PassShare --label "cc.job=ci-${GITHUB_RUN_ID}" "$drill_volume"
+          docker run --detach --name "$drill_db" --network "$drill_network" --network-alias postgres \
+            --memory 512m --cpus 1 \
+            --label cc.cleanup=verification --label cc.todo=1177 \
+            --label cc.project=PassShare --label "cc.job=ci-${GITHUB_RUN_ID}" \
+            --mount "type=volume,source=$drill_volume,target=/var/lib/postgresql/data" \
+            --env POSTGRES_HOST_AUTH_METHOD=trust \
+            postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+          drill_ready=0
+          for drill_attempt in $(seq 1 60); do
+            if test "$(docker exec "$drill_db" cat /proc/1/comm)" = postgres \
+              && docker exec "$drill_db" pg_isready -U postgres >/dev/null 2>&1; then
+              drill_ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$drill_ready" -eq 1
+          docker run --name "$drill_api" --network "$drill_network" --memory 768m --cpus 1 \
+            --label cc.cleanup=verification --label cc.todo=1177 \
+            --label cc.project=PassShare --label "cc.job=ci-${GITHUB_RUN_ID}" \
+            --env PASSSHARE_RESTORE_DRILL=synthetic-container-v1 \
+            --env "DRILL_SOURCE_SHA=$SOURCE_COMMIT" \
+            --env "DRILL_BACKEND_SHA256=$(git ls-files -z backend/src backend/native | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)" \
+            "passshare-restore-1177:${GITHUB_RUN_ID}" > restore-drill-report.json
+          docker run --rm -i --network none --memory 256m --cpus 1 \
+            "passshare-restore-1177:${GITHUB_RUN_ID}" --validate-report positive < restore-drill-report.json
+          docker stop "$drill_api" >/dev/null
+          docker rm -v "$drill_api"
+          set +e
+          docker run --name "$drill_api" --network "$drill_network" --memory 768m --cpus 1 \
+            --label cc.cleanup=verification --label cc.todo=1177 \
+            --label cc.project=PassShare --label "cc.job=ci-${GITHUB_RUN_ID}" \
+            --env PASSSHARE_RESTORE_DRILL=synthetic-container-v1 \
+            --env PASSSHARE_DRILL_CONTROL=omit-credential-purge \
+            --env "DRILL_SOURCE_SHA=$SOURCE_COMMIT" \
+            --env "DRILL_BACKEND_SHA256=$(git ls-files -z backend/src backend/native | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)" \
+            "passshare-restore-1177:${GITHUB_RUN_ID}" > restore-drill-negative-control.json
+          drill_status=$?
+          set -e
+          test "$drill_status" -eq 1
+          docker run --rm -i --network none --memory 256m --cpus 1 \
+            "passshare-restore-1177:${GITHUB_RUN_ID}" --validate-report negative < restore-drill-negative-control.json
+
+      - name: Recover only this run's verification resources
+        if: always()
+        run: |
+          set -eu
+          for drill_container in "passshare-restore-1177-api-${GITHUB_RUN_ID}" "passshare-restore-1177-db-${GITHUB_RUN_ID}"; do
+            if docker container inspect "$drill_container" >/dev/null 2>&1; then
+              docker stop "$drill_container" >/dev/null
+              docker rm -v "$drill_container"
+            fi
+          done
+          if docker volume inspect "passshare-restore-1177-${GITHUB_RUN_ID}" >/dev/null 2>&1; then
+            docker volume rm "passshare-restore-1177-${GITHUB_RUN_ID}"
+          fi
+          if docker network inspect "passshare-restore-1177-${GITHUB_RUN_ID}" >/dev/null 2>&1; then
+            docker network rm "passshare-restore-1177-${GITHUB_RUN_ID}"
+          fi
+          if docker image inspect "passshare-restore-1177:${GITHUB_RUN_ID}" >/dev/null 2>&1; then
+            docker image rm --no-prune "passshare-restore-1177:${GITHUB_RUN_ID}"
+          fi
+
+      - name: Keep the anonymous acceptance report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: synthetic-restore-1177
+          path: |
+            restore-drill-report.json
+            restore-drill-negative-control.json
+          if-no-files-found: warn

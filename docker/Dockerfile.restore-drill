@@ -1,0 +1,26 @@
+FROM rust:1-bookworm AS mutations
+WORKDIR /native
+COPY backend/native ./
+RUN cargo build --release --locked --bin passshare-mutations
+
+FROM rust:1-bookworm AS drill
+WORKDIR /drill
+COPY tools/restore-drill-rs ./
+RUN cargo test --locked && cargo build --release --locked --bin passshare-restore-drill
+
+FROM node:24-bookworm-slim AS backend
+WORKDIR /app
+COPY backend/package.json backend/pnpm-lock.yaml ./
+RUN corepack enable \
+  && corepack prepare pnpm@10.11.0 --activate \
+  && pnpm install --prod --frozen-lockfile --ignore-scripts
+COPY backend/src ./src
+
+FROM postgres:16-bookworm
+WORKDIR /app
+COPY --from=backend /usr/local/bin/node /usr/local/bin/node
+COPY --from=backend /app /app
+COPY --from=mutations /native/target/release/passshare-mutations /usr/local/bin/passshare-mutations
+COPY --from=drill /drill/target/release/passshare-restore-drill /usr/local/bin/passshare-restore-drill
+RUN node --version && pg_dump --version
+ENTRYPOINT ["/usr/local/bin/passshare-restore-drill"]
