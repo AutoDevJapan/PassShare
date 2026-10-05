@@ -13,9 +13,9 @@
 | `APPLE_SIGNING_IDENTITY` | Developer ID Application |
 | `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarization |
 
-シークレット未設定時は **未署名ビルド** が生成される（CI は green）。本番配布前に必ず設定する。
+現在の `desktop-build.yml` はビルドとCI成果物保存を検証する。署名用シークレットをビルドへ渡す工程やWindowsの発行元署名は、このworkflowには接続していない。シークレット名が登録されているだけで署名済みとは判定せず、本番配布前に実成果物の署名を確認する。
 
-Windowsの発行元署名は、別途Authenticode証明書と署名工程で確認する。自動更新用のminisign署名だけでWindowsの発行元署名を済ませたとは扱わない。署名・公開に必要な支出や契約は、検証できる候補と必要な条件をそろえてオーナーが判断する。署名の秘密値をログや報告へ出さない。
+Windowsの発行元署名は、別途Authenticode証明書と署名工程で確認する。自動更新用の署名だけでWindowsの発行元署名を済ませたとは扱わない。[Windows署名](https://v2.tauri.app/distribute/sign/windows/)と[自動更新](https://v2.tauri.app/plugin/updater/)の公式手順を分けて参照する。署名・公開に必要な支出や契約は、検証できる候補と必要な条件をそろえてオーナーが判断する。署名の秘密値をログや報告へ出さない。
 
 ## ローカルビルド
 
