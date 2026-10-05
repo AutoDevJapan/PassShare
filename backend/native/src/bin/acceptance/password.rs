@@ -33,6 +33,20 @@ pub fn run(port: u16, nonce: u128) {
     let (status, second) = account(port, "/api/auth/login", &email, &old);
     assert_eq!(status, 200);
     let first_session = first["refreshToken"].as_str().unwrap();
+    let before_token = first["connectAccessToken"].as_str().unwrap();
+    let (status, original_boxes) = http(port, "GET", "/v1/vaults", before_token, "", &Value::Null);
+    assert_eq!(status, 200);
+    let box_id = original_boxes[0]["id"].as_str().unwrap();
+    let item_path = format!("/v1/vaults/{box_id}/items");
+    let (status, original_item) = http(
+        port,
+        "POST",
+        &item_path,
+        before_token,
+        "password-fixture-item",
+        &json!({"title":"Synthetic retained item","category":"LOGIN","fields":[{"id":"synthetic-field","type":"STRING","label":"username","value":"synthetic-retained-value"}]}),
+    );
+    assert_eq!(status, 201);
     let second_session = second["refreshToken"].as_str().unwrap();
     let change = json!({"currentPassword":old,"newPassword":next});
     assert_eq!(
@@ -71,6 +85,13 @@ pub fn run(port: u16, nonce: u128) {
         200,
         "failed change retains original session"
     );
+    let cleanup_trigger = if std::env::var_os("DATABASE_URL").is_some() {
+        let name = format!("cleanup_failure_{nonce}");
+        sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic cleanup failure'; END $$; CREATE TRIGGER {name} BEFORE DELETE ON login_failures FOR EACH ROW WHEN(OLD.email='{email}') EXECUTE FUNCTION {name}();"));
+        Some(name)
+    } else {
+        None
+    };
     assert_eq!(
         http(
             port,
@@ -81,8 +102,14 @@ pub fn run(port: u16, nonce: u128) {
             &change
         )
         .0,
-        204
+        204,
+        "committed change remains success when ancillary cleanup fails"
     );
+    if let Some(name) = cleanup_trigger {
+        sql(&format!(
+            "DROP TRIGGER {name} ON login_failures; DROP FUNCTION {name}();"
+        ));
+    }
     for actor in [&first, &second] {
         let session = actor["refreshToken"].as_str().unwrap();
         let token = actor["connectAccessToken"].as_str().unwrap();
@@ -112,6 +139,26 @@ pub fn run(port: u16, nonce: u128) {
     assert_eq!(account(port, "/api/auth/login", &email, &old).0, 401);
     let (status, current) = account(port, "/api/auth/login", &email, &next);
     assert_eq!(status, 200, "new password can log in");
+    let access = current["connectAccessToken"].as_str().unwrap();
+    assert_eq!(
+        http(port, "GET", "/v1/vaults", access, "", &Value::Null).1,
+        original_boxes,
+        "same box identity survives password change"
+    );
+    let item_id = original_item["id"].as_str().unwrap();
+    assert_eq!(
+        http(
+            port,
+            "GET",
+            &format!("{item_path}/{item_id}"),
+            access,
+            "",
+            &Value::Null
+        )
+        .1,
+        original_item,
+        "full item remains identical"
+    );
     assert_eq!(
         http(
             port,
@@ -224,29 +271,49 @@ pub fn run(port: u16, nonce: u128) {
         .0,
         401
     );
-    let mut throttled = false;
+    let isolated_port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let binary = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(if cfg!(windows) {
+            "passshare-mutations.exe"
+        } else {
+            "passshare-mutations"
+        });
+    let isolated = super::Server::start(isolated_port, binary);
     for _ in 0..30 {
-        let status = http(
-            port,
+        assert_eq!(
+            http(
+                isolated_port,
+                "POST",
+                "/api/auth/password/change",
+                "",
+                "",
+                &json!({})
+            )
+            .0,
+            401,
+            "requests within the independent quota reach authorization"
+        );
+    }
+    assert_eq!(
+        http(
+            isolated_port,
             "POST",
             "/api/auth/password/change",
             "",
             "",
-            &json!({}),
+            &json!({})
         )
-        .0;
-        assert!(
-            status == 401 || status == 429,
-            "unauthenticated change never reaches hashing"
-        );
-        if status == 429 {
-            throttled = true;
-            break;
-        }
-    }
-    assert!(
-        throttled,
-        "the unauthenticated route is throttled before authorization"
+        .0,
+        429,
+        "the next request is stopped before authorization"
     );
+    drop(isolated);
     println!("credential acceptance passed: proof, all sessions/tokens revoked, fresh login; PostgreSQL additionally proves overlapping login/refresh cannot resurrect access");
 }

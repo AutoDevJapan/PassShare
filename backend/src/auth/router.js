@@ -187,7 +187,9 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
       const nextHash = await hashPassword(nextPassword);
       await authStore.changePassword(req.auth.userId, req.auth.sessionId, user.password_hash, nextHash);
-      await loginGuard.clearFailures(user.email);
+      // Credential rotation is already committed. Ancillary throttle cleanup
+      // must never report a failed change or retain the old cookie afterward.
+      await loginGuard.clearFailures(user.email).catch(() => {});
       if (!parseBearerToken(req)) {
         clearSessionCookie(res, appEnv);
         clearCsrfCookie(res, appEnv);
