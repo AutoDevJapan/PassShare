@@ -191,7 +191,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   async function renderPasswordSettings(req, res, status = 200, errorCode = "", success = false, preparedHtml) {
     const {webOrigin, locale} = passwordPageContext(req);
     let html = preparedHtml;
-    if (!html && ["PS024", "PS022"].includes(errorCode)) {
+    if (!html && ["PS024", "PS025", "PS022"].includes(errorCode)) {
       // At most one native render per supported locale for unauthenticated
       // requests. Cache the pending promise too, including failure.
       if (!expiredPages.has(locale)) expiredPages.set(locale, nativeMutation({command:"account-password-page",

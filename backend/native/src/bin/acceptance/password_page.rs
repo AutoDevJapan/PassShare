@@ -181,13 +181,12 @@ pub fn run(port: u16, nonce: u128) {
     );
     assert_eq!(status, 401);
     assert!(String::from_utf8(bytes).unwrap().contains("ログインの期限"));
-    let headers = "x-passshare-client: mobile\r\n";
     assert_eq!(
         http_raw(
             port,
             "POST",
             "/api/auth/login",
-            &headers,
+            "x-passshare-client: mobile\r\n",
             &json!({"email":email,"password":old})
         )
         .0,
@@ -198,7 +197,7 @@ pub fn run(port: u16, nonce: u128) {
             port,
             "POST",
             "/api/auth/login",
-            &headers,
+            "x-passshare-client: mobile\r\n",
             &json!({"email":email,"password":new})
         )
         .0,

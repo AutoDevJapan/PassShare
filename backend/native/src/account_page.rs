@@ -55,10 +55,10 @@ pub fn render(input: &Value) -> Value {
     let csrf = escape(input["csrfToken"].as_str().unwrap_or(""));
     let success = input["success"] == true;
     let code = input["errorCode"].as_str().unwrap_or("");
-    let expired = matches!(code, "PS024" | "PS022");
+    let expired = matches!(code, "PS024" | "PS025" | "PS022");
     let message = match code {
         "" => "",
-        "PS024" | "PS022" => text[14],
+        "PS024" | "PS025" | "PS022" => text[14],
         "PS047" => text[15],
         "PS026" => text[16],
         "PS046" => text[17],
@@ -136,7 +136,11 @@ mod tests {
     }
     #[test]
     fn success_and_expiration_only_offer_reauthentication() {
-        for input in [json!({"success":true}), json!({"errorCode":"PS024"})] {
+        for input in [
+            json!({"success":true}),
+            json!({"errorCode":"PS024"}),
+            json!({"errorCode":"PS025"}),
+        ] {
             let page = render(&input);
             let html = page["body"].as_str().unwrap();
             assert!(!html.contains("<form"));

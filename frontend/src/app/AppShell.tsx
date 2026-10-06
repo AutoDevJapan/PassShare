@@ -8,7 +8,8 @@ export function AppShell() {
   const { t, locale } = useI18n();
   const { user, logout } = useAuthSession();
   const navigate = useNavigate();
-  const accountUrl = `${getApiBaseUrl()}/api/auth/password/settings?locale=${locale}`;
+  const accountLocale = locale === "en" ? "en" : locale === "ru" ? "ru" : "ja";
+  const accountUrl = `${getApiBaseUrl()}/api/auth/password/settings?locale=${accountLocale}`;
 
   async function handleLogout() {
     await logout();
@@ -29,7 +30,7 @@ export function AppShell() {
             {t("app.nav.invitations")}
           </NavLink>
           <a href={accountUrl} className="app-shell__nav-link">
-            {locale === "ja" ? "アカウント" : locale === "ru" ? "Аккаунт" : "Account"}
+            {accountLocale === "ja" ? "アカウント" : accountLocale === "ru" ? "Аккаунт" : "Account"}
           </a>
         </nav>
         <div className="app-shell__session">
@@ -53,7 +54,7 @@ export function AppShell() {
           {t("app.nav.invitations")}
         </NavLink>
         <a href={accountUrl} className="app-shell__bottom-link">
-          {locale === "ja" ? "アカウント" : locale === "ru" ? "Аккаунт" : "Account"}
+          {accountLocale === "ja" ? "アカウント" : accountLocale === "ru" ? "Аккаунт" : "Account"}
         </a>
       </nav>
     </div>
