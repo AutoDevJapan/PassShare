@@ -670,7 +670,8 @@ mod smoke_tests {
         let master_password = fresh_master_password();
         let (dir, path) = temp_box("idle-input");
         let mut pb = PasswordBox::create(&path, &master_password).expect("create");
-        add_login(&mut pb, "Idle fixture", "must be erased", None, None, &[]);
+        let item_password = fresh_master_password();
+        add_login(&mut pb, "Idle fixture", &item_password, None, None, &[]);
         pb.save(&master_password).expect("save");
         let original = std::fs::read(&path).expect("ciphertext");
         let start = Instant::now();

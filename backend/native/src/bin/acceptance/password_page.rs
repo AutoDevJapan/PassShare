@@ -205,4 +205,23 @@ pub fn run(port: u16, nonce: u128) {
         200
     );
     println!("HTML password settings: confirmation/CSRF/wrong current/rotation/old tokens/new login passed");
+    // Expired responses use a shared cached Rust page and issue no fresh proof.
+    // Beyond the page budget the response is cheap JSON, with no native render.
+    let mut limited = false;
+    for _ in 0..40 {
+        let (status, headers, bytes) =
+            http_raw(port, "GET", "/api/auth/password/settings", "", &Value::Null);
+        assert!(!headers.to_ascii_lowercase().contains("set-cookie:"));
+        if status == 429 {
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["error"], "PS029");
+            limited = true;
+        } else {
+            assert_eq!(status, 401);
+        }
+    }
+    assert!(
+        limited,
+        "unauthenticated page requests have an independent budget"
+    );
 }
