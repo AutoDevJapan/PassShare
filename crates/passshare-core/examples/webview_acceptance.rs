@@ -430,6 +430,117 @@ fn ensure(value: bool, label: &str) -> Result<(), String> {
     }
 }
 
+fn open_desktop_ui(driver: &Driver, path: &Path, master: &str) -> Result<(), String> {
+    let opened = driver.script("const done=arguments[arguments.length-1];const inputs=document.querySelectorAll('#setup-heading~label input');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;inputs.forEach((el,i)=>{setter.call(el,arguments[i]);el.dispatchEvent(new Event('input',{bubbles:true}));});setTimeout(()=>{document.querySelector('.ps-actions .ps-button--secondary').click();const end=Date.now()+3000;const probe=()=>{if(document.querySelector('.ps-item-card__title')?.textContent==='Lock fixture')done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false);};probe();},50);", json!([path,master]))?;
+    ensure(
+        opened == true,
+        "actual desktop unlock screen did not show fixture",
+    )?;
+    let before = driver.script("const done=arguments[arguments.length-1];const input=document.querySelector('input[type=password]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(input,arguments[0]);input.dispatchEvent(new Event('input',{bubbles:true}));done(input.value===arguments[0] && !!document.querySelector('.ps-item-card'));", json!([master]))?;
+    ensure(before == true, "secret UI precondition absent")
+}
+
+fn assert_locked_ui(driver: &Driver) -> Result<(), String> {
+    ensure(driver.script("const done=arguments[arguments.length-1];const end=Date.now()+2000;const probe=()=>{if(document.querySelector('#setup-heading') && !document.querySelector('[type=password]')?.value && !document.querySelector('.ps-item-card'))done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false);};probe();", json!([]))? == true, "lock retained password input or list")
+}
+
+fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
+    let temp = tempfile::TempDir::new().map_err(|_| "lock fixture directory")?;
+    std::fs::create_dir_all(output).map_err(|_| "lock output directory")?;
+    let mut driver = Driver::start(temp.path(), &output.join("desktop-lock-driver.log"))?;
+    driver.open(application)?;
+    driver.deadline = Instant::now() + Duration::from_secs(360);
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
+        "restart did not begin locked",
+    )?;
+    let mut entropy = [0u8; 32];
+    getrandom::fill(&mut entropy).map_err(|_| "lock fixture entropy")?;
+    let master = STANDARD.encode(entropy);
+    let path = temp.path().join("lock.pbox");
+    ensure(
+        driver.invoke(
+            "create_password_box",
+            json!({"path":path,"masterPassword":master}),
+        )?["ok"]
+            == true,
+        "lock create failed",
+    )?;
+    ensure(driver.invoke("add_item", json!({"category":"LOGIN","title":"Lock fixture","password":master,"masterPassword":master}))?["ok"] == true, "lock item failed")?;
+    let saved = driver.invoke("list_items", json!({}))?["value"].clone();
+    ensure(
+        saved.as_array().is_some_and(|items| items.len() == 1),
+        "lock fixture count",
+    )?;
+    // Reopen and close twice. Each native transition has its own epoch and
+    // must destroy the secret-bearing UI; the UI may also observe its poll.
+    for _ in 0..2 {
+        open_desktop_ui(&driver, &path, &master)?;
+        ensure(
+            driver.invoke("lock_password_box", json!({}))?["ok"] == true,
+            "manual lock failed",
+        )?;
+        assert_locked_ui(&driver)?;
+    }
+    open_desktop_ui(&driver, &path, &master)?;
+    ensure(
+        driver.invoke("list_items", json!({}))?["value"] == saved,
+        "manual reopen changed contents",
+    )?;
+    let ciphertext = std::fs::read(&path).map_err(|_| "lock ciphertext")?;
+    // Measure the production five-minute duration, without test-only overrides.
+    let started = Instant::now();
+    thread::sleep(Duration::from_secs(298));
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == true,
+        "session expired before five minutes",
+    )?;
+    ensure(
+        driver.invoke("list_items", json!({}))?["value"] == saved,
+        "read during idle changed contents",
+    )?;
+    thread::sleep(Duration::from_secs(4));
+    ensure(
+        driver.invoke("native_is_unlocked", json!({}))?["value"] == false,
+        "production idle deadline did not lock",
+    )?;
+    ensure(
+        driver.invoke("native_activity", json!({}))?["value"] == false,
+        "late activity reopened session",
+    )?;
+    ensure(
+        driver.invoke("list_items", json!({}))?["ok"] == false,
+        "idle secret read accepted",
+    )?;
+    for command in ["search_items", "export_onepassword_csv", "add_item"] {
+        let args = if command == "search_items" {
+            json!({"query":"fixture"})
+        } else if command == "add_item" {
+            json!({"category":"LOGIN","title":"Blocked","password":master,"masterPassword":master})
+        } else {
+            json!({})
+        };
+        ensure(
+            driver.invoke(command, args)?["ok"] == false,
+            "idle secret command accepted",
+        )?;
+    }
+    assert_locked_ui(&driver)?;
+    ensure(
+        std::fs::read(&path).map_err(|_| "idle ciphertext")? == ciphertext,
+        "idle lock changed ciphertext",
+    )?;
+    open_desktop_ui(&driver, &path, &master)?;
+    ensure(
+        driver.invoke("list_items", json!({}))?["value"] == saved,
+        "idle reopen contents changed",
+    )?;
+    driver.invoke("lock_password_box", json!({}))?;
+    assert_locked_ui(&driver)?;
+    std::fs::write(output.join("desktop-auto-lock.json"), serde_json::to_vec_pretty(&json!({"nativeFlavor":"desktop","productionIdleSeconds":300,"measuredIdleSeconds":started.elapsed().as_secs_f64(),"manualRelockObserved":2,"secretUiBeforeLock":true,"secretUiAfterLock":false,"idleRequiresAuthentication":true,"lockedSecretCommandsRejected":true,"ciphertextPreserved":true,"backgroundAccepted":false,"physicalMobile":false,"syntheticOnly":true})).map_err(|_| "lock result encode")?).map_err(|_| "lock result write")?;
+    println!("native desktop production idle acceptance succeeded");
+    Ok(())
+}
 fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result<(), String> {
     let temp = tempfile::TempDir::new().map_err(|_| "fixture directory")?;
     std::fs::create_dir_all(output).map_err(|_| "output directory")?;
@@ -581,17 +692,25 @@ fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() != 5 {
-        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed OUTPUT");
+        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed|auto-lock OUTPUT");
         std::process::exit(2);
     }
     let flavor = args[2].to_str().unwrap_or("");
     let mode = args[3].to_str().unwrap_or("");
-    if !["desktop", "mobile"].contains(&flavor) || !["blocked", "executed"].contains(&mode) {
+    if !["desktop", "mobile"].contains(&flavor)
+        || !["blocked", "executed", "auto-lock"].contains(&mode)
+        || (mode == "auto-lock" && flavor != "desktop")
+    {
         std::process::exit(2);
     }
     let app = PathBuf::from(&args[1]);
     let output = PathBuf::from(&args[4]);
-    if let Err(error) = run(&app, flavor, mode == "blocked", &output) {
+    let result = if mode == "auto-lock" {
+        run_auto_lock(&app, &output)
+    } else {
+        run(&app, flavor, mode == "blocked", &output)
+    };
+    if let Err(error) = result {
         eprintln!("native acceptance failed: {error}");
         std::process::exit(1);
     }
@@ -600,6 +719,36 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_bridge_generations_reject_late_results_without_polling() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let result = std::process::Command::new("node")
+            .current_dir(root)
+            .args(["--experimental-strip-types", "--input-type=module", "-e", "import {bindNativeLock} from './shared/lib/native-lock.ts';let cleared=0;const binding=bindNativeLock(null,()=>{cleared+=1});const counts=[];binding.accept({epoch:0,unlocked:false});counts.push(cleared);binding.accept({epoch:1,unlocked:true});binding.accept({epoch:2,unlocked:false});counts.push(cleared);binding.accept({epoch:3,unlocked:true});binding.accept({epoch:2,unlocked:false});counts.push(cleared);binding.accept({epoch:4,unlocked:false});binding.accept({epoch:4,unlocked:false});counts.push(cleared);binding.accept({epoch:5,unlocked:true});binding.accept({epoch:6,unlocked:false});counts.push(cleared);binding.dispose();binding.accept({epoch:7,unlocked:false});counts.push(cleared);process.stdout.write(JSON.stringify(counts));"])
+            .output().expect("Node bridge process");
+        assert!(
+            result.status.success(),
+            "native bridge process must succeed"
+        );
+        let counts: Vec<usize> = serde_json::from_slice(&result.stdout).expect("bridge counts");
+        assert_eq!(counts, vec![0, 1, 1, 2, 3, 3]);
+        let result = std::process::Command::new("node")
+            .current_dir(root)
+            .args(["--experimental-strip-types", "--input-type=module", "-e", "import {bindNativeLock} from './shared/lib/native-lock.ts';let cleared=0;const binding=bindNativeLock(null,()=>{cleared+=1});binding.accept({epoch:3,unlocked:true});binding.accept({epoch:2,unlocked:false});const stale=cleared;binding.accept({epoch:4,unlocked:false});process.stdout.write(JSON.stringify([stale,cleared]));"])
+            .output().expect("late native result process");
+        assert!(
+            result.status.success(),
+            "late native result process must succeed"
+        );
+        let counts: Vec<usize> =
+            serde_json::from_slice(&result.stdout).expect("late native result counts");
+        assert_eq!(counts, vec![0, 1]);
+    }
 
     #[test]
     fn fragmented_script_headers_are_counted_once() {
