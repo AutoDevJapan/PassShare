@@ -84,7 +84,9 @@ pub fn render(input: &Value) -> Value {
         if !message.is_empty() {
             html.push_str(&format!(r#"<p class="error" role="alert">{message}</p>"#));
         }
-        html.push_str(&format!(r#"<form method="post" action="/api/auth/password/settings">
+        // Omitting action posts to the current document URL, retaining the
+        // same-site Vercel environment prefix and accepted route variants.
+        html.push_str(&format!(r#"<form method="post">
 <input type="hidden" name="csrfToken" value="{csrf}"><input type="hidden" name="locale" value="{locale}"><input type="hidden" name="webOrigin" value="{web}">
 <label for="current">{}</label><input id="current" name="currentPassword" type="password" autocomplete="current-password" required>
 <label for="new">{}</label><input id="new" name="newPassword" type="password" autocomplete="new-password" required aria-describedby="hint">
@@ -146,5 +148,12 @@ mod tests {
             assert!(!html.contains("<form"));
             assert!(html.contains("/app/login"));
         }
+    }
+    #[test]
+    fn form_posts_to_its_current_same_site_proxy_path() {
+        let page = render(&json!({"locale":"ja"}));
+        let html = page["body"].as_str().unwrap();
+        assert!(html.contains("<form method=\"post\">"));
+        assert!(!html.contains("action=\"/api/"));
     }
 }
