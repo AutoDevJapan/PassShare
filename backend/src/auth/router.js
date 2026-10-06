@@ -191,12 +191,20 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   async function renderPasswordSettings(req, res, status = 200, errorCode = "", success = false, preparedHtml) {
     const {webOrigin, locale} = passwordPageContext(req);
     let html = preparedHtml;
-    if (!html && ["PS024", "PS025", "PS022"].includes(errorCode)) {
-      // At most one native render per supported locale for unauthenticated
-      // requests. Cache the pending promise too, including failure.
-      if (!expiredPages.has(locale)) expiredPages.set(locale, nativeMutation({command:"account-password-page",
-        locale, webOrigin:defaultWebOrigin(appEnv), errorCode:"PS024"}));
-      html = await expiredPages.get(locale);
+    if (!html && !req.auth) {
+      // Every pre-auth failure uses the same page. Share pending work and
+      // briefly cache failures, then allow recovery without restarting.
+      let entry = expiredPages.get(locale);
+      if (!entry || Date.now() >= entry.retryAt) {
+        entry = {retryAt:Infinity};
+        entry.promise = nativeMutation({command:"account-password-page", locale,
+          webOrigin:defaultWebOrigin(appEnv), errorCode:"PS024"}).catch((error) => {
+            entry.retryAt = Date.now() + 5000;
+            throw error;
+          });
+        expiredPages.set(locale, entry);
+      }
+      html = await entry.promise;
     } else if (!html) {
       html = await nativeMutation({command:"account-password-page", locale,
         webOrigin, csrfToken:success ? "" : issueCsrfToken(res, appEnv), errorCode, success});
@@ -247,7 +255,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   }
 
   router.post("/password/change", passwordChangeThrottle, sessionGuard, requireCsrf, changePassword);
-  router.post("/password/settings", passwordChangeThrottle, urlencoded({extended:false,limit:"2mb"}),
+  router.post("/password/settings", passwordChangeThrottle, sessionGuard, urlencoded({extended:false,limit:"2mb"}),
     (req, _res, next) => {
       // Only the script-free form accepts its double-submit token in the body.
       // Mobile and Connect requests continue to use the JSON endpoint.
@@ -256,7 +264,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
       req.headers[CSRF_HEADER] = req.body?.csrfToken;
       next();
-    }, sessionGuard, requireCsrf, (req, res, next) => changePassword(req, res, next, true));
+    }, requireCsrf, (req, res, next) => changePassword(req, res, next, true));
 
   router.use("/password/settings", async (error, req, res, next) => {
     if (error.status === 429) { sendAuthError(res, error); return; }

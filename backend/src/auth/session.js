@@ -16,7 +16,8 @@ export function parseCookies(req) {
     if (separator <= 0) continue;
     const name = trimmed.slice(0, separator);
     const value = trimmed.slice(separator + 1);
-    cookies[name] = decodeURIComponent(value);
+    try { cookies[name] = decodeURIComponent(value); }
+    catch { /* Malformed cookie values cannot authenticate a session. */ }
   }
   return cookies;
 }

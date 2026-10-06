@@ -204,6 +204,23 @@ pub fn run(port: u16, nonce: u128) {
         200
     );
     println!("HTML password settings: confirmation/CSRF/wrong current/rotation/old tokens/new login passed");
+    for (method, headers) in [
+        ("GET", "Cookie: passshare_session=%E0%A4%A\r\n"),
+        ("POST", ""),
+    ] {
+        let (status, headers, bytes) = http_raw(
+            port,
+            method,
+            "/api/auth/password/settings",
+            headers,
+            &Value::Null,
+        );
+        assert_eq!(status, 401);
+        assert!(!headers.to_ascii_lowercase().contains("set-cookie:"));
+        let html = String::from_utf8(bytes).unwrap();
+        assert!(!html.contains("<form"));
+        assert!(html.contains("/app/login"));
+    }
     // Expired responses use a shared cached Rust page and issue no fresh proof.
     // Beyond the page budget the response is cheap JSON, with no native render.
     let mut limited = false;
