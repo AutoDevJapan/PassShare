@@ -1,4 +1,5 @@
 pub mod account;
+pub mod account_page;
 pub mod create;
 pub mod edit;
 pub mod share;
@@ -9,6 +10,8 @@ pub fn dispatch(input: &Value) -> Value {
     match input.get("command").and_then(Value::as_str) {
         Some("sharing-schema") => json!({"status":200,"body":share::MEMBERSHIP_SCHEMA}),
         Some("account-password-input") => account::validate_input(input),
+        Some("account-password-form") => account_page::validate_form(input),
+        Some("account-password-page") => account_page::render(input),
         Some("account-password-change") => account::authorize_change(input),
         Some("invitation-proof") => share::prepare(input),
         Some("invitation-accept") => share::accept(input),

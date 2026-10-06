@@ -2,11 +2,13 @@ import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import { LanguageSwitcher } from "@shared/ui/LanguageSwitcher";
 import { useAuthSession } from "../hooks/useAuthSession";
+import { getApiBaseUrl } from "../lib/auth-api";
 
 export function AppShell() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { user, logout } = useAuthSession();
   const navigate = useNavigate();
+  const accountUrl = `${getApiBaseUrl()}/api/auth/password/settings?locale=${locale}&webOrigin=${encodeURIComponent(window.location.origin)}`;
 
   async function handleLogout() {
     await logout();
@@ -26,6 +28,9 @@ export function AppShell() {
           <NavLink to="/app/invitations" className="app-shell__nav-link">
             {t("app.nav.invitations")}
           </NavLink>
+          <a href={accountUrl} className="app-shell__nav-link">
+            {locale === "ja" ? "アカウント" : locale === "ru" ? "Аккаунт" : "Account"}
+          </a>
         </nav>
         <div className="app-shell__session">
           <LanguageSwitcher />
@@ -47,6 +52,9 @@ export function AppShell() {
         <NavLink to="/app/invitations" className="app-shell__bottom-link">
           {t("app.nav.invitations")}
         </NavLink>
+        <a href={accountUrl} className="app-shell__bottom-link">
+          {locale === "ja" ? "アカウント" : locale === "ru" ? "Аккаунт" : "Account"}
+        </a>
       </nav>
     </div>
   );
