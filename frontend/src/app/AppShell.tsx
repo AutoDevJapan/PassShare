@@ -8,7 +8,7 @@ export function AppShell() {
   const { t, locale } = useI18n();
   const { user, logout } = useAuthSession();
   const navigate = useNavigate();
-  const accountUrl = `${getApiBaseUrl()}/api/auth/password/settings?locale=${locale}&webOrigin=${encodeURIComponent(window.location.origin)}`;
+  const accountUrl = `${getApiBaseUrl()}/api/auth/password/settings?locale=${locale}`;
 
   async function handleLogout() {
     await logout();

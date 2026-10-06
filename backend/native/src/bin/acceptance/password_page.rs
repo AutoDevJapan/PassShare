@@ -84,7 +84,7 @@ pub fn run(port: u16, nonce: u128) {
     let (status, _, bytes) = http_payload(
         port,
         "POST",
-        "/api/auth/password/settings",
+        "/api/auth/Password/Settings/",
         &form_headers,
         "application/x-www-form-urlencoded",
         &payload,
@@ -181,7 +181,7 @@ pub fn run(port: u16, nonce: u128) {
     );
     assert_eq!(status, 401);
     assert!(String::from_utf8(bytes).unwrap().contains("ログインの期限"));
-    let headers = format!("x-passshare-client: mobile\r\n");
+    let headers = "x-passshare-client: mobile\r\n";
     assert_eq!(
         http_raw(
             port,

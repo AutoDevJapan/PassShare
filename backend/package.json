@@ -22,5 +22,10 @@
   "devDependencies": {
     "yaml": "^2.8.0"
   },
-  "packageManager": "pnpm@10.11.0"
+  "packageManager": "pnpm@10.11.0",
+  "pnpm": {
+    "overrides": {
+      "proxy-addr": "2.0.8"
+    }
+  }
 }
