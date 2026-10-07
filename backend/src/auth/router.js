@@ -12,7 +12,6 @@ import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie 
 import { parseEmail, parsePassword } from "./validation.js";
 import { nativeMutation } from "../lib/native-mutations.js";
 import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS } from "./rate-limit-constants.js";
-import { defaultWebOrigin, isAllowedWebOrigin } from "../middleware/web-origin.js";
 import { CSRF_HEADER } from "./constants.js";
 
 /**
@@ -178,14 +177,10 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   function passwordPageContext(req) {
     const context = req.method === "POST" ? req.body : req.query;
-    const requested = context?.webOrigin;
-    let webOrigin = defaultWebOrigin(appEnv);
-    try {
-      if (typeof requested === "string" && new URL(requested).origin === requested && isAllowedWebOrigin(requested, appEnv,
-        process.env.WEB_ORIGIN, process.env.VERCEL_TEAM_SLUG)) webOrigin = requested;
-    } catch { /* Keep the configured Web destination. */ }
     const locale = ["en", "ru"].includes(context?.locale) ? context.locale : "ja";
-    return {webOrigin, locale};
+    // All Web environments proxy the API on the frontend origin. Relative
+    // links keep users in that environment without trusting a caller URL.
+    return {webOrigin:"", locale};
   }
 
   async function renderPasswordSettings(req, res, status = 200, errorCode = "", success = false, preparedHtml) {
@@ -198,7 +193,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       if (!entry || Date.now() >= entry.retryAt) {
         entry = {retryAt:Infinity};
         entry.promise = nativeMutation({command:"account-password-page", locale,
-          webOrigin:defaultWebOrigin(appEnv), errorCode:"PS024"}).catch((error) => {
+          webOrigin:"", errorCode:"PS024"}).catch((error) => {
             entry.retryAt = Date.now() + 5000;
             throw error;
           });

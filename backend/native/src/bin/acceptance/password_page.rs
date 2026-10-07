@@ -34,6 +34,10 @@ fn page(port: u16, session: &str) -> (String, String) {
         !html.contains("evil.example"),
         "untrusted return origin rejected"
     );
+    assert!(
+        html.contains("href=\"/app/vaults\""),
+        "same-origin return link"
+    );
     assert!(headers.contains("form-action 'self'"));
     assert!(headers.contains("Cache-Control: no-store"));
     let csrf = cookie(&headers, "passshare_csrf");
@@ -157,6 +161,10 @@ pub fn run(port: u16, nonce: u128) {
     assert_eq!(status, 200);
     let html = String::from_utf8(bytes).unwrap();
     assert!(html.contains("パスワードを変更しました"));
+    assert!(
+        html.contains("href=\"/app/login\""),
+        "same-origin reauthentication"
+    );
     assert!(!html.contains("<form") && !html.contains(&new));
     for name in ["passshare_session", "passshare_csrf"] {
         assert!(headers.lines().any(|line| line
@@ -220,6 +228,7 @@ pub fn run(port: u16, nonce: u128) {
         let html = String::from_utf8(bytes).unwrap();
         assert!(!html.contains("<form"));
         assert!(html.contains("/app/login"));
+        assert!(html.contains("href=\"/app/login\""));
     }
     // Expired responses use a shared cached Rust page and issue no fresh proof.
     // Beyond the page budget the response is cheap JSON, with no native render.
