@@ -182,7 +182,11 @@ fn http_at(
     socket
         .set_write_timeout(Some(remaining(deadline, Duration::from_secs(5))?))
         .map_err(|_| "write deadline")?;
-    let payload = serde_json::to_vec(body).map_err(|_| "request encoding")?;
+    let payload = if method == "GET" {
+        Vec::new()
+    } else {
+        serde_json::to_vec(body).map_err(|_| "request encoding")?
+    };
     let headers = format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
     write_request(&mut socket, headers.as_bytes(), deadline)?;
     write_request(&mut socket, &payload, deadline)?;
@@ -219,6 +223,7 @@ fn http_at(
         .ok_or_else(|| "missing driver value".into())
 }
 
+#[cfg(any(unix, test))]
 fn wait_ready(
     deadline: Instant,
     mut status: impl FnMut(Instant) -> Result<bool, String>,
@@ -782,9 +787,9 @@ mod tests {
                     header.starts_with(b"GET /status HTTP/1.1\r\n"),
                     "startup never creates a session"
                 );
-                let mut payload = [0u8; 2];
-                socket.read_exact(&mut payload).unwrap();
-                assert_eq!(&payload, b"{}");
+                assert!(header
+                    .windows(b"Content-Length: 0\r\n".len())
+                    .any(|part| part == b"Content-Length: 0\r\n"));
                 if attempt == 0 {
                     continue;
                 } // Proxy bound, native driver unavailable.
