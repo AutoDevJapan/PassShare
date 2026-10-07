@@ -25,7 +25,7 @@ jobs:
       - name: Install native runtime and driver dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11 at-spi2-core
           cargo install tauri-driver --version 2.1.0 --locked
       - name: Build actual frontend assets and finite Rust acceptance
         run: |
@@ -37,6 +37,7 @@ jobs:
           pnpm --dir apps/mobile run build
           rustfmt --edition 2021 --check crates/passshare-core/examples/webview_acceptance.rs
           cargo build -p passshare-core --example webview_acceptance --locked
+          cargo build -p passshare-core --example native_process_probe --locked
           cargo test -p passshare-core --example webview_acceptance --locked
           cargo clippy -p passshare-core --examples --locked -- -D warnings
       - name: Prove native policy tests detect missing idle and manual-lock enforcement

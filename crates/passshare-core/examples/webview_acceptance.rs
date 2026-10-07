@@ -187,7 +187,7 @@ fn http_at(
     } else {
         serde_json::to_vec(body).map_err(|_| "request encoding")?
     };
-    let headers = format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
+    let headers = format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", payload.len());
     write_request(&mut socket, headers.as_bytes(), deadline)?;
     write_request(&mut socket, &payload, deadline)?;
     let bytes = read_response(&mut socket, deadline)?;
@@ -254,6 +254,13 @@ impl Driver {
     fn start(profile: &Path, trace: &Path) -> Result<Self, String> {
         use std::os::unix::process::CommandExt;
         let mut command = Command::new("tauri-driver");
+        let probe = std::env::current_exe()
+            .map_err(|_| "acceptance executable")?
+            .with_file_name("native_process_probe");
+        command.args([
+            "--native-driver",
+            probe.to_str().ok_or("native probe path")?,
+        ]);
         command
             .env_clear()
             .process_group(0)
@@ -273,6 +280,7 @@ impl Driver {
         }
         command
             .env("LANG", "C.UTF-8")
+            .env("HOME", profile)
             .env("XDG_DATA_HOME", profile.join("data"))
             .env("XDG_CACHE_HOME", profile.join("cache"))
             .env("XDG_CONFIG_HOME", profile.join("config"))
