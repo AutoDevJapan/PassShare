@@ -4,7 +4,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 #[cfg(unix)]
@@ -157,11 +157,25 @@ fn decode_chunks(input: &[u8]) -> Result<Option<Vec<u8>>, String> {
 }
 
 fn http(method: &str, path: &str, body: &Value, deadline: Instant) -> Result<Value, String> {
-    let mut socket = TcpStream::connect_timeout(
-        &"127.0.0.1:4444".parse().unwrap(),
-        remaining(deadline, Duration::from_secs(5))?,
+    http_at(
+        "127.0.0.1:4444".parse().unwrap(),
+        method,
+        path,
+        body,
+        deadline,
     )
-    .map_err(|_| "driver connection failed")?;
+}
+
+fn http_at(
+    address: SocketAddr,
+    method: &str,
+    path: &str,
+    body: &Value,
+    deadline: Instant,
+) -> Result<Value, String> {
+    let mut socket =
+        TcpStream::connect_timeout(&address, remaining(deadline, Duration::from_secs(5))?)
+            .map_err(|_| "driver connection failed")?;
     socket
         .set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|_| "read deadline")?;
@@ -169,14 +183,19 @@ fn http(method: &str, path: &str, body: &Value, deadline: Instant) -> Result<Val
         .set_write_timeout(Some(remaining(deadline, Duration::from_secs(5))?))
         .map_err(|_| "write deadline")?;
     let payload = serde_json::to_vec(body).map_err(|_| "request encoding")?;
-    let headers = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1:4444\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
+    let headers = format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
     write_request(&mut socket, headers.as_bytes(), deadline)?;
     write_request(&mut socket, &payload, deadline)?;
     let bytes = read_response(&mut socket, deadline)?;
     let split = bytes
         .windows(4)
         .position(|part| part == b"\r\n\r\n")
-        .ok_or("response headers")?;
+        .ok_or_else(|| {
+            format!(
+                "driver {method} response headers absent ({} bytes)",
+                bytes.len()
+            )
+        })?;
     let headers = std::str::from_utf8(&bytes[..split]).map_err(|_| "header encoding")?;
     let status = headers
         .lines()
@@ -200,6 +219,26 @@ fn http(method: &str, path: &str, body: &Value, deadline: Instant) -> Result<Val
         .ok_or_else(|| "missing driver value".into())
 }
 
+fn wait_ready(
+    deadline: Instant,
+    mut status: impl FnMut(Instant) -> Result<bool, String>,
+) -> Result<(), String> {
+    let mut last = "not ready".to_owned();
+    while Instant::now() < deadline {
+        match status(deadline) {
+            Ok(true) => return Ok(()),
+            Ok(false) => last = "native driver not ready".into(),
+            Err(error) => last = error,
+        }
+        if let Ok(delay) = remaining(deadline, Duration::from_millis(50)) {
+            thread::sleep(delay);
+        } else {
+            break;
+        }
+    }
+    Err(format!("driver startup deadline: {last}"))
+}
+
 struct Driver {
     child: Child,
     session: Option<String>,
@@ -213,7 +252,10 @@ impl Driver {
         command
             .env_clear()
             .process_group(0)
-            .stdout(Stdio::null())
+            .stdout(Stdio::from(
+                std::fs::File::create(trace.with_extension("stdout.log"))
+                    .map_err(|_| "driver output trace file")?,
+            ))
             .stderr(Stdio::from(
                 std::fs::File::create(trace).map_err(|_| "driver trace file")?,
             ));
@@ -239,7 +281,7 @@ impl Driver {
             deadline: Instant::now() + Duration::from_secs(120),
         };
         let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
+        wait_ready(deadline, |deadline| {
             if driver
                 .child
                 .try_wait()
@@ -248,12 +290,12 @@ impl Driver {
             {
                 return Err("driver exited".into());
             }
-            if TcpStream::connect("127.0.0.1:4444").is_ok() {
-                return Ok(driver);
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        Err("driver startup deadline".into())
+            // The proxy can accept TCP before WebKitWebDriver is listening.
+            // Only read-only W3C status probes may be repeated; session POSTs
+            // must never be retried after a possibly committed response loss.
+            Ok(http("GET", "/status", &json!({}), deadline)?["ready"] == true)
+        })?;
+        Ok(driver)
     }
 
     #[cfg(not(unix))]
@@ -719,6 +761,52 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_proxy_status_must_be_ready_after_early_eof_and_not_ready() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for attempt in 0..3 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut header = Vec::new();
+                let mut byte = [0u8; 1];
+                while !header.ends_with(b"\r\n\r\n") {
+                    socket.read_exact(&mut byte).unwrap();
+                    header.push(byte[0]);
+                }
+                assert!(
+                    header.starts_with(b"GET /status HTTP/1.1\r\n"),
+                    "startup never creates a session"
+                );
+                let mut payload = [0u8; 2];
+                socket.read_exact(&mut payload).unwrap();
+                assert_eq!(&payload, b"{}");
+                if attempt == 0 {
+                    continue;
+                } // Proxy bound, native driver unavailable.
+                let body = if attempt == 1 {
+                    r#"{"value":{"ready":false,"message":"starting"}}"#
+                } else {
+                    r#"{"value":{"ready":true,"message":"ready"}}"#
+                };
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        wait_ready(Instant::now() + Duration::from_secs(3), |deadline| {
+            Ok(http_at(address, "GET", "/status", &json!({}), deadline)?["ready"] == true)
+        })
+        .unwrap();
+        server.join().unwrap();
+    }
 
     #[test]
     fn native_bridge_generations_reject_late_results_without_polling() {
