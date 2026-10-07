@@ -334,6 +334,17 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
     let (status, content) = http_bytes(port, "GET", &content_path, access, "", &Value::Null);
     assert_eq!(status, 200);
     assert_eq!(content, vec![0, 1, 254, 255], "actual attachment bytes");
+    let detail_path = format!("{items}/{item}");
+    let (status, stored_detail) = http(port, "GET", &detail_path, access, "", &Value::Null);
+    assert_eq!(status, 200);
+    assert!(
+        stored_detail["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field["value"] == "synthetic-number"),
+        "shared detail includes the persisted concealed field"
+    );
     let user_id = uuid(&member["user"]["id"]);
     if std::env::var_os("DATABASE_URL").is_some() {
         sql(&format!("UPDATE vault_memberships SET confirmed_at=NULL WHERE user_id='{user_id}' AND vault_id='{box_id}'"));
@@ -407,7 +418,13 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
         assert_eq!(status, 200);
         assert_eq!(
             kept, before_denied,
-            "denied save leaves the complete item collection unchanged"
+            "denied save leaves the item overviews unchanged"
+        );
+        let (status, kept_detail) = http(port, "GET", &detail_path, owner_access, "", &Value::Null);
+        assert_eq!(status, 200);
+        assert!(
+            kept_detail == stored_detail,
+            "denied save preserves the complete stored item"
         );
         assert_eq!(
             http(port, "GET", &content_path, access, "", &Value::Null).0,
@@ -472,6 +489,12 @@ pub fn run(port: u16, nonce: u128, owner: &str, box_id: &str, items: &str) {
             http(port, "GET", items, access, "", &Value::Null).0,
             200,
             "confirmed member resumes the same box"
+        );
+        let (status, recovered_detail) = http(port, "GET", &detail_path, access, "", &Value::Null);
+        assert_eq!(status, 200);
+        assert!(
+            recovered_detail == stored_detail,
+            "identity reconfirmation preserves all item fields and metadata"
         );
         assert_eq!(
             http_bytes(port, "GET", &content_path, access, "", &Value::Null).1,

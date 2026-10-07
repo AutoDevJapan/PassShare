@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, urlencoded } from "express";
 import { rateLimit } from "express-rate-limit";
 import { generateConnectId } from "../lib/connect.js";
 import { isTokenAuthClient } from "./client.js";
@@ -12,6 +12,7 @@ import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie 
 import { parseEmail, parsePassword } from "./validation.js";
 import { nativeMutation } from "../lib/native-mutations.js";
 import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS } from "./rate-limit-constants.js";
+import { CSRF_HEADER } from "./constants.js";
 
 /**
  * @param {object} deps
@@ -30,7 +31,11 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   // throttle below remains authoritative across replicas and restarts.
   const passwordChangeThrottle = rateLimit({ windowMs:LOGIN_IP_WINDOW_MS,
     limit:LOGIN_IP_MAX_REQUESTS, standardHeaders:"draft-6", legacyHeaders:false,
-    message:{error:"PS029",message:"Too many requests. Try again later."} });
+    handler:(_req, _res, next) => next(authHttpError(429, "PS029", "Too many requests. Try again later.")) });
+  const passwordPageThrottle = rateLimit({ windowMs:LOGIN_IP_WINDOW_MS,
+    limit:LOGIN_IP_MAX_REQUESTS, standardHeaders:"draft-6", legacyHeaders:false,
+    handler:(_req, _res, next) => next(authHttpError(429, "PS029", "Too many requests. Try again later.")) });
+  const expiredPages = new Map();
 
   router.get("/csrf", (_req, res) => {
     const csrfToken = issueCsrfToken(res, appEnv);
@@ -170,7 +175,46 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
     }
   });
 
-  router.post("/password/change", passwordChangeThrottle, sessionGuard, requireCsrf, async (req, res) => {
+  function passwordPageContext(req) {
+    const context = req.method === "POST" ? req.body : req.query;
+    const locale = ["en", "ru"].includes(context?.locale) ? context.locale : "ja";
+    // All Web environments proxy the API on the frontend origin. Relative
+    // links keep users in that environment without trusting a caller URL.
+    return {webOrigin:"", locale};
+  }
+
+  async function renderPasswordSettings(req, res, status = 200, errorCode = "", success = false, preparedHtml) {
+    const {webOrigin, locale} = passwordPageContext(req);
+    let html = preparedHtml;
+    if (!html && !req.auth) {
+      // Every pre-auth failure uses the same page. Share pending work and
+      // briefly cache failures, then allow recovery without restarting.
+      let entry = expiredPages.get(locale);
+      if (!entry || Date.now() >= entry.retryAt) {
+        entry = {retryAt:Infinity};
+        entry.promise = nativeMutation({command:"account-password-page", locale,
+          webOrigin:"", errorCode:"PS024"}).catch((error) => {
+            entry.retryAt = Date.now() + 5000;
+            throw error;
+          });
+        expiredPages.set(locale, entry);
+      }
+      html = await entry.promise;
+    } else if (!html) {
+      html = await nativeMutation({command:"account-password-page", locale,
+        webOrigin, csrfToken:success ? "" : issueCsrfToken(res, appEnv), errorCode, success});
+    }
+    res.set("Cache-Control", "no-store");
+    res.set("Referrer-Policy", "no-referrer");
+    res.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.status(status).type("html").send(html);
+  }
+
+  router.get("/password/settings", passwordPageThrottle, sessionGuard, async (req, res, next) => {
+    try { await renderPasswordSettings(req, res); } catch (error) { next(error); }
+  });
+
+  async function changePassword(req, res, next, isForm = false) {
     try {
       const clientIp = resolveClientIp(req);
       await loginGuard.assertIpAllowed(clientIp);
@@ -180,11 +224,16 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       await loginGuard.assertNotLocked(user.email);
       const currentPassword = req.body?.currentPassword;
       const nextPassword = req.body?.newPassword;
-      await nativeMutation({command:"account-password-input", currentPassword, newPassword:nextPassword});
+      await nativeMutation({command:isForm ? "account-password-form" : "account-password-input",
+        currentPassword, newPassword:nextPassword, confirmPassword:req.body?.confirmPassword});
       if (!await verifyPassword(user.password_hash, currentPassword)) {
         await loginGuard.recordFailure(user.email);
         throw authHttpError(401, "PS026", "Invalid email or password");
       }
+      // Prepare the receipt before committing. A renderer outage after a
+      // committed change must not be shown as a failed password rotation.
+      const receipt = isForm ? await nativeMutation({command:"account-password-page",
+        ...passwordPageContext(req), success:true}) : undefined;
       const nextHash = await hashPassword(nextPassword);
       await authStore.changePassword(req.auth.userId, req.auth.sessionId, user.password_hash, nextHash);
       // Credential rotation is already committed. Ancillary throttle cleanup
@@ -194,8 +243,28 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
         clearSessionCookie(res, appEnv);
         clearCsrfCookie(res, appEnv);
       }
-      res.status(204).end();
-    } catch (error) { sendAuthError(res, error); }
+      if (isForm) {
+        await renderPasswordSettings(req, res, 200, "", true, receipt);
+      } else { res.status(204).end(); }
+    } catch (error) { next(error); }
+  }
+
+  router.post("/password/change", passwordChangeThrottle, sessionGuard, requireCsrf, changePassword);
+  router.post("/password/settings", passwordChangeThrottle, sessionGuard, urlencoded({extended:false,limit:"2mb"}),
+    (req, _res, next) => {
+      // Only the script-free form accepts its double-submit token in the body.
+      // Mobile and Connect requests continue to use the JSON endpoint.
+      if (!req.is("application/x-www-form-urlencoded") || parseBearerToken(req) || isTokenAuthClient(req)) {
+        next(authHttpError(400, "PS018", "Invalid password settings form")); return;
+      }
+      req.headers[CSRF_HEADER] = req.body?.csrfToken;
+      next();
+    }, requireCsrf, (req, res, next) => changePassword(req, res, next, true));
+
+  router.use("/password/settings", async (error, req, res, next) => {
+    if (error.status === 429) { sendAuthError(res, error); return; }
+    try { await renderPasswordSettings(req, res, error.status ?? 500, error.code ?? "PS019"); }
+    catch (renderError) { next(renderError); }
   });
 
   router.post("/refresh", sessionGuard, requireCsrf, async (req, res) => {

@@ -1,6 +1,8 @@
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use passshare_core::domain::field::FieldPurpose;
@@ -12,13 +14,113 @@ use passshare_core::{
     Item, PassShareError, PasswordBox, PasswordBoxState, SavedChange,
 };
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, Manager, State};
+
+#[path = "../../../../shared/native-lock.rs"]
+mod native_lock;
+use native_lock::NativeLock;
 
 struct AppState {
-    box_path: Mutex<Option<PathBuf>>,
-    password_box: Mutex<Option<PasswordBox>>,
+    data: Mutex<BoxSession>,
 }
 
+#[derive(Clone, Serialize)]
+struct NativeStatus {
+    epoch: u64,
+    unlocked: bool,
+}
+
+#[derive(Default)]
+struct BoxSession {
+    password_box: Option<PasswordBox>,
+    session: NativeLock,
+}
+
+impl Deref for BoxSession {
+    type Target = Option<PasswordBox>;
+    fn deref(&self) -> &Self::Target {
+        &self.password_box
+    }
+}
+impl DerefMut for BoxSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.password_box
+    }
+}
+
+impl BoxSession {
+    // Every deadline observation also erases the decrypted box in the same
+    // critical section, including input racing the timer at the idle boundary.
+    fn check_and_wipe(&mut self, now: Instant) -> bool {
+        let open = self.session.is_unlocked(now);
+        if !open {
+            if let Some(pb) = self.password_box.as_mut() {
+                pb.lock();
+            }
+        }
+        open
+    }
+}
+
+impl AppState {
+    fn status(&self) -> Result<NativeStatus, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        let unlocked = data.check_and_wipe(Instant::now());
+        Ok(NativeStatus {
+            epoch: data.session.epoch(),
+            unlocked,
+        })
+    }
+    fn access(&self) -> Result<MutexGuard<'_, BoxSession>, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        if !data.check_and_wipe(Instant::now()) {
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        Ok(data)
+    }
+
+    fn lock(&self) -> Result<(), String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        data.session.lock();
+        data.check_and_wipe(Instant::now());
+        Ok(())
+    }
+    fn activity(&self, now: Instant) -> Result<bool, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        if !data.check_and_wipe(now) {
+            return Ok(false);
+        }
+        Ok(data.session.activity(now))
+    }
+
+    fn expire(&self) -> Result<bool, String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        let was_open = data
+            .password_box
+            .as_ref()
+            .is_some_and(|pb| pb.state() == PasswordBoxState::Unlocked);
+        Ok(!data.check_and_wipe(Instant::now()) && was_open)
+    }
+
+    fn begin_unlock(&self) -> Result<u64, String> {
+        Ok(self
+            .data
+            .lock()
+            .map_err(|_| "内部エラー")?
+            .session
+            .begin_unlock())
+    }
+
+    fn finish_unlock(&self, epoch: u64, mut pb: PasswordBox) -> Result<(), String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        if !data.session.unlock(epoch, Instant::now()) {
+            pb.lock();
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        data.password_box = Some(pb);
+        Ok(())
+    }
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ItemDto {
@@ -179,7 +281,9 @@ fn build_item_from_fields(
 
 #[tauri::command]
 fn get_state(state: State<'_, AppState>) -> Result<String, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let Ok(pb) = state.access() else {
+        return Ok("locked".into());
+    };
     Ok(match pb.as_ref().map(|b| b.state()) {
         Some(PasswordBoxState::Unlocked) => "unlocked".into(),
         Some(PasswordBoxState::Locked) | None => "locked".into(),
@@ -192,11 +296,11 @@ fn create_password_box(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
+    let epoch = state.begin_unlock()?;
     let path = PathBuf::from(path);
     let pb = PasswordBox::create(&path, &master_password).map_err(map_error)?;
     let recovery = pb.recovery_secret().map_err(map_error)?.map(String::from);
-    *state.box_path.lock().map_err(|_| "内部エラー")? = Some(path);
-    *state.password_box.lock().map_err(|_| "内部エラー")? = Some(pb);
+    state.finish_unlock(epoch, pb)?;
     Ok(recovery)
 }
 
@@ -206,16 +310,16 @@ fn open_password_box(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let epoch = state.begin_unlock()?;
     let path = PathBuf::from(path);
     let pb = PasswordBox::open(&path, &master_password).map_err(map_error)?;
-    *state.box_path.lock().map_err(|_| "内部エラー")? = Some(path);
-    *state.password_box.lock().map_err(|_| "内部エラー")? = Some(pb);
+    state.finish_unlock(epoch, pb)?;
     Ok(())
 }
 
 #[tauri::command]
 fn list_items(state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = state.access()?;
     let pb = pb
         .as_ref()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -229,7 +333,7 @@ fn list_items(state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
 
 #[tauri::command]
 fn search_items(query: String, state: State<'_, AppState>) -> Result<Vec<ItemDto>, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = state.access()?;
     let pb = pb
         .as_ref()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -255,7 +359,7 @@ fn add_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -317,7 +421,7 @@ fn update_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -408,7 +512,7 @@ fn delete_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -423,7 +527,7 @@ fn import_onepassword_csv(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -435,7 +539,7 @@ fn import_onepassword_csv(
 
 #[tauri::command]
 fn export_onepassword_csv(state: State<'_, AppState>) -> Result<String, String> {
-    let pb = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let pb = state.access()?;
     let pb = pb
         .as_ref()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -457,7 +561,7 @@ fn upsert_sync_item(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<ItemDto, String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
+    let mut guard = state.access()?;
     let pb = guard
         .as_mut()
         .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
@@ -483,12 +587,27 @@ fn generate_password(length: Option<usize>) -> String {
 }
 
 #[tauri::command]
-fn lock_password_box(state: State<'_, AppState>) -> Result<(), String> {
-    let mut guard = state.password_box.lock().map_err(|_| "内部エラー")?;
-    if let Some(pb) = guard.as_mut() {
-        pb.lock();
+fn lock_password_box(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.lock()?;
+    if let Ok(status) = state.status() {
+        let _ = app.emit("passshare-locked", status);
     }
     Ok(())
+}
+
+#[tauri::command]
+fn native_activity(state: State<'_, AppState>) -> Result<bool, String> {
+    state.activity(Instant::now())
+}
+
+#[tauri::command]
+fn native_is_unlocked(state: State<'_, AppState>) -> bool {
+    state.access().is_ok()
+}
+
+#[tauri::command]
+fn native_session_status(state: State<'_, AppState>) -> Result<NativeStatus, String> {
+    state.status()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -497,8 +616,20 @@ pub fn run() {
         .plugin(tauri_plugin_biometry::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
-            box_path: Mutex::new(None),
-            password_box: Mutex::new(None),
+            data: Mutex::new(BoxSession::default()),
+        })
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(1));
+                let state = handle.state::<AppState>();
+                if state.expire().unwrap_or(false) {
+                    if let Ok(status) = state.status() {
+                        let _ = handle.emit("passshare-locked", status);
+                    }
+                }
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -514,6 +645,9 @@ pub fn run() {
             upsert_sync_item,
             generate_password,
             lock_password_box,
+            native_activity,
+            native_is_unlocked,
+            native_session_status,
         ])
         .run(tauri::generate_context!())
         .expect("PassShare desktop failed to start");
@@ -525,7 +659,74 @@ mod smoke_tests {
     use passshare_core::domain::item::ItemCategory;
     use std::path::PathBuf;
 
-    const MASTER_PASSWORD: &str = "TestPass123!";
+    fn fresh_master_password() -> String {
+        PasswordBox::generate_password(PasswordGeneratorOptions {
+            length: 32,
+            ..Default::default()
+        })
+    }
+    #[test]
+    fn smoke_native_idle_input_erases_without_ui_poll() {
+        let master_password = fresh_master_password();
+        let (dir, path) = temp_box("idle-input");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
+        let item_password = fresh_master_password();
+        add_login(&mut pb, "Idle fixture", &item_password, None, None, &[]);
+        pb.save(&master_password).expect("save");
+        let original = std::fs::read(&path).expect("ciphertext");
+        let start = Instant::now();
+        let mut session = NativeLock::default();
+        assert!(session.unlock(session.begin_unlock(), start));
+        let state = AppState {
+            data: Mutex::new(BoxSession {
+                password_box: Some(pb),
+                session,
+            }),
+        };
+        assert!(!state
+            .activity(start + Duration::from_secs(300))
+            .expect("activity"));
+        {
+            let data = state.data.lock().expect("state");
+            let pb = data.password_box.as_ref().expect("box");
+            assert_eq!(pb.state(), PasswordBoxState::Locked);
+            assert!(pb.list_connect_items().is_err());
+        }
+        assert!(state.access().is_err());
+        assert_eq!(
+            std::fs::read(&path).expect("ciphertext after lock"),
+            original
+        );
+        let reopened = PasswordBox::open(&path, &master_password).expect("reopen");
+        assert_eq!(
+            reopened.list_connect_items().expect("items")[0].title,
+            "Idle fixture"
+        );
+        drop(reopened);
+        drop(state);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn smoke_native_manual_lock_rejects_pending_open() {
+        let master_password = fresh_master_password();
+        let (dir, path) = temp_box("pending-open");
+        let pb = PasswordBox::create(&path, &master_password).expect("create");
+        let state = AppState {
+            data: Mutex::new(BoxSession::default()),
+        };
+        let epoch = state.begin_unlock().expect("begin");
+        state.lock().expect("manual lock");
+        assert!(state.finish_unlock(epoch, pb).is_err());
+        assert!(state.access().is_err());
+        let reopened = PasswordBox::open(&path, &master_password).expect("reopen");
+        state
+            .finish_unlock(state.begin_unlock().expect("fresh begin"), reopened)
+            .expect("fresh open");
+        assert!(state.access().is_ok());
+        drop(state);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
 
     fn temp_box(name: &str) -> (PathBuf, PathBuf) {
         let dir =
@@ -557,13 +758,14 @@ mod smoke_tests {
 
     #[test]
     fn smoke_create_open_add_list_lock() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("smoke");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         add_login(&mut pb, "Smoke Login", "secret", None, None, &[]);
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("open");
+        let pb = PasswordBox::open(&path, &master_password).expect("open");
         let items = pb.list_connect_items().expect("list");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Smoke Login");
@@ -676,8 +878,9 @@ mod smoke_tests {
 
     #[test]
     fn smoke_edited_primary_url_and_untouched_data_survive_save_reopen() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("edit-primary-url");
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let fixture_password = uuid::Uuid::new_v4().to_string();
         let mut original = Item::new_login(
             pb.vault().expect("box").id.clone(),
@@ -714,10 +917,10 @@ mod smoke_tests {
         // This helper is the URL mutation used by the native update_item command.
         update_primary_url(&mut edited.urls, Some("https://changed.example/".into()));
         pb.update_item(edited).expect("update");
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
         drop(pb);
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let pb = PasswordBox::open(&path, &master_password).expect("reopen");
         let mut expected = original;
         expected.urls[1].href = "https://changed.example/".into();
         assert_eq!(
@@ -732,9 +935,10 @@ mod smoke_tests {
     // （タイトル / URL / ユーザー名 / タグの各軸をカバー）
     #[test]
     fn smoke_search_by_title_url_username_and_tag() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("search");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         add_login(
             &mut pb,
             "GitHub",
@@ -751,7 +955,7 @@ mod smoke_tests {
             Some("bob"),
             &["work"],
         );
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         let by_title = pb.search_connect_items("github").expect("title search");
         assert_eq!(by_title.len(), 1);
@@ -799,15 +1003,16 @@ mod smoke_tests {
     // MVP ATDD: 削除した項目は保存後・再オープン後も存在しない
     #[test]
     fn smoke_delete_item_persists_after_reopen() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("delete");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let keep = add_login(&mut pb, "Keep", "keep-pass", None, None, &[]);
         let remove = add_login(&mut pb, "Remove", "remove-pass", None, None, &[]);
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         pb.delete_item(&remove.id.to_string()).expect("delete");
-        pb.save(MASTER_PASSWORD).expect("save after delete");
+        pb.save(&master_password).expect("save after delete");
 
         assert_eq!(
             pb.delete_item(&remove.id.to_string()),
@@ -815,7 +1020,7 @@ mod smoke_tests {
             "削除済み ID の再削除は ItemNotFound"
         );
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let pb = PasswordBox::open(&path, &master_password).expect("reopen");
         let items = pb.list_connect_items().expect("list");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, keep.id);
@@ -826,11 +1031,12 @@ mod smoke_tests {
     // MVP ATDD: 間違ったマスターパスワードではエラーが返り、中身は読めない
     #[test]
     fn smoke_open_with_wrong_master_password_fails() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("wrongpass");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         add_login(&mut pb, "Secret Login", "top-secret", None, None, &[]);
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         let err = match PasswordBox::open(&path, "WrongPass456?") {
             Ok(_) => panic!("間違ったマスターパスワードで開けてしまった"),
@@ -849,9 +1055,10 @@ mod smoke_tests {
     // 再オープン後も同じ値が保持される。閉じた状態では読めない
     #[test]
     fn smoke_recovery_kit_available_and_persisted() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("recovery");
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let secret = pb
             .recovery_secret()
             .expect("recovery accessible")
@@ -866,7 +1073,7 @@ mod smoke_tests {
             "閉じた状態では緊急キットを読めない"
         );
 
-        let pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let pb = PasswordBox::open(&path, &master_password).expect("reopen");
         assert_eq!(
             pb.recovery_secret().expect("recovery accessible"),
             Some(secret.as_str()),
@@ -879,6 +1086,7 @@ mod smoke_tests {
     // 主要 category（CREDIT_CARD 等 7 種）が parse / CRUD をエラーなく通過する
     #[test]
     fn smoke_all_categories_crud_roundtrip() {
+        let master_password = fresh_master_password();
         let (dir, path) = temp_box("categories");
         let categories = [
             "LOGIN",
@@ -890,7 +1098,7 @@ mod smoke_tests {
             "CUSTOM",
         ];
 
-        let mut pb = PasswordBox::create(&path, MASTER_PASSWORD).expect("create");
+        let mut pb = PasswordBox::create(&path, &master_password).expect("create");
         let vault_id = pb.vault().expect("vault").id.clone();
 
         for name in categories {
@@ -912,10 +1120,10 @@ mod smoke_tests {
             .expect(name);
             pb.add_item(item).expect(name);
         }
-        pb.save(MASTER_PASSWORD).expect("save");
+        pb.save(&master_password).expect("save");
 
         // Read: 全 category が API 文字列へ round-trip する
-        let mut pb = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen");
+        let mut pb = PasswordBox::open(&path, &master_password).expect("reopen");
         let items = pb.list_connect_items().expect("list");
         assert_eq!(items.len(), categories.len());
         for name in categories {
@@ -935,9 +1143,9 @@ mod smoke_tests {
         card.set_field_by_label("notesPlain", "4111 1111 1111 1111")
             .expect("set body");
         pb.update_item(card.clone()).expect("update");
-        pb.save(MASTER_PASSWORD).expect("save update");
+        pb.save(&master_password).expect("save update");
 
-        let pb2 = PasswordBox::open(&path, MASTER_PASSWORD).expect("reopen after update");
+        let pb2 = PasswordBox::open(&path, &master_password).expect("reopen after update");
         let updated = pb2.get_item(&card.id.to_string()).expect("get updated");
         assert_eq!(
             ItemDto::from(updated).body.as_deref(),
@@ -949,7 +1157,7 @@ mod smoke_tests {
         for item in pb.list_connect_items().expect("list before delete") {
             pb.delete_item(&item.id.to_string()).expect("delete");
         }
-        pb.save(MASTER_PASSWORD).expect("save deletes");
+        pb.save(&master_password).expect("save deletes");
         assert!(pb.list_connect_items().expect("final list").is_empty());
 
         let _ = std::fs::remove_dir_all(dir);

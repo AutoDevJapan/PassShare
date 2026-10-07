@@ -8,8 +8,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[path = "acceptance/password.rs"]
 mod password_acceptance;
+#[path = "acceptance/password_page.rs"]
+mod password_page_acceptance;
 #[path = "acceptance/share.rs"]
 mod share_acceptance;
+#[path = "acceptance/web_share.rs"]
+mod web_share_acceptance;
 
 struct Server {
     child: Child,
@@ -113,18 +117,29 @@ fn http_raw(
     extra: &str,
     body: &Value,
 ) -> (u16, String, Vec<u8>) {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect synthetic API");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
     let payload = if body.is_null() {
         String::new()
     } else {
         body.to_string()
     };
+    http_payload(port, method, path, extra, "application/json", &payload)
+}
+
+fn http_payload(
+    port: u16,
+    method: &str,
+    path: &str,
+    extra: &str,
+    mime: &str,
+    payload: &str,
+) -> (u16, String, Vec<u8>) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect synthetic API");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\n\r\n{payload}",
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: {mime}\r\n{extra}Content-Length: {}\r\n\r\n{payload}",
         payload.len()
     )
     .unwrap();
@@ -341,7 +356,9 @@ fn main() {
         "modified box draft remains conflict"
     );
     share_acceptance::run(port, nonce, &refresh, &box_id, &path);
+    web_share_acceptance::run(port, nonce);
     password_acceptance::run(port, nonce);
+    password_page_acceptance::run(port, nonce);
     println!("native HTTP acceptance passed: create/edit/box identity and invitation proof, no proof/list leak, concurrent accept, revoke, member/token/attachment denial");
     drop(server);
 }

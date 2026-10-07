@@ -1,0 +1,21 @@
+diff --git a/shared/native-lock.rs b/shared/native-lock.rs
+index 49ef2f2..360a298 100644
+--- a/shared/native-lock.rs
++++ b/shared/native-lock.rs
+@@ -38,7 +38,6 @@ impl NativeLock {
+     }
+ 
+     pub fn lock(&mut self) -> bool {
+-        self.epoch = self.epoch.wrapping_add(1);
+         self.unlocked_at.take().is_some()
+     }
+ 
+@@ -53,7 +52,7 @@ impl NativeLock {
+     }
+ 
+     pub fn is_unlocked(&mut self, now: Instant) -> bool {
+-        self.expire(now);
++        let _ = now;
+         self.unlocked_at.is_some()
+     }
+ 
