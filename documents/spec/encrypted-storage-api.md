@@ -78,15 +78,13 @@ poolとnative実行ファイルがあるときだけスキーマ・APIを登録�
 2. JSON parserの後に `/api/encrypted` を登録する。
 3. Connect認証の後・旧Connect routerの前に `/vaults/:vaultUuid` の境界routerを登録する（/v1にRouterを作ってもよい）。
 4. HTTPエラーハンドラーで `P0055` を409 `PS055`へ変換する。
-5. DockerビルドのRust段階には、Coreのpath依存と継承元のworkspace Cargo.tomlを含める。
-   現行の `COPY native ./` だけでは新しいpath依存を解決できない。
-   リポジトリルートをビルド文脈にし、`backend/native` とCoreを元の相対位置で配置する。
-   現行container CI・Railwayのビルド文脈も同じ配置に合わせる。
-6. Linuxの専用受入で `cargo run --manifest-path backend/native/Cargo.toml --locked --bin encrypted_acceptance` を実行する。
-   全workspace検査は親が統合後に1回実施する。
+5. production nativeはCoreへ依存しないので、現行backend-onlyのDockerfile・Railway rootDirectoryを維持する。
+6. 専用受入は `tools/encrypted-storage-acceptance` の独立Rust workspaceから実行する。
+   Coreとnativeへのpath依存・本物の暗号化と復号はこのtoolだけに置く。
+   親が専用toolのCIを登録する。成功済みのルート全workspace検査を繰り返さない。
 
 `backend/src/encrypted/acceptance-host.js` は上記登録を実APIで検証する薄い専用ホスト。
-架空データ・Dockerの起動終了・全判断と検査はRustの `encrypted_acceptance` に置く。
+架空データ・Dockerの起動終了・全判断と検査はRustの独立toolに置く。
 共有Cargoゲート内で動かし、専用DBと自分のNodeを終了時に回収する。
 
 ## 実受入と残条件
@@ -100,8 +98,10 @@ poolとnative実行ファイルがあるときだけスキーマ・APIを登録�
 毎回新しい専用DBを作り、登録は合計5件だけとする。既存の登録上限を変更しない。
 
 2026-10-08のWindows実受入では上記すべてが成功した。
-対象nativeクレートのnextestは37件成功。Clippyの追加受入ヘルパーで見つかった
-入れ子のformat呼出しを修復し、最終の全target検査は警告0で成功した。
+Coreを独立toolへ移した最終構成でnativeのnextest38件、toolのCore契約nextest2件が成功した。
+両workspaceのClippyは全target・警告0で成功し、新toolから実HTTP/PGの全受入も成功した。
+Core・ルートmanifestのないbackend-onlyの別配置で、production nativeのlocked release buildも成功した。
+これはWindowsの配布配置検証で、LinuxのDockerイメージ実buildの確認ではない。
 独立作業では全workspace検査・push・PR・CI・別モデルレビュー・マージを行わない。
 親が最終統合の検査とレビューを実施する。
 
@@ -181,71 +181,51 @@ if (err && typeof err === "object" && "code" in err && err.code === "P0055") {
 独立受入の旧routerにはまだ翻訳がないので、その競合スケジュールでは500でもDB拒否を合格としている。
 親の正式統合後は、そのスケジュールも409になることを検査する。
 
-### `backend/Dockerfile`
+### backend-only配布と独立受入tool
 
-リポジトリルートをbuild contextとする置換案。親が実Docker buildを確認する。
+先のルートbuild context変更案は取り消す。
+production nativeのCore依存を除いたため、現行 `backend/Dockerfile` の
+`WORKDIR /native`・`COPY native ./`・`cargo build --release --locked --bin passshare-mutations` を維持する。
+CIの `docker build -t passshare-todo1163-api backend` も変更不要。
+Railwayのbackend-only文脈・rootDirectory・Dockerfile参照先を変更しない。
+公開中の配布を別のルート配置へ移さない。
 
-```dockerfile
-FROM rust:1-bookworm AS mutations
-WORKDIR /repo
-COPY Cargo.toml ./
-COPY crates/passshare-core ./crates/passshare-core
-COPY backend/native ./backend/native
-RUN cargo build --manifest-path backend/native/Cargo.toml \
-    --target-dir /native-target --release --locked --bin passshare-mutations
+nativeは公開JSONの厳密なfield集合・整数型/範囲・26文字の小文字英数字ID・
+context一致・canonical標準Base64・nonce/暗号文長だけを検査する。
+項目の暗号化アルゴリズム、鍵操作、復号、Coreのコードコピーは含まない。
+native単体fixtureは公開ヘッダーと合成暗号文のみ。
+スキーマのinclude_str!とbuild.rsの変更検知は維持する。
 
-FROM node:24-bookworm-slim
-WORKDIR /app
-COPY backend/package.json backend/pnpm-lock.yaml ./
-RUN corepack enable \
-  && corepack prepare pnpm@10.11.0 --activate \
-  && pnpm install --prod --frozen-lockfile --ignore-scripts
-COPY backend/src ./src
-COPY --from=mutations /native-target/release/passshare-mutations /usr/local/bin/passshare-mutations
-ENV NODE_ENV=production
-ENV PASSSHARE_MUTATIONS_BIN=/usr/local/bin/passshare-mutations
-EXPOSE 8080
-CMD ["npm", "start"]
+本物の暗号化・復号受入を `tools/encrypted-storage-acceptance/src/main.rs` へ移す。
+toolのCargo.tomlは独立workspaceであり、Coreとpassshare-mutationsへpath依存する。
+ルートworkspaceのmembersやCoreソースは変更しない。
+独立toolのCargo.lockを保存し、production nativeのCargo.lockとは分ける。
+production nativeのlockはCore関連を除いて22 packages、tool側は93 packagesとなる。
+
+toolの単体契約試験は、Coreが作った本物の暗号文をnativeのdispatchへ渡して
+項目/世代の整数上限、Coreの1MiB本文境界、暗号文の長さ上限を照合する。
+Coreの復号成功も確認し、余分な鍵/平文/realmや型違いをnativeが拒否する。
+これはSSOTの暗号アルゴリズムを複製せず、公開保存契約との整合を検査するための試験。
+実HTTP受入は別途ビルドしたproduction native実行ファイルを使う。
+
+専用targetを2つ用意し、共有Cargoゲートから次の順で実行する。
+例のパスは自分で所有記録を付けた作業用一時フォルダ配下に置く。
+Windowsはproduction実行ファイル名に .exe を付ける。
+
+```sh
+cargo nextest run --manifest-path backend/native/Cargo.toml --locked -p passshare-mutations --target-dir /owned/native-target -j 10
+cargo clippy --manifest-path backend/native/Cargo.toml --locked -p passshare-mutations --all-targets --target-dir /owned/native-target -j 10 -- -D warnings
+cargo build --manifest-path backend/native/Cargo.toml --locked --bin passshare-mutations --target-dir /owned/native-target -j 10
+cargo nextest run --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked -p passshare-encrypted-storage-acceptance --target-dir /owned/tool-target -j 10
+cargo clippy --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked --all-targets --target-dir /owned/tool-target -j 10 -- -D warnings
+cargo run --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked --target-dir /owned/tool-target -j 10 -- /owned/native-target/debug/passshare-mutations
 ```
 
-`backend/native/Cargo.toml` は独立workspace。
-その `../../crates/passshare-core` を保つため、nativeを `/native` に平置きしない。
-Coreはworkspace属性を継承するので `/repo/Cargo.toml` も必要。
-ビルド対象をルートworkspaceに変えず、`--manifest-path backend/native/Cargo.toml` を指定する。
-使うlockはnative側。ルートのCargo.lockをnative側のlockへ転用しない。
-targetを明示したためコピー元は `/native-target/release/passshare-mutations` となる。
-同じ最小配置で必須srcの存在と `cargo metadata --locked --offline --no-deps` の成功を確認済み。
-これはmanifest解決の検証で、Linuxの配布イメージbuild成功ではない。
-
-現行container CIの `docker build -t passshare-todo1163-api backend` は
-`docker build -f backend/Dockerfile -t passshare-todo1163-api .` へ変更する。
-RailwayもサービスのrootDirectoryをリポジトリルートに合わせ、
-使用する `backend/railway.toml` のdockerfilePathを `backend/Dockerfile` にする。
-設定ファイルの参照先も同ファイルへ維持する。現在の管理画面設定はこの独立担当では変更・再検証していない。
-Docker buildはリポジトリルートから行い、`backend/` だけのアップロードはしない。
-
-ルート文脈へ変えるので、既存backend/.dockerignoreだけを防護の根拠にしない。
-`backend/Dockerfile.dockerignore` は次の許可リストにする案。
-
-```text
-**
-!Cargo.toml
-!backend/
-!backend/native/
-!backend/native/**
-!backend/package.json
-!backend/pnpm-lock.yaml
-!backend/src/
-!backend/src/**
-!crates/
-!crates/passshare-core/
-!crates/passshare-core/**
-**/target
-**/node_modules
-**/.env
-**/.env.*
-**/*.pbox
-```
+nativeとtoolのtargetを共有しない。nextestの試験並列も10以下とする。
+rootの全workspace nextest/docは親が成功済みなので再実行しない。
+親はAPIの正式app登録、旧経路の境界、P0055のHTTP変換と専用toolのCIを担当する。
+専用toolはDocker/Node/バックエンドの依存導入済み環境で実行し、専用DBを自動起動・回収する。
+配布Dockerfileや本番の起動entryにこの受入toolを入れない。
 
 ### 検証の正確な範囲
 

@@ -1,4 +1,5 @@
-//! Run through the shared Cargo gate. Owns a disposable Docker PostgreSQL and
+//! Separate client-side Core/host contract acceptance; run via the Cargo gate.
+//! Owns a disposable Docker PostgreSQL and
 //! real Express host. No production configuration, model API or secret files.
 use passshare_core::{
     cloud_crypto::{ItemContext, PasswordBoxKey},
@@ -132,18 +133,14 @@ struct Host {
     port: u16,
 }
 impl Host {
-    fn start(db: &Database) -> Self {
+    fn start(db: &Database, binary: &std::path::Path) -> Self {
         let port = port();
         let backend = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
-            .to_owned();
-        let executable = std::env::current_exe().unwrap();
-        let binary = executable.parent().unwrap().join(if cfg!(windows) {
-            "passshare-mutations.exe"
-        } else {
-            "passshare-mutations"
-        });
+            .parent()
+            .unwrap()
+            .join("backend");
         let mut cmd = command("node");
         cmd.env_clear();
         for key in ["PATH", "SystemRoot", "TEMP", "TMP"] {
@@ -249,8 +246,15 @@ fn signup(port: u16) -> (String, String, String) {
     )
 }
 fn main() {
+    let binary = std::env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .expect("pass the built production passshare-mutations binary as the first argument")
+        .canonicalize()
+        .expect("production native binary must exist");
+    assert!(binary.is_file(), "production native binary must be a file");
     let db = Database::start();
-    let mut host = Host::start(&db);
+    let mut host = Host::start(&db, &binary);
     let p = host.port;
     let (refresh, connect, box_id) = signup(p);
     let (stranger, _, stranger_box) = signup(p);
@@ -640,7 +644,7 @@ fn main() {
     );
     // Restart proves persistence; client decrypts the unchanged opaque body.
     drop(host);
-    host = Host::start(&db);
+    host = Host::start(&db, &binary);
     let restored = http(host.port, "GET", &path, &headers, &Value::Null);
     assert_eq!(restored.0, 200);
     assert_eq!(
@@ -656,4 +660,87 @@ fn main() {
     db.sql("DELETE FROM sessions");
     assert_eq!(http(host.port, "GET", &path, &headers, &Value::Null).0, 401);
     println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation and private-box cascade passed");
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
+    fn native_plan(context: &ItemContext, envelope: &Value) -> Value {
+        passshare_mutations::dispatch(&json!({"command":"encrypted-plan","operation":"put",
+            "actor":"synthetic","session":"synthetic","boxId":context.password_box_id,
+            "itemId":context.item_id,"request":{"expectedVersion":context.item_version-1,"envelope":envelope}}))
+    }
+    fn context(version: u64, epoch: u64) -> ItemContext {
+        ItemContext {
+            password_box_id: ConnectId::generate().unwrap(),
+            item_id: ConnectId::generate().unwrap(),
+            item_version: version,
+            key_epoch: epoch,
+        }
+    }
+    fn item(context: &ItemContext) -> Value {
+        json!({"id":context.item_id,"version":context.item_version,"vault":{"id":context.password_box_id},"payload":""})
+    }
+    #[test]
+    fn core_real_envelopes_match_host_contract_at_numeric_and_size_boundaries() {
+        let key = PasswordBoxKey::generate().unwrap();
+        for context in [
+            context(1, 1),
+            context(9_007_199_254_740_991, 9_007_199_254_740_991),
+        ] {
+            let original = item(&context);
+            let envelope = key.encrypt_item(&original, &context).unwrap();
+            let plan = native_plan(&context, &serde_json::to_value(&envelope).unwrap());
+            assert_eq!(plan["status"], 200);
+            assert_eq!(
+                plan["body"]["params"][6],
+                serde_json::to_value(&envelope).unwrap()
+            );
+            assert_eq!(key.decrypt_item(&envelope, &context).unwrap(), original);
+        }
+        let context = context(1, 1);
+        let mut original = item(&context);
+        let overhead = serde_json::to_vec(&original).unwrap().len();
+        original["payload"] = json!("a".repeat(1024 * 1024 - overhead));
+        assert_eq!(serde_json::to_vec(&original).unwrap().len(), 1024 * 1024);
+        let envelope = key.encrypt_item(&original, &context).unwrap();
+        assert_eq!(
+            BASE64.decode(&envelope.ciphertext).unwrap().len(),
+            1024 * 1024 + 16
+        );
+        assert_eq!(
+            native_plan(&context, &serde_json::to_value(&envelope).unwrap())["status"],
+            200
+        );
+        original["payload"] = json!("a".repeat(1024 * 1024 - overhead + 1));
+        assert!(key.encrypt_item(&original, &context).is_err());
+        let mut too_large = serde_json::to_value(&envelope).unwrap();
+        too_large["ciphertext"] = json!(BASE64.encode(vec![0u8; 1024 * 1024 + 17]));
+        assert_eq!(native_plan(&context, &too_large)["status"], 400);
+    }
+    #[test]
+    fn host_rejects_extra_fields_and_malformed_types_on_real_core_envelopes() {
+        let context = context(1, 1);
+        let key = PasswordBoxKey::generate().unwrap();
+        let envelope =
+            serde_json::to_value(key.encrypt_item(&item(&context), &context).unwrap()).unwrap();
+        for pointer in ["", "/context"] {
+            for name in ["key", "plaintext", "realm"] {
+                let mut changed = envelope.clone();
+                changed.pointer_mut(pointer).unwrap()[name] = json!("forbidden");
+                assert_eq!(native_plan(&context, &changed)["status"], 400);
+            }
+        }
+        for (pointer, value) in [
+            ("/format", json!(1.0)),
+            ("/context/itemVersion", json!("1")),
+            ("/context/keyEpoch", json!(0)),
+        ] {
+            let mut changed = envelope.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert_eq!(native_plan(&context, &changed)["status"], 400);
+        }
+    }
 }
