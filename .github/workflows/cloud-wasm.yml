@@ -43,6 +43,7 @@ jobs:
           wasm-bindgen target/wasm32-unknown-unknown/release/passshare_cloud_wasm.wasm --target nodejs --out-dir node-pkg
           cargo run --locked --example release_acceptance -- node-pkg/passshare_cloud_wasm.js
           wasm-bindgen target/wasm32-unknown-unknown/release/passshare_cloud_wasm.wasm --target web --out-dir pkg
+          cp worker/boot.mjs pkg/boot.mjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: passshare-cloud-wasm
