@@ -302,7 +302,9 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Run mobile smoke tests
-        run: cargo test -p passshare-mobile smoke_
+        run: |
+          cargo test -p passshare-mobile --locked
+          cargo clippy -p passshare-mobile --all-targets --locked -- -D warnings
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
@@ -329,6 +331,11 @@ jobs:
 
       - name: Run mobile unit tests
         run: pnpm --dir apps/mobile run test
+
+      - name: Verify actual React auth against delayed logout and lifecycle results
+        run: |
+          rustfmt --edition 2021 --check crates/passshare-core/examples/mobile_auth_acceptance.rs
+          cargo run -p passshare-core --locked --example mobile_auth_acceptance -- apps/mobile
 
       - name: Run mobile auth API tests
         working-directory: backend

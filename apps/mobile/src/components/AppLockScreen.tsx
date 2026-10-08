@@ -1,13 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { getPinLockState, hasAppPin, isValidPin, setAppPin, verifyAppPin } from "../lib/app-lock";
-import { authenticateBiometric, isBiometricAvailable } from "../lib/secure-storage";
+import { isBiometricAvailable } from "../lib/secure-storage";
 import { useMobileLabels } from "../hooks/useMobileLabels";
 
 type Props = {
-  onUnlocked: () => void;
+  // The epoch is taken before verification starts; the native lock rejects the
+  // unlock if background / logout / account change happened in between.
+  beginUnlock: () => Promise<number>;
+  onUnlocked: (epoch: number) => Promise<boolean>;
+  biometricUnlock: () => Promise<boolean>;
 };
 
-export function AppLockScreen({ onUnlocked }: Props) {
+export function AppLockScreen({ beginUnlock, onUnlocked, biometricUnlock }: Props) {
   const labels = useMobileLabels();
   const [pin, setPin] = useState("");
   const [setupPin, setSetupPinValue] = useState("");
@@ -33,8 +37,7 @@ export function AppLockScreen({ onUnlocked }: Props) {
   async function unlockWithBiometric() {
     setError(null);
     try {
-      await authenticateBiometric(labels.lockBiometric);
-      onUnlocked();
+      if (!(await biometricUnlock())) setError(labels.lockLead);
     } catch (err) {
       setError(err instanceof Error ? err.message : labels.lockLead);
     }
@@ -43,18 +46,25 @@ export function AppLockScreen({ onUnlocked }: Props) {
   async function handlePinUnlock(event: FormEvent) {
     event.preventDefault();
     setError(null);
-    const result = await verifyAppPin(pin);
-    if (result.status === "ok") {
-      setLocked(false);
-      onUnlocked();
-      return;
+    try {
+      const epoch = await beginUnlock();
+      const result = await verifyAppPin(pin);
+      setPin("");
+      if (result.status === "ok") {
+        setLocked(false);
+        if (!(await onUnlocked(epoch))) setError(labels.lockLead);
+        return;
+      }
+      if (result.status === "locked") {
+        setLocked(true);
+        setError(labels.lockLocked);
+        return;
+      }
+      setError(labels.lockPinMismatch);
+    } catch {
+      setPin("");
+      setError(labels.lockLead);
     }
-    if (result.status === "locked") {
-      setLocked(true);
-      setError(labels.lockLocked);
-      return;
-    }
-    setError(labels.lockPinMismatch);
   }
 
   async function handlePinSetup(event: FormEvent) {
@@ -71,14 +81,16 @@ export function AppLockScreen({ onUnlocked }: Props) {
       return;
     }
     try {
+      const epoch = await beginUnlock();
       await setAppPin(setupPin);
+      setSetupPinValue("");
+      setSetupConfirm("");
+      setNeedsSetup(false);
+      if (!(await onUnlocked(epoch))) setError(labels.lockLead);
     } catch {
       // Unexpected failure (e.g. storage/crypto): surface it rather than swallow.
       setError(labels.lockSetupFailed);
-      return;
     }
-    setNeedsSetup(false);
-    onUnlocked();
   }
 
   if (needsSetup === null) {
