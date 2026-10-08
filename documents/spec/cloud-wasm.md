@@ -38,3 +38,8 @@ JavaScript側の入力・返した復号JSON・画面状態は呼出元が保持
 Argon2処理と鍵保持は専用Workerへ置き、画面を停止させず、施錠・背景移行時には
 鍵を消去してWorkerを終了する接続を次に確認します。項目JSONは値を保持し、キーの順序は正規化します。
 固定の公開架空データ `tests/format1-vector.json` は形式1の復号互換性を検査するため保持します。
+
+CIはreleaseで生成した同一WASMからNode用bindingsとWeb用bindingsを作ります。
+`examples/release_acceptance.rs` は実際のrelease成果物をNodeで読み込み、固定の形式1を
+NFC正規化を含めて復元し、施錠後の復号拒否をRust側で照合します。Web用bindingsは
+同じ成果物からartifactとして保存します。Node上の受入は実ブラウザの実行証拠とは分けます。

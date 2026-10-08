@@ -14,7 +14,13 @@ fn main() {
         let text = bindings.to_string_lossy();
         if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
             std::path::PathBuf::from(format!(r"\\{unc}"))
-        } else if let Some(path) = text.strip_prefix(r"\\?\") {
+        } else if let Some(path) = text.strip_prefix(r"\\?\").filter(|path| {
+            let bytes = path.as_bytes();
+            bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && bytes[2] == b'\\'
+        }) {
             std::path::PathBuf::from(path)
         } else {
             bindings
@@ -32,8 +38,8 @@ process.stdin.on('end', () => {
   const item = JSON.parse(key.decrypt_item(JSON.stringify(f.envelope), JSON.stringify(f.context)));
   key.lock();
   const locked = key.is_locked();
-  let refused = false;
-  try { key.decrypt_item(JSON.stringify(f.envelope), JSON.stringify(f.context)); } catch { refused = true; }
+  let refused = '';
+  try { key.decrypt_item(JSON.stringify(f.envelope), JSON.stringify(f.context)); } catch (e) { refused = String(e); }
   key.free();
   process.stdout.write(JSON.stringify({item, locked, refused}));
 });
@@ -101,6 +107,6 @@ process.stdin.on('end', () => {
     let result: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(result["item"], fixture["item"]);
     assert_eq!(result["locked"], true);
-    assert_eq!(result["refused"], true);
+    assert_eq!(result["refused"], "PS057: Password box is locked");
     println!("actual release WASM: fixed format1/NFC restoration and locked rejection passed");
 }
