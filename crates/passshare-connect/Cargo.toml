@@ -7,6 +7,7 @@ rust-version.workspace = true
 description = "1Password Connect API compatible HTTP client for PassShare"
 
 [dependencies]
+base64.workspace = true
 passshare-core = { path = "../passshare-core" }
 percent-encoding.workspace = true
 reqwest.workspace = true

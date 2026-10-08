@@ -33,7 +33,7 @@ Bearerは既存のセッション用トークンを使用し、Connectトーク�
 | 操作 | 相対パス | 本文・応答 |
 |---|---|---|
 | GET | `/boxes/:boxId` | `{mode,keyEpoch}`。互換状態の世代はnull |
-| POST | `/boxes/:boxId/enable` | `{keyEpoch:1}`。同じ有効化の再送は成功 |
+| POST | `/boxes/:boxId/enable` | 本文 `{keyEpoch:1}`／応答 `{mode:"encrypted",keyEpoch:1}`。同じ有効化の再送は成功 |
 | GET | `/boxes/:boxId/items?after=:itemId` | `{items:[{itemId,itemVersion,keyEpoch}],nextCursor}`。ID順で最大100件 |
 | GET | `/boxes/:boxId/items/:itemId` | 保存した `EncryptedItem` の全JSON |
 | PUT | `/boxes/:boxId/items/:itemId` | `{expectedVersion,envelope}`。成功は200と保存した全暗号文 |
