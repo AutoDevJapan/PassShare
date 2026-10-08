@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
 import { requireSession, parseBearerToken } from "../auth/session.js";
 import { requireCsrf } from "../auth/csrf.js";
 import { sendAuthError } from "../auth/errors.js";
@@ -11,6 +12,10 @@ export async function createEncryptedRouter({ pool, authStore }) {
   if (!pool) throw new Error("Encrypted storage requires PostgreSQL");
   await applySchemaWithAdvisoryLock(pool, 4820124, await nativeMutation({ command: "encrypted-schema" }));
   const router = Router();
+  // Bound authenticated lookup/native work before checking a session. Match the
+  // general auth budget; password hashing retains its separate tighter limit.
+  router.use(rateLimit({windowMs:60*1000,limit:600,standardHeaders:"draft-6",legacyHeaders:false,
+    handler:(_req,res)=>res.status(429).json({error:"PS029",message:"PS029: Too many requests. Try again later."})}));
   router.use(requireSession(authStore));
   router.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   // A claimed client type does not make cookie authentication CSRF-safe.
