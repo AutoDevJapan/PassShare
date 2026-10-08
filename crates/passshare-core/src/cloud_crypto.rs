@@ -14,6 +14,12 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::{crypto::MasterKey, ConnectId};
 
+mod shared_keys;
+pub use shared_keys::{
+    AccountIdentity, AccountIdentityContext, PublicAccountIdentity, SharedKeyContext,
+    WrappedAccountIdentity, WrappedSharedPasswordBoxKey, SHARED_KEY_SUITE,
+};
+
 const FORMAT: u32 = 1;
 const MAX_ITEM_BYTES: usize = 1024 * 1024;
 const TAG_BYTES: usize = 16;

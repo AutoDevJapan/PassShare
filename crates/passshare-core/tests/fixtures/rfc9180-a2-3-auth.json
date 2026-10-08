@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/cfrg/draft-irtf-cfrg-hpke/blob/5f503c564da00b0687b3de75f1dfbdfc4079ad31/test-vectors.json",
+  "description": "Public RFC 9180 interoperability vector, Auth/KEM32/KDF1/AEAD3, sequence 0; not user credentials",
+  "ikmE": "938d3daa5a8904540bc24f48ae90eed3f4f7f11839560597b55e7c9598c996c0",
+  "ikmR": "64835d5ee64aa7aad57c6f2e4f758f7696617f8829e70bc9ac7a5ef95d1c756c",
+  "ikmS": "9d8f94537d5a3ddef71234c0baedfad4ca6861634d0b94c3007fed557ad17df6",
+  "pkEm": "f7674cc8cd7baa5872d1f33dbaffe3314239f6197ddf5ded1746760bfc847e0e",
+  "pkRm": "1a478716d63cb2e16786ee93004486dc151e988b34b475043d3e0175bdb01c44",
+  "pkSm": "f0f4f9e96c54aeed3f323de8534fffd7e0577e4ce269896716bcb95643c8712b",
+  "enc": "f7674cc8cd7baa5872d1f33dbaffe3314239f6197ddf5ded1746760bfc847e0e",
+  "info": "4f6465206f6e2061204772656369616e2055726e",
+  "aad": "436f756e742d30",
+  "pt": "4265617574792069732074727574682c20747275746820626561757479",
+  "ct": "ab1a13c9d4f01a87ec3440dbd756e2677bd2ecf9df0ce7ed73869b98e00c09be111cb9fdf077347aeb88e61bdf"
+}
