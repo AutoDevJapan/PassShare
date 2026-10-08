@@ -64,7 +64,11 @@ export function registerLifecycleForms({
     return html;
   }
 
-  const fixedPage = async (spec, tokens) => bind(await template({ errorCode: "", ...spec }), tokens);
+  const fixedPage = async (spec, tokens) => {
+    const page = await template({ errorCode: "", ...spec });
+    // A failed renderer must not issue a cookie for a form that never existed.
+    return bind(page, typeof tokens === "function" ? tokens() : tokens);
+  };
   const handle = (action) => async (req, res, next) => {
     try { await action(req, res); } catch (error) { next(error); }
   };
@@ -98,7 +102,7 @@ export function registerLifecycleForms({
 
   router.get(KEY, pageThrottle, canonical("recovery-key"), sessionGuard, handle(async (req, res) => {
     sendHtml(res, 200, await fixedPage({ page: "recovery-key", state: "form", locale: localeOf(req) },
-      { csrf: issueCsrfToken(res, appEnv) }));
+      () => ({ csrf: issueCsrfToken(res, appEnv) })));
   }));
 
   router.post(KEY, formThrottle, canonical("recovery-key"), sessionGuard, parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
@@ -113,7 +117,7 @@ export function registerLifecycleForms({
   // No session: the per-process budget runs before any other work.
   router.get(RECOVER, pageThrottle, canonical("recover"), handle(async (req, res) => {
     sendHtml(res, 200, await fixedPage({ page: "recover", state: "form", locale: localeOf(req) },
-      { csrf: issueCsrfToken(res, appEnv) }));
+      () => ({ csrf: issueCsrfToken(res, appEnv) })));
   }));
 
   router.post(RECOVER, formThrottle, canonical("recover"), parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
@@ -150,7 +154,7 @@ export function registerLifecycleForms({
         }
         const lost = page !== "recover" && SESSION_LOST.has(errorCode);
         const html = await fixedPage({ page, state: "form", locale: localeOf(req), errorCode },
-          lost ? {} : { csrf: issueCsrfToken(res, appEnv) });
+          () => lost ? {} : { csrf: issueCsrfToken(res, appEnv) });
         sendHtml(res, status, html);
       } catch (renderError) { next(renderError); }
     };

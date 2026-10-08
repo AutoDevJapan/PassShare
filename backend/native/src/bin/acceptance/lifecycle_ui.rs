@@ -39,12 +39,21 @@ pub fn cache_faults(source: &std::path::Path) {
     let path = "/api/auth/account/recover?locale=ru";
     let first = get(port, path, "");
     assert_eq!(first.status, 503);
+    assert!(!first.headers.to_ascii_lowercase().contains("set-cookie:"));
+    assert!(!first.html.contains("<form") && !first.html.contains("passshare1163-renderer"));
+    assert!(first
+        .headers
+        .to_ascii_lowercase()
+        .contains("cache-control: no-store"));
     std::fs::copy(source, &owned.0).expect("restore isolated renderer");
-    assert_eq!(
-        get(port, path, "").status,
-        503,
-        "failed template is cached briefly"
-    );
+    let cached = get(port, path, "");
+    assert_eq!(cached.status, 503, "failed template is cached briefly");
+    assert!(!cached.headers.to_ascii_lowercase().contains("set-cookie:"));
+    assert!(!cached.html.contains("<form") && !cached.html.contains("passshare1163-renderer"));
+    assert!(cached
+        .headers
+        .to_ascii_lowercase()
+        .contains("cache-control: no-store"));
     std::thread::sleep(std::time::Duration::from_millis(5200));
     let restored = get(port, path, "");
     assert_eq!(
