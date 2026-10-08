@@ -10,7 +10,7 @@ const MAX_CIPHERTEXT: usize = 1024 * 1024 + 16;
 fn failure() -> Value {
     json!({"status":400,"code":"PS051","message":"PS051: Invalid encrypted storage request"})
 }
-fn id(value: &Value) -> Option<&str> {
+pub(crate) fn id(value: &Value) -> Option<&str> {
     let value = value.as_str()?;
     (value.len() == 26
         && value
@@ -18,12 +18,12 @@ fn id(value: &Value) -> Option<&str> {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
     .then_some(value)
 }
-fn number(value: &Value, zero: bool) -> Option<u64> {
+pub(crate) fn number(value: &Value, zero: bool) -> Option<u64> {
     value
         .as_u64()
         .filter(|n| *n <= MAX_INTEGER && (zero || *n > 0))
 }
-fn exact_fields(value: &Value, fields: &[&str]) -> bool {
+pub(crate) fn exact_fields(value: &Value, fields: &[&str]) -> bool {
     value.as_object().is_some_and(|object| {
         object.len() == fields.len() && fields.iter().all(|field| object.contains_key(*field))
     })
