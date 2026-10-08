@@ -10,6 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod password_acceptance;
 #[path = "acceptance/password_page.rs"]
 mod password_page_acceptance;
+#[path = "acceptance/recovery.rs"]
+mod recovery_acceptance;
 #[path = "acceptance/share.rs"]
 mod share_acceptance;
 #[path = "acceptance/web_share.rs"]
@@ -172,8 +174,10 @@ fn main() {
             "acceptance requires the isolated CI service database"
         );
     }
+    let recovery_only = std::env::args().any(|value| value == "--recovery-only");
     let external_port = std::env::args()
-        .nth(1)
+        .skip(1)
+        .find(|value| value != "--recovery-only")
         .map(|value| value.parse::<u16>().expect("external fixture port"));
     let port = external_port.unwrap_or_else(|| {
         TcpListener::bind(("127.0.0.1", 0))
@@ -193,6 +197,17 @@ fn main() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
+    if recovery_only {
+        // A separately bounded fixture group does not disable production limits.
+        // SQL helper permits only the exact synthetic CI database.
+        if std::env::var_os("DATABASE_URL").is_some() {
+            share_acceptance::sql(
+                "DELETE FROM login_ip_requests WHERE ip IN ('127.0.0.1','::ffff:127.0.0.1')",
+            );
+        }
+        recovery_acceptance::run(port, nonce);
+        return;
+    }
     let (status, session) = http(
         port,
         "POST",
