@@ -550,6 +550,19 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let stranger_headers = format!("Authorization: Bearer {stranger}\r\n");
     let mut connect_headers = format!("Authorization: Bearer {connect}\r\n");
     let root = format!("/api/encrypted/boxes/{box_id}");
+    // Keep the pooled HTTP connection reactor alive between synchronous Core/HTTP steps.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let sdk =
+        passshare_connect::EncryptedSessionClient::new(&format!("http://127.0.0.1:{p}"), &refresh)
+            .unwrap();
+    assert_eq!(
+        runtime.block_on(sdk.state(&box_id)).unwrap(),
+        passshare_connect::BoxState::Compatibility
+    );
     assert_eq!(
         http(p, "GET", &root, &connect_headers, &Value::Null).0,
         401,
@@ -647,7 +660,32 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
             assert_eq!(http(p, "PUT", &path, &headers, &bad).0, 400);
         }
     }
-    assert_eq!(http(p, "PUT", &path, &headers, &payload).0, 200);
+    assert_eq!(runtime.block_on(sdk.enable_empty_box(&box_id)).unwrap(), 1);
+    assert_eq!(
+        runtime.block_on(sdk.state(&box_id)).unwrap(),
+        passshare_connect::BoxState::Encrypted { key_epoch: 1 }
+    );
+    assert_eq!(
+        runtime
+            .block_on(sdk.put_item(&box_id, context.item_id.as_str(), 0, &envelope))
+            .unwrap(),
+        envelope
+    );
+    assert_eq!(
+        runtime
+            .block_on(sdk.get_item(&box_id, context.item_id.as_str()))
+            .unwrap(),
+        envelope
+    );
+    let sdk_page = runtime.block_on(sdk.list(&box_id, None)).unwrap();
+    assert_eq!(sdk_page.items.len(), 1);
+    assert_eq!(sdk_page.items[0].item_id, context.item_id);
+    assert!(sdk_page.next_cursor.is_none());
+    let sdk_conflict = runtime
+        .block_on(sdk.put_item(&box_id, context.item_id.as_str(), 0, &envelope))
+        .unwrap_err();
+    assert_eq!(sdk_conflict.status(), Some(409));
+    assert_eq!(sdk_conflict.code(), Some("PS015"));
     let (status, stored) = http(p, "GET", &path, &headers, &Value::Null);
     assert_eq!(status, 200);
     assert_eq!(stored, serde_json::to_value(&envelope).unwrap());
@@ -764,6 +802,16 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     assert_eq!(created, json!({"bundleVersion":1,"bundle":bundle1}));
     let (status, fetched) = http(p, "GET", &owner_path, &headers, &Value::Null);
     assert_eq!((status, &fetched), (200, &created));
+    let sdk_bundle = runtime
+        .block_on(sdk.get_owner_key(&box_id, &owner_ctx))
+        .unwrap();
+    assert_eq!(sdk_bundle.bundle_version, 1);
+    assert_eq!(serde_json::to_value(&sdk_bundle.bundle).unwrap(), bundle1);
+    let sdk_replay = runtime
+        .block_on(sdk.put_owner_key(&box_id, 0, &sdk_bundle.bundle, None))
+        .unwrap_err();
+    assert_eq!(sdk_replay.status(), Some(409));
+    assert_eq!(sdk_replay.code(), Some("PS015"));
     let recovered = unwrap_bundle(&fetched["bundle"], &owner_password, &owner_ctx).unwrap();
     assert_eq!(
         recovered
