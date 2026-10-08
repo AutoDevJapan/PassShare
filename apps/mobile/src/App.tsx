@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MatrixBackground } from "@shared/ui/MatrixBackground";
 import { useAuthSession } from "./hooks/useAuthSession";
 import { AppLockScreen } from "./components/AppLockScreen";
@@ -13,10 +13,14 @@ type Tab = "vaults" | "settings";
 
 export function App() {
   const labels = useMobileLabels();
-  const { user, loading } = useAuthSession();
-  const [unlocked, setUnlocked] = useState(false);
+  const { user, loading, unlocked, lockGeneration, beginUnlock, completeUnlock, biometricUnlock } = useAuthSession();
   const [tab, setTab] = useState<Tab>("vaults");
   const [selectedVaultId, setSelectedVaultId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTab("vaults");
+    setSelectedVaultId(null);
+  }, [lockGeneration]);
 
   if (loading) {
     return <div className="mobile-loading">{labels.appTitle}</div>;
@@ -38,7 +42,12 @@ export function App() {
       <div className="mobile-shell">
         <MatrixBackground className="matrix-rain--fixed" />
         <main className="mobile-app">
-          <AppLockScreen onUnlocked={() => setUnlocked(true)} />
+          <AppLockScreen
+            key={lockGeneration}
+            beginUnlock={beginUnlock}
+            onUnlocked={(epoch) => completeUnlock(epoch)}
+            biometricUnlock={biometricUnlock}
+          />
         </main>
       </div>
     );

@@ -11,6 +11,19 @@ fn authenticated(input: &Value) -> bool {
         && input["verifiedHash"].as_str() == Some(hash)
 }
 
+/// True when retiring `actor` would leave a shared box without an owner, so a
+/// confirmed member must receive ownership first. The page lists exactly the
+/// boxes for which `retire` answers 409.
+pub fn needs_transfer(actor: &str, members: &[Value]) -> bool {
+    members
+        .iter()
+        .any(|m| m["user_id"] == actor && m["role"] == "owner")
+        && members.iter().any(|m| m["user_id"] != actor)
+        && !members
+            .iter()
+            .any(|m| m["user_id"] != actor && m["role"] == "owner")
+}
+
 pub fn transfer(input: &Value) -> Value {
     if !authenticated(input) {
         return error(401, "PS024", "Session is invalid or expired");

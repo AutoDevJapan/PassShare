@@ -41,6 +41,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.2
         version: 6.0.3(vite@8.1.4)
+      react-test-renderer:
+        specifier: 19.2.7
+        version: 19.2.7(react@19.2.7)
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
@@ -376,6 +379,14 @@ packages:
     peerDependencies:
       react: ^19.2.7
 
+  react-is@19.3.0:
+    resolution: {integrity: sha512-UpMYezM4v5/18F28aC66AEsjXIgE02kyEMH6yLdgLXu/UTfa1Ntwck/nNLrbqJsEXW7gPb0coNO9FQse9WTovA==}
+
+  react-test-renderer@19.2.7:
+    resolution: {integrity: sha512-U4TyPDJ9MsC8rFimXuJum8w40aPc9kbOZYO8Pc2/4A884i8hwJsMNA/JNyuOc/f2/37wHvk7HjpVl1V4re7Dig==}
+    peerDependencies:
+      react: ^19.2.7
+
   react@19.2.7:
     resolution: {integrity: sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ==}
     engines: {node: '>=0.10.0'}
@@ -673,6 +684,14 @@ snapshots:
   react-dom@19.2.7(react@19.2.7):
     dependencies:
       react: 19.2.7
+      scheduler: 0.27.0
+
+  react-is@19.3.0: {}
+
+  react-test-renderer@19.2.7(react@19.2.7):
+    dependencies:
+      react: 19.2.7
+      react-is: 19.3.0
       scheduler: 0.27.0
 
   react@19.2.7: {}

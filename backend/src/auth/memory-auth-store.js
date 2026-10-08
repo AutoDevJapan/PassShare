@@ -298,6 +298,20 @@ export function createMemoryAuthStore() {
       return memberships.filter((m) => m.vault_id === vaultId && m.role === "owner").length;
     },
 
+    async listSoleOwnedSharedBoxes(userId, limit) {
+      const boxes = [];
+      const owned = memberships.filter((m) => m.user_id === userId && m.role === "owner").map((m) => m.vault_id).sort();
+      for (const id of owned) {
+        const members = memberships.filter((m) => m.vault_id === id);
+        const others = members.filter((m) => m.user_id !== userId);
+        if (!others.length || others.some((m) => m.role === "owner")) continue;
+        boxes.push({ id, members: members.map((m) => ({ user_id: m.user_id, role: m.role,
+          email: usersById.get(m.user_id)?.email ?? "", identity_confirmed: m.role === "owner" || !!m.confirmed_at })) });
+        if (boxes.length >= limit) break;
+      }
+      return boxes;
+    },
+
     async updateVaultMemberRole(vaultId, targetUserId, role) {
       const membership = memberships.find(
         (m) => m.vault_id === vaultId && m.user_id === targetUserId,
