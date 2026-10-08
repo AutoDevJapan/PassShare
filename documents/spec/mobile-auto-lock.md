@@ -30,7 +30,9 @@ native_background、native_foreground、native_lock、native_account、native_lo
 
 WebViewのvisibility変化で画面を直ちに閉じ、Rustへ背景・前景を通知します。
 hiddenのまま起動した場合も通知し、前景に戻った時にアカウント未復元なら一度再試行します。
-OS側のRunEvent::Resumedでも再施錠し、JSが凍結されていた場合の旧解除を拒否します。
+OS側のWindowEvent::Suspendedで背景を通知し、WindowEvent::Resumedでも再施錠します。
+JSが凍結されていた場合の旧解除も拒否します。一般的なRunEvent::Resumedはイベントループの
+Pollで発生するため使いません。Tauriとruntime-wry 2.11.2の実ソースで経路を確認しました。
 生体認証ダイアログによる単なるblurを施錠の契機にはしません。
 非Tauriの開発用プレビューはネイティブの期限監視を持ちません。
 

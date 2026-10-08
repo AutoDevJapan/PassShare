@@ -372,7 +372,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       lock();
       const transition = isTauri() ? invoke<void>(document.hidden ? "native_background" : "native_foreground") : Promise.resolve();
       void transition.then(() => {
-        if (!document.hidden && userRef.current === null && loggingOut.current !== sessionRevision.current) void refresh();
+        if (!document.hidden && userRef.current === null && loggingOut.current !== sessionRevision.current) void refreshConnect();
       }).catch(() => undefined);
     };
     document.addEventListener("visibilitychange", onVisibility);
@@ -388,7 +388,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       restoredProof.current = null;
       logoutToken.current = null;
     };
-  }, [lock, refresh]);
+  }, [lock, refreshConnect]);
 
   const value = useMemo(
     () => ({

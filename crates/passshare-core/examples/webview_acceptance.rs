@@ -454,7 +454,11 @@ impl Fixture {
         let thread = thread::spawn(move || {
             while !stopping.load(Ordering::Relaxed) {
                 if let Ok((mut socket, _)) = listener.accept() {
-                    let _ = serve_fixture(&mut socket, &requests);
+                    // Winsock accept inherits the listener's nonblocking mode.
+                    // Restore blocking I/O before applying finite read deadlines.
+                    if socket.set_nonblocking(false).is_ok() {
+                        let _ = serve_fixture(&mut socket, &requests);
+                    }
                 } else {
                     thread::sleep(Duration::from_millis(10));
                 }

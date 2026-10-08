@@ -169,10 +169,24 @@ pub fn run() {
         .expect("PassShare mobile failed to start")
         .run(|app, event| {
             #[cfg(mobile)]
-            if matches!(event, tauri::RunEvent::Resumed) {
-                let state = app.state::<AppState>();
-                let _ = state.with(|lock| lock.resume());
-                emit_locked(app, &state);
+            match event {
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::Suspended,
+                    ..
+                } => {
+                    let state = app.state::<AppState>();
+                    let _ = state.with(|lock| lock.background());
+                    emit_locked(app, &state);
+                }
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::Resumed,
+                    ..
+                } => {
+                    let state = app.state::<AppState>();
+                    let _ = state.with(|lock| lock.resume());
+                    emit_locked(app, &state);
+                }
+                _ => {}
             }
             #[cfg(not(mobile))]
             let _ = (app, event);
