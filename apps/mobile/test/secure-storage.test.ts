@@ -133,3 +133,53 @@ test("clearAuthSession removes the in-memory session secrets", async () => {
   await clearAuthSession();
   assert.equal(await loadAuthSession(REASON), null);
 });
+
+test("logout removes an OS write that was already in flight", async () => {
+  const { api, backing } = makeFakeApi();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const setData = api.setData;
+  api.setData = async (input) => {
+    entered.resolve();
+    await release.promise;
+    await setData(input);
+  };
+  __setBiometryApiForTests(api as never);
+  let current = true;
+  const writing = saveAuthSession(SESSION, () => current);
+  const refused = assert.rejects(writing, /Session changed/);
+  await entered.promise;
+  current = false;
+  const removing = clearAuthSession();
+  release.resolve();
+  await refused;
+  await removing;
+  assert.equal(backing.has("auth-session"), false);
+  assert.equal(await loadAuthSession(REASON), null);
+});
+
+test("cleanup of a stale OS write cannot remove a newer account", async () => {
+  const { api, backing } = makeFakeApi();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const setData = api.setData;
+  let first = true;
+  api.setData = async (input) => {
+    if (first) { first = false; entered.resolve(); await release.promise; }
+    await setData(input);
+  };
+  __setBiometryApiForTests(api as never);
+  let current = true;
+  const old = saveAuthSession(SESSION, () => current);
+  const refused = assert.rejects(old, /Session changed/);
+  await entered.promise;
+  current = false;
+  const next = { ...SESSION, refreshToken: "synthetic-next-account" };
+  const writing = saveAuthSession(next);
+  release.resolve();
+  await refused;
+  await writing;
+  await clearAuthSession(() => false);
+  assert.equal(backing.get("auth-session"), JSON.stringify(next));
+  assert.deepEqual(await loadAuthSession(REASON), next);
+});
