@@ -7,21 +7,25 @@ use serde_json::{json, Value};
 pub fn cache_faults(source: &std::path::Path) {
     assert!(
         std::env::var_os("DATABASE_URL").is_none(),
-        "memory-only isolated renderer fault"
+        "renderer fault acceptance requires DATABASE_URL to be absent"
     );
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let fixture = source.with_file_name(format!(
-        "passshare1163-renderer-{nonce}{}",
+        "passshare1163-renderer-{}-{nonce}{}",
+        std::process::id(),
         if cfg!(windows) { ".exe" } else { "" }
     ));
     struct Owned(std::path::PathBuf);
     impl Drop for Owned {
         fn drop(&mut self) {
-            if self.0.exists() {
-                std::fs::remove_file(&self.0).expect("remove owned renderer clone");
+            if self.0.exists() && std::fs::remove_file(&self.0).is_err() {
+                eprintln!("owned renderer clone cleanup failed");
+                if !std::thread::panicking() {
+                    panic!("owned renderer clone cleanup failed");
+                }
             }
         }
     }
@@ -33,6 +37,12 @@ pub fn cache_faults(source: &std::path::Path) {
         .unwrap()
         .port();
     let server = super::Server::start(port, owned.0.clone());
+    let session = web_session(
+        port,
+        "/api/auth/signup",
+        &format!("fault-{nonce}@example.test"),
+        &format!("Synthetic-Fault-{nonce}!"),
+    );
     // Schema startup completed with the real renderer. Lose only our clone,
     // leaving the parent binary and every other service untouched.
     std::fs::remove_file(&owned.0).expect("inject renderer outage");
@@ -45,6 +55,16 @@ pub fn cache_faults(source: &std::path::Path) {
         .headers
         .to_ascii_lowercase()
         .contains("cache-control: no-store"));
+    for failed_path in ["/api/auth/account/recovery-key", "/api/auth/account/retire"] {
+        let failed = get(port, failed_path, &session);
+        assert_eq!(failed.status, 503);
+        assert!(!failed.headers.to_ascii_lowercase().contains("set-cookie:"));
+        assert!(!failed.html.contains("<form") && !failed.html.contains("passshare1163-renderer"));
+        assert!(failed
+            .headers
+            .to_ascii_lowercase()
+            .contains("cache-control: no-store"));
+    }
     std::fs::copy(source, &owned.0).expect("restore isolated renderer");
     let cached = get(port, path, "");
     assert_eq!(cached.status, 503, "failed template is cached briefly");
@@ -54,6 +74,7 @@ pub fn cache_faults(source: &std::path::Path) {
         .headers
         .to_ascii_lowercase()
         .contains("cache-control: no-store"));
+    // The service retries failures after 5000ms; allow 200ms scheduling margin.
     std::thread::sleep(std::time::Duration::from_millis(5200));
     let restored = get(port, path, "");
     assert_eq!(
@@ -674,6 +695,10 @@ pub fn run(port: u16, nonce: u128) {
     for _ in 0..60 {
         let reply = get(port, &format!("{recover}?locale=ja"), "");
         if reply.status == 429 {
+            assert!(reply
+                .headers
+                .to_ascii_lowercase()
+                .contains("cache-control: no-store"));
             assert!(!reply.headers.to_ascii_lowercase().contains("set-cookie:"));
             let body: Value = serde_json::from_str(&reply.html).unwrap();
             assert_eq!(body["error"], "PS029");
