@@ -1,9 +1,11 @@
 //! Separate client-side Core/host contract acceptance; run via the Cargo gate.
 //! Owns a disposable Docker PostgreSQL and
 //! real Express host. No production configuration, model API or secret files.
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use passshare_core::{
-    cloud_crypto::{ItemContext, PasswordBoxKey},
-    ConnectId,
+    cloud_crypto::{ItemContext, OwnerKeyContext, PasswordBoxKey, WrappedPasswordBoxKey},
+    crypto::{derive_master_key_with_params, MasterKey},
+    ConnectId, PassShareError,
 };
 use serde_json::{json, Value};
 use std::{
@@ -439,12 +441,17 @@ fn http_bytes(port: u16, method: &str, path: &str, headers: &str, body: &Value) 
     (status, bytes[split + 4..].to_vec())
 }
 fn signup(port: u16) -> (String, String, String) {
+    let (refresh, connect, box_id, _) = signup_with_password(port);
+    (refresh, connect, box_id)
+}
+fn signup_with_password(port: u16) -> (String, String, String, String) {
+    let password = format!("{}Aa!", ConnectId::generate().unwrap());
     let (status, session) = http(
         port,
         "POST",
         "/api/auth/signup",
         "x-passshare-client: mobile\r\n",
-        &json!({"email":format!("{}@example.test",ConnectId::generate().unwrap()),"password":format!("{}Aa!",ConnectId::generate().unwrap())}),
+        &json!({"email":format!("{}@example.test",ConnectId::generate().unwrap()),"password":password}),
     );
     assert_eq!(status, 201, "synthetic signup");
     let connect = session["connectAccessToken"].as_str().unwrap().to_owned();
@@ -461,8 +468,42 @@ fn signup(port: u16) -> (String, String, String) {
         refresh,
         connect,
         boxes[0]["id"].as_str().unwrap().to_owned(),
+        password,
     )
 }
+// Client-side owner key bundle, as packages/cloud-wasm builds it: a fixed
+// Format-1 Argon2id costs are fixed independently of Core defaults.
+// The password, salt-derived
+// master key and raw box key stay in this process; the server sees the bundle only.
+fn owner_context(box_id: &str, owner: &str, epoch: u64) -> OwnerKeyContext {
+    serde_json::from_value(json!({"passwordBoxId":box_id,"ownerAccountId":owner,"keyEpoch":epoch}))
+        .unwrap()
+}
+fn owner_master(password: &str, salt: &[u8]) -> Result<MasterKey, PassShareError> {
+    derive_master_key_with_params(password, salt, 65_536, 3, 4)
+}
+fn owner_bundle(
+    key: &PasswordBoxKey,
+    master: &MasterKey,
+    salt: [u8; 16],
+    context: &OwnerKeyContext,
+) -> Value {
+    json!({"format":1,"salt":BASE64.encode(salt),
+        "wrapped":key.wrap_for_owner(master,context).unwrap()})
+}
+// Re-derives the master key from the FETCHED salt, as a fresh client would.
+fn unwrap_bundle(
+    bundle: &Value,
+    password: &str,
+    context: &OwnerKeyContext,
+) -> Result<PasswordBoxKey, PassShareError> {
+    let salt = BASE64.decode(bundle["salt"].as_str().unwrap()).unwrap();
+    let master = owner_master(password, &salt)?;
+    let wrapped: WrappedPasswordBoxKey = serde_json::from_value(bundle["wrapped"].clone()).unwrap();
+    PasswordBoxKey::unwrap_for_owner(&wrapped, &master, context)
+        .map_err(|_| PassShareError::CorruptFile)
+}
+
 fn main() {
     let mode = Mode::parse(&std::env::args_os().skip(1).collect::<Vec<_>>())
         .unwrap_or_else(|reason| panic!("{reason}"));
@@ -503,11 +544,11 @@ fn main() {
 fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let mut host = Host::start(db, network, mode);
     let p = host.port;
-    let (refresh, connect, box_id) = signup(p);
-    let (stranger, _, stranger_box) = signup(p);
+    let (refresh, connect, box_id, auth_password) = signup_with_password(p);
+    let (stranger, _, stranger_box, stranger_auth_password) = signup_with_password(p);
     let headers = format!("Authorization: Bearer {refresh}\r\n");
     let stranger_headers = format!("Authorization: Bearer {stranger}\r\n");
-    let connect_headers = format!("Authorization: Bearer {connect}\r\n");
+    let mut connect_headers = format!("Authorization: Bearer {connect}\r\n");
     let root = format!("/api/encrypted/boxes/{box_id}");
     assert_eq!(
         http(p, "GET", &root, &connect_headers, &Value::Null).0,
@@ -623,6 +664,190 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let claimant = db.sql(&format!(
         "SELECT user_id::text FROM vault_memberships WHERE vault_id='{stranger_box}'"
     ));
+    // Owner key bundle: synthetic password and bundles are derived by Core here.
+    let owner_id = db.sql(&format!(
+        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{box_id}' AND role='owner'"
+    ));
+    let owner_path = format!("{root}/owner-key");
+    let owner_password = format!(
+        "synthetic-owner-password-{}",
+        ConnectId::generate().unwrap()
+    );
+    let salt = [7u8; 16];
+    let master = owner_master(&owner_password, &salt).unwrap();
+    let owner_ctx = owner_context(&box_id, &owner_id, 1);
+    let bundle1 = owner_bundle(&key, &master, salt, &owner_ctx);
+    let put1 = json!({"expectedVersion":0,"bundle":bundle1});
+    let stranger_put = json!({"expectedVersion":0,"bundle":owner_bundle(&key,&master,salt,&owner_context(&box_id,&claimant,1))});
+    for (credentials, expected) in [
+        ("", 401),
+        (connect_headers.as_str(), 401),
+        (stranger_headers.as_str(), 403),
+    ] {
+        assert_eq!(
+            http(p, "GET", &owner_path, credentials, &Value::Null).0,
+            expected
+        );
+        let body = if expected == 403 {
+            &stranger_put
+        } else {
+            &put1
+        };
+        assert_eq!(http(p, "PUT", &owner_path, credentials, body).0, expected);
+    }
+    // Cookie writes need CSRF; a claimed client type is not a bypass.
+    for client in [
+        "",
+        "x-passshare-client: mobile\r\n",
+        "x-passshare-client: extension\r\n",
+    ] {
+        assert_eq!(
+            http(
+                p,
+                "PUT",
+                &owner_path,
+                &format!("Cookie: passshare_session={refresh}\r\n{client}"),
+                &put1
+            )
+            .0,
+            403
+        );
+    }
+    assert_eq!(
+        http(p, "GET", &owner_path, &headers, &Value::Null).0,
+        404,
+        "missing bundle"
+    );
+    for pointer in ["/bundle", "/bundle/wrapped", "/bundle/wrapped/context"] {
+        for field in ["password", "key", "kdf"] {
+            let mut bad = put1.clone();
+            bad.pointer_mut(pointer).unwrap()[field] = json!("must-not-enter-storage");
+            assert_eq!(http(p, "PUT", &owner_path, &headers, &bad).0, 400);
+        }
+    }
+    for (pointer, value) in [
+        ("/bundle/format", json!(2)),
+        ("/bundle/salt", json!(BASE64.encode([1u8; 15]))),
+        (
+            "/bundle/wrapped/ciphertext",
+            json!(BASE64.encode([0u8; 47])),
+        ),
+        (
+            "/bundle/wrapped/context/passwordBoxId",
+            json!(ConnectId::generate().unwrap()),
+        ),
+        ("/bundle/wrapped/context/ownerAccountId", json!(claimant)),
+        ("/expectedVersion", json!(9_007_199_254_740_991u64)),
+    ] {
+        let mut bad = put1.clone();
+        *bad.pointer_mut(pointer).unwrap() = value;
+        assert_eq!(
+            http(p, "PUT", &owner_path, &headers, &bad).0,
+            400,
+            "{pointer}"
+        );
+    }
+    let other_epoch = json!({"expectedVersion":0,"bundle":owner_bundle(&key,&master,salt,&owner_context(&box_id,&owner_id,2))});
+    let (status, rejection) = http(p, "PUT", &owner_path, &headers, &other_epoch);
+    assert_eq!((status, &rejection["error"]), (409, &json!("PS056")));
+    assert_eq!(
+        http(p, "GET", &owner_path, &headers, &Value::Null).0,
+        404,
+        "rejections store nothing"
+    );
+    let csrf = ConnectId::generate().unwrap();
+    let cookie_headers = format!(
+        "Cookie: passshare_session={refresh}; passshare_csrf={csrf}\r\nx-csrf-token: {csrf}\r\n"
+    );
+    let (status, created) = http(p, "PUT", &owner_path, &cookie_headers, &put1);
+    assert_eq!(status, 200);
+    assert_eq!(created, json!({"bundleVersion":1,"bundle":bundle1}));
+    let (status, fetched) = http(p, "GET", &owner_path, &headers, &Value::Null);
+    assert_eq!((status, &fetched), (200, &created));
+    let recovered = unwrap_bundle(&fetched["bundle"], &owner_password, &owner_ctx).unwrap();
+    assert_eq!(
+        recovered
+            .decrypt_item(&serde_json::from_value(stored.clone()).unwrap(), &context)
+            .unwrap(),
+        item,
+        "bundle unwraps to the key that decrypts the stored item"
+    );
+    assert!(unwrap_bundle(&fetched["bundle"], "wrong-synthetic-password", &owner_ctx).is_err());
+    assert!(unwrap_bundle(
+        &fetched["bundle"],
+        &owner_password,
+        &owner_context(&box_id, &claimant, 1)
+    )
+    .is_err());
+    let (status, replay) = http(p, "PUT", &owner_path, &headers, &put1);
+    assert_eq!((status, &replay["error"]), (409, &json!("PS015")));
+    let bundle2 = owner_bundle(&key, &master, salt, &owner_ctx);
+    // A session alone must not replace the only key wrapper with structurally
+    // valid garbage. Missing/wrong reauthentication leaves all bytes intact.
+    let mut garbage = bundle2.clone();
+    garbage["wrapped"]["ciphertext"] = json!(BASE64.encode([0u8; 48]));
+    for body in [
+        json!({"expectedVersion":1,"bundle":garbage}),
+        json!({"expectedVersion":1,"bundle":garbage,"currentPassword":format!("wrong-{}",ConnectId::generate().unwrap())}),
+    ] {
+        let (status, error) = http(p, "PUT", &owner_path, &headers, &body);
+        assert_eq!((status, &error["error"]), (401, &json!("PS026")));
+        assert_eq!(
+            http(p, "GET", &owner_path, &headers, &Value::Null).1,
+            created
+        );
+    }
+    let (status, updated) = http(
+        p,
+        "PUT",
+        &owner_path,
+        &headers,
+        &json!({"expectedVersion":1,"bundle":bundle2,"currentPassword":auth_password}),
+    );
+    assert_eq!(
+        (status, &updated),
+        (200, &json!({"bundleVersion":2,"bundle":bundle2}))
+    );
+    assert_eq!(http(p, "PUT", &owner_path, &headers, &put1).0, 409);
+    assert_eq!(
+        http(
+            p,
+            "PUT",
+            &owner_path,
+            &headers,
+            &json!({"expectedVersion":1,"bundle":bundle1,"currentPassword":auth_password})
+        )
+        .0,
+        409,
+        "stale update preserves the current bundle"
+    );
+    assert_eq!(
+        http(p, "GET", &owner_path, &headers, &Value::Null).1,
+        updated
+    );
+    let bundle3 = owner_bundle(&key, &master, salt, &owner_ctx);
+    let contenders: Vec<_> = (0..4)
+        .map(|_| {
+            let (h, path) = (headers.clone(), owner_path.clone());
+            let body =
+                json!({"expectedVersion":2,"bundle":bundle3,"currentPassword":auth_password});
+            thread::spawn(move || http(p, "PUT", &path, &h, &body).0)
+        })
+        .collect();
+    let statuses: Vec<_> = contenders.into_iter().map(|w| w.join().unwrap()).collect();
+    assert_eq!(statuses.iter().filter(|s| **s == 200).count(), 1);
+    assert_eq!(statuses.iter().filter(|s| **s == 409).count(), 3);
+    let current_bundle = json!({"bundleVersion":3,"bundle":bundle3});
+    assert_eq!(
+        http(p, "GET", &owner_path, &headers, &Value::Null).1,
+        current_bundle
+    );
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_owner_keys WHERE bundle::text LIKE '%{owner_password}%'"
+        )),
+        "0"
+    );
     // Unconfirmed membership cannot read; confirmed membership can read but
     // cannot enable. This fixture never sends or stores a box key on the host.
     db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES('{claimant}','{box_id}','member')"));
@@ -646,11 +871,117 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         .0,
         403
     );
+    // A confirmed non-owner member can neither read nor write an owner bundle.
+    let member_put = json!({"expectedVersion":0,"bundle":owner_bundle(&key,&master,salt,&owner_context(&box_id,&claimant,1))});
+    assert_eq!(
+        http(p, "GET", &owner_path, &stranger_headers, &Value::Null).0,
+        403
+    );
+    assert_eq!(
+        http(p, "PUT", &owner_path, &stranger_headers, &member_put).0,
+        403
+    );
+    // Ownership transfer: the previous owner loses access and the new owner never
+    // sees the previous bundle. The new owner must wrap a key it already holds.
+    let swap = |new: &str, authorization: &str, password: &str| {
+        assert_eq!(
+            http(
+                p,
+                "POST",
+                &format!("/api/auth/vaults/{box_id}/ownership"),
+                authorization,
+                &json!({"currentPassword":password,"targetUserId":new})
+            )
+            .0,
+            204,
+            "formal ownership transfer must succeed before testing key access"
+        );
+    };
+    swap(&claimant, &headers, &auth_password);
+    assert_eq!(http(p, "GET", &owner_path, &headers, &Value::Null).0, 403);
+    let old_put = json!({"expectedVersion":3,"bundle":owner_bundle(&key,&master,salt,&owner_ctx),"currentPassword":auth_password});
+    assert_eq!(http(p, "PUT", &owner_path, &headers, &old_put).0, 403);
+    assert_eq!(
+        http(p, "GET", &owner_path, &stranger_headers, &Value::Null).0,
+        404
+    );
+    assert_eq!(
+        http(
+            p,
+            "PUT",
+            &owner_path,
+            &stranger_headers,
+            &json!({"expectedVersion":0,"bundle":bundle1})
+        )
+        .0,
+        400,
+        "another owner's context is refused"
+    );
+    let new_password = format!(
+        "synthetic-owner-password-{}",
+        ConnectId::generate().unwrap()
+    );
+    let new_salt = [9u8; 16];
+    let new_ctx = owner_context(&box_id, &claimant, 1);
+    let new_bundle = owner_bundle(
+        &key,
+        &owner_master(&new_password, &new_salt).unwrap(),
+        new_salt,
+        &new_ctx,
+    );
+    let (status, new_created) = http(
+        p,
+        "PUT",
+        &owner_path,
+        &stranger_headers,
+        &json!({"expectedVersion":0,"bundle":new_bundle}),
+    );
+    assert_eq!(
+        (status, &new_created),
+        (200, &json!({"bundleVersion":1,"bundle":new_bundle}))
+    );
+    assert_eq!(
+        http(p, "GET", &owner_path, &stranger_headers, &Value::Null).1,
+        new_created
+    );
+    assert!(
+        unwrap_bundle(&new_created["bundle"], &new_password, &new_ctx)
+            .unwrap()
+            .decrypt_item(&serde_json::from_value(stored.clone()).unwrap(), &context)
+            .is_ok()
+    );
+    swap(&owner_id, &stranger_headers, &stranger_auth_password);
+    // Formal ownership transfer revokes old Connect tokens. Refresh through
+    // the real auth API before asserting the legacy ciphertext boundary.
+    let (status, refreshed) = http(
+        p,
+        "POST",
+        "/api/auth/token/refresh",
+        "",
+        &json!({"refreshToken":refresh}),
+    );
+    assert_eq!(
+        status, 200,
+        "new live Connect token after ownership transfer"
+    );
+    connect_headers = format!(
+        "Authorization: Bearer {}\r\n",
+        refreshed["connectAccessToken"].as_str().unwrap()
+    );
+    assert_eq!(
+        http(p, "GET", &owner_path, &headers, &Value::Null).1,
+        current_bundle,
+        "owner bundle survives transfer and return untouched"
+    );
     db.sql(&format!(
         "DELETE FROM vault_memberships WHERE user_id='{claimant}' AND vault_id='{box_id}'"
     ));
     assert_eq!(
         http(p, "GET", &path, &stranger_headers, &Value::Null).0,
+        403
+    );
+    assert_eq!(
+        http(p, "GET", &owner_path, &stranger_headers, &Value::Null).0,
         403
     );
     for (pointer, value) in [
@@ -884,15 +1215,36 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     private_item["vault"]["id"] = json!(private_box);
     assert_eq!(http(p,"PUT",&format!("{private_root}/items/{}",context.item_id),&private_headers,
         &json!({"expectedVersion":0,"envelope":key.encrypt_item(&private_item,&private_context).unwrap()})).0,200);
+    let private_owner = db.sql(&format!(
+        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{private_box}'"
+    ));
+    assert_eq!(
+        http(
+            p,
+            "PUT",
+            &format!("{private_root}/owner-key"),
+            &private_headers,
+            &json!({"expectedVersion":0,"bundle":owner_bundle(&key,&master,salt,&owner_context(&private_box,&private_owner,1))})
+        )
+        .0,
+        200
+    );
     db.sql(&format!(
         "DELETE FROM connect_vaults WHERE id='{private_box}'"
     ));
-    assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_box_state WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_items WHERE box_id='{private_box}')")),"0");
+    assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_box_state WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_items WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{private_box}')")),"0");
     assert_eq!(
         db.sql(&format!(
             "SELECT count(*) FROM encrypted_items WHERE box_id='{box_id}'"
         )),
         "1"
+    );
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{box_id}'"
+        )),
+        "2",
+        "another box's owner bundles are retained"
     );
     // Restart proves persistence; client decrypts the unchanged opaque body.
     drop(host);
@@ -900,6 +1252,11 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     assert_eq!(
         http_bytes(host.port, "GET", &path, &headers, &Value::Null).0,
         404
+    );
+    assert_eq!(
+        http_bytes(host.port, "GET", &owner_path, &headers, &Value::Null).0,
+        404,
+        "owner key API is disabled with the encrypted storage flag"
     );
     assert_eq!(
         http(
@@ -922,20 +1279,50 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
             .unwrap(),
         next_item
     );
+    // The bundle is durable across restart and still unwraps to the item key.
+    let restored_bundle = http(host.port, "GET", &owner_path, &headers, &Value::Null);
+    assert_eq!(
+        (restored_bundle.0, &restored_bundle.1),
+        (200, &current_bundle)
+    );
+    assert_eq!(
+        unwrap_bundle(&restored_bundle.1["bundle"], &owner_password, &owner_ctx)
+            .unwrap()
+            .decrypt_item(&next_envelope, &next)
+            .unwrap(),
+        next_item
+    );
+    // Deleting an account removes only its own bundles.
+    db.sql(&format!("DELETE FROM users WHERE id='{claimant}'"));
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{box_id}'"
+        )),
+        "1"
+    );
     // Session/membership revocation is checked against live DB state.
     db.sql(&format!(
         "DELETE FROM vault_memberships WHERE vault_id='{box_id}'"
     ));
     assert_eq!(http(host.port, "GET", &path, &headers, &Value::Null).0, 403);
+    assert_eq!(
+        http(host.port, "GET", &owner_path, &headers, &Value::Null).0,
+        403
+    );
+    assert_eq!(http(host.port, "PUT", &owner_path, &headers, &put1).0, 403);
     db.sql("DELETE FROM sessions");
     assert_eq!(http(host.port, "GET", &path, &headers, &Value::Null).0, 401);
-    println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation and private-box cascade passed");
+    assert_eq!(
+        http(host.port, "GET", &owner_path, &headers, &Value::Null).0,
+        401
+    );
+    println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation, private-box cascade, and owner key bundle unwrap/CAS/transfer/restart/cascade passed");
 }
 
 #[cfg(test)]
 mod contract_tests {
     use super::*;
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+    use base64::engine::general_purpose::STANDARD as BASE64;
 
     #[test]
     fn cli_modes_are_exact_and_image_values_cannot_be_docker_options() {
@@ -1012,6 +1399,32 @@ mod contract_tests {
         let mut too_large = serde_json::to_value(&envelope).unwrap();
         too_large["ciphertext"] = json!(BASE64.encode(vec![0u8; 1024 * 1024 + 17]));
         assert_eq!(native_plan(&context, &too_large)["status"], 400);
+    }
+    #[test]
+    fn core_real_owner_bundle_matches_host_contract_and_rejects_scope_changes() {
+        let owner = "7b1f3c52-0a4e-4c1d-9a55-3f2d6e8b9c10";
+        let box_id = ConnectId::generate().unwrap();
+        let key = PasswordBoxKey::generate().unwrap();
+        let salt = [7u8; 16];
+        let master = owner_master("synthetic-password", &salt).unwrap();
+        let context = owner_context(box_id.as_str(), owner, 1);
+        let bundle = owner_bundle(&key, &master, salt, &context);
+        let plan = |actor: &str, bundle: &Value| {
+            passshare_mutations::dispatch(&json!({"command":"owner-key-plan","operation":"put",
+                "actor":actor,"session":"synthetic","boxId":box_id,
+                "request":{"expectedVersion":0,"bundle":bundle}}))
+        };
+        let accepted = plan(owner, &bundle);
+        assert_eq!(accepted["status"], 200);
+        assert_eq!(accepted["body"]["params"][5], bundle);
+        assert!(unwrap_bundle(&bundle, "synthetic-password", &context).is_ok());
+        assert_eq!(
+            plan("8b1f3c52-0a4e-4c1d-9a55-3f2d6e8b9c10", &bundle)["status"],
+            400
+        );
+        let mut extra = bundle.clone();
+        extra["kdf"] = json!({"memoryKiB":8});
+        assert_eq!(plan(owner, &extra)["status"], 400);
     }
     #[test]
     fn host_rejects_extra_fields_and_malformed_types_on_real_core_envelopes() {

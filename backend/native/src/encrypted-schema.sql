@@ -24,6 +24,25 @@ CREATE TABLE IF NOT EXISTS encrypted_items (
   FOREIGN KEY (box_id) REFERENCES connect_vaults(id) ON DELETE CASCADE
 );
 
+-- Opaque, client-wrapped box key for ONE owner. Private to that account even in
+-- a shared box. The server holds no password, raw key or KDF parameters.
+CREATE TABLE IF NOT EXISTS encrypted_owner_keys (
+  box_id VARCHAR(26) NOT NULL REFERENCES encrypted_box_state(box_id) ON DELETE CASCADE,
+  owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  revision BIGINT NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+  key_epoch BIGINT NOT NULL CHECK (key_epoch BETWEEN 1 AND 9007199254740991),
+  bundle JSONB NOT NULL CHECK (
+    jsonb_typeof(bundle)='object' AND jsonb_typeof(bundle->'wrapped')='object'
+    AND bundle->>'format'='1' AND bundle->'wrapped'->>'format'='1'
+    AND bundle->'wrapped'->'context'->>'passwordBoxId'=box_id
+    AND bundle->'wrapped'->'context'->>'ownerAccountId'=owner_id::text
+    AND bundle->'wrapped'->'context'->>'keyEpoch'=key_epoch::text
+    AND octet_length(bundle::text) <= 2048
+  ),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (box_id,owner_id)
+);
+
 -- Serialize all old writes with activation, including writes through the old
 -- importer, form editor and store adapters. A middleware-only check races.
 CREATE OR REPLACE FUNCTION passshare_plaintext_boundary() RETURNS TRIGGER
@@ -111,4 +130,51 @@ BEGIN
     VALUES(box,item,previous+1,epoch,body)
     ON CONFLICT(box_id,item_id) DO UPDATE SET revision=EXCLUDED.revision,key_epoch=EXCLUDED.key_epoch,envelope=EXCLUDED.envelope,updated_at=NOW();
   RETURN jsonb_build_object('status',200,'body',body);
+END $$;
+
+-- Owner key bundle: same box-first lock order as the item operation, with the
+-- live session and CURRENT confirmed owner rechecked under that lock. No
+-- delete, rotation or migration exists here.
+DROP FUNCTION IF EXISTS passshare_owner_key_operation(UUID,UUID,VARCHAR,TEXT,BIGINT,JSONB,BIGINT);
+CREATE OR REPLACE FUNCTION passshare_owner_key_operation(
+  actor UUID, session_id UUID, box VARCHAR, operation TEXT,
+  previous BIGINT, body JSONB, epoch BIGINT, verified_snapshot TEXT
+) RETURNS JSONB LANGUAGE plpgsql AS $$
+DECLARE
+  membership_role TEXT;
+  active_epoch BIGINT;
+  current_key encrypted_owner_keys%ROWTYPE;
+  current_hash TEXT;
+BEGIN
+  PERFORM id FROM connect_vaults WHERE id=box FOR UPDATE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS044','Password box not found'); END IF;
+  -- Reauthentication is bound to the current credential snapshot, matching
+  -- ownership transfer's box-before-user order. No encryption password enters SQL.
+  SELECT password_hash INTO current_hash FROM users WHERE id=actor FOR SHARE;
+  PERFORM id FROM sessions WHERE id=session_id AND user_id=actor AND expires_at>clock_timestamp() FOR SHARE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired'); END IF;
+  SELECT role INTO membership_role FROM vault_memberships
+    WHERE user_id=actor AND vault_id=box AND passshare_membership_active(role,confirmed_at) FOR SHARE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(403,'PS016','Access denied to password box'); END IF;
+  IF membership_role<>'owner' THEN RETURN passshare_encrypted_error(403,'PS032','Password box owner access required'); END IF;
+  SELECT key_epoch INTO active_epoch FROM encrypted_box_state WHERE box_id=box;
+  IF active_epoch IS NULL THEN RETURN passshare_encrypted_error(409,'PS055','Encrypted storage is not enabled'); END IF;
+  SELECT * INTO current_key FROM encrypted_owner_keys WHERE box_id=box AND owner_id=actor;
+  IF operation='get' THEN
+    IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS012','Owner key bundle not found'); END IF;
+    IF current_key.key_epoch<>active_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+    RETURN jsonb_build_object('status',200,'body',jsonb_build_object('bundleVersion',current_key.revision,'bundle',current_key.bundle));
+  END IF;
+  IF operation<>'put' OR previous IS NULL OR previous<0 OR previous>=9007199254740991 OR body IS NULL THEN
+    RETURN passshare_encrypted_error(400,'PS051','Invalid owner key bundle request');
+  END IF;
+  IF epoch IS DISTINCT FROM active_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+  IF previous>0 AND (verified_snapshot IS NULL OR verified_snapshot IS DISTINCT FROM encode(sha256(convert_to(current_hash,'UTF8')),'hex')) THEN
+    RETURN passshare_encrypted_error(401,'PS026','Reauthentication required to replace owner key bundle');
+  END IF;
+  IF COALESCE(current_key.revision,0)<>previous THEN RETURN passshare_encrypted_error(409,'PS015','Owner key bundle changed since it was read'); END IF;
+  INSERT INTO encrypted_owner_keys(box_id,owner_id,revision,key_epoch,bundle)
+    VALUES(box,actor,previous+1,epoch,body)
+    ON CONFLICT(box_id,owner_id) DO UPDATE SET revision=EXCLUDED.revision,key_epoch=EXCLUDED.key_epoch,bundle=EXCLUDED.bundle,updated_at=NOW();
+  RETURN jsonb_build_object('status',200,'body',jsonb_build_object('bundleVersion',previous+1,'bundle',body));
 END $$;

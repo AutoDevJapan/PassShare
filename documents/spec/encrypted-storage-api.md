@@ -52,6 +52,8 @@ JSONのキー順と空白は正規化しますが、各値と暗号文は保持�
 クライアントは応答をCoreの `decrypt_item(envelope, expectedContext)` で検証してから利用します。
 期待する保存先・項目・版・世代を、サーバーの応答だけから信用してはいけません。
 
+所有者キーバンドル（`/boxes/:boxId/owner-key`）の契約は [owner-key-bundle-api.md](owner-key-bundle-api.md) です。
+
 ## 旧経路との境界と削除
 
 有効化したボックスは旧 `/v1/vaults/:vaultUuid` 経路から409で拒否します。
