@@ -17,9 +17,10 @@ use std::{
 };
 
 // Usage: <production-native-binary> OR --image <prebuilt-production-image>.
-// Both modes require preloaded postgres:17-alpine. Supplied images are never
+// Both modes require the preloaded pinned PostgreSQL image. Supplied images are never
 // mounted over or removed by the tool; the caller owns its build/tag lifecycle.
-const POSTGRES_IMAGE: &str = "postgres:17-alpine";
+const POSTGRES_IMAGE: &str =
+    "postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24";
 static CLEANUP_FAILED: AtomicBool = AtomicBool::new(false);
 
 enum Mode {

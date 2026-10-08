@@ -78,9 +78,16 @@ production nativeは公開JSONヘッダーの厳密検査だけを担い、Core�
 cargo nextest run --locked --manifest-path backend/native/Cargo.toml -p passshare-mutations --test-threads 10
 cargo nextest run --locked --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --workspace --test-threads 10
 cargo run --locked --manifest-path tools/encrypted-storage-acceptance/Cargo.toml -- /owned/native-target/debug/passshare-mutations
+docker build -t passshare-todo1163-encrypted-api backend
+cargo run --locked --manifest-path tools/encrypted-storage-acceptance/Cargo.toml -- --image passshare-todo1163-encrypted-api
 ```
 
 生成先は担当用に分け、共有Cargoゲートとsccacheを使います。同じrootソースの全検査を重ねません。
+PostgreSQL fixtureは `postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24`
+を事前ロードし、両モードとも `--pull=never` で使います。imageモードは正式Dockerfileで
+作った実行ファイルをそのまま使い、ホストのnativeファイルをマウントして置き換えません。
+呼出元が自分のAPIイメージを削除し、toolが自分のコンテナ・ボリューム・networkを回収します。
+`.github/workflows/encrypted-storage.yml` に独立toolの検査とNode／image両モードを登録しました。
 
 ## 確認できたことと残条件
 
@@ -90,6 +97,8 @@ cargo run --locked --manifest-path tools/encrypted-storage-acceptance/Cargo.toml
 未確認／除名済みメンバーと失効済みセッションの拒否、CookieのCSRF、旧HTTP／DB経路の拒否、
 互換ボックスの保持、平文書込みと切替の競合、本人だけのボックス削除時の連鎖削除を確認しました。
 CIと別モデルレビューは候補ごとに別途記録します。源本体の成功を配布イメージの成功に転用しません。
+退会APIのmain `682ab55` を統合したソースでnative45件、tool3件、正式Nodeと
+PostgreSQLの全受入を再確認しました。配布イメージとLinux CIの結果は別に確認します。
 
 残条件は全クライアント接続、端末での鍵保管、WASM、共有鍵の確認・配布・失効・復旧、
 平文移行と故障時の原本保持、暗号化した添付、プラン上限、削除契約、公開環境での受入です。
