@@ -1,0 +1,53 @@
+{
+  "bundle": {
+    "format": 1,
+    "salt": "JSUlJSUlJSUlJSUlJSUlJQ==",
+    "wrapped": {
+      "ciphertext": "LMhzjjqSDzn2lVhPJI8k4MElTE9g4pre8/lsKl9cIjAwm5L/TQ5h/YdA+GA44yZR",
+      "context": {
+        "keyEpoch": 1,
+        "ownerAccountId": "11111111-1111-4111-8111-111111111111",
+        "passwordBoxId": "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "format": 1,
+      "nonce": "2g2MMdySHf1+Nhe7cahKt7OpPwPm4tMy"
+    }
+  },
+  "context": {
+    "itemId": "bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "itemVersion": 1,
+    "keyEpoch": 1,
+    "passwordBoxId": "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "envelope": {
+    "ciphertext": "6nDr6X6V+E+cFErAEl6T1WjeKIU1QmdAGyesmVOgGQLiDMoS/7oaE5FpsuxR77UE1y+FRMWlHoiEaCanrNTw7KUMr8OL51HNWa9Xb0+1I0DdIxibuinaMAfIZIydPmSMP81qicU/Fag+Jcf9VyQ+Ij1bMKgKfMeDCNZyPNjPCpTz8MeJ3g2HT7cN98RfZrRdUDY0DgmmKBitvb5OcQE9ljw0htKwBB+0N53j1qAARkpIdSo=",
+    "context": {
+      "itemId": "bbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "itemVersion": 1,
+      "keyEpoch": 1,
+      "passwordBoxId": "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "format": 1,
+    "nonce": "KY2Zg+EJB/fxuML1JZuWrrT25prTFAEh"
+  },
+  "item": {
+    "extra": {
+      "keep": [
+        1,
+        2,
+        3
+      ]
+    },
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "title": "Public format1 compatibility fixture",
+    "vault": {
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "version": 1
+  },
+  "owner": {
+    "keyEpoch": 1,
+    "ownerAccountId": "11111111-1111-4111-8111-111111111111",
+    "passwordBoxId": "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
