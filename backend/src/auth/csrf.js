@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { generateToken } from "./tokens.js";
-import { CSRF_COOKIE, CSRF_HEADER } from "./constants.js";
+import { CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE } from "./constants.js";
 import { authHttpError } from "./errors.js";
 import { isTokenAuthClient } from "./client.js";
 import { parseBearerToken, parseCookies } from "./session.js";
@@ -46,12 +46,14 @@ export function clearCsrfCookie(res, appEnv) {
 
 /** @type {import('express').RequestHandler} */
 export function requireCsrf(req, _res, next) {
-  if (parseBearerToken(req) || isTokenAuthClient(req)) {
+  const cookies = parseCookies(req);
+  // Client labels select the response shape, not cookie authorization. Native
+  // login/signup without a session cookie still use the token transport.
+  if (parseBearerToken(req) || (isTokenAuthClient(req) && !cookies[SESSION_COOKIE])) {
     next();
     return;
   }
 
-  const cookies = parseCookies(req);
   const cookieToken = cookies[CSRF_COOKIE];
   const headerToken = req.headers[CSRF_HEADER];
   if (

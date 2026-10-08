@@ -150,6 +150,40 @@ pub fn run(port: u16, nonce: u128) {
         "blocked deletion leaves entire shared item intact"
     );
     let ownership = format!("/api/auth/vaults/{shared}/ownership");
+    for client in ["mobile", "extension"] {
+        let cookie = format!(
+            "Cookie: passshare_session={actor_session}\r\nx-passshare-client: {client}\r\n"
+        );
+        for (method, path, body) in [
+            ("DELETE", "/api/auth/account".to_owned(), deletion.clone()),
+            (
+                "POST",
+                ownership.clone(),
+                json!({"currentPassword":password,"targetUserId":peer["user"]["id"]}),
+            ),
+            (
+                "POST",
+                "/api/auth/recovery-key".to_owned(),
+                json!({"currentPassword":password}),
+            ),
+        ] {
+            assert_eq!(
+                http_raw(port, method, &path, &cookie, &body).0,
+                403,
+                "claimed client type cannot bypass cookie CSRF"
+            );
+        }
+    }
+    for authorization in ["Bearer ", "Basic malformed"] {
+        let headers = format!(
+            "Cookie: passshare_session={actor_session}\r\nAuthorization: {authorization}\r\n"
+        );
+        assert_eq!(
+            http_raw(port, "GET", "/api/auth/me", &headers, &Value::Null).0,
+            401,
+            "malformed authorization cannot fall back to a cookie"
+        );
+    }
     assert_eq!(
         http(
             port,

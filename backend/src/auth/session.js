@@ -74,6 +74,9 @@ export function parseBearerToken(req) {
  */
 export async function resolveSessionAuth(req, authStore) {
   const bearerToken = parseBearerToken(req);
+  if (req.headers.authorization !== undefined && !bearerToken) {
+    throw authHttpError(401,"PS024","Session is invalid or expired");
+  }
   if (bearerToken) {
     const session = await authStore.findSessionByToken(bearerToken);
     if (!session) {
