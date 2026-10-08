@@ -1,0 +1,46 @@
+name: Encrypted storage acceptance
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: encrypted-storage-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22'
+      - run: pnpm --dir backend install --frozen-lockfile
+      - name: Check the independent Core contract tool
+        run: |
+          cargo fmt --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --check
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked --all-targets
+          cargo clippy --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked --all-targets -- -D warnings
+          cargo build --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked
+          cargo build --manifest-path backend/native/Cargo.toml --locked --bin passshare-mutations
+      - name: Load the pinned PostgreSQL fixture
+        run: docker pull postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+      - name: Verify the formal Node entrypoint with PostgreSQL and Core encryption
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance backend/native/target/debug/passshare-mutations
+      - name: Build the actual backend-only distribution image
+        run: docker build -t passshare-todo1163-encrypted-api backend
+      - name: Verify the distribution image with PostgreSQL and Core encryption
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --image passshare-todo1163-encrypted-api
+      - name: Remove the owned API image and verify fixture cleanup
+        if: always()
+        run: |
+          docker ps -a --filter label=passshare.fixture=encrypted-storage --format '{{.Names}}'
+          test -z "$(docker ps -aq --filter label=passshare.fixture=encrypted-storage)"
+          test -z "$(docker network ls -q --filter label=passshare.fixture=encrypted-storage)"
+          if docker image inspect passshare-todo1163-encrypted-api >/dev/null 2>&1; then docker rmi passshare-todo1163-encrypted-api; fi

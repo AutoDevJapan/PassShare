@@ -14,6 +14,7 @@ import { createSecurityHeadersMiddleware } from "./middleware/security-headers.j
 import { createWebCorsMiddleware } from "./middleware/web-cors.js";
 import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
 import { createMutationStore } from "./store/mutation-store.js";
+import { createEncryptedRouter, createPlaintextBoundary } from "./encrypted/router.js";
 
 // Best-effort DB pool warm-up: open the first connection during startup so the
 // first real request after a Railway cold-start (idle wake / fresh deploy) does
@@ -160,10 +161,25 @@ export async function createApp(options = {}) {
   );
   const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });
   app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore, mutateOnce }));
+  // Keep an unfinished client/key migration off existing hosted accounts.
+  const encryptedEnabled = process.env.PASSSHARE_ENCRYPTED_STORAGE === "true";
+  if (encryptedEnabled && (!pool || !process.env.PASSSHARE_MUTATIONS_BIN)) {
+    throw new Error("Encrypted storage requires PostgreSQL and the native service");
+  }
+  const plaintextBoundary = express.Router();
+  if (encryptedEnabled) {
+    app.use("/api/encrypted",await createEncryptedRouter({pool,authStore}));
+  }
+  // A flag rollback must not make an already encrypted box appear empty in
+  // the compatibility API. Preserve the boundary whenever its state exists.
+  if (pool) {
+    plaintextBoundary.use("/vaults/:vaultUuid",createPlaintextBoundary({pool}));
+  }
   const requireConnectAuth = createRequireConnectAuth({ authStore, appEnv });
   app.use(
     "/v1",
     requireConnectAuth,
+    plaintextBoundary,
     createConnectRouter(connectStore, { requireVaultAccess, mutateOnce }),
   );
   app.use(connectErrorHandler);

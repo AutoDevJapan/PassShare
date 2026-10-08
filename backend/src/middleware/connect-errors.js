@@ -11,6 +11,10 @@ export function connectErrorHandler(err, _req, res, next) {
     next(err);
     return;
   }
+  if (err && typeof err === "object" && err.code === "P0055") {
+    sendConnectError(res,409,"PS055: Ciphertext storage required");
+    return;
+  }
   if (err && typeof err === "object" && "status" in err && "message" in err) {
     sendConnectError(res, /** @type {number} */ (err.status), /** @type {string} */ (err.message));
     return;
