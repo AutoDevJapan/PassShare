@@ -108,3 +108,152 @@ poolとnative実行ファイルがあるときだけスキーマ・APIを登録�
 全クライアント接続・端末鍵保管・WASM・共有鍵配布/失効/復旧・移行と原本保持・
 暗号化添付・プラン上限・削除契約・本番での統合/CIは未完。
 サーバー契約の受入成功をM4全体や販売条件の完了に読み替えない。
+
+## 親へ渡す具体的な接続差分（2026-10-08補足）
+
+### DB・公開経路・realm
+
+実検証はDockerのPostgreSQL 17 Alpine。MySQL・SQLite・DBのモックは使わない。
+接続は既存Nodeのnode-postgres `pg` 8.22.0のPool。Rustは標準入出力で検査とSQL計画を返し、
+JSがPoolでパラメーター化SQLを実行する。Rustの別DBdriver・別DBserviceは追加しない。
+実接続は使い捨てDBの127.0.0.1の動的ポート。モデルや本番のAPIキーは使わない。
+
+バックエンドの標準登録先は `/api/encrypted/boxes/...`。
+現在のVercel設定に従う統合後の予定公開先は
+`https://pass-share.bm1314.net/backend/prd/api/encrypted/boxes/...`。
+開発・検証は同じ `/backend/dev`・`/backend/stg` の中継先へ登録する。
+これはリポジトリのrewrite設定に基づく予定URLで、新APIの公開環境の開通確認ではない。
+新APIはセッションCookieまたはセッションBearerを使い、旧 `/v1` のConnect Bearerと区別する。
+
+realmという設定・request欄・WWW-Authenticate realmは実装していない。
+DB環境の分離に加え、既存sessionのUUIDとuser UUID、確認済みmembership、ボックスIDで権限を決める。
+Coreの項目AADは用途名 `passshare.cloud.item`・形式・ボックスID・項目ID・版・鍵世代。
+そこへAPP_ENV・配信origin・環境realmは入らない。
+別環境へ同じDB、ID、鍵、sessionを複製した場合の暗号上のrealm分離は保証しない。
+入力へrealmを付けても新たな権限・鍵区分にはならず、PUT/enableの未知フィールドとして拒否する。
+環境realmを追加する製品要件があるなら、Core形式・AADと全クライアントを別途整合させる必要がある。
+
+### `backend/src/app.js`
+
+importを1つ追加する。
+
+```js
+import { createEncryptedRouter, createPlaintextBoundary } from "./encrypted/router.js";
+```
+
+既存JSON parserより後の登録部分を次の形に接続する。
+親の復旧・退会登録はそのまま保持する。
+
+```js
+const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });
+app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore, mutateOnce }));
+const encryptedRouter = pool && process.env.PASSSHARE_MUTATIONS_BIN
+  ? await createEncryptedRouter({ pool, authStore }) : null;
+if (encryptedRouter) app.use("/api/encrypted", encryptedRouter);
+
+const connectApi = express.Router();
+connectApi.use(createRequireConnectAuth({ authStore, appEnv }));
+if (encryptedRouter) {
+  connectApi.use("/vaults/:vaultUuid", createPlaintextBoundary({ pool }));
+}
+connectApi.use(createConnectRouter(connectStore, { requireVaultAccess, mutateOnce }));
+app.use("/v1", connectApi);
+app.use(connectErrorHandler);
+```
+
+境界をConnect認証の後・旧routerの前に置く。メモリ専用起動では新APIを登録しない。
+新API初期化の失敗を無視して通常起動するcatchは置かず、原因を修復する。
+初期化によるスキーマ追加だけでは、既存ボックスのモードは切り替わらない。
+
+### `backend/src/middleware/connect-errors.js`
+
+`connectErrorHandler` のheadersSent判定の後、一般のstatus判定の前へ追加する。
+旧Connect APIの標準応答形式 `{status,message}` を維持する。
+
+```js
+if (err && typeof err === "object" && "code" in err && err.code === "P0055") {
+  sendConnectError(res, 409, "PS055: Ciphertext storage required");
+  return;
+}
+```
+
+この翻訳は、旧要求が境界確認を済ませた後に別要求で有効化された競合のために必要。
+独立受入の旧routerにはまだ翻訳がないので、その競合スケジュールでは500でもDB拒否を合格としている。
+親の正式統合後は、そのスケジュールも409になることを検査する。
+
+### `backend/Dockerfile`
+
+リポジトリルートをbuild contextとする置換案。親が実Docker buildを確認する。
+
+```dockerfile
+FROM rust:1-bookworm AS mutations
+WORKDIR /repo
+COPY Cargo.toml ./
+COPY crates/passshare-core ./crates/passshare-core
+COPY backend/native ./backend/native
+RUN cargo build --manifest-path backend/native/Cargo.toml \
+    --target-dir /native-target --release --locked --bin passshare-mutations
+
+FROM node:24-bookworm-slim
+WORKDIR /app
+COPY backend/package.json backend/pnpm-lock.yaml ./
+RUN corepack enable \
+  && corepack prepare pnpm@10.11.0 --activate \
+  && pnpm install --prod --frozen-lockfile --ignore-scripts
+COPY backend/src ./src
+COPY --from=mutations /native-target/release/passshare-mutations /usr/local/bin/passshare-mutations
+ENV NODE_ENV=production
+ENV PASSSHARE_MUTATIONS_BIN=/usr/local/bin/passshare-mutations
+EXPOSE 8080
+CMD ["npm", "start"]
+```
+
+`backend/native/Cargo.toml` は独立workspace。
+その `../../crates/passshare-core` を保つため、nativeを `/native` に平置きしない。
+Coreはworkspace属性を継承するので `/repo/Cargo.toml` も必要。
+ビルド対象をルートworkspaceに変えず、`--manifest-path backend/native/Cargo.toml` を指定する。
+使うlockはnative側。ルートのCargo.lockをnative側のlockへ転用しない。
+targetを明示したためコピー元は `/native-target/release/passshare-mutations` となる。
+同じ最小配置で必須srcの存在と `cargo metadata --locked --offline --no-deps` の成功を確認済み。
+これはmanifest解決の検証で、Linuxの配布イメージbuild成功ではない。
+
+現行container CIの `docker build -t passshare-todo1163-api backend` は
+`docker build -f backend/Dockerfile -t passshare-todo1163-api .` へ変更する。
+RailwayもサービスのrootDirectoryをリポジトリルートに合わせ、
+使用する `backend/railway.toml` のdockerfilePathを `backend/Dockerfile` にする。
+設定ファイルの参照先も同ファイルへ維持する。現在の管理画面設定はこの独立担当では変更・再検証していない。
+Docker buildはリポジトリルートから行い、`backend/` だけのアップロードはしない。
+
+ルート文脈へ変えるので、既存backend/.dockerignoreだけを防護の根拠にしない。
+`backend/Dockerfile.dockerignore` は次の許可リストにする案。
+
+```text
+**
+!Cargo.toml
+!backend/
+!backend/native/
+!backend/native/**
+!backend/package.json
+!backend/pnpm-lock.yaml
+!backend/src/
+!backend/src/**
+!crates/
+!crates/passshare-core/
+!crates/passshare-core/**
+**/target
+**/node_modules
+**/.env
+**/.env.*
+**/*.pbox
+```
+
+### 検証の正確な範囲
+
+実HTTPは正式実装の新router＋既存signup/session/Connect APIを実行した。
+スコープは専用 `acceptance-host.js` から接続する受入用API。
+画面プレビューやmock APIではないが、正式 `src/index.js` の起動経路への新router登録でもない。
+受入ホストは外側に新APIと旧境界を置くため、旧境界はConnect認証より先に実行される。
+親の正式登録では上の順番へ直す。専用ホストを公開用起動entryへ変更しない。
+Vercel中継、正式セキュリティヘッダー/CORSの適用順、実配布Dockerimage、公開dev/stg/prdの新API、
+realm分離、既存ユーザーの平文移行、全クライアント・鍵復旧の成功は、この独立受入では確認していない。
+架空fixtureは専用PGを毎回作って5ユーザーだけ登録し、既存の30件登録枠を緩和しない。
