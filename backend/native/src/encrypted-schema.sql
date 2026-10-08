@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS encrypted_items (
     AND octet_length(envelope::text) <= 1500000
   ),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (box_id,item_id)
+  PRIMARY KEY (box_id,item_id),
+  FOREIGN KEY (box_id) REFERENCES connect_vaults(id) ON DELETE CASCADE
 );
 
 -- Serialize all old writes with activation, including writes through the old
