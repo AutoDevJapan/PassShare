@@ -76,8 +76,8 @@ export function createMemoryAuthStore() {
     },
 
     async createSession(userId, expectedPasswordHash) {
-      const user = requireUser(userId);
-      if (user.password_hash !== expectedPasswordHash) throw authHttpError(401, "PS024", "Session is invalid or expired");
+      const user = usersById.get(userId);
+      if (!user || user.password_hash !== expectedPasswordHash) throw authHttpError(401, "PS024", "Session is invalid or expired");
       const sessionToken = generateToken();
       const tokenHash = hashToken(sessionToken);
       const id = randomUUID();

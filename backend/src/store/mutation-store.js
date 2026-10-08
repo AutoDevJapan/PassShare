@@ -15,6 +15,8 @@ export async function createMutationStore({ store, authStore, pool }) {
 
   async function execute(input, transactionStore, client, existing) {
     async function requireCurrentMembership(boxId) {
+      // Sharing, retirement and ciphertext activation lock the parent first.
+      if (client) await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[boxId]);
       const permitted = client
         ? (await client.query("SELECT vault_id FROM vault_memberships WHERE user_id=$1 AND vault_id=$2 AND passshare_membership_active(role,confirmed_at) FOR SHARE", [input.actor,boxId])).rowCount > 0
         : (await authStore.listVaultIdsForUser(input.actor)).includes(boxId);

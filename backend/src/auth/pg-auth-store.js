@@ -364,18 +364,25 @@ export function createPgAuthStore(pool) {
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
       const confirmationCode = generateToken();
       const { confirmationHash } = await nativeMutation({command: "invitation-proof", confirmationCode});
+      const client=await pool.connect();
       try {
-        await pool.query(
+        await client.query("BEGIN");
+        await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[vaultId]);
+        const owner=await client.query("SELECT u.id FROM users u JOIN vault_memberships vm ON vm.user_id=u.id WHERE u.id=$1 AND vm.vault_id=$2 AND vm.role='owner' FOR SHARE OF u,vm",[inviterId,vaultId]);
+        if (!owner.rowCount) throw authHttpError(403,"PS032","Password box owner access required");
+        await client.query(
           `INSERT INTO vault_invitations (id, vault_id, inviter_id, invitee_email, role, expires_at, confirmation_hash)
            VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7)`,
           [id, vaultId, inviterId, inviteeEmail, role, expiresAt.toISOString(), confirmationHash],
         );
+        await client.query("COMMIT");
       } catch (error) {
+        await client.query("ROLLBACK").catch(()=>{});
         if (error && typeof error === "object" && "code" in error && error.code === "23505") {
           throw authHttpError(409, "PS038", "A pending invitation already exists for this email");
         }
         throw error;
-      }
+      } finally {client.release();}
 
       return {
         id,
