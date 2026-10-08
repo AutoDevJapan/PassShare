@@ -6,6 +6,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[path = "acceptance/lifecycle_ui.rs"]
+mod lifecycle_ui_acceptance;
 #[path = "acceptance/password.rs"]
 mod password_acceptance;
 #[path = "acceptance/password_page.rs"]
@@ -178,9 +180,10 @@ fn main() {
     }
     let recovery_only = std::env::args().any(|value| value == "--recovery-only");
     let retirement_only = std::env::args().any(|value| value == "--retirement-only");
+    let lifecycle_ui_only = std::env::args().any(|value| value == "--lifecycle-ui-only");
     let external_port = std::env::args()
         .skip(1)
-        .find(|value| value != "--recovery-only" && value != "--retirement-only")
+        .find(|value| !value.starts_with("--"))
         .map(|value| value.parse::<u16>().expect("external fixture port"));
     let port = external_port.unwrap_or_else(|| {
         TcpListener::bind(("127.0.0.1", 0))
@@ -200,7 +203,7 @@ fn main() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    if recovery_only || retirement_only {
+    if recovery_only || retirement_only || lifecycle_ui_only {
         // A separately bounded fixture group does not disable production limits.
         // SQL helper permits only the exact synthetic CI database.
         if std::env::var_os("DATABASE_URL").is_some() {
@@ -210,8 +213,10 @@ fn main() {
         }
         if recovery_only {
             recovery_acceptance::run(port, nonce);
-        } else {
+        } else if retirement_only {
             retirement_acceptance::run(port, nonce);
+        } else {
+            lifecycle_ui_acceptance::run(port, nonce);
         }
         return;
     }

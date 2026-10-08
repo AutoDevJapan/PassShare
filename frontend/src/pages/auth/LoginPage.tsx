@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@shared/i18n/I18nProvider";
-import { AuthApiError } from "../../lib/auth-api";
+import { AuthApiError, getApiBaseUrl } from "../../lib/auth-api";
 import { useAuthSession } from "../../hooks/useAuthSession";
 
 export function LoginPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { user, login } = useAuthSession();
   const navigate = useNavigate();
   const location = useLocation();
@@ -13,6 +13,9 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const recoveryLocale = locale === "en" ? "en" : locale === "ru" ? "ru" : "ja";
+  const recoveryUrl = `${getApiBaseUrl()}/api/auth/account/recover?locale=${recoveryLocale}`;
 
   const redirectTo =
     (location.state as { from?: string } | null)?.from ?? "/app/vaults";
@@ -73,7 +76,7 @@ export function LoginPage() {
         </form>
         <p className="auth-page__links">
           <Link to="/app/signup">{t("app.auth.signupLink")}</Link>
-          <Link to="/app/reset-password">{t("app.auth.resetLink")}</Link>
+          <a href={recoveryUrl}>{t("app.auth.resetLink")}</a>
         </p>
       </div>
     </div>
