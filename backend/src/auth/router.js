@@ -296,6 +296,38 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       res.status(204).end();
     } catch(error) { next(error); }
   });
+
+  async function reauthenticateAccount(req) {
+    const ip=resolveClientIp(req);
+    await loginGuard.assertIpAllowed(ip);await loginGuard.recordIpRequest(ip);
+    const user=await authStore.findUserById(req.auth.userId);
+    if (!user) throw authHttpError(401,"PS024","Session is invalid or expired");
+    await loginGuard.assertNotLocked(user.email);
+    const password=parsePassword(req.body?.currentPassword);
+    if (!await verifyPassword(user.password_hash,password)) {
+      await loginGuard.recordFailure(user.email);
+      throw authHttpError(401,"PS026","Invalid email or password");
+    }
+    return user;
+  }
+
+  router.post("/vaults/:vaultId/ownership",passwordChangeThrottle,sessionGuard,requireCsrf,async(req,res,next)=>{
+    try {
+      const user=await reauthenticateAccount(req);
+      await authStore.transferOwnership(user.id,req.auth.sessionId,user.password_hash,req.params.vaultId,req.body?.targetUserId);
+      res.set("Cache-Control","no-store");res.status(204).end();
+    } catch(error) {next(error);}
+  });
+
+  router.delete("/account",passwordChangeThrottle,sessionGuard,requireCsrf,async(req,res,next)=>{
+    try {
+      const user=await reauthenticateAccount(req);
+      await authStore.retireAccount(user.id,req.auth.sessionId,user.password_hash,req.body?.confirmationEmail,connectStore);
+      await loginGuard.clearFailures(user.email).catch(()=>{});
+      if (!parseBearerToken(req)) {clearSessionCookie(res,appEnv);clearCsrfCookie(res,appEnv);}
+      res.set("Cache-Control","no-store");res.status(204).end();
+    } catch(error) {next(error);}
+  });
   router.post("/password/settings", passwordChangeThrottle, sessionGuard, urlencoded({extended:false,limit:"2mb"}),
     (req, _res, next) => {
       // Only the script-free form accepts its double-submit token in the body.

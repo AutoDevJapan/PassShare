@@ -210,6 +210,49 @@ export function createMemoryAuthStore() {
       }
     },
 
+    async transferOwnership(userId, sessionId, expectedHash, vaultId, targetUserId) {
+      const user=usersById.get(userId);
+      const session=sessionsById.get(sessionId);
+      const members=memberships.filter(m=>m.vault_id===vaultId).map(m=>({...m,identity_confirmed:m.role==="owner" || !!m.confirmed_at}));
+      const snapshot=JSON.stringify(memberships);
+      await nativeMutation({command:"account-owner-transfer",userId,targetUserId,currentHash:user?.password_hash,verifiedHash:expectedHash,sessionExists:!!session && session.user_id===userId && new Date(session.expires_at).getTime()>Date.now(),members});
+      if (!user || usersById.get(userId)!==user || user.password_hash!==expectedHash || sessionsById.get(sessionId)!==session || new Date(session.expires_at).getTime()<=Date.now()) throw authHttpError(401,"PS024","Session is invalid or expired");
+      if (JSON.stringify(memberships)!==snapshot) throw authHttpError(409,"PS047","Memberships changed; retry ownership transfer");
+      memberships.find(m=>m.vault_id===vaultId && m.user_id===targetUserId).role="owner";
+      const previous=memberships.find(m=>m.vault_id===vaultId && m.user_id===userId);
+      previous.role="member";previous.confirmed_at=new Date().toISOString();
+      for (const [id,row] of connectTokensById) {
+        if (row.user_id===userId || row.user_id===targetUserId) {connectTokensById.delete(id);connectTokenIdByHash.delete(row.token_hash);}
+      }
+    },
+
+    async retireAccount(userId, sessionId, expectedHash, confirmationEmail, connectStore) {
+      const user=usersById.get(userId);
+      const session=sessionsById.get(sessionId);
+      const snapshot=JSON.stringify(memberships);
+      const ids=memberships.filter(m=>m.user_id===userId).map(m=>m.vault_id);
+      const boxes=ids.map(id=>({id,members:memberships.filter(m=>m.vault_id===id).map(m=>({...m}))}));
+      const {privateBoxIds}=await nativeMutation({command:"account-retire",userId,currentHash:user?.password_hash,verifiedHash:expectedHash,sessionExists:!!session && session.user_id===userId && new Date(session.expires_at).getTime()>Date.now(),email:user?.email,confirmationEmail,boxes});
+      if (!user || usersById.get(userId)!==user || user.password_hash!==expectedHash || sessionsById.get(sessionId)!==session || new Date(session.expires_at).getTime()<=Date.now()) throw authHttpError(401,"PS024","Session is invalid or expired");
+      if (JSON.stringify(memberships)!==snapshot) throw authHttpError(409,"PS049","Memberships changed; review and retry deletion");
+      // The map adapter's purge is synchronous: no request interleaves between
+      // the final authorization check, private data removal and account removal.
+      connectStore.purgePrivateBoxes(privateBoxIds);
+      for (let i=memberships.length-1;i>=0;i--) {
+        if (memberships[i].user_id===userId || privateBoxIds.includes(memberships[i].vault_id)) memberships.splice(i,1);
+      }
+      for (let i=invitations.length-1;i>=0;i--) {
+        if (invitations[i].inviter_id===userId || invitations[i].invitee_email===user.email || privateBoxIds.includes(invitations[i].vault_id)) invitations.splice(i,1);
+      }
+      for (const [id,row] of sessionsById) {
+        if (row.user_id===userId) {sessionsById.delete(id);sessionIdByTokenHash.delete(row.token_hash);}
+      }
+      for (const [id,row] of connectTokensById) {
+        if (row.user_id===userId) {connectTokensById.delete(id);connectTokenIdByHash.delete(row.token_hash);}
+      }
+      userIdByEmail.delete(user.email);usersById.delete(userId);
+    },
+
     async findConnectTokenByHash(tokenHash) {
       const tokenId = connectTokenIdByHash.get(tokenHash);
       if (!tokenId) return null;
