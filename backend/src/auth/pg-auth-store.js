@@ -68,6 +68,19 @@ export function createPgAuthStore(pool) {
       );
     },
 
+    async createOwnedBox(userId,_connectStore,vaultId,name) {
+      const client=await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const user=await client.query("SELECT id FROM users WHERE id=$1 FOR SHARE",[userId]);
+        if (!user.rowCount) throw authHttpError(401,"PS024","Session is invalid or expired");
+        await client.query("INSERT INTO connect_vaults(id,name) VALUES($1,$2)",[vaultId,name]);
+        await client.query("INSERT INTO vault_memberships(user_id,vault_id,role,confirmed_at) VALUES($1,$2,'owner',NOW())",[userId,vaultId]);
+        await client.query("COMMIT");
+      }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error;}
+      finally{client.release();}
+    },
+
     async listVaultIdsForUser(userId) {
       const result = await pool.query(
         "SELECT vault_id FROM vault_memberships WHERE user_id = $1 AND passshare_membership_active(role,confirmed_at) ORDER BY created_at ASC",

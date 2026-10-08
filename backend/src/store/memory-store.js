@@ -252,6 +252,11 @@ export function createMemoryStore() {
       }
     },
 
+    createOwnedBox(id,name) {
+      const now=nowIso();
+      vaults.set(id,{id,name,description:"",type:"USER_CREATED",content_version:1,attribute_version:1,created_at:now,updated_at:now});
+    },
+
     /** Test helper */
     seedVault(vault) {
       vaults.set(vault.id, vault);

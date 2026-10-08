@@ -210,6 +210,13 @@ export function createMemoryAuthStore() {
       }
     },
 
+    createOwnedBox(userId, connectStore, vaultId, name) {
+      requireUser(userId);
+      // Both map writes execute in the same stack, with no yielding adapter.
+      connectStore.createOwnedBox(vaultId,name);
+      memberships.push({user_id:userId,vault_id:vaultId,role:"owner",created_at:new Date().toISOString(),confirmed_at:new Date().toISOString()});
+    },
+
     async transferOwnership(userId, sessionId, expectedHash, vaultId, targetUserId) {
       const user=usersById.get(userId);
       const session=sessionsById.get(sessionId);
@@ -353,6 +360,8 @@ export function createMemoryAuthStore() {
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS).toISOString();
       const confirmationCode = generateToken();
       const { confirmationHash } = await nativeMutation({command: "invitation-proof", confirmationCode});
+      requireUser(inviterId);
+      if (!memberships.some(m=>m.vault_id===vaultId && m.user_id===inviterId && m.role==="owner")) throw authHttpError(403,"PS032","Password box owner access required");
       if (invitations.some((inv) => inv.vault_id === vaultId && inv.invitee_email === inviteeEmail && inv.status === "pending")) {
         throw authHttpError(409, "PS038", "A pending invitation already exists for this email");
       }
@@ -415,6 +424,7 @@ export function createMemoryAuthStore() {
       const inviter = memberships.find((m) => m.user_id === invitation?.inviter_id && m.vault_id === invitation?.vault_id);
       const result = await nativeMutation({command: "invitation-accept", confirmationCode, email: user.email,
         inviterRole: inviter?.role, nowMs: Date.now(), invitation: invitation ? {...invitation, expiresMs: new Date(invitation.expires_at).getTime()} : null});
+      if (usersById.get(userId)!==user || !invitations.includes(invitation)) throw authHttpError(401,"PS024","Session is invalid or expired");
       // Native processing yields to other requests. Recheck mutable state before
       // the synchronous commit so revoke/decline/removal can never be overwritten.
       if (invitation.status !== "pending") throw authHttpError(404, "PS039", "Invitation not found");

@@ -8,6 +8,7 @@ import { createPgAuthStore } from "./pg-auth-store.js";
  * @property {(userId: string) => Promise<object|null>} findUserById
  * @property {(input: { email: string, passwordHash: string }) => Promise<object>} createUser
  * @property {(userId: string, vaultId: string, role?: string) => Promise<void>} addVaultMembership
+ * @property {(userId: string, connectStore: object, vaultId: string, name: string) => Promise<void>|void} createOwnedBox
  * @property {(userId: string) => Promise<string[]>} listVaultIdsForUser
  * @property {(userId: string, expectedPasswordHash: string) => Promise<{ sessionToken: string, sessionId: string, expiresAt: string }>} createSession
  * @property {(sessionToken: string) => Promise<object|null>} findSessionByToken

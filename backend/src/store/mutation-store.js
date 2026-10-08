@@ -36,9 +36,12 @@ export async function createMutationStore({ store, authStore, pool }) {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
     } else {
       const vaultId = generateConnectId();
-      await transactionStore.createVault({ id: vaultId, name: input.request.name });
-      if (client) await client.query("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES($1,$2,'owner')", [input.actor,vaultId]);
-      else await authStore.addVaultMembership(input.actor, vaultId, "owner");
+      if (client) {
+        const user=await client.query("SELECT id FROM users WHERE id=$1 FOR SHARE",[input.actor]);
+        if (!user.rowCount) throw connectHttpError(401,"PS024: Session is invalid or expired");
+        await transactionStore.createVault({id:vaultId,name:input.request.name});
+        await client.query("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES($1,$2,'owner')",[input.actor,vaultId]);
+      } else { await authStore.createOwnedBox(input.actor,store,vaultId,input.request.name); }
       result = { vaultId, name: input.request.name };
     }
     const scope = await nativeMutation({ ...input, command: "scope" });

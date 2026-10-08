@@ -392,8 +392,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
         return;
       }
       const vaultId = generateConnectId();
-      await connectStore.createVault({ id: vaultId, name });
-      await authStore.addVaultMembership(req.auth.userId, vaultId, "owner");
+      await authStore.createOwnedBox(req.auth.userId,connectStore,vaultId,name);
       res.status(201).json({ vaultId, name });
     } catch (error) {
       sendAuthError(res, error);
