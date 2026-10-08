@@ -276,7 +276,19 @@ pub fn run(port: u16, nonce: u128) {
         });
         let mut blocked = false;
         for _ in 0..100 {
-            if sql(&format!("SELECT count(*) FROM pg_stat_activity WHERE {pid}=ANY(pg_blocking_pids(pid)) AND query LIKE '%users%'")).parse::<u32>().unwrap()>=2{blocked=true;break}
+            // Login may block while clearing its verified failure row before
+            // user-row insertion. Both paths must wait on this exact retiring
+            // backend PID, regardless of which row in its transaction they hit.
+            if sql(&format!(
+                "SELECT count(*) FROM pg_stat_activity WHERE {pid}=ANY(pg_blocking_pids(pid))"
+            ))
+            .parse::<u32>()
+            .unwrap()
+                >= 2
+            {
+                blocked = true;
+                break;
+            }
             thread::sleep(Duration::from_millis(20));
         }
         assert!(blocked, "old login and mint actually overlap retirement");
