@@ -2,12 +2,15 @@ pub mod account;
 pub mod account_page;
 pub mod create;
 pub mod edit;
+pub mod encrypted;
 pub mod share;
 
 use serde_json::{json, Value};
 
 pub fn dispatch(input: &Value) -> Value {
     match input.get("command").and_then(Value::as_str) {
+        Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),
+        Some("encrypted-plan") => encrypted::plan(input),
         Some("sharing-schema") => json!({"status":200,"body":share::MEMBERSHIP_SCHEMA}),
         Some("account-password-input") => account::validate_input(input),
         Some("account-password-form") => account_page::validate_form(input),
