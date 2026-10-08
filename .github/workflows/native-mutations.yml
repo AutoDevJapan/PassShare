@@ -57,6 +57,12 @@ jobs:
       - name: Verify recovery key, recovery and retirement pages through the real memory API (Windows)
         run: ./target/release/acceptance.exe --lifecycle-ui-only
         if: runner.os == 'Windows'
+      - name: Verify renderer failure cache recovery without restarting the API
+        run: ./target/release/acceptance --lifecycle-cache-faults
+        if: runner.os != 'Windows'
+      - name: Verify renderer failure cache recovery without restarting the API (Windows)
+        run: ./target/release/acceptance.exe --lifecycle-cache-faults
+        if: runner.os == 'Windows'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-mutations-${{ matrix.os }}

@@ -4,6 +4,65 @@
 use super::{http, http_payload, http_raw};
 use serde_json::{json, Value};
 
+pub fn cache_faults(source: &std::path::Path) {
+    assert!(
+        std::env::var_os("DATABASE_URL").is_none(),
+        "memory-only isolated renderer fault"
+    );
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let fixture = source.with_file_name(format!(
+        "passshare1163-renderer-{nonce}{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    struct Owned(std::path::PathBuf);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            if self.0.exists() {
+                std::fs::remove_file(&self.0).expect("remove owned renderer clone");
+            }
+        }
+    }
+    let owned = Owned(fixture);
+    std::fs::copy(source, &owned.0).expect("clone renderer for isolated fault");
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let server = super::Server::start(port, owned.0.clone());
+    // Schema startup completed with the real renderer. Lose only our clone,
+    // leaving the parent binary and every other service untouched.
+    std::fs::remove_file(&owned.0).expect("inject renderer outage");
+    let path = "/api/auth/account/recover?locale=ru";
+    let first = get(port, path, "");
+    assert_eq!(first.status, 503);
+    std::fs::copy(source, &owned.0).expect("restore isolated renderer");
+    assert_eq!(
+        get(port, path, "").status,
+        503,
+        "failed template is cached briefly"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(5200));
+    let restored = get(port, path, "");
+    assert_eq!(
+        restored.status, 200,
+        "template retries without an API restart"
+    );
+    assert!(restored.html.contains("<form") && restored.html.contains("lang=\"ru\""));
+    for path in ["/api/auth/account/recovery-key", "/api/auth/account/retire"] {
+        let expired = get(port, path, "");
+        assert_eq!(expired.status, 401);
+        assert!(!expired.html.contains("<form"));
+        assert!(!expired.headers.to_ascii_lowercase().contains("set-cookie:"));
+    }
+    drop(server);
+    drop(owned);
+    println!("lifecycle renderer outage: 503, cached503, retry200 and expired401 without secrets/proofs passed");
+}
+
 struct Reply {
     status: u16,
     headers: String,

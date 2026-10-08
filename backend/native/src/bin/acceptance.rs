@@ -180,6 +180,16 @@ fn main() {
     }
     let recovery_only = std::env::args().any(|value| value == "--recovery-only");
     let retirement_only = std::env::args().any(|value| value == "--retirement-only");
+    if std::env::args().any(|value| value == "--lifecycle-cache-faults") {
+        let executable = std::env::current_exe().unwrap();
+        let binary = executable.parent().unwrap().join(if cfg!(windows) {
+            "passshare-mutations.exe"
+        } else {
+            "passshare-mutations"
+        });
+        lifecycle_ui_acceptance::cache_faults(&binary);
+        return;
+    }
     let lifecycle_ui_only = std::env::args().any(|value| value == "--lifecycle-ui-only");
     let external_port = std::env::args()
         .skip(1)
