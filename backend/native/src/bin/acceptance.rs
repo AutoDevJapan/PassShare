@@ -201,7 +201,9 @@ fn main() {
         // A separately bounded fixture group does not disable production limits.
         // SQL helper permits only the exact synthetic CI database.
         if std::env::var_os("DATABASE_URL").is_some() {
-            share_acceptance::sql("DELETE FROM login_ip_requests WHERE ip='127.0.0.1'");
+            share_acceptance::sql(
+                "DELETE FROM login_ip_requests WHERE ip IN ('127.0.0.1','::ffff:127.0.0.1')",
+            );
         }
         recovery_acceptance::run(port, nonce);
         return;

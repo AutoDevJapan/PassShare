@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use std::{thread, time::Duration};
 
 pub fn run(port: u16, nonce: u128) {
+    let malformed_email = format!("!@!.{} !", "!.".repeat(150_000));
+    assert_eq!(http(port,"POST","/api/auth/password/recover","","",&json!({"email":malformed_email,"recoveryKey":"A".repeat(43),"newPassword":format!("Synthetic-New-{nonce}")})).0,400,"dotted invalid email must be rejected within HTTP deadline");
     let email = format!("recovery-{nonce}@example.test");
     let old = format!("Synthetic-Recovery-Old-{nonce}!");
     let next = format!("Synthetic-Recovery-New-{nonce}!");
