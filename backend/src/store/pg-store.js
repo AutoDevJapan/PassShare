@@ -104,11 +104,13 @@ export function createPgStore(pool) {
         version: body.version ?? 1,
       };
       try {
-        await pool.query(
-          `INSERT INTO connect_items (id, vault_id, document, created_at, updated_at)
-           VALUES ($1, $2, $3::jsonb, $4::timestamptz, $5::timestamptz)`,
+        const inserted = await pool.query(
+          `WITH locked_box AS MATERIALIZED (SELECT id FROM connect_vaults WHERE id=$2 FOR UPDATE)
+           INSERT INTO connect_items (id, vault_id, document, created_at, updated_at)
+           SELECT $1, id, $3::jsonb, $4::timestamptz, $5::timestamptz FROM locked_box`,
           [id, vaultId, JSON.stringify(document), now, now],
         );
+        if (!inserted.rowCount) throw connectHttpError(404,"PS012: Password box not found");
       } catch (error) {
         // Concurrent create with the same requested id: the pre-check above is not
         // atomic, so surface the unique-violation as a 409 rather than a 500.
@@ -136,9 +138,10 @@ export function createPgStore(pool) {
         version: (row.document.version ?? 1) + 1,
       };
       const result = await pool.query(
-        `UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz
-         WHERE id = $3 AND COALESCE((document->>'version')::bigint, 1) = $4::bigint`,
-        [JSON.stringify(document), now, itemId, expectedVersion],
+        `WITH locked_box AS MATERIALIZED (SELECT id FROM connect_vaults WHERE id=$5 FOR UPDATE)
+         UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz FROM locked_box
+         WHERE connect_items.id = $3 AND connect_items.vault_id=locked_box.id AND COALESCE((document->>'version')::bigint, 1) = $4::bigint`,
+        [JSON.stringify(document), now, itemId, expectedVersion,vaultId],
       );
       if (result.rowCount === 0) {
         throw connectHttpError(409, "PS015: Item changed since it was read");
@@ -161,9 +164,10 @@ export function createPgStore(pool) {
       patched.updatedAt = nowIso();
       patched.version = (row.document.version ?? 1) + 1;
       const result = await pool.query(
-        `UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz
-         WHERE id = $3 AND COALESCE((document->>'version')::bigint, 1) = $4::bigint`,
-        [JSON.stringify(patched), patched.updatedAt, itemId, expectedVersion],
+        `WITH locked_box AS MATERIALIZED (SELECT id FROM connect_vaults WHERE id=$5 FOR UPDATE)
+         UPDATE connect_items SET document = $1::jsonb, updated_at = $2::timestamptz FROM locked_box
+         WHERE connect_items.id = $3 AND connect_items.vault_id=locked_box.id AND COALESCE((document->>'version')::bigint, 1) = $4::bigint`,
+        [JSON.stringify(patched), patched.updatedAt, itemId, expectedVersion,vaultId],
       );
       if (result.rowCount === 0) {
         throw connectHttpError(409, "PS015: Item changed since it was read");
@@ -173,7 +177,7 @@ export function createPgStore(pool) {
 
     async deleteItem(vaultId, itemId) {
       await requireItem(vaultId, itemId);
-      await pool.query("DELETE FROM connect_items WHERE id = $1", [itemId]);
+      await pool.query("WITH locked_box AS MATERIALIZED (SELECT id FROM connect_vaults WHERE id=$2 FOR UPDATE) DELETE FROM connect_items USING locked_box WHERE connect_items.id=$1 AND connect_items.vault_id=locked_box.id",[itemId,vaultId]);
     },
 
     async getFileMeta(vaultId, itemId, fileId) {

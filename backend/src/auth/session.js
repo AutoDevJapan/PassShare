@@ -61,7 +61,7 @@ export function clearSessionCookie(res, appEnv) {
 /** @param {import('express').Request} req */
 export function parseBearerToken(req) {
   const header = req.headers.authorization;
-  if (typeof header !== "string" || !header.startsWith("Bearer ")) {
+  if (typeof header !== "string" || header.slice(0,7).toLowerCase() !== "bearer ") {
     return null;
   }
   const token = header.slice("Bearer ".length).trim();
@@ -74,6 +74,9 @@ export function parseBearerToken(req) {
  */
 export async function resolveSessionAuth(req, authStore) {
   const bearerToken = parseBearerToken(req);
+  if (req.headers.authorization !== undefined && !bearerToken) {
+    throw authHttpError(401,"PS024","Session is invalid or expired");
+  }
   if (bearerToken) {
     const session = await authStore.findSessionByToken(bearerToken);
     if (!session) {

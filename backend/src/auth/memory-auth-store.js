@@ -76,8 +76,8 @@ export function createMemoryAuthStore() {
     },
 
     async createSession(userId, expectedPasswordHash) {
-      const user = requireUser(userId);
-      if (user.password_hash !== expectedPasswordHash) throw authHttpError(401, "PS024", "Session is invalid or expired");
+      const user = usersById.get(userId);
+      if (!user || user.password_hash !== expectedPasswordHash) throw authHttpError(401, "PS024", "Session is invalid or expired");
       const sessionToken = generateToken();
       const tokenHash = hashToken(sessionToken);
       const id = randomUUID();
@@ -210,6 +210,56 @@ export function createMemoryAuthStore() {
       }
     },
 
+    createOwnedBox(userId, connectStore, vaultId, name) {
+      requireUser(userId);
+      // Both map writes execute in the same stack, with no yielding adapter.
+      connectStore.createOwnedBox(vaultId,name);
+      memberships.push({user_id:userId,vault_id:vaultId,role:"owner",created_at:new Date().toISOString(),confirmed_at:new Date().toISOString()});
+    },
+
+    async transferOwnership(userId, sessionId, expectedHash, vaultId, targetUserId) {
+      const user=usersById.get(userId);
+      const session=sessionsById.get(sessionId);
+      const members=memberships.filter(m=>m.vault_id===vaultId).map(m=>({...m,identity_confirmed:m.role==="owner" || !!m.confirmed_at}));
+      const snapshot=JSON.stringify(memberships);
+      await nativeMutation({command:"account-owner-transfer",userId,targetUserId,currentHash:user?.password_hash,verifiedHash:expectedHash,sessionExists:!!session && session.user_id===userId && new Date(session.expires_at).getTime()>Date.now(),members});
+      if (!user || usersById.get(userId)!==user || user.password_hash!==expectedHash || sessionsById.get(sessionId)!==session || new Date(session.expires_at).getTime()<=Date.now()) throw authHttpError(401,"PS024","Session is invalid or expired");
+      if (JSON.stringify(memberships)!==snapshot) throw authHttpError(409,"PS047","Memberships changed; retry ownership transfer");
+      memberships.find(m=>m.vault_id===vaultId && m.user_id===targetUserId).role="owner";
+      const previous=memberships.find(m=>m.vault_id===vaultId && m.user_id===userId);
+      previous.role="member";previous.confirmed_at=new Date().toISOString();
+      for (const [id,row] of connectTokensById) {
+        if (row.user_id===userId || row.user_id===targetUserId) {connectTokensById.delete(id);connectTokenIdByHash.delete(row.token_hash);}
+      }
+    },
+
+    async retireAccount(userId, sessionId, expectedHash, confirmationEmail, connectStore) {
+      const user=usersById.get(userId);
+      const session=sessionsById.get(sessionId);
+      const snapshot=JSON.stringify(memberships);
+      const ids=memberships.filter(m=>m.user_id===userId).map(m=>m.vault_id);
+      const boxes=ids.map(id=>({id,members:memberships.filter(m=>m.vault_id===id).map(m=>({...m}))}));
+      const {privateBoxIds}=await nativeMutation({command:"account-retire",userId,currentHash:user?.password_hash,verifiedHash:expectedHash,sessionExists:!!session && session.user_id===userId && new Date(session.expires_at).getTime()>Date.now(),email:user?.email,confirmationEmail,boxes});
+      if (!user || usersById.get(userId)!==user || user.password_hash!==expectedHash || sessionsById.get(sessionId)!==session || new Date(session.expires_at).getTime()<=Date.now()) throw authHttpError(401,"PS024","Session is invalid or expired");
+      if (JSON.stringify(memberships)!==snapshot) throw authHttpError(409,"PS049","Memberships changed; review and retry deletion");
+      // The map adapter's purge is synchronous: no request interleaves between
+      // the final authorization check, private data removal and account removal.
+      connectStore.purgePrivateBoxes(privateBoxIds);
+      for (let i=memberships.length-1;i>=0;i--) {
+        if (memberships[i].user_id===userId || privateBoxIds.includes(memberships[i].vault_id)) memberships.splice(i,1);
+      }
+      for (let i=invitations.length-1;i>=0;i--) {
+        if (invitations[i].inviter_id===userId || invitations[i].invitee_email===user.email || privateBoxIds.includes(invitations[i].vault_id)) invitations.splice(i,1);
+      }
+      for (const [id,row] of sessionsById) {
+        if (row.user_id===userId) {sessionsById.delete(id);sessionIdByTokenHash.delete(row.token_hash);}
+      }
+      for (const [id,row] of connectTokensById) {
+        if (row.user_id===userId) {connectTokensById.delete(id);connectTokenIdByHash.delete(row.token_hash);}
+      }
+      userIdByEmail.delete(user.email);usersById.delete(userId);
+    },
+
     async findConnectTokenByHash(tokenHash) {
       const tokenId = connectTokenIdByHash.get(tokenHash);
       if (!tokenId) return null;
@@ -310,6 +360,8 @@ export function createMemoryAuthStore() {
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS).toISOString();
       const confirmationCode = generateToken();
       const { confirmationHash } = await nativeMutation({command: "invitation-proof", confirmationCode});
+      requireUser(inviterId);
+      if (!memberships.some(m=>m.vault_id===vaultId && m.user_id===inviterId && m.role==="owner")) throw authHttpError(403,"PS032","Password box owner access required");
       if (invitations.some((inv) => inv.vault_id === vaultId && inv.invitee_email === inviteeEmail && inv.status === "pending")) {
         throw authHttpError(409, "PS038", "A pending invitation already exists for this email");
       }
@@ -372,6 +424,7 @@ export function createMemoryAuthStore() {
       const inviter = memberships.find((m) => m.user_id === invitation?.inviter_id && m.vault_id === invitation?.vault_id);
       const result = await nativeMutation({command: "invitation-accept", confirmationCode, email: user.email,
         inviterRole: inviter?.role, nowMs: Date.now(), invitation: invitation ? {...invitation, expiresMs: new Date(invitation.expires_at).getTime()} : null});
+      if (usersById.get(userId)!==user || !invitations.includes(invitation)) throw authHttpError(401,"PS024","Session is invalid or expired");
       // Native processing yields to other requests. Recheck mutable state before
       // the synchronous commit so revoke/decline/removal can never be overwritten.
       if (invitation.status !== "pending") throw authHttpError(404, "PS039", "Invitation not found");

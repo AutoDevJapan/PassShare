@@ -110,6 +110,7 @@ export function createMemoryStore() {
         updatedAt: now,
         version: body.version ?? 1,
       };
+      if (!vaults.has(vaultId)) throw connectHttpError(404,"PS012: Password box not found");
       items.set(id, {
         id,
         vault_id: vaultId,
@@ -122,6 +123,7 @@ export function createMemoryStore() {
 
     async replaceItem(vaultId, itemId, body) {
       const row = await requireItem(vaultId, itemId);
+      if (!vaults.has(vaultId) || items.get(itemId)!==row) throw connectHttpError(404,"PS007: Item not found");
       if (body.version !== undefined && body.version !== (row.document.version ?? 1)) {
         throw connectHttpError(409, "PS015: Item changed since it was read");
       }
@@ -142,6 +144,7 @@ export function createMemoryStore() {
 
     async patchItem(vaultId, itemId, patches) {
       const row = await requireItem(vaultId, itemId);
+      if (!vaults.has(vaultId) || items.get(itemId)!==row) throw connectHttpError(404,"PS007: Item not found");
       let patched;
       try {
         patched = patchDocument(row.document, patches);
@@ -192,6 +195,7 @@ export function createMemoryStore() {
 
     async createFile(vaultId, itemId, input = {}) {
       await requireItem(vaultId, itemId);
+      if (!vaults.has(vaultId) || !items.has(itemId)) throw connectHttpError(404,"PS007: Item not found");
       const fileId = generateConnectId();
       const now = nowIso();
       const content = input.content ?? Buffer.alloc(0);
@@ -233,6 +237,24 @@ export function createMemoryStore() {
         updated_at: now,
       });
       return vaultId;
+    },
+
+    purgePrivateBoxes(ids) {
+      for (const id of ids) {
+        for (const [itemId,row] of items) {
+          if (row.vault_id!==id) continue;
+          for (const [fileId,file] of files) {
+            if (file.meta.item_id===itemId) {file.content?.fill(0);files.delete(fileId);}
+          }
+          items.delete(itemId);
+        }
+        vaults.delete(id);
+      }
+    },
+
+    createOwnedBox(id,name) {
+      const now=nowIso();
+      vaults.set(id,{id,name,description:"",type:"USER_CREATED",content_version:1,attribute_version:1,created_at:now,updated_at:now});
     },
 
     /** Test helper */

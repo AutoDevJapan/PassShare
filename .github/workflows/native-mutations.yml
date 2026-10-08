@@ -45,6 +45,12 @@ jobs:
       - name: Verify one-time account recovery through the real memory API (Windows)
         run: ./target/release/acceptance.exe --recovery-only
         if: runner.os == 'Windows'
+      - name: Verify account retirement and shared ownership through the real memory API
+        run: ./target/release/acceptance --retirement-only
+        if: runner.os != 'Windows'
+      - name: Verify account retirement and shared ownership through the real memory API (Windows)
+        run: ./target/release/acceptance.exe --retirement-only
+        if: runner.os == 'Windows'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-mutations-${{ matrix.os }}
@@ -89,6 +95,10 @@ jobs:
         run: backend/native/target/release/acceptance --recovery-only
         env:
           DATABASE_URL: postgresql://passshare:passshare@127.0.0.1:5432/passshare
+      - name: Verify PostgreSQL retirement rollback and credential races
+        run: backend/native/target/release/acceptance --retirement-only
+        env:
+          DATABASE_URL: postgresql://passshare:passshare@127.0.0.1:5432/passshare
   container:
     runs-on: ubuntu-latest
     steps:
@@ -119,6 +129,12 @@ jobs:
             sleep 1
           done
           backend/native/target/release/acceptance 8094 --recovery-only
+          docker restart passshare-todo1163-api
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8094/health >/dev/null; then break; fi
+            sleep 1
+          done
+          backend/native/target/release/acceptance 8094 --retirement-only
       - name: Remove the owned container and image
         if: always()
         run: |
