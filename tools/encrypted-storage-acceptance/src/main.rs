@@ -149,12 +149,13 @@ impl Host {
             }
         }
         let child = cmd
-            .arg("src/encrypted/acceptance-host.js")
+            .arg("src/index.js")
             .current_dir(backend)
             .env("PORT", port.to_string())
             .env("APP_ENV", "local")
             .env("DEV_SEED", "false")
             .env("PASSSHARE_MUTATIONS_BIN", binary)
+            .env("PASSSHARE_ENCRYPTED_STORAGE", "true")
             .env(
                 "DATABASE_URL",
                 format!(
