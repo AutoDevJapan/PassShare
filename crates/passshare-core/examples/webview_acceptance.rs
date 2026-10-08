@@ -596,6 +596,127 @@ fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
     println!("native desktop production idle acceptance succeeded");
     Ok(())
 }
+fn run_mobile_lock(application: &Path, output: &Path) -> Result<(), String> {
+    let temp = tempfile::TempDir::new().map_err(|_| "mobile lock fixture directory")?;
+    std::fs::create_dir_all(output).map_err(|_| "mobile lock output directory")?;
+    let mut driver = Driver::start(temp.path(), &output.join("mobile-lock-driver.log"))?;
+    driver.deadline = Instant::now() + Duration::from_secs(420);
+    driver.open(application)?;
+    let boot = driver.script("const done=arguments[arguments.length-1];const end=Date.now()+5000;const probe=()=>{if(document.querySelector('input'))done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false)};probe();", json!([]))?;
+    ensure(boot == true, "mobile startup restoration did not settle")?;
+    ensure(
+        driver.invoke("native_foreground", json!({}))?["ok"] == true,
+        "mobile initial foreground sync failed",
+    )?;
+    let before = driver.invoke("native_session_status", json!({}))?;
+    ensure(
+        before["ok"] == true && before["value"]["unlocked"] == false,
+        "mobile starts locked",
+    )?;
+    let account = driver.invoke(
+        "native_account",
+        json!({"id":"synthetic-mobile-user","epoch":before["value"]["epoch"]}),
+    )?;
+    ensure(
+        account["ok"] == true && account["value"]["accepted"] == true,
+        "mobile account CAS failed",
+    )?;
+    let epoch = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+    ensure(
+        driver.invoke("native_complete_unlock", json!({"epoch":epoch}))?["value"]["unlocked"]
+            == true,
+        "mobile IPC unlock failed",
+    )?;
+    let inflight = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+    ensure(
+        driver.invoke("native_background", json!({}))?["ok"] == true,
+        "mobile IPC background failed",
+    )?;
+    ensure(
+        driver.invoke("native_complete_unlock", json!({"epoch":inflight}))?["value"]["unlocked"]
+            == false,
+        "mobile accepted stale background proof",
+    )?;
+    let hidden = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+    ensure(
+        driver.invoke("native_complete_unlock", json!({"epoch":hidden}))?["value"]["unlocked"]
+            == false,
+        "mobile accepted background unlock",
+    )?;
+    ensure(
+        driver.invoke("native_foreground", json!({}))?["ok"] == true,
+        "mobile IPC resume failed",
+    )?;
+    ensure(
+        driver.invoke("native_complete_unlock", json!({"epoch":hidden}))?["value"]["unlocked"]
+            == false,
+        "mobile restored pre-resume proof",
+    )?;
+    let epoch = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+    ensure(
+        driver.invoke("native_complete_unlock", json!({"epoch":epoch}))?["value"]["unlocked"]
+            == true,
+        "mobile fresh foreground unlock failed",
+    )?;
+    ensure(
+        driver.invoke("native_activity", json!({}))?["value"] == true,
+        "mobile foreground activity failed",
+    )?;
+    let idle_start = Instant::now();
+    while idle_start.elapsed() < Duration::from_secs(301) {
+        // This calls the real status IPC. Polling must not extend the deadline.
+        let status = driver.invoke("native_session_status", json!({}))?;
+        ensure(status["ok"] == true, "mobile idle status failed")?;
+        if idle_start.elapsed() < Duration::from_secs(299) {
+            ensure(
+                status["value"]["unlocked"] == true,
+                "mobile expired before production deadline",
+            )?;
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    ensure(
+        driver.invoke("native_session_status", json!({}))?["value"]["unlocked"] == false,
+        "mobile polling extended idle deadline",
+    )?;
+    ensure(
+        driver.invoke("native_activity", json!({}))?["value"] == false,
+        "mobile late input reopened session",
+    )?;
+    let stale = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+    ensure(
+        driver.invoke("native_logout", json!({}))?["ok"] == true,
+        "mobile IPC logout failed",
+    )?;
+    ensure(
+        driver.invoke(
+            "native_account",
+            json!({"id":"synthetic-old-user","epoch":stale}),
+        )?["value"]["accepted"]
+            == false,
+        "mobile stale account restored after logout",
+    )?;
+    let epoch = driver.invoke("native_begin_unlock", json!({}))?["value"].clone();
+    ensure(
+        driver.invoke("native_complete_unlock", json!({"epoch":epoch}))?["value"]["unlocked"]
+            == false,
+        "mobile accountless unlock succeeded",
+    )?;
+    std::fs::write(
+        output.join("mobile-lock.json"),
+        serde_json::to_vec_pretty(&json!({
+            "nativeIpc":true,"backgroundAndResumeCommands":true,"staleAccountRejected":true,
+        "measuredIdleSeconds":idle_start.elapsed().as_secs_f64(),"productionIdleSeconds":300,
+        "nativeLogout":true,"accountlessUnlockRejected":true,"backgroundAccepted":false,"physicalMobile":false,
+            "osBackgroundEvents":false,"pinOrBiometricUi":false,"syntheticOnly":true
+        }))
+        .map_err(|_| "mobile lock result encoding")?,
+    )
+    .map_err(|_| "mobile lock result write")?;
+    println!("native mobile IPC and production idle acceptance succeeded");
+    Ok(())
+}
+
 fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result<(), String> {
     let temp = tempfile::TempDir::new().map_err(|_| "fixture directory")?;
     std::fs::create_dir_all(output).map_err(|_| "output directory")?;
@@ -747,20 +868,23 @@ fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() != 5 {
-        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed|auto-lock OUTPUT");
+        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed|auto-lock|mobile-lock OUTPUT");
         std::process::exit(2);
     }
     let flavor = args[2].to_str().unwrap_or("");
     let mode = args[3].to_str().unwrap_or("");
     if !["desktop", "mobile"].contains(&flavor)
-        || !["blocked", "executed", "auto-lock"].contains(&mode)
+        || !["blocked", "executed", "auto-lock", "mobile-lock"].contains(&mode)
         || (mode == "auto-lock" && flavor != "desktop")
+        || (mode == "mobile-lock" && flavor != "mobile")
     {
         std::process::exit(2);
     }
     let app = PathBuf::from(&args[1]);
     let output = PathBuf::from(&args[4]);
-    let result = if mode == "auto-lock" {
+    let result = if mode == "mobile-lock" {
+        run_mobile_lock(&app, &output)
+    } else if mode == "auto-lock" {
         run_auto_lock(&app, &output)
     } else {
         run(&app, flavor, mode == "blocked", &output)

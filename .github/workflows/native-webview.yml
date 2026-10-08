@@ -78,6 +78,9 @@ jobs:
       - name: Verify desktop manual relock and production five-minute idle lock
         run: |
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop auto-lock "$PWD/native-webview-results"
+      - name: Verify mobile native IPC, stale lifecycle proofs and production idle deadline
+        run: |
+          dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile mobile-lock "$PWD/native-webview-results"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

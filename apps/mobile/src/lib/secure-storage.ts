@@ -104,9 +104,29 @@ async function purgeLegacySecureKeys(): Promise<void> {
  * ({@link loadAuthSession}) needs a single biometric unlock instead of one
  * prompt per secret.
  */
-export async function saveAuthSession(session: StoredAuthSession): Promise<void> {
-  await setSecureValue(AUTH_SESSION_KEY, JSON.stringify(session));
-  await purgeLegacySecureKeys();
+let sessionMutation: Promise<void> = Promise.resolve();
+
+// Serialise writes and removals, including a write already inside the OS plugin.
+// A newer account/lock invalidates the result; its removal cannot race a newer write.
+function mutateSession(action: () => Promise<void>): Promise<void> {
+  const result = sessionMutation.then(action);
+  sessionMutation = result.catch(() => undefined);
+  return result;
+}
+
+export async function saveAuthSession(
+  session: StoredAuthSession,
+  isCurrent: () => boolean = () => true,
+): Promise<void> {
+  await mutateSession(async () => {
+    if (!isCurrent()) throw new Error("Session changed.");
+    await setSecureValue(AUTH_SESSION_KEY, JSON.stringify(session));
+    await purgeLegacySecureKeys();
+    if (!isCurrent()) {
+      await removeSecureValue(AUTH_SESSION_KEY);
+      throw new Error("Session changed.");
+    }
+  });
 }
 
 /**
@@ -137,9 +157,12 @@ export async function loadAuthSession(reason: string): Promise<StoredAuthSession
   return null;
 }
 
-export async function clearAuthSession(): Promise<void> {
-  await removeSecureValue(AUTH_SESSION_KEY);
-  await purgeLegacySecureKeys();
+export async function clearAuthSession(isCurrent: () => boolean = () => true): Promise<void> {
+  await mutateSession(async () => {
+    if (!isCurrent()) return;
+    await removeSecureValue(AUTH_SESSION_KEY);
+    await purgeLegacySecureKeys();
+  });
 }
 
 /**
