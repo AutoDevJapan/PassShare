@@ -11,7 +11,7 @@ import { createInvitationsRouter, createShareRouter } from "./share-router.js";
 import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
 import { nativeMutation } from "../lib/native-mutations.js";
-import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS } from "./rate-limit-constants.js";
+import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS, AUTH_ROUTE_WINDOW_MS, AUTH_ROUTE_MAX_REQUESTS } from "./rate-limit-constants.js";
 import { CSRF_HEADER } from "./constants.js";
 import { generateToken } from "./tokens.js";
 
@@ -26,6 +26,9 @@ import { generateToken } from "./tokens.js";
  */
 export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore, mutateOnce }) {
   const router = Router();
+  router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
+    standardHeaders:"draft-6",legacyHeaders:false,
+    handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
   const sessionGuard = requireSession(authStore);
   const loginGuard = createLoginGuard({ store: loginGuardStore });
   // Cheap per-process protection before session DB lookup; the existing shared
@@ -296,6 +299,38 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       res.status(204).end();
     } catch(error) { next(error); }
   });
+
+  async function reauthenticateAccount(req) {
+    const ip=resolveClientIp(req);
+    await loginGuard.assertIpAllowed(ip);await loginGuard.recordIpRequest(ip);
+    const user=await authStore.findUserById(req.auth.userId);
+    if (!user) throw authHttpError(401,"PS024","Session is invalid or expired");
+    await loginGuard.assertNotLocked(user.email);
+    const password=parsePassword(req.body?.currentPassword);
+    if (!await verifyPassword(user.password_hash,password)) {
+      await loginGuard.recordFailure(user.email);
+      throw authHttpError(401,"PS026","Invalid email or password");
+    }
+    return user;
+  }
+
+  router.post("/vaults/:vaultId/ownership",passwordChangeThrottle,sessionGuard,requireCsrf,async(req,res,next)=>{
+    try {
+      const user=await reauthenticateAccount(req);
+      await authStore.transferOwnership(user.id,req.auth.sessionId,user.password_hash,req.params.vaultId,req.body?.targetUserId);
+      res.set("Cache-Control","no-store");res.status(204).end();
+    } catch(error) {next(error);}
+  });
+
+  router.delete("/account",passwordChangeThrottle,sessionGuard,requireCsrf,async(req,res,next)=>{
+    try {
+      const user=await reauthenticateAccount(req);
+      await authStore.retireAccount(user.id,req.auth.sessionId,user.password_hash,req.body?.confirmationEmail,connectStore);
+      await loginGuard.clearFailures(user.email).catch(()=>{});
+      if (!parseBearerToken(req)) {clearSessionCookie(res,appEnv);clearCsrfCookie(res,appEnv);}
+      res.set("Cache-Control","no-store");res.status(204).end();
+    } catch(error) {next(error);}
+  });
   router.post("/password/settings", passwordChangeThrottle, sessionGuard, urlencoded({extended:false,limit:"2mb"}),
     (req, _res, next) => {
       // Only the script-free form accepts its double-submit token in the body.
@@ -360,8 +395,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
         return;
       }
       const vaultId = generateConnectId();
-      await connectStore.createVault({ id: vaultId, name });
-      await authStore.addVaultMembership(req.auth.userId, vaultId, "owner");
+      await authStore.createOwnedBox(req.auth.userId,connectStore,vaultId,name);
       res.status(201).json({ vaultId, name });
     } catch (error) {
       sendAuthError(res, error);

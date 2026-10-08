@@ -12,6 +12,8 @@ mod password_acceptance;
 mod password_page_acceptance;
 #[path = "acceptance/recovery.rs"]
 mod recovery_acceptance;
+#[path = "acceptance/retirement.rs"]
+mod retirement_acceptance;
 #[path = "acceptance/share.rs"]
 mod share_acceptance;
 #[path = "acceptance/web_share.rs"]
@@ -175,9 +177,10 @@ fn main() {
         );
     }
     let recovery_only = std::env::args().any(|value| value == "--recovery-only");
+    let retirement_only = std::env::args().any(|value| value == "--retirement-only");
     let external_port = std::env::args()
         .skip(1)
-        .find(|value| value != "--recovery-only")
+        .find(|value| value != "--recovery-only" && value != "--retirement-only")
         .map(|value| value.parse::<u16>().expect("external fixture port"));
     let port = external_port.unwrap_or_else(|| {
         TcpListener::bind(("127.0.0.1", 0))
@@ -197,7 +200,7 @@ fn main() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    if recovery_only {
+    if recovery_only || retirement_only {
         // A separately bounded fixture group does not disable production limits.
         // SQL helper permits only the exact synthetic CI database.
         if std::env::var_os("DATABASE_URL").is_some() {
@@ -205,7 +208,11 @@ fn main() {
                 "DELETE FROM login_ip_requests WHERE ip IN ('127.0.0.1','::ffff:127.0.0.1')",
             );
         }
-        recovery_acceptance::run(port, nonce);
+        if recovery_only {
+            recovery_acceptance::run(port, nonce);
+        } else {
+            retirement_acceptance::run(port, nonce);
+        }
         return;
     }
     let (status, session) = http(

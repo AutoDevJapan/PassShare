@@ -68,6 +68,19 @@ export function createPgAuthStore(pool) {
       );
     },
 
+    async createOwnedBox(userId,_connectStore,vaultId,name) {
+      const client=await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const user=await client.query("SELECT id FROM users WHERE id=$1 FOR SHARE",[userId]);
+        if (!user.rowCount) throw authHttpError(401,"PS024","Session is invalid or expired");
+        await client.query("INSERT INTO connect_vaults(id,name) VALUES($1,$2)",[vaultId,name]);
+        await client.query("INSERT INTO vault_memberships(user_id,vault_id,role,confirmed_at) VALUES($1,$2,'owner',NOW())",[userId,vaultId]);
+        await client.query("COMMIT");
+      }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error;}
+      finally{client.release();}
+    },
+
     async listVaultIdsForUser(userId) {
       const result = await pool.query(
         "SELECT vault_id FROM vault_memberships WHERE user_id = $1 AND passshare_membership_active(role,confirmed_at) ORDER BY created_at ASC",
@@ -207,6 +220,49 @@ export function createPgAuthStore(pool) {
       finally { client.release(); }
     },
 
+    async transferOwnership(userId, sessionId, expectedHash, vaultId, targetUserId) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[vaultId]);
+        const user = (await client.query("SELECT password_hash FROM users WHERE id=$1 FOR UPDATE",[userId])).rows[0];
+        const session = await client.query("SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at > clock_timestamp() FOR SHARE",[sessionId,userId]);
+        const members = (await client.query("SELECT user_id,role,passshare_membership_active(role,confirmed_at) AS identity_confirmed FROM vault_memberships WHERE vault_id=$1 FOR UPDATE",[vaultId])).rows;
+        await nativeMutation({command:"account-owner-transfer",userId,targetUserId,currentHash:user?.password_hash,verifiedHash:expectedHash,sessionExists:session.rowCount>0,members});
+        await client.query("UPDATE vault_memberships SET role=CASE WHEN user_id=$2 THEN 'owner' ELSE 'member' END,confirmed_at=COALESCE(confirmed_at,NOW()) WHERE vault_id=$1 AND user_id IN ($2,$3)",[vaultId,targetUserId,userId]);
+        await client.query("DELETE FROM connect_tokens WHERE user_id IN ($1,$2)",[userId,targetUserId]);
+        await client.query("COMMIT");
+      } catch(error) { await client.query("ROLLBACK").catch(()=>{});throw error; }
+      finally { client.release(); }
+    },
+
+    async retireAccount(userId, sessionId, expectedHash, confirmationEmail) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        // Match sharing's box-before-user lock order. A late membership or box
+        // creation is detected again before any destructive writes.
+        const locked = (await client.query("SELECT cv.id FROM connect_vaults cv WHERE cv.id IN (SELECT vault_id FROM vault_memberships WHERE user_id=$1) ORDER BY cv.id FOR UPDATE",[userId])).rows.map(row=>row.id);
+        const user = (await client.query("SELECT email,password_hash FROM users WHERE id=$1 FOR UPDATE",[userId])).rows[0];
+        const session = await client.query("SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at > clock_timestamp() FOR SHARE",[sessionId,userId]);
+        const current = (await client.query("SELECT vault_id FROM vault_memberships WHERE user_id=$1 ORDER BY vault_id",[userId])).rows.map(row=>row.vault_id);
+        if (JSON.stringify(locked) !== JSON.stringify(current)) throw authHttpError(409,"PS049","Password box memberships changed; review and retry deletion");
+        const boxes=[];
+        for (const id of locked) {
+          const members=(await client.query("SELECT user_id,role FROM vault_memberships WHERE vault_id=$1 FOR UPDATE",[id])).rows;
+          boxes.push({id,members});
+        }
+        const {privateBoxIds}=await nativeMutation({command:"account-retire",userId,currentHash:user?.password_hash,verifiedHash:expectedHash,sessionExists:session.rowCount>0,email:user?.email,confirmationEmail,boxes});
+        await client.query("DELETE FROM connect_vaults WHERE id=ANY($1::varchar[])",[privateBoxIds]);
+        await client.query("DELETE FROM mutation_operations WHERE actor=$1 OR resource=ANY($2::text[])",[userId,privateBoxIds]);
+        await client.query("DELETE FROM vault_invitations WHERE invitee_email=$1",[user.email]);
+        await client.query("DELETE FROM login_failures WHERE email=$1",[user.email]);
+        await client.query("DELETE FROM users WHERE id=$1",[userId]);
+        await client.query("COMMIT");
+      } catch(error) { await client.query("ROLLBACK").catch(()=>{});throw error; }
+      finally { client.release(); }
+    },
+
     async findConnectTokenByHash(tokenHash) {
       const result = await pool.query(
         `SELECT id, user_id, token_hash, vault_ids, expires_at, label
@@ -308,18 +364,25 @@ export function createPgAuthStore(pool) {
       const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
       const confirmationCode = generateToken();
       const { confirmationHash } = await nativeMutation({command: "invitation-proof", confirmationCode});
+      const client=await pool.connect();
       try {
-        await pool.query(
+        await client.query("BEGIN");
+        await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[vaultId]);
+        const owner=await client.query("SELECT u.id FROM users u JOIN vault_memberships vm ON vm.user_id=u.id WHERE u.id=$1 AND vm.vault_id=$2 AND vm.role='owner' FOR SHARE OF u,vm",[inviterId,vaultId]);
+        if (!owner.rowCount) throw authHttpError(403,"PS032","Password box owner access required");
+        await client.query(
           `INSERT INTO vault_invitations (id, vault_id, inviter_id, invitee_email, role, expires_at, confirmation_hash)
            VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7)`,
           [id, vaultId, inviterId, inviteeEmail, role, expiresAt.toISOString(), confirmationHash],
         );
+        await client.query("COMMIT");
       } catch (error) {
+        await client.query("ROLLBACK").catch(()=>{});
         if (error && typeof error === "object" && "code" in error && error.code === "23505") {
           throw authHttpError(409, "PS038", "A pending invitation already exists for this email");
         }
         throw error;
-      }
+      } finally {client.release();}
 
       return {
         id,

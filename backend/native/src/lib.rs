@@ -4,6 +4,7 @@ pub mod create;
 pub mod edit;
 pub mod encrypted;
 pub mod recovery;
+pub mod retirement;
 pub mod share;
 
 use serde_json::{json, Value};
@@ -12,6 +13,8 @@ pub fn dispatch(input: &Value) -> Value {
     match input.get("command").and_then(Value::as_str) {
         Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),
         Some("encrypted-plan") => encrypted::plan(input),
+        Some("account-retire") => retirement::retire(input),
+        Some("account-owner-transfer") => retirement::transfer(input),
         Some("account-recovery-schema") => json!({"status":200,"body":recovery::SCHEMA}),
         Some("account-recovery-prepare") => recovery::prepare(input),
         Some("account-recovery-input") => recovery::validate_input(input),
