@@ -54,10 +54,18 @@ export async function createEncryptedRouter({ pool, authStore }) {
 // bypass the boundary. The DB trigger is authoritative for legacy writes.
 export function createPlaintextBoundary({ pool }) {
   const router = Router({ mergeParams: true });
+  let stateReady = false;
   router.use(rateLimit({windowMs:60*1000,limit:600,standardHeaders:"draft-6",legacyHeaders:false,
     handler:(_req,res)=>res.status(429).json({error:"PS029",message:"PS029: Too many requests. Try again later."})}));
   router.use(async (req, res, next) => {
     try {
+      // Check on demand until initialized, so an instance booted with the
+      // flag off observes a later migration without blocking app startup.
+      if (!stateReady) {
+        stateReady = (await pool.query(
+          "SELECT to_regclass('encrypted_box_state') IS NOT NULL AS present")).rows[0].present;
+        if (!stateReady) { next(); return; }
+      }
       const { rows } = await pool.query("SELECT 1 FROM encrypted_box_state WHERE box_id=$1", [req.params.vaultUuid]);
       if (rows.length) {
         res.status(409).json({ error: "PS055", message: "PS055: Ciphertext storage required" });

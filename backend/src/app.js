@@ -172,9 +172,7 @@ export async function createApp(options = {}) {
   }
   // A flag rollback must not make an already encrypted box appear empty in
   // the compatibility API. Preserve the boundary whenever its state exists.
-  const encryptedStateExists = pool && (encryptedEnabled || (await pool.query(
-    "SELECT to_regclass('public.encrypted_box_state') IS NOT NULL AS present")).rows[0].present);
-  if (encryptedStateExists) {
+  if (pool) {
     plaintextBoundary.use("/vaults/:vaultUuid",createPlaintextBoundary({pool}));
   }
   const requireConnectAuth = createRequireConnectAuth({ authStore, appEnv });
