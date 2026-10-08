@@ -168,7 +168,7 @@ export async function createApp(options = {}) {
   }
   const plaintextBoundary = express.Router();
   if (encryptedEnabled) {
-    app.use("/api/encrypted",await createEncryptedRouter({pool,authStore}));
+    app.use("/api/encrypted",await createEncryptedRouter({pool,authStore,loginGuardStore}));
   }
   // A flag rollback must not make an already encrypted box appear empty in
   // the compatibility API. Preserve the boundary whenever its state exists.

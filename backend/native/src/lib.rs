@@ -4,6 +4,7 @@ pub mod create;
 pub mod edit;
 pub mod encrypted;
 pub mod lifecycle_page;
+pub mod owner_key;
 pub mod recovery;
 pub mod retirement;
 pub mod share;
@@ -16,6 +17,7 @@ pub fn dispatch(input: &Value) -> Value {
         Some("account-lifecycle-form") => lifecycle_page::validate_form(input),
         Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),
         Some("encrypted-plan") => encrypted::plan(input),
+        Some("owner-key-plan") => owner_key::plan(input),
         Some("account-retire") => retirement::retire(input),
         Some("account-owner-transfer") => retirement::transfer(input),
         Some("account-recovery-schema") => json!({"status":200,"body":recovery::SCHEMA}),
