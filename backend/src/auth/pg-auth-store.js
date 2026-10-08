@@ -21,6 +21,8 @@ export function createPgAuthStore(pool) {
       await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY, AUTH_SCHEMA_SQL);
       await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY,
         await nativeMutation({command:"sharing-schema"}));
+      await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY,
+        await nativeMutation({command:"account-recovery-schema"}));
     },
 
     async findUserByEmail(email) {
@@ -170,6 +172,39 @@ export function createPgAuthStore(pool) {
     },
     async deleteConnectTokensForUser(userId) {
       await pool.query("DELETE FROM connect_tokens WHERE user_id = $1", [userId]);
+    },
+
+    async setRecoveryKey(userId, sessionId, expectedHash, recoveryHash) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const user = (await client.query("SELECT password_hash FROM users WHERE id=$1 FOR UPDATE",[userId])).rows[0];
+        const session = await client.query("SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at > clock_timestamp() FOR SHARE",[sessionId,userId]);
+        await nativeMutation({command:"account-recovery-issue",currentHash:user?.password_hash,
+          verifiedHash:expectedHash,recoveryHash,sessionExists:session.rowCount > 0});
+        await client.query("UPDATE users SET recovery_hash=$2 WHERE id=$1",[userId,recoveryHash]);
+        await client.query("COMMIT");
+      } catch(error) { await client.query("ROLLBACK").catch(()=>{}); throw error; }
+      finally { client.release(); }
+    },
+
+    async findRecoveryByEmail(email) {
+      return (await pool.query("SELECT id,password_hash,recovery_hash FROM users WHERE email=$1",[email])).rows[0] ?? null;
+    },
+
+    async recoverPassword(userId, expectedHash, recoveryHash, nextHash) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const user = (await client.query("SELECT password_hash,recovery_hash FROM users WHERE id=$1 FOR UPDATE",[userId])).rows[0];
+        await nativeMutation({command:"account-recovery-consume",currentHash:user?.password_hash,
+          verifiedHash:expectedHash,recoveryHash,storedRecoveryHash:user?.recovery_hash,nextHash});
+        await client.query("UPDATE users SET password_hash=$2,recovery_hash=NULL WHERE id=$1",[userId,nextHash]);
+        await client.query("DELETE FROM sessions WHERE user_id=$1",[userId]);
+        await client.query("DELETE FROM connect_tokens WHERE user_id=$1",[userId]);
+        await client.query("COMMIT");
+      } catch(error) { await client.query("ROLLBACK").catch(()=>{}); throw error; }
+      finally { client.release(); }
     },
 
     async findConnectTokenByHash(tokenHash) {

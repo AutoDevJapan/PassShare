@@ -13,6 +13,7 @@ import { parseEmail, parsePassword } from "./validation.js";
 import { nativeMutation } from "../lib/native-mutations.js";
 import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS } from "./rate-limit-constants.js";
 import { CSRF_HEADER } from "./constants.js";
+import { generateToken } from "./tokens.js";
 
 /**
  * @param {object} deps
@@ -250,6 +251,51 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   }
 
   router.post("/password/change", passwordChangeThrottle, sessionGuard, requireCsrf, changePassword);
+
+  router.post("/recovery-key", passwordChangeThrottle, sessionGuard, requireCsrf, async (req,res,next) => {
+    try {
+      const clientIp = resolveClientIp(req);
+      await loginGuard.assertIpAllowed(clientIp);
+      await loginGuard.recordIpRequest(clientIp);
+      const user = await authStore.findUserById(req.auth.userId);
+      if (!user) throw authHttpError(401,"PS024","Session is invalid or expired");
+      await loginGuard.assertNotLocked(user.email);
+      const currentPassword = parsePassword(req.body?.currentPassword);
+      if (!await verifyPassword(user.password_hash,currentPassword)) {
+        await loginGuard.recordFailure(user.email);
+        throw authHttpError(401,"PS026","Invalid email or password");
+      }
+      const recoveryKey = generateToken();
+      const {recoveryHash} = await nativeMutation({command:"account-recovery-prepare",recoveryKey});
+      await authStore.setRecoveryKey(user.id,req.auth.sessionId,user.password_hash,recoveryHash);
+      // A replacement invalidates the previous key, even if its response was lost.
+      res.set("Cache-Control","no-store");
+      res.status(201).json({recoveryKey});
+    } catch(error) { next(error); }
+  });
+
+  router.post("/password/recover", passwordChangeThrottle, requireCsrf, async (req,res,next) => {
+    try {
+      const clientIp = resolveClientIp(req);
+      await loginGuard.assertIpAllowed(clientIp);
+      await loginGuard.recordIpRequest(clientIp);
+      const email = parseEmail(req.body?.email);
+      const recoveryKey = req.body?.recoveryKey;
+      const newPassword = req.body?.newPassword;
+      await nativeMutation({command:"account-recovery-input",recoveryKey,newPassword});
+      const {recoveryHash} = await nativeMutation({command:"account-recovery-prepare",recoveryKey});
+      const user = await authStore.findRecoveryByEmail(email);
+      // Uniform unknown-account/wrong-key error before expensive Argon2 work.
+      await nativeMutation({command:"account-recovery-consume",currentHash:user?.password_hash,
+        verifiedHash:user?.password_hash,recoveryHash,storedRecoveryHash:user?.recovery_hash});
+      const nextHash = await hashPassword(newPassword);
+      await authStore.recoverPassword(user.id,user.password_hash,recoveryHash,nextHash);
+      await loginGuard.clearFailures(email).catch(()=>{});
+      if (!parseBearerToken(req)) { clearSessionCookie(res,appEnv); clearCsrfCookie(res,appEnv); }
+      res.set("Cache-Control","no-store");
+      res.status(204).end();
+    } catch(error) { next(error); }
+  });
   router.post("/password/settings", passwordChangeThrottle, sessionGuard, urlencoded({extended:false,limit:"2mb"}),
     (req, _res, next) => {
       // Only the script-free form accepts its double-submit token in the body.

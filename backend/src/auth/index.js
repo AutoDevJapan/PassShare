@@ -15,6 +15,9 @@ import { createPgAuthStore } from "./pg-auth-store.js";
  * @property {(sessionId: string) => Promise<void>} deleteSession
  * @property {(userId: string, label: string, sessionId: string) => Promise<{ accessToken: string, expiresAt: string, expiresIn: number, vaultIds: string[], tokenHash: string }>} createConnectToken
  * @property {(userId: string, sessionId: string, expectedHash: string, nextHash: string) => Promise<void>} changePassword
+ * @property {(userId: string, sessionId: string, expectedHash: string, recoveryHash: string) => Promise<void>} setRecoveryKey
+ * @property {(email: string) => Promise<object|null>} findRecoveryByEmail
+ * @property {(userId: string, expectedHash: string, recoveryHash: string, nextHash: string) => Promise<void>} recoverPassword
  * @property {(tokenHash: string) => Promise<object|null>} findConnectTokenByHash
  * @property {(userId: string) => Promise<void>} deleteConnectTokensForUser
  */
