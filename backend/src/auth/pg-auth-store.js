@@ -300,6 +300,25 @@ export function createPgAuthStore(pool) {
       return result.rows;
     },
 
+    // Display only: boxes where the user is an owner and no other owner exists,
+    // so a confirmed member must take over before deletion. Transfer and
+    // retirement re-check everything under their own locks.
+    async listSoleOwnedSharedBoxes(userId, limit) {
+      const ids = (await pool.query(
+        `SELECT vm.vault_id FROM vault_memberships vm
+         WHERE vm.user_id=$1 AND vm.role='owner'
+           AND EXISTS (SELECT 1 FROM vault_memberships o WHERE o.vault_id=vm.vault_id AND o.user_id<>$1)
+           AND NOT EXISTS (SELECT 1 FROM vault_memberships w WHERE w.vault_id=vm.vault_id AND w.user_id<>$1 AND w.role='owner')
+         ORDER BY vm.vault_id LIMIT $2`, [userId, limit])).rows.map((row) => row.vault_id);
+      if (!ids.length) return [];
+      const rows = (await pool.query(
+        `SELECT vm.vault_id, vm.user_id, vm.role, u.email,
+                passshare_membership_active(vm.role,vm.confirmed_at) AS identity_confirmed
+         FROM vault_memberships vm JOIN users u ON u.id=vm.user_id
+         WHERE vm.vault_id=ANY($1::varchar[]) ORDER BY vm.vault_id, vm.created_at`, [ids])).rows;
+      return ids.map((id) => ({ id, members: rows.filter((row) => row.vault_id === id).map(({ vault_id: _box, ...member }) => member) }));
+    },
+
     async countVaultOwners(vaultId) {
       const result = await pool.query(
         `SELECT COUNT(*)::int AS count

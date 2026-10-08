@@ -14,6 +14,7 @@ import { nativeMutation } from "../lib/native-mutations.js";
 import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS, AUTH_ROUTE_WINDOW_MS, AUTH_ROUTE_MAX_REQUESTS } from "./rate-limit-constants.js";
 import { CSRF_HEADER } from "./constants.js";
 import { generateToken } from "./tokens.js";
+import { registerLifecycleForms } from "./lifecycle-forms.js";
 
 /**
  * @param {object} deps
@@ -26,6 +27,7 @@ import { generateToken } from "./tokens.js";
  */
 export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore, mutateOnce }) {
   const router = Router();
+  router.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
     standardHeaders:"draft-6",legacyHeaders:false,
     handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
@@ -208,10 +210,24 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       html = await nativeMutation({command:"account-password-page", locale,
         webOrigin, csrfToken:success ? "" : issueCsrfToken(res, appEnv), errorCode, success});
     }
+    sendHtmlPage(res, status, html);
+  }
+
+  function sendHtmlPage(res, status, html) {
     res.set("Cache-Control", "no-store");
     res.set("Referrer-Policy", "no-referrer");
     res.set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     res.status(status).type("html").send(html);
+  }
+
+  // Only script-free forms accept their double-submit token in the body.
+  // Mobile and Connect requests continue to use the JSON endpoints.
+  function htmlFormCsrf(req, _res, next) {
+    if (!req.is("application/x-www-form-urlencoded") || parseBearerToken(req) || isTokenAuthClient(req)) {
+      next(authHttpError(400, "PS018", "Invalid account form")); return;
+    }
+    req.headers[CSRF_HEADER] = req.body?.csrfToken;
+    next();
   }
 
   router.get("/password/settings", passwordPageThrottle, sessionGuard, async (req, res, next) => {
@@ -255,23 +271,60 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   router.post("/password/change", passwordChangeThrottle, sessionGuard, requireCsrf, changePassword);
 
+  // The JSON endpoints and the script-free pages share these operations, so
+  // each credential check and commit exists once. A page passes `prepare` to
+  // build its success response BEFORE the commit: nothing that can fail runs
+  // after a credential has changed.
+  async function issueRecoveryKey(req, { prepare } = {}) {
+    const user = await reauthenticateAccount(req);
+    const recoveryKey = generateToken();
+    const {recoveryHash} = await nativeMutation({command:"account-recovery-prepare",recoveryKey});
+    const receipt = prepare ? await prepare(recoveryKey) : undefined;
+    await authStore.setRecoveryKey(user.id,req.auth.sessionId,user.password_hash,recoveryHash);
+    // A replacement invalidates the previous key, even if its response was lost.
+    return { recoveryKey, receipt };
+  }
+
+  async function recoverAccount(req, res, { prepare } = {}) {
+    const clientIp = resolveClientIp(req);
+    await loginGuard.assertIpAllowed(clientIp);
+    await loginGuard.recordIpRequest(clientIp);
+    const email = parseEmail(req.body?.email);
+    const recoveryKey = req.body?.recoveryKey;
+    const newPassword = req.body?.newPassword;
+    await nativeMutation({command:"account-recovery-input",recoveryKey,newPassword});
+    const {recoveryHash} = await nativeMutation({command:"account-recovery-prepare",recoveryKey});
+    const user = await authStore.findRecoveryByEmail(email);
+    // Uniform unknown-account/wrong-key error before expensive Argon2 work.
+    await nativeMutation({command:"account-recovery-consume",currentHash:user?.password_hash,
+      verifiedHash:user?.password_hash,recoveryHash,storedRecoveryHash:user?.recovery_hash});
+    const nextHash = await hashPassword(newPassword);
+    const receipt = prepare ? await prepare() : undefined;
+    await authStore.recoverPassword(user.id,user.password_hash,recoveryHash,nextHash);
+    await loginGuard.clearFailures(email).catch(()=>{});
+    if (!parseBearerToken(req)) { clearSessionCookie(res,appEnv); clearCsrfCookie(res,appEnv); }
+    return receipt;
+  }
+
+  async function transferOwnership(req, vaultId, targetUserId, { prepare } = {}) {
+    const user = await reauthenticateAccount(req);
+    const receipt = prepare ? await prepare() : undefined;
+    await authStore.transferOwnership(user.id,req.auth.sessionId,user.password_hash,vaultId,targetUserId);
+    return receipt;
+  }
+
+  async function retireAccount(req, res, confirmationEmail, { prepare } = {}) {
+    const user = await reauthenticateAccount(req);
+    const receipt = prepare ? await prepare() : undefined;
+    await authStore.retireAccount(user.id,req.auth.sessionId,user.password_hash,confirmationEmail,connectStore);
+    await loginGuard.clearFailures(user.email).catch(()=>{});
+    if (!parseBearerToken(req)) {clearSessionCookie(res,appEnv);clearCsrfCookie(res,appEnv);}
+    return receipt;
+  }
+
   router.post("/recovery-key", passwordChangeThrottle, sessionGuard, requireCsrf, async (req,res,next) => {
     try {
-      const clientIp = resolveClientIp(req);
-      await loginGuard.assertIpAllowed(clientIp);
-      await loginGuard.recordIpRequest(clientIp);
-      const user = await authStore.findUserById(req.auth.userId);
-      if (!user) throw authHttpError(401,"PS024","Session is invalid or expired");
-      await loginGuard.assertNotLocked(user.email);
-      const currentPassword = parsePassword(req.body?.currentPassword);
-      if (!await verifyPassword(user.password_hash,currentPassword)) {
-        await loginGuard.recordFailure(user.email);
-        throw authHttpError(401,"PS026","Invalid email or password");
-      }
-      const recoveryKey = generateToken();
-      const {recoveryHash} = await nativeMutation({command:"account-recovery-prepare",recoveryKey});
-      await authStore.setRecoveryKey(user.id,req.auth.sessionId,user.password_hash,recoveryHash);
-      // A replacement invalidates the previous key, even if its response was lost.
+      const { recoveryKey } = await issueRecoveryKey(req);
       res.set("Cache-Control","no-store");
       res.status(201).json({recoveryKey});
     } catch(error) { next(error); }
@@ -279,22 +332,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   router.post("/password/recover", passwordChangeThrottle, requireCsrf, async (req,res,next) => {
     try {
-      const clientIp = resolveClientIp(req);
-      await loginGuard.assertIpAllowed(clientIp);
-      await loginGuard.recordIpRequest(clientIp);
-      const email = parseEmail(req.body?.email);
-      const recoveryKey = req.body?.recoveryKey;
-      const newPassword = req.body?.newPassword;
-      await nativeMutation({command:"account-recovery-input",recoveryKey,newPassword});
-      const {recoveryHash} = await nativeMutation({command:"account-recovery-prepare",recoveryKey});
-      const user = await authStore.findRecoveryByEmail(email);
-      // Uniform unknown-account/wrong-key error before expensive Argon2 work.
-      await nativeMutation({command:"account-recovery-consume",currentHash:user?.password_hash,
-        verifiedHash:user?.password_hash,recoveryHash,storedRecoveryHash:user?.recovery_hash});
-      const nextHash = await hashPassword(newPassword);
-      await authStore.recoverPassword(user.id,user.password_hash,recoveryHash,nextHash);
-      await loginGuard.clearFailures(email).catch(()=>{});
-      if (!parseBearerToken(req)) { clearSessionCookie(res,appEnv); clearCsrfCookie(res,appEnv); }
+      await recoverAccount(req, res);
       res.set("Cache-Control","no-store");
       res.status(204).end();
     } catch(error) { next(error); }
@@ -316,31 +354,25 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
 
   router.post("/vaults/:vaultId/ownership",passwordChangeThrottle,sessionGuard,requireCsrf,async(req,res,next)=>{
     try {
-      const user=await reauthenticateAccount(req);
-      await authStore.transferOwnership(user.id,req.auth.sessionId,user.password_hash,req.params.vaultId,req.body?.targetUserId);
+      await transferOwnership(req,req.params.vaultId,req.body?.targetUserId);
       res.set("Cache-Control","no-store");res.status(204).end();
     } catch(error) {next(error);}
   });
 
   router.delete("/account",passwordChangeThrottle,sessionGuard,requireCsrf,async(req,res,next)=>{
     try {
-      const user=await reauthenticateAccount(req);
-      await authStore.retireAccount(user.id,req.auth.sessionId,user.password_hash,req.body?.confirmationEmail,connectStore);
-      await loginGuard.clearFailures(user.email).catch(()=>{});
-      if (!parseBearerToken(req)) {clearSessionCookie(res,appEnv);clearCsrfCookie(res,appEnv);}
+      await retireAccount(req,res,req.body?.confirmationEmail);
       res.set("Cache-Control","no-store");res.status(204).end();
     } catch(error) {next(error);}
   });
+
+  registerLifecycleForms({ router, authStore, connectStore, appEnv, sessionGuard,
+    pageThrottle: passwordPageThrottle, formThrottle: passwordChangeThrottle, htmlFormCsrf,
+    requireCsrf, issueCsrfToken, sendHtml: sendHtmlPage, pageContext: passwordPageContext,
+    operations: { issueRecoveryKey, recoverAccount, transferOwnership, retireAccount } });
+
   router.post("/password/settings", passwordChangeThrottle, sessionGuard, urlencoded({extended:false,limit:"2mb"}),
-    (req, _res, next) => {
-      // Only the script-free form accepts its double-submit token in the body.
-      // Mobile and Connect requests continue to use the JSON endpoint.
-      if (!req.is("application/x-www-form-urlencoded") || parseBearerToken(req) || isTokenAuthClient(req)) {
-        next(authHttpError(400, "PS018", "Invalid password settings form")); return;
-      }
-      req.headers[CSRF_HEADER] = req.body?.csrfToken;
-      next();
-    }, requireCsrf, (req, res, next) => changePassword(req, res, next, true));
+    htmlFormCsrf, requireCsrf, (req, res, next) => changePassword(req, res, next, true));
 
   router.use("/password/settings", async (error, req, res, next) => {
     if (error.status === 429) { sendAuthError(res, error); return; }
