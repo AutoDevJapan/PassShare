@@ -283,8 +283,10 @@ impl EncryptedSessionClient {
         check_id(item_id)?;
         let url = self.endpoint(&["boxes", box_id, "items", item_id])?;
         let item: EncryptedItem = decode(&self.send(Method::GET, url, None).await?)?;
-        envelope_problem(&item, box_id, item_id)
-            .map_or(Ok(item), |m| Err(Error::InvalidResponse(m)))
+        if let Some(problem) = envelope_problem(&item, box_id, item_id) {
+            return Err(Error::InvalidResponse(problem));
+        }
+        Ok(item)
     }
 
     /// Compare-and-set write. A stale `expected_version` surfaces as
@@ -504,10 +506,10 @@ fn decode_record(bytes: &[u8]) -> EncryptedSessionResult<OwnerKeyRecord> {
     if !(1..=MAX_INTEGER).contains(&record.bundle_version) {
         return Err(Error::InvalidResponse("bundle version out of range"));
     }
-    record
-        .bundle
-        .problem()
-        .map_or(Ok(record), |m| Err(Error::InvalidResponse(m)))
+    if let Some(problem) = record.bundle.problem() {
+        return Err(Error::InvalidResponse(problem));
+    }
+    Ok(record)
 }
 
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> EncryptedSessionResult<T> {
