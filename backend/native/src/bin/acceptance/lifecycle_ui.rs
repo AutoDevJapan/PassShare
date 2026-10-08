@@ -162,6 +162,28 @@ pub fn run(port: u16, nonce: u128) {
     let keys = "/api/auth/account/recovery-key";
     let recover = "/api/auth/account/recover";
     let retire = "/api/auth/account/retire";
+    // Relative navigation must keep working when a user pastes a slash URL.
+    // Both methods canonicalize before an authentication lookup or mutation.
+    for (path, name) in [
+        (keys, "recovery-key"),
+        (recover, "recover"),
+        (retire, "retire"),
+    ] {
+        for method in ["GET", "POST"] {
+            let (status, headers, bytes) = http_raw(
+                port,
+                method,
+                &format!("{path}/?locale=ru"),
+                "",
+                &Value::Null,
+            );
+            assert_eq!(status, 307);
+            assert!(headers
+                .lines()
+                .any(|line| line.to_ascii_lowercase() == format!("location: ../{name}?locale=ru")));
+            assert!(!String::from_utf8_lossy(&bytes).contains("csrfToken"));
+        }
+    }
     let email = format!("lifecycle-{nonce}@example.test");
     let old = format!("Synthetic-Life-Old-{nonce}!");
     let next = format!("Synthetic-Life-New-{nonce}!");

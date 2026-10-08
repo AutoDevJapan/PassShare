@@ -70,6 +70,15 @@ export function registerLifecycleForms({
   };
   const localeOf = (req) => pageContext(req).locale;
 
+  // A trailing slash changes how relative links resolve in a browser. Keep
+  // proxy prefixes and POST bodies while redirecting before any operation.
+  const canonical = (name) => (req, res, next) => {
+    if (!req.path.endsWith("/")) { next(); return; }
+    res.set("Cache-Control", "no-store");
+    const locale = pageContext({ method: "GET", query: req.query }).locale;
+    res.redirect(307, `../${name}?locale=${locale}`);
+  };
+
   async function renderRetire(req, res, status = 200, errorCode = "") {
     const locale = localeOf(req);
     const rows = await authStore.listSoleOwnedSharedBoxes(req.auth.userId, BOX_LIMIT + 1);
@@ -87,12 +96,12 @@ export function registerLifecycleForms({
   const RECOVER = "/account/recover";
   const RETIRE = "/account/retire";
 
-  router.get(KEY, pageThrottle, sessionGuard, handle(async (req, res) => {
+  router.get(KEY, pageThrottle, canonical("recovery-key"), sessionGuard, handle(async (req, res) => {
     sendHtml(res, 200, await fixedPage({ page: "recovery-key", state: "form", locale: localeOf(req) },
       { csrf: issueCsrfToken(res, appEnv) }));
   }));
 
-  router.post(KEY, formThrottle, sessionGuard, parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
+  router.post(KEY, formThrottle, canonical("recovery-key"), sessionGuard, parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
     const locale = localeOf(req);
     await nativeMutation({ command: "account-lifecycle-form", page: "recovery-key", form: req.body });
     const { receipt } = await operations.issueRecoveryKey(req, {
@@ -102,12 +111,12 @@ export function registerLifecycleForms({
   }));
 
   // No session: the per-process budget runs before any other work.
-  router.get(RECOVER, pageThrottle, handle(async (req, res) => {
+  router.get(RECOVER, pageThrottle, canonical("recover"), handle(async (req, res) => {
     sendHtml(res, 200, await fixedPage({ page: "recover", state: "form", locale: localeOf(req) },
       { csrf: issueCsrfToken(res, appEnv) }));
   }));
 
-  router.post(RECOVER, formThrottle, parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
+  router.post(RECOVER, formThrottle, canonical("recover"), parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
     const locale = localeOf(req);
     await nativeMutation({ command: "account-lifecycle-form", page: "recover", form: req.body });
     const receipt = await operations.recoverAccount(req, res, {
@@ -116,9 +125,9 @@ export function registerLifecycleForms({
     sendHtml(res, 200, receipt);
   }));
 
-  router.get(RETIRE, pageThrottle, sessionGuard, handle((req, res) => renderRetire(req, res)));
+  router.get(RETIRE, pageThrottle, canonical("retire"), sessionGuard, handle((req, res) => renderRetire(req, res)));
 
-  router.post(RETIRE, formThrottle, sessionGuard, parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
+  router.post(RETIRE, formThrottle, canonical("retire"), sessionGuard, parseForm, htmlFormCsrf, requireCsrf, handle(async (req, res) => {
     const locale = localeOf(req);
     const decision = await nativeMutation({ command: "account-lifecycle-form", page: "retire", form: req.body });
     const prepare = (state) => () => fixedPage({ page: "retire", state, locale });
