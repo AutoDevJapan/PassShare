@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { rateLimit } from "express-rate-limit";
+import { AUTH_ROUTE_WINDOW_MS, AUTH_ROUTE_MAX_REQUESTS } from "./rate-limit-constants.js";
 import { isValidConnectId } from "../lib/connect.js";
 import { requireCsrf } from "./csrf.js";
 import { authHttpError, sendAuthError } from "./errors.js";
@@ -18,6 +20,9 @@ import { parseEmail } from "./validation.js";
  */
 export function createShareRouter({ authStore, connectStore }) {
   const router = Router({ mergeParams: true });
+  router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
+    standardHeaders:"draft-6",legacyHeaders:false,
+    handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
   const sessionGuard = requireSession(authStore);
 
   router.get("/members", sessionGuard, async (req, res) => {
@@ -149,6 +154,9 @@ export function createShareRouter({ authStore, connectStore }) {
  */
 export function createInvitationsRouter({ authStore, connectStore }) {
   const router = Router();
+  router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
+    standardHeaders:"draft-6",legacyHeaders:false,
+    handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
   const sessionGuard = requireSession(authStore);
 
   router.get("/", sessionGuard, async (req, res) => {

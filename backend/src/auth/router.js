@@ -11,7 +11,7 @@ import { createInvitationsRouter, createShareRouter } from "./share-router.js";
 import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
 import { nativeMutation } from "../lib/native-mutations.js";
-import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS } from "./rate-limit-constants.js";
+import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS, AUTH_ROUTE_WINDOW_MS, AUTH_ROUTE_MAX_REQUESTS } from "./rate-limit-constants.js";
 import { CSRF_HEADER } from "./constants.js";
 import { generateToken } from "./tokens.js";
 
@@ -26,6 +26,9 @@ import { generateToken } from "./tokens.js";
  */
 export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore, mutateOnce }) {
   const router = Router();
+  router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
+    standardHeaders:"draft-6",legacyHeaders:false,
+    handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
   const sessionGuard = requireSession(authStore);
   const loginGuard = createLoginGuard({ store: loginGuardStore });
   // Cheap per-process protection before session DB lookup; the existing shared

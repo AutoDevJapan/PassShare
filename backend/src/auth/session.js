@@ -61,7 +61,7 @@ export function clearSessionCookie(res, appEnv) {
 /** @param {import('express').Request} req */
 export function parseBearerToken(req) {
   const header = req.headers.authorization;
-  if (typeof header !== "string" || !header.startsWith("Bearer ")) {
+  if (typeof header !== "string" || header.slice(0,7).toLowerCase() !== "bearer ") {
     return null;
   }
   const token = header.slice("Bearer ".length).trim();

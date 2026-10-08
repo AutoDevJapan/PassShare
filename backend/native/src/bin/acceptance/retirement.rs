@@ -40,6 +40,18 @@ pub fn run(port: u16, nonce: u128) {
     let actor_session = actor["refreshToken"].as_str().unwrap();
     let access = actor["connectAccessToken"].as_str().unwrap();
     let peer_session = peer["refreshToken"].as_str().unwrap();
+    assert_eq!(
+        http_raw(
+            port,
+            "GET",
+            "/api/auth/me",
+            &format!("Authorization: bearer {actor_session}\r\n"),
+            &Value::Null
+        )
+        .0,
+        200,
+        "bearer scheme is case insensitive"
+    );
     let (status, boxes) = http(port, "GET", "/v1/vaults", access, "", &Value::Null);
     assert_eq!(status, 200);
     let shared = boxes[0]["id"].as_str().unwrap();
