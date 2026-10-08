@@ -162,10 +162,19 @@ export async function createApp(options = {}) {
   const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });
   app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore, mutateOnce }));
   // Keep an unfinished client/key migration off existing hosted accounts.
-  const encryptedEnabled = pool && process.env.PASSSHARE_MUTATIONS_BIN && process.env.PASSSHARE_ENCRYPTED_STORAGE === "true";
+  const encryptedEnabled = process.env.PASSSHARE_ENCRYPTED_STORAGE === "true";
+  if (encryptedEnabled && (!pool || !process.env.PASSSHARE_MUTATIONS_BIN)) {
+    throw new Error("Encrypted storage requires PostgreSQL and the native service");
+  }
   const plaintextBoundary = express.Router();
   if (encryptedEnabled) {
     app.use("/api/encrypted",await createEncryptedRouter({pool,authStore}));
+  }
+  // A flag rollback must not make an already encrypted box appear empty in
+  // the compatibility API. Preserve the boundary whenever its state exists.
+  const encryptedStateExists = pool && (encryptedEnabled || (await pool.query(
+    "SELECT to_regclass('public.encrypted_box_state') IS NOT NULL AS present")).rows[0].present);
+  if (encryptedStateExists) {
     plaintextBoundary.use("/vaults/:vaultUuid",createPlaintextBoundary({pool}));
   }
   const requireConnectAuth = createRequireConnectAuth({ authStore, appEnv });

@@ -54,6 +54,8 @@ export async function createEncryptedRouter({ pool, authStore }) {
 // bypass the boundary. The DB trigger is authoritative for legacy writes.
 export function createPlaintextBoundary({ pool }) {
   const router = Router({ mergeParams: true });
+  router.use(rateLimit({windowMs:60*1000,limit:600,standardHeaders:"draft-6",legacyHeaders:false,
+    handler:(_req,res)=>res.status(429).json({error:"PS029",message:"PS029: Too many requests. Try again later."})}));
   router.use(async (req, res, next) => {
     try {
       const { rows } = await pool.query("SELECT 1 FROM encrypted_box_state WHERE box_id=$1", [req.params.vaultUuid]);

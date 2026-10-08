@@ -112,12 +112,15 @@ impl Drop for Network {
 }
 
 fn command(program: &str) -> Command {
-    let mut command = Command::new(program);
+    let command = Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        let mut command = command;
         command.creation_flags(0x08000000);
+        command
     }
+    #[cfg(not(windows))]
     command
 }
 fn port() -> u16 {
@@ -234,6 +237,9 @@ struct Host {
 }
 impl Host {
     fn start(db: &Database, network: &Network, mode: &Mode) -> Self {
+        Self::with_storage(db, network, mode, true)
+    }
+    fn with_storage(db: &Database, network: &Network, mode: &Mode, enabled: bool) -> Self {
         let port = port();
         let host = match mode {
             Mode::Image(image) => {
@@ -269,7 +275,11 @@ impl Host {
                         "--env",
                         "DEV_SEED=false",
                         "--env",
-                        "PASSSHARE_ENCRYPTED_STORAGE=true",
+                        if enabled {
+                            "PASSSHARE_ENCRYPTED_STORAGE=true"
+                        } else {
+                            "PASSSHARE_ENCRYPTED_STORAGE=false"
+                        },
                         "--env",
                         "PORT=8080",
                         "--env",
@@ -283,7 +293,7 @@ impl Host {
                 );
                 host
             }
-            Mode::Node(binary) => Self::start_node(db, binary, port),
+            Mode::Node(binary) => Self::start_node(db, binary, port, enabled),
         };
         // Published container ports can accept TCP before the application has
         // completed migrations. Observe HTTP health from the real entrypoint.
@@ -300,7 +310,7 @@ impl Host {
         );
         host
     }
-    fn start_node(db: &Database, binary: &std::path::Path, port: u16) -> Self {
+    fn start_node(db: &Database, binary: &std::path::Path, port: u16, enabled: bool) -> Self {
         let backend = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -321,7 +331,10 @@ impl Host {
             .env("APP_ENV", "local")
             .env("DEV_SEED", "false")
             .env("PASSSHARE_MUTATIONS_BIN", binary)
-            .env("PASSSHARE_ENCRYPTED_STORAGE", "true")
+            .env(
+                "PASSSHARE_ENCRYPTED_STORAGE",
+                if enabled { "true" } else { "false" },
+            )
             .env(
                 "DATABASE_URL",
                 format!(
@@ -388,6 +401,15 @@ fn ready(port: u16) -> bool {
         .is_ok_and(|body| body["status"] == "ok")
 }
 fn http(port: u16, method: &str, path: &str, headers: &str, body: &Value) -> (u16, Value) {
+    let (status, bytes) = http_bytes(port, method, path, headers, body);
+    let body = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    (status, body)
+}
+fn http_bytes(port: u16, method: &str, path: &str, headers: &str, body: &Value) -> (u16, Vec<u8>) {
     let payload = if body.is_null() {
         String::new()
     } else {
@@ -414,12 +436,7 @@ fn http(port: u16, method: &str, path: &str, headers: &str, body: &Value) -> (u1
         .unwrap()
         .parse()
         .unwrap();
-    let body = if bytes.len() == split + 4 {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes[split + 4..]).unwrap()
-    };
-    (status, body)
+    (status, bytes[split + 4..].to_vec())
 }
 fn signup(port: u16) -> (String, String, String) {
     let (status, session) = http(
@@ -492,6 +509,11 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let stranger_headers = format!("Authorization: Bearer {stranger}\r\n");
     let connect_headers = format!("Authorization: Bearer {connect}\r\n");
     let root = format!("/api/encrypted/boxes/{box_id}");
+    assert_eq!(
+        http(p, "GET", &root, &connect_headers, &Value::Null).0,
+        401,
+        "Connect credentials are not account sessions"
+    );
     assert_eq!(
         http(p, "GET", &root, &headers, &Value::Null).1["mode"],
         "compatibility"
@@ -834,7 +856,7 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let enabled = enabling.join().unwrap();
     let written = writing.join().unwrap();
     assert!(
-        (enabled == 200 && written >= 400) || (enabled == 409 && written == 201),
+        (enabled == 200 && written == 409) || (enabled == 409 && written == 201),
         "activation/legacy race: {enabled}/{written}"
     );
     assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_box_state WHERE box_id='{race_box}')+(SELECT count(*) FROM connect_items WHERE vault_id='{race_box}')")),"1");
@@ -873,6 +895,24 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         "1"
     );
     // Restart proves persistence; client decrypts the unchanged opaque body.
+    drop(host);
+    host = Host::with_storage(db, network, mode, false);
+    assert_eq!(
+        http_bytes(host.port, "GET", &path, &headers, &Value::Null).0,
+        404
+    );
+    assert_eq!(
+        http(
+            host.port,
+            "GET",
+            &format!("/v1/vaults/{box_id}/items"),
+            &connect_headers,
+            &Value::Null
+        )
+        .0,
+        409,
+        "disabled storage cannot make an encrypted box look empty"
+    );
     drop(host);
     host = Host::start(db, network, mode);
     let restored = http(host.port, "GET", &path, &headers, &Value::Null);
