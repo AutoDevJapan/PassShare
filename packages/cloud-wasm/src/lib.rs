@@ -12,6 +12,8 @@ use unicode_normalization::UnicodeNormalization;
 use wasm_bindgen::prelude::*;
 use zeroize::{Zeroize, Zeroizing};
 
+mod worker;
+
 const INVALID: &str = "PS051: Invalid encrypted data";
 const LOCKED: &str = "PS057: Password box is locked";
 const MAX_BODY: usize = 1024 * 1024;
@@ -248,6 +250,51 @@ impl CloudPasswordBox {
     pub fn is_locked(&self) -> bool {
         self.session.key.is_none()
     }
+}
+
+#[wasm_bindgen]
+extern "C" {
+    type DedicatedWorkerGlobalScope;
+    type MessageEvent;
+    #[wasm_bindgen(thread_local_v2, js_name = globalThis)]
+    static GLOBAL: JsValue;
+    #[wasm_bindgen(method, setter, js_name = onmessage)]
+    fn set_onmessage(this: &DedicatedWorkerGlobalScope, handler: &JsValue);
+    #[wasm_bindgen(method, js_name = postMessage)]
+    fn post_message(this: &DedicatedWorkerGlobalScope, message: &JsValue);
+    #[wasm_bindgen(method, getter)]
+    fn data(this: &MessageEvent) -> JsValue;
+}
+thread_local! {
+    static STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Attaches the message dispatcher. Only a DedicatedWorkerGlobalScope may call this
+/// successfully; importing the module elsewhere registers nothing and creates no key.
+/// A `ready` reply (requestId null, ok true) is posted once the listener is attached.
+#[wasm_bindgen]
+pub fn start_worker() -> Result<(), JsValue> {
+    let scope: DedicatedWorkerGlobalScope = GLOBAL
+        .with(|global| global.clone())
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("PS060: Not a dedicated worker"))?;
+    if STARTED.replace(true) {
+        return Err(JsValue::from_str("PS060: Worker already started"));
+    }
+    let mut worker = worker::WorkerSession::new();
+    let ready = worker.ready();
+    let replies: DedicatedWorkerGlobalScope =
+        <DedicatedWorkerGlobalScope as AsRef<JsValue>>::as_ref(&scope)
+            .clone()
+            .unchecked_into();
+    let handler = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
+        let reply = worker.handle(event.data().as_string().unwrap_or_default());
+        replies.post_message(&JsValue::from_str(&reply));
+    });
+    scope.set_onmessage(handler.as_ref());
+    handler.forget();
+    scope.post_message(&JsValue::from_str(&ready));
+    Ok(())
 }
 
 #[cfg(test)]
