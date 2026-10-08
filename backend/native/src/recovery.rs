@@ -27,7 +27,8 @@ pub fn prepare(input: &Value) -> Value {
     json!({"status":200,"body":{"recoveryHash":digest(value)}})
 }
 
-pub fn validate_password(input: &Value) -> Value {
+// Return only a fixed decision, never credential values in the IPC response.
+pub fn validate_input(input: &Value) -> Value {
     if key(input).is_none() {
         return denied();
     }
@@ -129,7 +130,7 @@ mod tests {
     fn invalid_new_password_and_hash_are_rejected() {
         for password in ["short".to_owned(), "x".repeat(1025)] {
             assert_eq!(
-                validate_password(&json!({"recoveryKey":"A".repeat(43),"newPassword":password}))
+                validate_input(&json!({"recoveryKey":"A".repeat(43),"newPassword":password}))
                     ["status"],
                 400
             );

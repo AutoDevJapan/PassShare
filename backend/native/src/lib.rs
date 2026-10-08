@@ -14,7 +14,7 @@ pub fn dispatch(input: &Value) -> Value {
         Some("account-owner-transfer") => retirement::transfer(input),
         Some("account-recovery-schema") => json!({"status":200,"body":recovery::SCHEMA}),
         Some("account-recovery-prepare") => recovery::prepare(input),
-        Some("account-recovery-input") => recovery::validate_password(input),
+        Some("account-recovery-input") => recovery::validate_input(input),
         Some("account-recovery-issue") => recovery::authorize_issue(input),
         Some("account-recovery-consume") => recovery::authorize_recovery(input),
         Some("sharing-schema") => json!({"status":200,"body":share::MEMBERSHIP_SCHEMA}),
