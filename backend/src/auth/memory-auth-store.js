@@ -173,6 +173,43 @@ export function createMemoryAuthStore() {
       }
     },
 
+    async setRecoveryKey(userId, sessionId, expectedHash, recoveryHash) {
+      const user = usersById.get(userId);
+      const session = sessionsById.get(sessionId);
+      const snapshot = () => ({command:"account-recovery-issue", currentHash:user?.password_hash,
+        verifiedHash:expectedHash,recoveryHash,sessionExists:usersById.get(userId) === user && !!session &&
+          sessionsById.get(sessionId) === session && session.user_id === userId && new Date(session.expires_at).getTime() > Date.now()});
+      await nativeMutation(snapshot());
+      // Recheck after native IPC yields; a password change or logout may have
+      // revoked this authenticated snapshot in the meantime.
+      if (!usersById.has(userId) || user.password_hash !== expectedHash || !sessionsById.has(sessionId) ||
+          new Date(session.expires_at).getTime() <= Date.now()) throw authHttpError(401,"PS026","Invalid recovery credentials");
+      user.recovery_hash = recoveryHash;
+    },
+
+    async findRecoveryByEmail(email) {
+      const user = usersById.get(userIdByEmail.get(email));
+      return user ? {...user} : null;
+    },
+
+    async recoverPassword(userId, expectedHash, recoveryHash, nextHash) {
+      const user = usersById.get(userId);
+      await nativeMutation({command:"account-recovery-consume",currentHash:user?.password_hash,
+        verifiedHash:expectedHash,recoveryHash,storedRecoveryHash:user?.recovery_hash,nextHash});
+      if (!user || usersById.get(userId) !== user || user.password_hash !== expectedHash || user.recovery_hash !== recoveryHash) {
+        throw authHttpError(401,"PS026","Invalid recovery credentials");
+      }
+      // No await between the one-time check, credential change and revocation.
+      user.password_hash = nextHash;
+      user.recovery_hash = null;
+      for (const [id,row] of sessionsById) {
+        if (row.user_id === userId) { sessionsById.delete(id); sessionIdByTokenHash.delete(row.token_hash); }
+      }
+      for (const [id,row] of connectTokensById) {
+        if (row.user_id === userId) { connectTokensById.delete(id); connectTokenIdByHash.delete(row.token_hash); }
+      }
+    },
+
     async findConnectTokenByHash(tokenHash) {
       const tokenId = connectTokenIdByHash.get(tokenHash);
       if (!tokenId) return null;
