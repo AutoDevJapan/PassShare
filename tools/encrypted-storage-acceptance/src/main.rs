@@ -4,7 +4,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use passshare_core::{
     cloud_crypto::{ItemContext, OwnerKeyContext, PasswordBoxKey, WrappedPasswordBoxKey},
-    crypto::{derive_master_key_with_params, MasterKey},
+    crypto::{derive_master_key_with_params, generate_salt, MasterKey},
     ConnectId, PassShareError,
 };
 use serde_json::{json, Value};
@@ -673,7 +673,7 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         "synthetic-owner-password-{}",
         ConnectId::generate().unwrap()
     );
-    let salt = [7u8; 16];
+    let salt = generate_salt().unwrap();
     let master = owner_master(&owner_password, &salt).unwrap();
     let owner_ctx = owner_context(&box_id, &owner_id, 1);
     let bundle1 = owner_bundle(&key, &master, salt, &owner_ctx);
@@ -772,7 +772,8 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         item,
         "bundle unwraps to the key that decrypts the stored item"
     );
-    assert!(unwrap_bundle(&fetched["bundle"], "wrong-synthetic-password", &owner_ctx).is_err());
+    let wrong_password = format!("incorrect-{}", ConnectId::generate().unwrap());
+    assert!(unwrap_bundle(&fetched["bundle"], &wrong_password, &owner_ctx).is_err());
     assert!(unwrap_bundle(
         &fetched["bundle"],
         &owner_password,
@@ -921,7 +922,7 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         "synthetic-owner-password-{}",
         ConnectId::generate().unwrap()
     );
-    let new_salt = [9u8; 16];
+    let new_salt = generate_salt().unwrap();
     let new_ctx = owner_context(&box_id, &claimant, 1);
     let new_bundle = owner_bundle(
         &key,
@@ -1405,8 +1406,9 @@ mod contract_tests {
         let owner = "7b1f3c52-0a4e-4c1d-9a55-3f2d6e8b9c10";
         let box_id = ConnectId::generate().unwrap();
         let key = PasswordBoxKey::generate().unwrap();
-        let salt = [7u8; 16];
-        let master = owner_master("synthetic-password", &salt).unwrap();
+        let salt = generate_salt().unwrap();
+        let password = format!("synthetic-{}", ConnectId::generate().unwrap());
+        let master = owner_master(&password, &salt).unwrap();
         let context = owner_context(box_id.as_str(), owner, 1);
         let bundle = owner_bundle(&key, &master, salt, &context);
         let plan = |actor: &str, bundle: &Value| {
@@ -1417,7 +1419,7 @@ mod contract_tests {
         let accepted = plan(owner, &bundle);
         assert_eq!(accepted["status"], 200);
         assert_eq!(accepted["body"]["params"][5], bundle);
-        assert!(unwrap_bundle(&bundle, "synthetic-password", &context).is_ok());
+        assert!(unwrap_bundle(&bundle, &password, &context).is_ok());
         assert_eq!(
             plan("8b1f3c52-0a4e-4c1d-9a55-3f2d6e8b9c10", &bundle)["status"],
             400
