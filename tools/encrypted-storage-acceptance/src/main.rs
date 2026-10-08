@@ -11,9 +11,104 @@ use std::{
     net::{TcpListener, TcpStream},
     path::PathBuf,
     process::{Child, Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::Duration,
 };
+
+// Usage: <production-native-binary> OR --image <prebuilt-production-image>.
+// Both modes require preloaded postgres:17-alpine. Supplied images are never
+// mounted over or removed by the tool; the caller owns its build/tag lifecycle.
+const POSTGRES_IMAGE: &str = "postgres:17-alpine";
+static CLEANUP_FAILED: AtomicBool = AtomicBool::new(false);
+
+enum Mode {
+    Node(PathBuf),
+    Image(String),
+}
+impl Mode {
+    fn parse(args: &[std::ffi::OsString]) -> Result<Self, &'static str> {
+        match args {
+            [flag, image] if flag == "--image" => {
+                let image = image.to_str().ok_or("image tag must be ASCII")?;
+                if image.is_empty()
+                    || image.starts_with('-')
+                    || !image
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"/._-:@".contains(&b))
+                {
+                    return Err("invalid image tag");
+                }
+                Ok(Self::Image(image.to_owned()))
+            }
+            [binary] if !binary.to_string_lossy().starts_with('-') => Ok(Self::Node(binary.into())),
+            _ => Err("usage: <production-native-binary> OR --image <prebuilt-production-image>"),
+        }
+    }
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Node(_) => "node",
+            Self::Image(_) => "image",
+        }
+    }
+}
+
+fn docker_ok(args: &[&str], operation: &str) {
+    assert!(
+        command("docker")
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success()),
+        "{operation} failed"
+    );
+}
+fn cleanup(args: &[&str]) {
+    if !command("docker")
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+    {
+        CLEANUP_FAILED.store(true, Ordering::SeqCst);
+        eprintln!("owned Docker resource cleanup failed");
+    }
+}
+struct Network {
+    name: String,
+}
+impl Network {
+    fn start() -> Self {
+        let network = Self {
+            name: format!(
+                "passshare1163-encrypted-net-{}",
+                ConnectId::generate().unwrap()
+            ),
+        };
+        docker_ok(
+            &[
+                "network",
+                "create",
+                "--driver",
+                "bridge",
+                "--label",
+                "passshare.todo=1163",
+                "--label",
+                "passshare.fixture=encrypted-storage",
+                &network.name,
+            ],
+            "create owned bridge network",
+        );
+        network
+    }
+}
+impl Drop for Network {
+    fn drop(&mut self) {
+        cleanup(&["network", "rm", &self.name]);
+    }
+}
 
 fn command(program: &str) -> Command {
     let mut command = Command::new(program);
@@ -36,7 +131,7 @@ struct Database {
     port: u16,
 }
 impl Database {
-    fn start() -> Self {
+    fn start(network: &Network) -> Self {
         let db = Self {
             name: format!("passshare1163-encrypted-{}", ConnectId::generate().unwrap()),
             port: port(),
@@ -47,6 +142,9 @@ impl Database {
                 "--detach",
                 "--name",
                 &db.name,
+                "--pull=never",
+                "--network",
+                &network.name,
                 "--label",
                 "passshare.todo=1163",
                 "--label",
@@ -59,7 +157,7 @@ impl Database {
                 "POSTGRES_PASSWORD=passshare",
                 "--env",
                 "POSTGRES_DB=passshare",
-                "postgres:17-alpine",
+                POSTGRES_IMAGE,
             ])
             .stdout(Stdio::null())
             .status()
@@ -122,19 +220,86 @@ impl Database {
 }
 impl Drop for Database {
     fn drop(&mut self) {
-        let _ = command("docker")
-            .args(["rm", "--force", "--volumes", &self.name])
-            .stdout(Stdio::null())
-            .status();
+        cleanup(&["rm", "--force", "--volumes", &self.name]);
     }
 }
+enum HostProcess {
+    Node(Child),
+    Container(String),
+}
 struct Host {
-    child: Child,
+    process: HostProcess,
     port: u16,
 }
 impl Host {
-    fn start(db: &Database, binary: &std::path::Path) -> Self {
+    fn start(db: &Database, network: &Network, mode: &Mode) -> Self {
         let port = port();
+        let host = match mode {
+            Mode::Image(image) => {
+                let host = Self {
+                    process: HostProcess::Container(format!(
+                        "passshare1163-encrypted-api-{}",
+                        ConnectId::generate().unwrap()
+                    )),
+                    port,
+                };
+                let HostProcess::Container(name) = &host.process else {
+                    unreachable!()
+                };
+                // All values are separate CLI arguments. No shell interpolation,
+                // host native mount, native ENV override, or external secrets.
+                docker_ok(
+                    &[
+                        "run",
+                        "--detach",
+                        "--name",
+                        name,
+                        "--pull=never",
+                        "--network",
+                        &network.name,
+                        "--label",
+                        "passshare.todo=1163",
+                        "--label",
+                        "passshare.fixture=encrypted-storage",
+                        "--publish",
+                        &format!("127.0.0.1:{port}:8080"),
+                        "--env",
+                        "APP_ENV=local",
+                        "--env",
+                        "DEV_SEED=false",
+                        "--env",
+                        "PASSSHARE_ENCRYPTED_STORAGE=true",
+                        "--env",
+                        "PORT=8080",
+                        "--env",
+                        &format!(
+                            "DATABASE_URL=postgresql://passshare:passshare@{}:5432/passshare",
+                            db.name
+                        ),
+                        image,
+                    ],
+                    "start owned production API image",
+                );
+                host
+            }
+            Mode::Node(binary) => Self::start_node(db, binary, port),
+        };
+        // Published container ports can accept TCP before the application has
+        // completed migrations. Observe HTTP health from the real entrypoint.
+        assert!(
+            (0..200).any(|_| {
+                if ready(port) {
+                    true
+                } else {
+                    thread::sleep(Duration::from_millis(100));
+                    false
+                }
+            }),
+            "formal API HTTP readiness"
+        );
+        host
+    }
+    fn start_node(db: &Database, binary: &std::path::Path, port: u16) -> Self {
         let backend = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -166,26 +331,60 @@ impl Host {
             .stdout(Stdio::null())
             .spawn()
             .unwrap();
-        let host = Self { child, port };
-        assert!(
-            (0..100).any(|_| {
-                if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                    true
-                } else {
-                    thread::sleep(Duration::from_millis(100));
-                    false
-                }
-            }),
-            "API readiness"
-        );
-        host
+        Self {
+            process: HostProcess::Node(child),
+            port,
+        }
     }
 }
 impl Drop for Host {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        match &mut self.process {
+            HostProcess::Node(child) => {
+                let _ = child.kill();
+                if child.wait().is_err() {
+                    CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                }
+            }
+            HostProcess::Container(name) => cleanup(&["rm", "--force", "--volumes", name]),
+        }
     }
+}
+fn ready(port: u16) -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().unwrap(),
+        Duration::from_millis(500),
+    ) else {
+        return false;
+    };
+    if stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .is_err()
+        || stream
+            .set_write_timeout(Some(Duration::from_millis(500)))
+            .is_err()
+        || write!(
+            stream,
+            "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .is_err()
+    {
+        return false;
+    }
+    let mut bytes = Vec::new();
+    if stream.take(65536).read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    let Some(split) = bytes.windows(4).position(|p| p == b"\r\n\r\n") else {
+        return false;
+    };
+    std::str::from_utf8(&bytes[..split]).is_ok_and(|headers| {
+        headers
+            .lines()
+            .next()
+            .is_some_and(|h| h.split_whitespace().nth(1) == Some("200"))
+    }) && serde_json::from_slice::<Value>(&bytes[split + 4..])
+        .is_ok_and(|body| body["status"] == "ok")
 }
 fn http(port: u16, method: &str, path: &str, headers: &str, body: &Value) -> (u16, Value) {
     let payload = if body.is_null() {
@@ -247,15 +446,44 @@ fn signup(port: u16) -> (String, String, String) {
     )
 }
 fn main() {
-    let binary = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .expect("pass the built production passshare-mutations binary as the first argument")
-        .canonicalize()
-        .expect("production native binary must exist");
-    assert!(binary.is_file(), "production native binary must be a file");
-    let db = Database::start();
-    let mut host = Host::start(&db, &binary);
+    let mode = Mode::parse(&std::env::args_os().skip(1).collect::<Vec<_>>())
+        .unwrap_or_else(|reason| panic!("{reason}"));
+    let mode = match mode {
+        Mode::Node(binary) => {
+            let binary = binary
+                .canonicalize()
+                .expect("production native binary must exist");
+            assert!(binary.is_file(), "production native binary must be a file");
+            Mode::Node(binary)
+        }
+        Mode::Image(image) => {
+            docker_ok(
+                &["image", "inspect", &image],
+                "inspect prebuilt production image",
+            );
+            Mode::Image(image)
+        }
+    };
+    docker_ok(
+        &["image", "inspect", POSTGRES_IMAGE],
+        "inspect preloaded PostgreSQL base image",
+    );
+    let network = Network::start();
+    let db = Database::start(&network);
+    run_acceptance(&db, &network, &mode);
+    drop(db);
+    drop(network);
+    assert!(
+        !CLEANUP_FAILED.load(Ordering::SeqCst),
+        "owned fixture cleanup must succeed"
+    );
+    println!(
+        "encrypted storage mode={} acceptance and owned fixture cleanup passed",
+        mode.label()
+    );
+}
+fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
+    let mut host = Host::start(db, network, mode);
     let p = host.port;
     let (refresh, connect, box_id) = signup(p);
     let (stranger, _, stranger_box) = signup(p);
@@ -645,7 +873,7 @@ fn main() {
     );
     // Restart proves persistence; client decrypts the unchanged opaque body.
     drop(host);
-    host = Host::start(&db, &binary);
+    host = Host::start(db, network, mode);
     let restored = http(host.port, "GET", &path, &headers, &Value::Null);
     assert_eq!(restored.0, 200);
     assert_eq!(
@@ -667,6 +895,29 @@ fn main() {
 mod contract_tests {
     use super::*;
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
+    #[test]
+    fn cli_modes_are_exact_and_image_values_cannot_be_docker_options() {
+        assert!(matches!(
+            Mode::parse(&["native.exe".into()]),
+            Ok(Mode::Node(_))
+        ));
+        assert!(matches!(
+            Mode::parse(&["--image".into(), "passshare1163-api:fixture".into()]),
+            Ok(Mode::Image(_))
+        ));
+        for args in [
+            vec![],
+            vec!["--image"],
+            vec!["--image", "--privileged"],
+            vec!["--image", "tag --env extra"],
+            vec!["--image", "tag", "extra"],
+            vec!["binary", "extra"],
+            vec!["--unknown"],
+        ] {
+            assert!(Mode::parse(&args.into_iter().map(Into::into).collect::<Vec<_>>()).is_err());
+        }
+    }
 
     fn native_plan(context: &ItemContext, envelope: &Value) -> Value {
         passshare_mutations::dispatch(&json!({"command":"encrypted-plan","operation":"put",
