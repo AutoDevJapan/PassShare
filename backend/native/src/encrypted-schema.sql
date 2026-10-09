@@ -210,6 +210,11 @@ BEGIN
   IF EXISTS(SELECT 1 FROM encrypted_item_tombstones WHERE box_id=box AND item_id=item) THEN
     RETURN passshare_encrypted_error(409,'PS015','Deleted item ID cannot be reused');
   END IF;
+  -- A committed PUT may lose its HTTP reply. Accept only the exact stored
+  -- public envelope at the immediately following revision, without a write.
+  IF current_item.revision=previous+1 AND current_item.key_epoch=epoch AND current_item.envelope=body THEN
+    RETURN jsonb_build_object('status',200,'body',current_item.envelope);
+  END IF;
   IF COALESCE(current_item.revision,0)<>previous THEN RETURN passshare_encrypted_error(409,'PS015','Item changed since it was read'); END IF;
   INSERT INTO encrypted_items(box_id,item_id,revision,key_epoch,envelope)
     VALUES(box,item,previous+1,epoch,body)
