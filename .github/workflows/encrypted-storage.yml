@@ -15,6 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: packages/connect-go/go.mod
+          cache: false
+      - name: Compile the Go session acceptance binary
+        working-directory: packages/connect-go
+        env:
+          GOTOOLCHAIN: local
+        run: go test -c -o "$RUNNER_TEMP/passshare-go-session.test"
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
         with:
           version: 10.11.0
@@ -33,10 +42,14 @@ jobs:
         run: docker pull mirror.gcr.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
       - name: Verify the formal Node entrypoint with PostgreSQL and Core encryption
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance backend/native/target/debug/passshare-mutations
+      - name: Verify Go SDK with formal Node and Rust Core
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --go-session "$RUNNER_TEMP/passshare-go-session.test" backend/native/target/debug/passshare-mutations
       - name: Build the actual backend-only distribution image
         run: docker build -t passshare-todo1163-encrypted-api backend
       - name: Verify the distribution image with PostgreSQL and Core encryption
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --image passshare-todo1163-encrypted-api
+      - name: Verify Go SDK with the distribution image and Rust Core
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --go-session "$RUNNER_TEMP/passshare-go-session.test" --image passshare-todo1163-encrypted-api
       - name: Remove the owned API image and verify fixture cleanup
         if: always()
         run: |
