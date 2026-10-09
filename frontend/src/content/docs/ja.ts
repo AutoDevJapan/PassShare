@@ -131,7 +131,7 @@ export const docsJa: LocaleDocs = {
   },
   terms: {
     title: "利用規約",
-    lead: "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。",
+    lead: "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。 運営事業者はAutoDevJapanです。お問い合わせ: contact@autodevjapan.com。",
     sections: [
       {
         id: "acceptance",
@@ -244,7 +244,7 @@ export const docsJa: LocaleDocs = {
         title: "6. 利用者の権利",
         paragraphs: [
           "利用者は自己の個人情報について、開示・訂正・削除を請求できます。",
-          "お問い合わせ: GitHub Issues またはサポート窓口（準備中）。",
+          "お問い合わせ: contact@autodevjapan.com。",
         ],
       },
     ],

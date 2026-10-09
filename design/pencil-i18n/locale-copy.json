@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T17:22:51.960Z",
+  "generatedAt": "2026-10-09T09:03:19.535Z",
   "issue": 130,
   "frameCount": 30,
   "viewports": [
@@ -471,7 +471,7 @@
       "path": "/terms",
       "strings": {
         "docTitle": "利用規約",
-        "docLead": "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。",
+        "docLead": "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。 運営事業者はAutoDevJapanです。お問い合わせ: contact@autodevjapan.com。",
         "docSections": [
           "1. 規約への同意"
         ]
@@ -485,7 +485,7 @@
       "path": "/terms",
       "strings": {
         "docTitle": "利用規約",
-        "docLead": "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。",
+        "docLead": "PassShare サービス（Web ポータル、Desktop、Mobile、拡張機能、Connect API）の利用条件です。 運営事業者はAutoDevJapanです。お問い合わせ: contact@autodevjapan.com。",
         "docSections": [
           "1. 規約への同意"
         ]
@@ -499,7 +499,7 @@
       "path": "/terms",
       "strings": {
         "docTitle": "Terms of service",
-        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API). Operated by AutoDevJapan. Contact: contact@autodevjapan.com.",
         "docSections": [
           "1. Acceptance"
         ]
@@ -513,7 +513,7 @@
       "path": "/terms",
       "strings": {
         "docTitle": "Terms of service",
-        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+        "docLead": "Terms for PassShare (web portal, desktop, mobile, extension, Connect API). Operated by AutoDevJapan. Contact: contact@autodevjapan.com.",
         "docSections": [
           "1. Acceptance"
         ]
@@ -527,7 +527,7 @@
       "path": "/terms",
       "strings": {
         "docTitle": "Условия использования",
-        "docLead": "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API).",
+        "docLead": "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API). Оператор: AutoDevJapan. Контакты: contact@autodevjapan.com.",
         "docSections": [
           "1. Принятие условий"
         ]
@@ -541,7 +541,7 @@
       "path": "/terms",
       "strings": {
         "docTitle": "Условия использования",
-        "docLead": "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API).",
+        "docLead": "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API). Оператор: AutoDevJapan. Контакты: contact@autodevjapan.com.",
         "docSections": [
           "1. Принятие условий"
         ]
