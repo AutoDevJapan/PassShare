@@ -34,6 +34,7 @@ Bearerは既存のセッション用トークンを使用し、Connectトーク�
 |---|---|---|
 | GET | `/boxes/:boxId` | `{mode,keyEpoch}`。互換状態の世代はnull |
 | POST | `/boxes/:boxId/enable` | 本文 `{keyEpoch:1}`／応答 `{mode:"encrypted",keyEpoch:1}`。同じ有効化の再送は成功 |
+| POST | `/boxes/:boxId/setup` | 本文 `{bundle}`／応答 `{mode:"encrypted",keyEpoch:1,bundleVersion:1,bundle}`。空のボックスの有効化と所有者用の暗号化鍵を一度に保存 |
 | GET | `/boxes/:boxId/items?after=:itemId` | `{items:[{itemId,itemVersion,keyEpoch}],nextCursor}`。ID順で最大100件 |
 | GET | `/boxes/:boxId/items/:itemId` | 保存した `EncryptedItem` の全JSON |
 | PUT | `/boxes/:boxId/items/:itemId` | `{expectedVersion,envelope}`。成功は200と保存した全暗号文 |
@@ -53,6 +54,28 @@ JSONのキー順と空白は正規化しますが、各値と暗号文は保持�
 期待する保存先・項目・版・世代を、サーバーの応答だけから信用してはいけません。
 
 所有者キーバンドル（`/boxes/:boxId/owner-key`）の契約は [owner-key-bundle-api.md](owner-key-bundle-api.md) です。
+
+### 初回設定の確定と再送
+
+新しい画面の初回設定には `setup` を使います。端末で生成した所有者用bundleだけを送り、
+暗号化パスワード・生鍵・認証パスワードを本文へ含めません。Rustの既存bundle検査で
+形式・長さ・所有者・ボックス・世代1・未知フィールドを照合します。
+
+PostgreSQLで親ボックスの行をロックし、現在のセッションと所有者の所属を再確認します。
+有効化とbundleの挿入は同じトランザクションです。挿入が失敗したら両方を取り消します。
+既存平文のあるボックスは409 `PS055`で拒否します。旧経路の書込みも同じ親行で直列化します。
+旧有効化APIで空の状態だけが作られていて、暗号文も所有者bundleも無い場合は設定を完了できます。
+
+応答を失った場合は、最初に作ったbundleの全内容をそのまま再送できます。
+現在の世代が1で所有者bundleの版が1、保存値が完全一致するときだけ200を返します。
+項目を保存した後もこの一致した再送は有効です。異なるbundle、置換済みの版、他の所有者の
+bundleや既存暗号文を持つ状態を新しい鍵で上書きしようとする操作は409 `PS015`で拒否します。
+世代が変更された場合は409 `PS056`です。再送時に新しい鍵やsaltを生成し直しません。
+画面の成功には取得し直したbundleを端末で開けることが必要で、HTTP200だけで成功扱いにしません。
+
+独立したRust受入ツールは、正式APIでCookieのCSRF、Connect資格の拒否、途中挿入失敗時の
+全取消、同一再送、別bundleの拒否、再取得した鍵による全JSONの復号、異なる初期鍵の
+同時要求で成功1件・競合1件となることを検査します。実行結果と候補CIは別途記録します。
 
 ## 旧経路との境界と削除
 

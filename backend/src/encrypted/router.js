@@ -45,7 +45,7 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
         const plan = await nativeMutation({ command, operation: name,
           actor: req.auth.userId, session: req.auth.sessionId,
           boxId: req.params.boxId, itemId: req.params.itemId,
-          request: name === "list" ? { after: req.query.after ?? null } : ["enable", "put"].includes(name) ? publicRequest : null });
+          request: name === "list" ? { after: req.query.after ?? null } : ["enable", "put", "setup"].includes(name) ? publicRequest : null });
         if (ownerPut && !plan.requiresReauthentication && Object.hasOwn(req.body,"currentPassword")) {
           throw authHttpError(400,"PS051","Unexpected authentication field on initial key creation");
         }
@@ -79,6 +79,7 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
   }
   router.get("/boxes/:boxId", operation("state"));
   router.post("/boxes/:boxId/enable", csrf, operation("enable"));
+  router.post("/boxes/:boxId/setup", csrf, operation("setup", "encrypted-setup-plan"));
   router.get("/boxes/:boxId/items", operation("list"));
   router.get("/boxes/:boxId/items/:itemId", operation("get"));
   router.put("/boxes/:boxId/items/:itemId", csrf, operation("put"));
