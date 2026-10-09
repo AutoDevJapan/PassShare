@@ -24,6 +24,18 @@ CREATE TABLE IF NOT EXISTS encrypted_items (
   FOREIGN KEY (box_id) REFERENCES connect_vaults(id) ON DELETE CASCADE
 );
 
+-- Deleted IDs stay reserved. Only public CAS metadata is retained, never an
+-- envelope, nonce, ciphertext, plaintext or key. Both parent deletions cascade.
+CREATE TABLE IF NOT EXISTS encrypted_item_tombstones (
+  box_id VARCHAR(26) NOT NULL CHECK (box_id ~ '^[a-z0-9]{26}$')
+    REFERENCES encrypted_box_state(box_id) ON DELETE CASCADE,
+  item_id VARCHAR(26) NOT NULL CHECK (item_id ~ '^[a-z0-9]{26}$'),
+  last_live_version BIGINT NOT NULL CHECK (last_live_version BETWEEN 1 AND 9007199254740991),
+  key_epoch BIGINT NOT NULL CHECK (key_epoch BETWEEN 1 AND 9007199254740991),
+  PRIMARY KEY (box_id,item_id),
+  FOREIGN KEY (box_id) REFERENCES connect_vaults(id) ON DELETE CASCADE
+);
+
 -- Opaque, client-wrapped box key for ONE owner. Private to that account even in
 -- a shared box. The server holds no password, raw key or KDF parameters.
 CREATE TABLE IF NOT EXISTS encrypted_owner_keys (
@@ -94,7 +106,8 @@ BEGIN
   -- An old owner's bundle or any encrypted content must not be orphaned by a
   -- fresh key. Only an empty legacy activation without any bundle can recover.
   IF EXISTS(SELECT 1 FROM encrypted_owner_keys WHERE box_id=box)
-      OR EXISTS(SELECT 1 FROM encrypted_items WHERE box_id=box) THEN
+      OR EXISTS(SELECT 1 FROM encrypted_items WHERE box_id=box)
+      OR EXISTS(SELECT 1 FROM encrypted_item_tombstones WHERE box_id=box) THEN
     RETURN passshare_encrypted_error(409,'PS015','Existing encrypted content requires its original key');
   END IF;
   IF EXISTS(SELECT 1 FROM connect_items WHERE vault_id=box) THEN
@@ -125,6 +138,7 @@ DECLARE
   membership_role TEXT;
   active_epoch BIGINT;
   current_item encrypted_items%ROWTYPE;
+  tombstone encrypted_item_tombstones%ROWTYPE;
   result JSONB;
 BEGIN
   PERFORM id FROM connect_vaults WHERE id=box FOR UPDATE;
@@ -165,11 +179,37 @@ BEGIN
     IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS012','Item not found'); END IF;
     RETURN jsonb_build_object('status',200,'body',current_item.envelope);
   END IF;
+  IF operation='delete' THEN
+    IF box IS NULL OR box !~ '^[a-z0-9]{26}$' OR item IS NULL OR item !~ '^[a-z0-9]{26}$'
+        OR previous IS NULL OR previous NOT BETWEEN 1 AND 9007199254740991
+        OR epoch IS NULL OR epoch NOT BETWEEN 1 AND 9007199254740991 OR body IS NOT NULL THEN
+      RETURN passshare_encrypted_error(400,'PS051','Invalid encrypted storage request');
+    END IF;
+    IF membership_role NOT IN ('owner','member') THEN RETURN passshare_encrypted_error(403,'PS032','Write access required'); END IF;
+    IF epoch IS DISTINCT FROM active_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+    IF current_item.item_id IS NOT NULL THEN
+      IF current_item.key_epoch<>active_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+      IF current_item.revision<>previous THEN RETURN passshare_encrypted_error(409,'PS015','Item changed since it was read'); END IF;
+      DELETE FROM encrypted_items WHERE box_id=box AND item_id=item;
+      -- If insertion fails, the preceding deletion is rolled back as well.
+      INSERT INTO encrypted_item_tombstones(box_id,item_id,last_live_version,key_epoch)
+        VALUES(box,item,current_item.revision,current_item.key_epoch);
+      RETURN jsonb_build_object('status',204);
+    END IF;
+    SELECT * INTO tombstone FROM encrypted_item_tombstones WHERE box_id=box AND item_id=item;
+    IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS044','Item not found'); END IF;
+    IF tombstone.key_epoch<>active_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+    IF tombstone.last_live_version<>previous THEN RETURN passshare_encrypted_error(409,'PS015','Item changed since it was read'); END IF;
+    RETURN jsonb_build_object('status',204);
+  END IF;
   IF operation<>'put' OR previous IS NULL OR previous<0 OR previous>=9007199254740991 OR body IS NULL THEN
     RETURN passshare_encrypted_error(400,'PS051','Invalid encrypted storage request');
   END IF;
   IF membership_role NOT IN ('owner','member') THEN RETURN passshare_encrypted_error(403,'PS032','Write access required'); END IF;
   IF epoch IS DISTINCT FROM active_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+  IF EXISTS(SELECT 1 FROM encrypted_item_tombstones WHERE box_id=box AND item_id=item) THEN
+    RETURN passshare_encrypted_error(409,'PS015','Deleted item ID cannot be reused');
+  END IF;
   IF COALESCE(current_item.revision,0)<>previous THEN RETURN passshare_encrypted_error(409,'PS015','Item changed since it was read'); END IF;
   INSERT INTO encrypted_items(box_id,item_id,revision,key_epoch,envelope)
     VALUES(box,item,previous+1,epoch,body)

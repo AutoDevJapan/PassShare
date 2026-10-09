@@ -98,6 +98,16 @@ pub fn plan(input: &Value) -> Value {
             };
             (json!(item), Value::Null, Value::Null, Value::Null)
         }
+        "delete" if exact_fields(request, &["expectedVersion", "keyEpoch"]) => {
+            let (Some(item), Some(previous), Some(epoch)) = (
+                id(&input["itemId"]),
+                number(&request["expectedVersion"], false),
+                number(&request["keyEpoch"], false),
+            ) else {
+                return failure();
+            };
+            (json!(item), json!(previous), Value::Null, json!(epoch))
+        }
         "put" if exact_fields(request, &["expectedVersion", "envelope"]) => {
             let Some(item) = id(&input["itemId"]) else {
                 return failure();
@@ -126,6 +136,82 @@ pub fn plan(input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delete_plans_exact_metadata_without_an_envelope() {
+        let mut input = fixture();
+        input["operation"] = json!("delete");
+        for version in [1, MAX_INTEGER] {
+            input["request"] = json!({"expectedVersion":version,"keyEpoch":MAX_INTEGER});
+            let result = plan(&input);
+            assert_eq!(result["status"], 200);
+            assert_eq!(
+                result["body"]["params"],
+                json!([
+                    "actor",
+                    "session",
+                    input["boxId"],
+                    "delete",
+                    input["itemId"],
+                    version,
+                    null,
+                    MAX_INTEGER
+                ])
+            );
+            assert_eq!(result["body"]["sql"], plan(&fixture())["body"]["sql"]);
+        }
+    }
+    #[test]
+    fn delete_rejects_missing_extra_wrong_type_and_unsafe_metadata() {
+        let mut input = fixture();
+        input["operation"] = json!("delete");
+        input["request"] = json!({"expectedVersion":1,"keyEpoch":1});
+        for field in ["expectedVersion", "keyEpoch"] {
+            for value in [
+                json!(0),
+                json!(-1),
+                json!(1.0),
+                json!("1"),
+                json!(true),
+                Value::Null,
+                json!(MAX_INTEGER + 1),
+                json!(u64::MAX),
+            ] {
+                let mut changed = input.clone();
+                changed["request"][field] = value;
+                assert_eq!(plan(&changed)["status"], 400, "{field}");
+            }
+            let mut changed = input.clone();
+            changed["request"].as_object_mut().unwrap().remove(field);
+            assert_eq!(plan(&changed)["status"], 400);
+        }
+        for field in ["envelope", "ciphertext", "plaintext", "key"] {
+            let mut changed = input.clone();
+            changed["request"][field] = json!("forbidden");
+            assert_eq!(plan(&changed)["status"], 400);
+        }
+        for field in ["boxId", "itemId"] {
+            for value in [
+                json!("B".repeat(26)),
+                json!("i".repeat(25)),
+                json!("../item"),
+                Value::Null,
+            ] {
+                let mut changed = input.clone();
+                changed[field] = value;
+                assert_eq!(plan(&changed)["status"], 400);
+            }
+        }
+        for request in [Value::Null, json!([]), json!(1)] {
+            let mut changed = input.clone();
+            changed["request"] = request;
+            assert_eq!(plan(&changed)["status"], 400);
+        }
+        for field in ["actor", "session"] {
+            let mut changed = input.clone();
+            changed[field] = json!("");
+            assert_eq!(plan(&changed)["status"], 400);
+        }
+    }
     fn fixture() -> Value {
         // Public synthetic headers only; real Core crypto lives in the separate
         // acceptance tool. No encryption algorithm is duplicated on the host.

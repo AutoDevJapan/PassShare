@@ -196,7 +196,10 @@ impl Database {
         db
     }
     fn sql(&self, sql: &str) -> String {
-        let output = command("docker")
+        self.sql_before(sql, std::time::Instant::now() + Duration::from_secs(15))
+    }
+    fn sql_before(&self, sql: &str, deadline: std::time::Instant) -> String {
+        let mut child = command("docker")
             .args([
                 "exec",
                 &self.name,
@@ -214,14 +217,64 @@ impl Database {
                 "-c",
                 sql,
             ])
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "fixture SQL failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut readers = Vec::new();
+        for (is_stdout, pipe) in [
+            (true, Box::new(stdout) as Box<dyn Read + Send>),
+            (false, Box::new(stderr) as Box<dyn Read + Send>),
+        ] {
+            let sender = sender.clone();
+            readers.push(thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let result = pipe.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes);
+                let _ = sender.send((is_stdout, result, bytes));
+            }));
+        }
+        drop(sender);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                if !reap_before(
+                    &mut child,
+                    std::time::Instant::now() + Duration::from_secs(2),
+                ) {
+                    CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                }
+                panic!("fixture SQL exceeded its deadline");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let mut output = None;
+        for _ in 0..2 {
+            let (is_stdout, result, bytes) = receiver
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("fixture SQL output drain exceeded deadline");
+            result.expect("fixture SQL output read failed");
+            assert!(
+                bytes.len() <= 8 * 1024 * 1024,
+                "fixture SQL output exceeded bound"
+            );
+            if is_stdout {
+                output = Some(bytes);
+            }
+        }
+        for reader in readers {
+            reader.join().expect("fixture SQL reader failed");
+        }
+        assert!(status.success(), "fixture SQL failed");
+        String::from_utf8(output.unwrap())
+            .unwrap()
+            .trim()
+            .to_owned()
     }
 }
 impl Drop for Database {
@@ -687,6 +740,14 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         .unwrap_err();
     assert_eq!(sdk_conflict.status(), Some(409));
     assert_eq!(sdk_conflict.code(), Some("PS015"));
+    accept_encrypted_delete(
+        db,
+        p,
+        (&refresh, &connect, &stranger, &stranger_box),
+        &context,
+        &item,
+        &key,
+    );
     let (status, stored) = http(p, "GET", &path, &headers, &Value::Null);
     assert_eq!(status, 200);
     assert_eq!(stored, serde_json::to_value(&envelope).unwrap());
@@ -1279,10 +1340,34 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         .0,
         200
     );
+    assert_eq!(
+        http_bytes(
+            p,
+            "DELETE",
+            &format!("{private_root}/items/{}", context.item_id),
+            &private_headers,
+            &json!({"expectedVersion":1,"keyEpoch":1})
+        ),
+        (204, Vec::new())
+    );
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_item_tombstones WHERE box_id='{private_box}'"
+        )),
+        "1"
+    );
+    let retained_context = ItemContext {
+        item_id: ConnectId::generate().unwrap(),
+        ..private_context.clone()
+    };
+    private_item["id"] = json!(retained_context.item_id);
+    assert_eq!(http(p,"PUT",&format!("{private_root}/items/{}",retained_context.item_id),&private_headers,
+        &json!({"expectedVersion":0,"envelope":key.encrypt_item(&private_item,&retained_context).unwrap()})).0,200);
+    assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_items WHERE box_id='{private_box}')::text || ':' || (SELECT count(*) FROM encrypted_item_tombstones WHERE box_id='{private_box}')::text")),"1:1", "both live ciphertext and deletion metadata must exist before cascade");
     db.sql(&format!(
         "DELETE FROM connect_vaults WHERE id='{private_box}'"
     ));
-    assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_box_state WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_items WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{private_box}')")),"0");
+    assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_box_state WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_items WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{private_box}')+(SELECT count(*) FROM encrypted_item_tombstones WHERE box_id='{private_box}')")),"0");
     assert_eq!(
         db.sql(&format!(
             "SELECT count(*) FROM encrypted_items WHERE box_id='{box_id}'"
@@ -1367,6 +1452,545 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         401
     );
     println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation, private-box cascade, and owner key bundle unwrap/CAS/transfer/restart/cascade passed");
+}
+
+fn accept_encrypted_delete(
+    db: &Database,
+    p: u16,
+    credentials: (&str, &str, &str, &str),
+    original_context: &ItemContext,
+    original_item: &Value,
+    key: &PasswordBoxKey,
+) {
+    let (session, connect, stranger, stranger_box) = credentials;
+    let box_id = original_context.password_box_id.as_str();
+    let root = format!("/api/encrypted/boxes/{box_id}");
+    let headers = format!("Authorization: Bearer {session}\r\n");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let sdk =
+        passshare_connect::EncryptedSessionClient::new(&format!("http://127.0.0.1:{p}"), session)
+            .unwrap();
+    // Retain the complete original DTO and arbitrary nested values. Every new
+    // nonce/key is generated by real Core, never reused static ciphertext.
+    let context = ItemContext {
+        item_id: ConnectId::generate().unwrap(),
+        ..original_context.clone()
+    };
+    let item_id = context.item_id.as_str();
+    let path = format!("{root}/items/{item_id}");
+    let mut item = original_item.clone();
+    item["id"] = json!(item_id);
+    if item.get("attachments").is_none() {
+        item["attachments"] = json!([{"id":"synthetic-attachment","name":"retained.bin","size":3}]);
+    }
+    if item.get("payload").is_none() {
+        item["payload"] = json!({"ordered":[3,1,2],"unknown":{"null":null,"value":ConnectId::generate().unwrap()}});
+    }
+    let envelope = key.encrypt_item(&item, &context).unwrap();
+    runtime
+        .block_on(sdk.put_item(box_id, item_id, 0, &envelope))
+        .unwrap();
+    let fetched = runtime.block_on(sdk.get_item(box_id, item_id)).unwrap();
+    assert_eq!(key.decrypt_item(&fetched, &context).unwrap(), item);
+    let deletion = json!({"expectedVersion":1,"keyEpoch":1});
+    let live_snapshot = || {
+        db.sql(&format!(
+        "SELECT to_jsonb(i)::text FROM encrypted_items i WHERE box_id='{box_id}' AND item_id='{item_id}'"
+    ))
+    };
+    let before = live_snapshot();
+    let reject = |body: &Value, status, code| {
+        let reply = http(p, "DELETE", &path, &headers, body);
+        assert_eq!(reply.0, status);
+        assert_eq!(reply.1["error"], code);
+        assert_eq!(
+            live_snapshot(),
+            before,
+            "rejection must preserve the complete ciphertext row"
+        );
+    };
+    reject(&json!({"expectedVersion":2,"keyEpoch":1}), 409, "PS015");
+    reject(&json!({"expectedVersion":1,"keyEpoch":2}), 409, "PS056");
+    for body in [
+        json!({"expectedVersion":0,"keyEpoch":1}),
+        json!({"expectedVersion":9007199254740992u64,"keyEpoch":1}),
+        json!({"expectedVersion":1,"keyEpoch":0}),
+        json!({"expectedVersion":1,"keyEpoch":9007199254740992u64}),
+        json!({"expectedVersion":"1","keyEpoch":1}),
+        json!({"expectedVersion":1,"keyEpoch":true}),
+        json!({"expectedVersion":1}),
+        json!({"expectedVersion":1,"keyEpoch":1,"envelope":envelope}),
+        json!({"expectedVersion":1,"keyEpoch":1,"plaintext":"forbidden"}),
+    ] {
+        reject(&body, 400, "PS051");
+    }
+    for (credentials, status) in [
+        (String::new(), 401),
+        (format!("Authorization: Bearer {connect}\r\n"), 401),
+        (format!("Authorization: Bearer {stranger}\r\n"), 403),
+        (format!("Cookie: passshare_session={session}\r\n"), 403),
+        (
+            format!("Cookie: passshare_session={session}\r\nx-passshare-client: mobile\r\n"),
+            403,
+        ),
+        (
+            format!("Cookie: passshare_session={session}\r\nx-passshare-client: extension\r\n"),
+            403,
+        ),
+    ] {
+        assert_eq!(http(p, "DELETE", &path, &credentials, &deletion).0, status);
+        assert_eq!(live_snapshot(), before);
+    }
+    let missing = ConnectId::generate().unwrap();
+    let error = runtime
+        .block_on(sdk.delete_item(box_id, missing.as_str(), 1, 1))
+        .unwrap_err();
+    assert_eq!((error.status(), error.code()), (Some(404), Some("PS044")));
+
+    // Synthetic role/session state also exercises the DB recheck directly,
+    // bypassing middleware claims without bypassing the operation's locks.
+    let actor = db.sql(&format!(
+        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{box_id}' AND role='owner'"
+    ));
+    let session_id = db.sql(&format!(
+        "SELECT id::text FROM sessions WHERE user_id='{actor}' ORDER BY created_at LIMIT 1"
+    ));
+    let sql_operation = format!("SELECT passshare_encrypted_operation('{actor}','{session_id}','{box_id}','delete','{item_id}',1,NULL,1)");
+    let reply: Value = serde_json::from_str(&db.sql(&format!("BEGIN; UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id='{session_id}'; {sql_operation}; ROLLBACK;"))).unwrap();
+    assert_eq!(
+        (reply["status"].as_u64(), reply["code"].as_str()),
+        (Some(401), Some("PS024"))
+    );
+    let reply: Value = serde_json::from_str(&db.sql(&format!("BEGIN; DELETE FROM vault_memberships WHERE vault_id='{box_id}' AND user_id='{actor}'; {sql_operation}; ROLLBACK;"))).unwrap();
+    assert_eq!(
+        (reply["status"].as_u64(), reply["code"].as_str()),
+        (Some(403), Some("PS016"))
+    );
+    assert_eq!(live_snapshot(), before);
+    let member = db.sql(&format!("SELECT user_id::text FROM vault_memberships WHERE vault_id='{stranger_box}' AND role='owner'"));
+    let member_headers = format!("Authorization: Bearer {stranger}\r\n");
+    db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES('{member}','{box_id}','member')"));
+    assert_eq!(http(p, "DELETE", &path, &member_headers, &deletion).0, 403);
+    db.sql(&format!("UPDATE vault_memberships SET confirmed_at=NOW(),role='viewer' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+    let reply = http(p, "DELETE", &path, &member_headers, &deletion);
+    assert_eq!((reply.0, reply.1["error"].as_str()), (403, Some("PS032")));
+    assert_eq!(live_snapshot(), before);
+    db.sql(&format!(
+        "DELETE FROM vault_memberships WHERE user_id='{member}' AND vault_id='{box_id}'"
+    ));
+
+    // Direct SQL fault injection is SYNTHETIC fixture setup only. A tombstone
+    // insert trigger fails after the function has executed the live-row DELETE.
+    // This proves transactional rollback, not an actual production outage.
+    db.sql(&format!("CREATE FUNCTION passshare_delete_fault() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN IF NEW.box_id='{box_id}' AND NEW.item_id='{item_id}' THEN RAISE EXCEPTION 'synthetic tombstone insert failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER passshare_delete_fault BEFORE INSERT ON encrypted_item_tombstones FOR EACH ROW EXECUTE FUNCTION passshare_delete_fault();"));
+    reject(&deletion, 503, "PS019");
+    assert_eq!(db.sql(&format!("SELECT count(*) FROM encrypted_item_tombstones WHERE box_id='{box_id}' AND item_id='{item_id}'")), "0");
+    let fetched = runtime.block_on(sdk.get_item(box_id, item_id)).unwrap();
+    assert_eq!(key.decrypt_item(&fetched, &context).unwrap(), item);
+    db.sql("DROP TRIGGER passshare_delete_fault ON encrypted_item_tombstones; DROP FUNCTION passshare_delete_fault();");
+
+    // State/row epoch inconsistencies are also synthetic setup, never a claim
+    // that rotation exists. Both sides must match the active epoch to delete.
+    db.sql(&format!(
+        "UPDATE encrypted_box_state SET key_epoch=2 WHERE box_id='{box_id}'"
+    ));
+    reject(&json!({"expectedVersion":1,"keyEpoch":2}), 409, "PS056");
+    db.sql(&format!(
+        "UPDATE encrypted_box_state SET key_epoch=1 WHERE box_id='{box_id}'"
+    ));
+
+    // DB constraints defend direct metadata writes independently of the HTTP
+    // planner. All statements here touch only this disposable fixture's box.
+    for values in [
+        format!("'{box_id}','{item_id}',0,1"),
+        format!("'{box_id}','{item_id}',9007199254740992,1"),
+        format!("'{box_id}','{item_id}',1,0"),
+        format!("'{box_id}','{item_id}',1,9007199254740992"),
+        format!("'{box_id}','INVALID',1,1"),
+        format!("'INVALID','{item_id}',1,1"),
+    ] {
+        db.sql(&format!("DO $$ BEGIN BEGIN INSERT INTO encrypted_item_tombstones(box_id,item_id,last_live_version,key_epoch) VALUES({values}); RAISE EXCEPTION 'invalid tombstone accepted'; EXCEPTION WHEN check_violation THEN NULL; END; END $$;"));
+    }
+    runtime
+        .block_on(sdk.delete_item(box_id, item_id, 1, 1))
+        .unwrap();
+    let error = runtime.block_on(sdk.get_item(box_id, item_id)).unwrap_err();
+    assert_eq!(
+        (error.status(), error.code()),
+        (Some(404), Some("PS012")),
+        "GET retains its existing error code"
+    );
+    assert!(!runtime
+        .block_on(sdk.list(box_id, None))
+        .unwrap()
+        .items
+        .iter()
+        .any(|entry| entry.item_id.as_str() == item_id));
+    assert!(live_snapshot().is_empty());
+    let tombstone: Value = serde_json::from_str(&db.sql(&format!(
+        "SELECT to_jsonb(t)::text FROM encrypted_item_tombstones t WHERE box_id='{box_id}' AND item_id='{item_id}'"
+    ))).unwrap();
+    assert_eq!(
+        tombstone,
+        json!({"box_id":box_id,"item_id":item_id,"last_live_version":1,"key_epoch":1})
+    );
+    assert_eq!(db.sql("SELECT string_agg(column_name,',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='encrypted_item_tombstones'"), "box_id,item_id,last_live_version,key_epoch", "no envelope, nonce, secret, ciphertext or key column");
+    // The SDK accepts the replay, and the independent raw HTTP helper observes
+    // that the formal Node adapter sends exactly zero bytes after its headers.
+    runtime
+        .block_on(sdk.delete_item(box_id, item_id, 1, 1))
+        .unwrap();
+    assert_eq!(
+        http_bytes(p, "DELETE", &path, &headers, &deletion),
+        (204, Vec::new())
+    );
+    let csrf = ConnectId::generate().unwrap();
+    let cookie = format!(
+        "Cookie: passshare_session={session}; passshare_csrf={csrf}\r\nx-csrf-token: {csrf}\r\n"
+    );
+    assert_eq!(
+        http_bytes(p, "DELETE", &path, &cookie, &deletion),
+        (204, Vec::new())
+    );
+    for (version, epoch, code) in [(2, 1, "PS015"), (1, 2, "PS056")] {
+        let error = runtime
+            .block_on(sdk.delete_item(box_id, item_id, version, epoch))
+            .unwrap_err();
+        assert_eq!((error.status(), error.code()), (Some(409), Some(code)));
+    }
+    let error = runtime
+        .block_on(sdk.put_item(box_id, item_id, 0, &envelope))
+        .unwrap_err();
+    assert_eq!((error.status(), error.code()), (Some(409), Some("PS015")));
+    let updated_context = ItemContext {
+        item_version: 2,
+        ..context.clone()
+    };
+    let mut updated_item = item.clone();
+    updated_item["version"] = json!(2);
+    let updated_envelope = key.encrypt_item(&updated_item, &updated_context).unwrap();
+    let error = runtime
+        .block_on(sdk.put_item(box_id, item_id, 1, &updated_envelope))
+        .unwrap_err();
+    assert_eq!((error.status(), error.code()), (Some(409), Some("PS015")));
+    db.sql(&format!(
+        "UPDATE encrypted_box_state SET key_epoch=2 WHERE box_id='{box_id}'"
+    ));
+    let error = runtime
+        .block_on(sdk.delete_item(box_id, item_id, 1, 2))
+        .unwrap_err();
+    assert_eq!(
+        (error.status(), error.code()),
+        (Some(409), Some("PS056")),
+        "old tombstone must not replay in a new epoch"
+    );
+    db.sql(&format!(
+        "UPDATE encrypted_box_state SET key_epoch=1 WHERE box_id='{box_id}'"
+    ));
+    assert_eq!(
+        runtime.block_on(sdk.state(box_id)).unwrap(),
+        passshare_connect::BoxState::Encrypted { key_epoch: 1 }
+    );
+    assert_eq!(
+        http(
+            p,
+            "GET",
+            &format!("/v1/vaults/{box_id}/items"),
+            &format!("Authorization: Bearer {connect}\r\n"),
+            &Value::Null
+        )
+        .0,
+        409
+    );
+    let retained: Value = serde_json::from_str(&db.sql(&format!("SELECT to_jsonb(t)::text FROM encrypted_item_tombstones t WHERE box_id='{box_id}' AND item_id='{item_id}'"))).unwrap();
+    assert_eq!(
+        retained, tombstone,
+        "replays and conflicts leave metadata unchanged"
+    );
+
+    // Both HTTP requests begin from one barrier with the same live revision.
+    // Only one wins; a winning update must be decryptable as the complete DTO,
+    // and a winning delete must leave a tombstone and no live ciphertext.
+    let race_context = ItemContext {
+        item_id: ConnectId::generate().unwrap(),
+        ..context.clone()
+    };
+    let race_id = race_context.item_id.as_str();
+    let race_path = format!("{root}/items/{race_id}");
+    let mut race_item = item.clone();
+    race_item["id"] = json!(race_id);
+    let race_envelope = key.encrypt_item(&race_item, &race_context).unwrap();
+    runtime
+        .block_on(sdk.put_item(box_id, race_id, 0, &race_envelope))
+        .unwrap();
+    let race_next_context = ItemContext {
+        item_version: 2,
+        ..race_context.clone()
+    };
+    let mut race_next_item = race_item.clone();
+    race_next_item["version"] = json!(2);
+    let race_next_envelope = key
+        .encrypt_item(&race_next_item, &race_next_context)
+        .unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let requests = [
+        ("DELETE", deletion.clone()),
+        (
+            "PUT",
+            json!({"expectedVersion":1,"envelope":race_next_envelope}),
+        ),
+    ];
+    let handles = requests
+        .into_iter()
+        .map(|(method, body)| {
+            let path = race_path.clone();
+            let headers = headers.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                http(p, method, &path, &headers, &body)
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    let outcomes = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect::<Vec<_>>();
+    let raced_live = runtime.block_on(sdk.get_item(box_id, race_id));
+    let raced_tombstone = db.sql(&format!("SELECT last_live_version::text || ':' || key_epoch::text FROM encrypted_item_tombstones WHERE box_id='{box_id}' AND item_id='{race_id}'"));
+    match (outcomes[0].0, outcomes[1].0) {
+        (204, 409) => {
+            assert!(outcomes[0].1.is_null());
+            assert_eq!(outcomes[1].1["error"], "PS015");
+            assert_eq!(raced_live.unwrap_err().status(), Some(404));
+            assert_eq!(raced_tombstone, "1:1");
+            assert!(!runtime
+                .block_on(sdk.list(box_id, None))
+                .unwrap()
+                .items
+                .iter()
+                .any(|entry| entry.item_id.as_str() == race_id));
+        }
+        (409, 200) => {
+            assert_eq!(outcomes[0].1["error"], "PS015");
+            let stored = raced_live.unwrap();
+            assert_eq!(stored, race_next_envelope);
+            assert_eq!(
+                key.decrypt_item(&stored, &race_next_context).unwrap(),
+                race_next_item
+            );
+            assert!(raced_tombstone.is_empty());
+            runtime
+                .block_on(sdk.delete_item(box_id, race_id, 2, 1))
+                .unwrap();
+        }
+        statuses => panic!("delete/update CAS must have one winner: {statuses:?}"),
+    }
+    assert_eq!(db.sql(&format!("SELECT count(*) FROM encrypted_items WHERE box_id='{box_id}' AND item_id IN ('{item_id}','{race_id}')")), "0");
+    // A currently confirmed member can delete, including an exact replay. Role
+    // removal then denies the same replay despite the matching tombstone.
+    db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role,confirmed_at) VALUES('{member}','{box_id}','member',NOW())"));
+    let member_context = ItemContext {
+        item_id: ConnectId::generate().unwrap(),
+        ..context.clone()
+    };
+    let mut member_item = item.clone();
+    member_item["id"] = json!(member_context.item_id);
+    let member_envelope = key.encrypt_item(&member_item, &member_context).unwrap();
+    runtime
+        .block_on(sdk.put_item(box_id, member_context.item_id.as_str(), 0, &member_envelope))
+        .unwrap();
+    let member_path = format!("{root}/items/{}", member_context.item_id);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let concurrent = (0..2)
+        .map(|_| {
+            let barrier = barrier.clone();
+            let path = member_path.clone();
+            let headers = member_headers.clone();
+            let body = deletion.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                http_bytes(p, "DELETE", &path, &headers, &body)
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    for response in concurrent {
+        assert_eq!(response.join().unwrap(), (204, Vec::new()));
+    }
+    assert_eq!(db.sql(&format!("SELECT count(*) FROM encrypted_item_tombstones WHERE box_id='{box_id}' AND item_id='{}'",member_context.item_id)),"1");
+    db.sql(&format!(
+        "DELETE FROM vault_memberships WHERE user_id='{member}' AND vault_id='{box_id}'"
+    ));
+    assert_eq!(
+        http(p, "DELETE", &member_path, &member_headers, &deletion).0,
+        403
+    );
+    accept_waiting_delete_revocation(db, p, key, original_item);
+    println!("encrypted delete: SDK 204, empty wire reply, full DTO preservation, strict metadata, auth/CSRF, synthetic rollback/epoch/DB constraints, GET/list absence, replay, reserved ID, encrypted boundary and synchronized delete/update CAS passed");
+}
+
+struct HeldBox {
+    child: Child,
+}
+impl HeldBox {
+    fn start(db: &Database, box_id: &str, label: &str) -> Self {
+        let mut child = command("docker")
+            .args([
+                "exec",
+                "-i",
+                "--env",
+                &format!("PGAPPNAME={label}"),
+                &db.name,
+                "psql",
+                "-X",
+                "-qAt",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                "passshare",
+                "-d",
+                "passshare",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        writeln!(child.stdin.as_mut().unwrap(), "SET statement_timeout=12000; SET idle_in_transaction_session_timeout=15000; BEGIN; SELECT id FROM connect_vaults WHERE id='{box_id}' FOR UPDATE;").unwrap();
+        child.stdin.as_mut().unwrap().flush().unwrap();
+        Self { child }
+    }
+    fn commit(&mut self) {
+        writeln!(self.child.stdin.as_mut().unwrap(), "COMMIT;\\q").unwrap();
+        self.child.stdin.as_mut().unwrap().flush().unwrap();
+        drop(self.child.stdin.take());
+    }
+}
+impl Drop for HeldBox {
+    fn drop(&mut self) {
+        if let Some(mut stdin) = self.child.stdin.take() {
+            let _ = writeln!(stdin, "ROLLBACK;\\q");
+        }
+        if !reap_before(
+            &mut self.child,
+            std::time::Instant::now() + Duration::from_secs(3),
+        ) {
+            let _ = self.child.kill();
+            if !reap_before(
+                &mut self.child,
+                std::time::Instant::now() + Duration::from_secs(2),
+            ) {
+                CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                eprintln!("owned SQL holder did not exit within cleanup deadline");
+            }
+        }
+    }
+}
+fn reap_before(child: &mut Child, deadline: std::time::Instant) -> bool {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Err(_) => return false,
+            Ok(None) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+fn wait_db(db: &Database, sql: &str) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if db.sql_before(sql, deadline) == "t" {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+fn accept_waiting_delete_revocation(db: &Database, p: u16, key: &PasswordBoxKey, original: &Value) {
+    let (session, _, box_id) = signup(p);
+    let headers = format!("Authorization: Bearer {session}\r\n");
+    let root = format!("/api/encrypted/boxes/{box_id}");
+    assert_eq!(
+        http(
+            p,
+            "POST",
+            &format!("{root}/enable"),
+            &headers,
+            &json!({"keyEpoch":1})
+        )
+        .0,
+        200
+    );
+    let context = ItemContext {
+        password_box_id: box_id.parse().unwrap(),
+        item_id: ConnectId::generate().unwrap(),
+        item_version: 1,
+        key_epoch: 1,
+    };
+    let mut item = original.clone();
+    item["id"] = json!(context.item_id);
+    item["vault"]["id"] = json!(box_id);
+    item["version"] = json!(1);
+    let envelope = key.encrypt_item(&item, &context).unwrap();
+    let path = format!("{root}/items/{}", context.item_id);
+    assert_eq!(
+        http(
+            p,
+            "PUT",
+            &path,
+            &headers,
+            &json!({"expectedVersion":0,"envelope":envelope})
+        )
+        .0,
+        200
+    );
+    let label = format!("passshare-delete-held-{}", context.item_id);
+    let mut held = HeldBox::start(db, &box_id, &label);
+    assert!(wait_db(db,&format!("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='{label}' AND state='idle in transaction')")),"synthetic holder must have acquired the box lock");
+    let request = thread::spawn(move || {
+        http(
+            p,
+            "DELETE",
+            &path,
+            &headers,
+            &json!({"expectedVersion":1,"keyEpoch":1}),
+        )
+    });
+    let waiting=wait_db(db,"SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%SELECT passshare_encrypted_operation(%')");
+    // Synthetic direct session revocation, committed while DELETE demonstrably
+    // waits before its authoritative session check. This is not a logout claim.
+    db.sql(&format!("DELETE FROM sessions WHERE user_id IN (SELECT user_id FROM vault_memberships WHERE vault_id='{box_id}' AND role='owner')"));
+    held.commit();
+    let reply = request.join().unwrap();
+    assert!(
+        waiting,
+        "the API must be waiting on the held DB lock before revocation"
+    );
+    assert_eq!((reply.0, reply.1["error"].as_str()), (401, Some("PS024")));
+    let stored: Value = serde_json::from_str(&db.sql(&format!(
+        "SELECT envelope::text FROM encrypted_items WHERE box_id='{box_id}' AND item_id='{}'",
+        context.item_id
+    )))
+    .unwrap();
+    assert_eq!(stored, serde_json::to_value(envelope).unwrap());
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_item_tombstones WHERE box_id='{box_id}'"
+        )),
+        "0"
+    );
+    println!("encrypted delete: DB-observed waiter rejects committed synthetic session revocation and preserves ciphertext without a tombstone");
 }
 
 fn accept_atomic_setup(db: &Database, p: u16) {
