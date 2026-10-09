@@ -229,9 +229,10 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     let identity = AccountIdentity::generate(context.clone()).unwrap();
     let public = serde_json::to_value(identity.public_identity()).unwrap();
     // Deliberately independent of the account login credential.
-    let encryption_password = "synthetic-identity-encryption-only-Aa!";
+    let encryption_password = BASE64.encode(generate_salt().unwrap());
+    assert_ne!(encryption_password, a.password);
     let salt = generate_salt().unwrap();
-    let master = owner_master(encryption_password, &salt).unwrap();
+    let master = owner_master(&encryption_password, &salt).unwrap();
     let sealed = bundle(&identity, &master, salt);
     let initial = request(&public, &sealed, 0, None);
     let native = |body: &Value| {
@@ -442,9 +443,11 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     );
     rejected(db, p, &a, &a.headers(), &version_rotation, 409);
 
-    let next_password = "synthetic-independent-rewrap-Aa!";
+    let next_password = BASE64.encode(generate_salt().unwrap());
+    assert_ne!(next_password, encryption_password);
+    assert_ne!(next_password, a.password);
     let next_salt = generate_salt().unwrap();
-    let next_master = owner_master(next_password, &next_salt).unwrap();
+    let next_master = owner_master(&next_password, &next_salt).unwrap();
     let rewrapped = bundle(&identity, &next_master, next_salt);
     rejected(
         db,
@@ -741,8 +744,8 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     // Storage observation uses only known synthetic sentinels, never searches
     // for random secret keys or misrepresents opaque ciphertext as authenticated.
     for sentinel in [
-        encryption_password,
-        next_password,
+        encryption_password.as_str(),
+        next_password.as_str(),
         "synthetic-forbidden-sentinel",
     ] {
         assert_eq!(db.sql(&format!("SELECT count(*) FROM encrypted_account_identities WHERE identity::text LIKE '%{sentinel}%' OR bundle::text LIKE '%{sentinel}%'")),"0");
