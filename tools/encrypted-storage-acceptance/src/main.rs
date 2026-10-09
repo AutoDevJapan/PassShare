@@ -18,6 +18,8 @@ use std::{
     time::Duration,
 };
 
+mod go_session;
+
 // Usage: <production-native-binary> OR --image <prebuilt-production-image>.
 // Both modes require the preloaded pinned PostgreSQL image. Supplied images are never
 // mounted over or removed by the tool; the caller owns its build/tag lifecycle.
@@ -567,8 +569,10 @@ fn unwrap_bundle(
 }
 
 fn main() {
-    let mode = Mode::parse(&std::env::args_os().skip(1).collect::<Vec<_>>())
-        .unwrap_or_else(|reason| panic!("{reason}"));
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let (go_executable, host_args) =
+        go_session::cli(&args).unwrap_or_else(|reason| panic!("{reason}"));
+    let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
     let mode = match mode {
         Mode::Node(binary) => {
             let binary = binary
@@ -591,7 +595,11 @@ fn main() {
     );
     let network = Network::start();
     let db = Database::start(&network);
-    run_acceptance(&db, &network, &mode);
+    if let Some(executable) = go_executable {
+        go_session::run(&db, &network, &mode, &executable);
+    } else {
+        run_acceptance(&db, &network, &mode);
+    }
     drop(db);
     drop(network);
     assert!(
