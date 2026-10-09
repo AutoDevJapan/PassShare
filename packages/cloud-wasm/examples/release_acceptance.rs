@@ -3,9 +3,9 @@ use serde_json::Value;
 use std::io::Write;
 use std::process::{Command, Stdio};
 fn main() {
-    let bindings = std::env::args_os()
-        .nth(1)
-        .expect("generated Node bindings path");
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let web = args.first().is_some_and(|arg| arg == "--web");
+    let bindings = args.get(usize::from(web)).expect("generated bindings path");
     let bindings = std::path::PathBuf::from(bindings).canonicalize().unwrap();
     // Node's CommonJS realpath cannot import Windows extended-length paths.
     // The canonical target remains the same owned file.
@@ -28,7 +28,6 @@ fn main() {
     };
     // Transport glue only. Rust below verifies the returned values.
     const HOST: &str = r#"
-const api = require(process.argv[1]);
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => input += chunk);
@@ -75,6 +74,17 @@ process.stdin.on('end', () => {
   process.stdout.write(JSON.stringify({item, locked, refused, sharedItem, ownerWrapRefused, wrongRecipientRefused, lockedIdentityRefused, sharedLockedRefused}));
 });
 "#;
+    let loader = if web {
+        r#"
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const api = await import(pathToFileURL(process.argv[1]).href);
+await api.default({ module_or_path: readFileSync(process.argv[1].replace(/\.js$/, '_bg.wasm')) });
+"#
+    } else {
+        "const api = require(process.argv[1]);\n"
+    };
+    let host = format!("{loader}{HOST}");
     let mut command = Command::new("node");
     command.env_clear();
     for key in ["PATH", "SystemRoot", "TEMP", "TMP"] {
@@ -87,9 +97,12 @@ process.stdin.on('end', () => {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    if web {
+        command.args(["--input-type=module", "--experimental-default-type=module"]);
+    }
     let mut child = command
         .arg("-e")
-        .arg(HOST)
+        .arg(host)
         .arg(bindings)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
