@@ -24,7 +24,7 @@ export function CloudBoxGate({ compatibility, setup = false }: {
 }) {
   const { vaultId = "" } = useParams();
   const location = useLocation();
-  const { user, connectClient } = useAuthSession();
+  const { user, connectClient, refreshConnect } = useAuthSession();
   const { t } = useI18n();
   const scope = `${user?.id}:${vaultId}:${setup}:${location.key}`;
   const [result, setResult] = useState<{ scope: string; state?: BoxState; error?: MessageKey }>({ scope: "" });
@@ -45,17 +45,20 @@ export function CloudBoxGate({ compatibility, setup = false }: {
   }, [vaultId, setup, !!compatibility, connectClient]);
   useLayoutEffect(() => {
     const controller = new AbortController();
-    const request = { controller, scope, retry, encrypted: false, checking: null };
+    const request: NonNullable<typeof gateRequest.current> = { controller, scope, retry, encrypted: false, checking: null };
     gateRequest.current = request;
-    if (user && vaultId) void readState(controller.signal).then(
+    if (user && vaultId) {
+      request.checking = readState(controller.signal).finally(() => { request.checking = null; });
+      void request.checking.then(
       (state) => {
         if (!controller.signal.aborted) {
-          request.encrypted = state.mode === "encrypted";
-          setResult({ scope, state });
+          if (state.mode === "encrypted") request.encrypted = true;
+          if (state.mode === "encrypted" || !request.encrypted) setResult({ scope, state });
         }
       },
       (error: unknown) => { if (!controller.signal.aborted) setResult({ scope, error: errorKey(error) }); },
-    );
+      );
+    }
     return () => { controller.abort(); gateRequest.current = null; };
   }, [scope, user?.id, vaultId, retry, readState]);
   const ensureCompatibility = useCallback(async () => {
@@ -76,7 +79,10 @@ export function CloudBoxGate({ compatibility, setup = false }: {
   }, [scope, vaultId, retry, readState]);
   if (result.scope !== scope || (!result.state && !result.error)) return <p role="status">{t("session.loading")}</p>;
   if (result.error) return <section className="app-page cloud-page"><p className="ps-error" role="alert">{t(result.error)}</p>
-    <button className="ps-button ps-button--secondary" onClick={() => { setResult({ scope: "" }); setRetry((v) => v + 1); }}>{t("cloud.retry")}</button>
+    <button className="ps-button ps-button--secondary" onClick={() => {
+      setResult({ scope: "" });
+      void refreshConnect().finally(() => setRetry((v) => v + 1));
+    }}>{t("cloud.retry")}</button>
     <Link className="app-back-link" to="/app/vaults">{t("app.vault.back")}</Link></section>;
   if (result.state?.mode === "compatibility" && compatibility && !setup) return <>{compatibility(ensureCompatibility)}</>;
   return <CloudEncryptionScreen key={scope} boxId={vaultId} initialState={result.state!} />;
