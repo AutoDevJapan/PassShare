@@ -56,7 +56,8 @@ export function CloudBoxGate({ compatibility, setup = false }: {
           if (state.mode === "encrypted" || !request.encrypted) setResult({ scope, state });
         }
       },
-      (error: unknown) => { if (!controller.signal.aborted) setResult({ scope, error: errorKey(error) }); },
+      (error: unknown) => { if (!controller.signal.aborted) setResult({ scope,
+        error: compatibility && !setup ? "app.item.loadError" : errorKey(error) }); },
       );
     }
     return () => { controller.abort(); gateRequest.current = null; };

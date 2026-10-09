@@ -270,7 +270,9 @@ test("refreshing after an account changed clears the previous account draft and 
   expect(otherAccount.status()).toBe(201);
   await page.getByRole("button", { name: /Refresh list|一覧を更新/ }).click();
   await expect(page.getByRole("alert")).toContainText(/Failed to load|読み込み|取得/);
-  await expect(form.getByRole("textbox", { name: /^Title$|^タイトル$/ })).toHaveValue("");
-  await expect(form.locator('input[type="password"]')).toHaveValue("");
-  await expect(form.getByRole("button", { name: /^Add$|^追加$/ })).toBeDisabled();
+  await expect(page.getByRole("link", { name: /Back to list|一覧に戻る/ })).toBeVisible();
+  await expect(form).toHaveCount(0);
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  expect(await page.locator("input").evaluateAll((inputs) => inputs.map((input) => input.value)))
+    .not.toContain("Previous account draft");
 });

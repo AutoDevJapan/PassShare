@@ -51,12 +51,16 @@ export function bundleText(bundle: OwnerBundle): string {
     !fields(bundle.wrapped, ["format", "context", "nonce", "ciphertext"]) ||
     !fields(bundle.wrapped.context, ["passwordBoxId", "ownerAccountId", "keyEpoch"])) throw new CloudApiError(502);
   const { format, salt, wrapped } = bundle;
-  const { passwordBoxId, ownerAccountId, keyEpoch } = wrapped.context;
-  if (!Number.isSafeInteger(format) || !Number.isSafeInteger(wrapped.format) || !Number.isSafeInteger(keyEpoch) ||
-    [salt, passwordBoxId, ownerAccountId, wrapped.nonce, wrapped.ciphertext].some((value) => typeof value !== "string"))
+  if (!Number.isSafeInteger(format) || !Number.isSafeInteger(wrapped.format) ||
+    [salt, wrapped.nonce, wrapped.ciphertext].some((value) => typeof value !== "string") ||
+    !Object.entries(wrapped.context).every(([name, value]) => name === "keyEpoch"
+      ? Number.isSafeInteger(value) : typeof value === "string"))
     throw new CloudApiError(502);
-  return JSON.stringify({ format, salt, wrapped: { format: wrapped.format,
-    context: { passwordBoxId, ownerAccountId, keyEpoch }, nonce: wrapped.nonce, ciphertext: wrapped.ciphertext } });
+  // Serialize the complete Rust-produced public envelope uniformly. Domain
+  // context validation belongs to Rust; no secret or key field is projected.
+  return JSON.stringify(bundle, (_name, value: unknown) => value && typeof value === "object"
+    ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+    : value);
 }
 export function sameBundle(left: OwnerBundle, right: OwnerBundle): boolean {
   try { return bundleText(left) === bundleText(right); } catch { return false; }

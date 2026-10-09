@@ -30,7 +30,7 @@ export function AppShell() {
     setLoggingOut(true);
     setLogoutFailed(false);
     const token = generation.current;
-    try { await logout(); if (token === generation.current) navigate("/"); }
+    try { await logout(() => { if (token === generation.current) navigate("/"); }); }
     catch { if (token === generation.current) setLogoutFailed(true); }
     finally {
       logoutPending.current = false;

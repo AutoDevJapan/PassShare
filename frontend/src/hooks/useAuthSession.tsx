@@ -28,7 +28,7 @@ type AuthSessionContextValue = {
   connectLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: (onConfirmed?: () => void) => Promise<void>;
   refresh: () => Promise<void>;
   refreshConnect: () => Promise<ConnectClient | null>;
 };
@@ -42,11 +42,12 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [connectLoading, setConnectLoading] = useState(false);
   const generation = useRef(0);
   const mounted = useRef(true);
+  const currentAccount = useRef<string | null>(null);
 
-  const invalidate = useCallback(() => {
+  const invalidate = useCallback((dropClient = true) => {
     const token = ++generation.current;
     lockCloudUi();
-    setConnectClient(null);
+    if (dropClient) setConnectClient(null);
     return token;
   }, []);
 
@@ -55,6 +56,8 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     const currentUser = await fetchCurrentUser();
     if (!active()) return null;
     // Drop the previous account before acquiring credentials for the current one.
+    if (currentAccount.current !== (currentUser?.id ?? null)) setConnectClient(null);
+    currentAccount.current = currentUser?.id ?? null;
     setUser(currentUser);
     if (!currentUser) return null;
     const credentials = await fetchConnectToken();
@@ -65,7 +68,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshConnect = useCallback(async () => {
-    const token = invalidate();
+    const token = invalidate(false);
     setLoading(false);
     setConnectLoading(true);
     try {
@@ -78,7 +81,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, [invalidate, syncSession]);
 
   const refresh = useCallback(async () => {
-    const token = invalidate();
+    const token = invalidate(false);
     setLoading(true);
     setConnectLoading(true);
     try {
@@ -137,12 +140,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     [invalidate, syncSession],
   );
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (onConfirmed?: () => void) => {
     const token = invalidate();
     setLoading(false);
     setConnectLoading(false);
     await logoutRequest();
     if (!mounted.current || generation.current !== token) return;
+    onConfirmed?.();
+    currentAccount.current = null;
     setUser(null);
     await primeCsrfToken();
   }, [invalidate]);
