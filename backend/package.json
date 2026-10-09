@@ -20,7 +20,7 @@
     "unzipper": "^0.12.3"
   },
   "devDependencies": {
-    "yaml": "^2.8.0"
+    "yaml": "^2.9.1"
   },
   "packageManager": "pnpm@10.11.0",
   "pnpm": {
