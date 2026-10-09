@@ -470,6 +470,15 @@ fn http_bytes(port: u16, method: &str, path: &str, headers: &str, body: &Value) 
     } else {
         body.to_string()
     };
+    http_payload(port, method, path, headers, &payload)
+}
+fn http_payload(
+    port: u16,
+    method: &str,
+    path: &str,
+    headers: &str,
+    payload: &str,
+) -> (u16, Vec<u8>) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
@@ -735,11 +744,21 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     assert_eq!(sdk_page.items.len(), 1);
     assert_eq!(sdk_page.items[0].item_id, context.item_id);
     assert!(sdk_page.next_cursor.is_none());
+    let different_envelope = key.encrypt_item(&item, &context).unwrap();
+    assert_ne!(different_envelope, envelope);
     let sdk_conflict = runtime
-        .block_on(sdk.put_item(&box_id, context.item_id.as_str(), 0, &envelope))
+        .block_on(sdk.put_item(&box_id, context.item_id.as_str(), 0, &different_envelope))
         .unwrap_err();
     assert_eq!(sdk_conflict.status(), Some(409));
     assert_eq!(sdk_conflict.code(), Some("PS015"));
+    accept_encrypted_put_replay(
+        db,
+        p,
+        (&refresh, &connect, &stranger, &stranger_box),
+        &context,
+        &item,
+        &key,
+    );
     accept_encrypted_delete(
         db,
         p,
@@ -760,7 +779,22 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         http(p, "GET", &path, &stranger_headers, &Value::Null).0,
         403
     );
-    assert_eq!(http(p, "PUT", &path, &headers, &payload).0, 409);
+    let before_replay = db.sql(&format!(
+        "SELECT to_jsonb(i)::text FROM encrypted_items i WHERE box_id='{box_id}' AND item_id='{}'",
+        context.item_id
+    ));
+    assert_eq!(
+        http(p, "PUT", &path, &headers, &payload),
+        (200, stored.clone())
+    );
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT to_jsonb(i)::text FROM encrypted_items i WHERE box_id='{box_id}' AND item_id='{}'",
+            context.item_id
+        )),
+        before_replay,
+        "exact create replay preserves updated_at and the full row"
+    );
     let claimant = db.sql(&format!(
         "SELECT user_id::text FROM vault_memberships WHERE vault_id='{stranger_box}'"
     ));
@@ -1130,19 +1164,46 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let mut next_item = item.clone();
     next_item["version"] = json!(2);
     next_item["title"] = json!("Updated client title");
-    let next_envelope = key.encrypt_item(&next_item, &next).unwrap();
-    let next_payload = json!({"expectedVersion":1,"envelope":next_envelope});
-    let workers: Vec<_> = (0..4)
-        .map(|_| {
+    // Different prepared ciphertexts must still compete through CAS. Identical
+    // prepared requests are exercised separately by accept_encrypted_put_replay.
+    let candidates = (0..4)
+        .map(|_| key.encrypt_item(&next_item, &next).unwrap())
+        .collect::<Vec<_>>();
+    for (index, candidate) in candidates.iter().enumerate() {
+        assert!(candidates[..index].iter().all(|other| other != candidate));
+    }
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(5));
+    let workers: Vec<_> = candidates
+        .into_iter()
+        .map(|candidate| {
             let h = headers.clone();
             let path = path.clone();
-            let body = next_payload.clone();
-            thread::spawn(move || http(p, "PUT", &path, &h, &body).0)
+            let barrier = barrier.clone();
+            let body = json!({"expectedVersion":1,"envelope":candidate});
+            thread::spawn(move || {
+                barrier.wait();
+                (http(p, "PUT", &path, &h, &body), candidate)
+            })
         })
         .collect();
-    let statuses: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
-    assert_eq!(statuses.iter().filter(|s| **s == 200).count(), 1);
-    assert_eq!(statuses.iter().filter(|s| **s == 409).count(), 3);
+    barrier.wait();
+    let outcomes: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+    assert_eq!(
+        outcomes.iter().filter(|(reply, _)| reply.0 == 200).count(),
+        1
+    );
+    assert_eq!(
+        outcomes.iter().filter(|(reply, _)| reply.0 == 409).count(),
+        3
+    );
+    for (reply, _) in outcomes.iter().filter(|(reply, _)| reply.0 == 409) {
+        assert_eq!(reply.1["error"], "PS015");
+    }
+    let (reply, next_envelope) = outcomes
+        .into_iter()
+        .find(|(reply, _)| reply.0 == 200)
+        .unwrap();
+    assert_eq!(reply.1, serde_json::to_value(&next_envelope).unwrap());
     assert_eq!(
         http(p, "GET", &format!("{root}/items"), &headers, &Value::Null).1["items"],
         json!([{"itemId":context.item_id,"itemVersion":2,"keyEpoch":1}])
@@ -1445,13 +1506,397 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         403
     );
     assert_eq!(http(host.port, "PUT", &owner_path, &headers, &put1).0, 403);
+    let committed_payload = json!({"expectedVersion":1,"envelope":next_envelope});
+    let committed_snapshot = || {
+        db.sql(&format!(
+            "SELECT to_jsonb(i)::text FROM encrypted_items i WHERE box_id='{box_id}' AND item_id='{}'",
+            context.item_id
+        ))
+    };
+    let committed_row = committed_snapshot();
+    assert_eq!(
+        http(host.port, "PUT", &path, &headers, &committed_payload).0,
+        403
+    );
+    assert_eq!(committed_snapshot(), committed_row);
     db.sql("DELETE FROM sessions");
     assert_eq!(http(host.port, "GET", &path, &headers, &Value::Null).0, 401);
+    assert_eq!(
+        http(host.port, "PUT", &path, &headers, &committed_payload).0,
+        401
+    );
+    assert_eq!(committed_snapshot(), committed_row);
     assert_eq!(
         http(host.port, "GET", &owner_path, &headers, &Value::Null).0,
         401
     );
     println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation, private-box cascade, and owner key bundle unwrap/CAS/transfer/restart/cascade passed");
+}
+
+fn accept_encrypted_put_replay(
+    db: &Database,
+    p: u16,
+    credentials: (&str, &str, &str, &str),
+    original_context: &ItemContext,
+    original_item: &Value,
+    key: &PasswordBoxKey,
+) {
+    let (session, connect, member_session, member_box) = credentials;
+    let box_id = original_context.password_box_id.as_str();
+    let headers = format!("Authorization: Bearer {session}\r\n");
+    let member_headers = format!("Authorization: Bearer {member_session}\r\n");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{p}");
+    let sdk = passshare_connect::EncryptedSessionClient::new(&base, session).unwrap();
+    let member_sdk = passshare_connect::EncryptedSessionClient::new(&base, member_session).unwrap();
+    let mut context = ItemContext {
+        item_id: ConnectId::generate().unwrap(),
+        ..original_context.clone()
+    };
+    let item_id = context.item_id.as_str().to_owned();
+    let race_id = ConnectId::generate().unwrap();
+    let path = format!("/api/encrypted/boxes/{box_id}/items/{item_id}");
+    let snapshot = |id: &str| {
+        db.sql(&format!(
+            "SELECT jsonb_build_object('row',to_jsonb(i),'xmin',i.xmin::text)::text FROM encrypted_items i WHERE box_id='{box_id}' AND item_id='{id}'"
+        ))
+    };
+    let actor = db.sql(&format!(
+        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{box_id}' AND role='owner'"
+    ));
+    let session_id = db.sql(&format!(
+        "SELECT id::text FROM sessions WHERE user_id='{actor}' ORDER BY created_at LIMIT 1"
+    ));
+    let member = db.sql(&format!(
+        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{member_box}' AND role='owner'"
+    ));
+    let csrf = ConnectId::generate().unwrap();
+    let cookie = format!(
+        "Cookie: passshare_session={session}; passshare_csrf={csrf}\r\nx-csrf-token: {csrf}\r\n"
+    );
+    let mut item = original_item.clone();
+    item["id"] = json!(item_id);
+    if item.get("attachments").is_none() {
+        item["attachments"] =
+            json!([{"id":"synthetic-replay-attachment","name":"retained.bin","size":3}]);
+    }
+    if item.get("payload").is_none() {
+        item["payload"] = json!({"ordered":[3,1,2],"unknown":{"null":null,"value":ConnectId::generate().unwrap()}});
+    }
+
+    // Synthetic fixture instrumentation: fail any redundant UPDATE, even if
+    // it writes the same timestamp/values. No ledger or additional table is used.
+    // Real version advances are allowed; exact replay must never reach UPDATE.
+    db.sql(&format!("CREATE FUNCTION passshare_put_replay_write_fault() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic redundant replay update'; END $$; CREATE TRIGGER passshare_put_replay_write_fault BEFORE UPDATE ON encrypted_items FOR EACH ROW WHEN (OLD.box_id='{box_id}' AND OLD.item_id IN ('{item_id}','{race_id}') AND OLD.revision=NEW.revision) EXECUTE FUNCTION passshare_put_replay_write_fault();"));
+    let mut first_payload = Value::Null;
+    let mut last_payload = Value::Null;
+    for version in [1, 2] {
+        context.item_version = version;
+        item["version"] = json!(version);
+        item["title"] = json!(format!("Full DTO replay version {version}"));
+        let envelope = key.encrypt_item(&item, &context).unwrap();
+        let public = serde_json::to_value(&envelope).unwrap();
+        let payload = json!({"expectedVersion":version-1,"envelope":public});
+        // A different confirmed writer commits version 2. The original actor
+        // may replay the identical stored public envelope regardless of author.
+        let writer = if version == 1 { &sdk } else { &member_sdk };
+        assert_eq!(
+            runtime
+                .block_on(writer.put_item(box_id, &item_id, version - 1, &envelope))
+                .unwrap(),
+            envelope
+        );
+        let before = snapshot(&item_id);
+        if version == 1 {
+            // Verify the fixture observer is armed; only its exact injected
+            // error is accepted, and the redundant write must roll back.
+            db.sql(&format!("DO $$ BEGIN BEGIN UPDATE encrypted_items SET revision=revision WHERE box_id='{box_id}' AND item_id='{item_id}'; EXCEPTION WHEN raise_exception THEN IF SQLERRM='synthetic redundant replay update' THEN RETURN; END IF; RAISE; END; RAISE EXCEPTION 'replay write observer did not fire'; END $$;"));
+            assert_eq!(snapshot(&item_id), before);
+        }
+        let row: Value = serde_json::from_str(&before).unwrap();
+        assert_eq!(row["row"]["revision"], version);
+        assert_eq!(row["row"]["key_epoch"], 1);
+        assert_eq!(row["row"]["envelope"], public);
+        assert!(row["row"]["updated_at"].as_str().is_some());
+        assert_eq!(
+            runtime
+                .block_on(sdk.put_item(box_id, &item_id, version - 1, &envelope))
+                .unwrap(),
+            envelope
+        );
+        let fetched = runtime.block_on(sdk.get_item(box_id, &item_id)).unwrap();
+        assert_eq!(fetched, envelope);
+        assert_eq!(key.decrypt_item(&fetched, &context).unwrap(), item);
+        assert_eq!(
+            http(p, "GET", &path, &headers, &Value::Null),
+            (200, public.clone())
+        );
+        assert_eq!(
+            snapshot(&item_id),
+            before,
+            "SDK replay preserves updated_at and xmin"
+        );
+
+        // Serialize in a different order on the wire, including context keys.
+        // A Value-only comparison would never exercise JSONB normalization.
+        let reordered = format!(
+            "{{ \"envelope\": {{ \"nonce\": {}, \"format\": 1, \"context\": {{ \"passwordBoxId\": {}, \"keyEpoch\": 1, \"itemVersion\": {version}, \"itemId\": {} }}, \"ciphertext\": {} }}, \"expectedVersion\": {} }}",
+            public["nonce"],
+            public["context"]["passwordBoxId"],
+            public["context"]["itemId"],
+            public["ciphertext"],
+            version - 1
+        );
+        assert_ne!(reordered, payload.to_string());
+        assert_eq!(serde_json::from_str::<Value>(&reordered).unwrap(), payload);
+        let (status, bytes) = http_payload(p, "PUT", &path, &cookie, &reordered);
+        assert_eq!(status, 200);
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), public);
+        assert_eq!(
+            snapshot(&item_id),
+            before,
+            "JSONB replay does not update the row"
+        );
+
+        let reject = |body: &Value, status, code| {
+            let reply = http(p, "PUT", &path, &headers, body);
+            assert_eq!((reply.0, reply.1["error"].as_str()), (status, Some(code)));
+            assert_eq!(
+                snapshot(&item_id),
+                before,
+                "rejection preserves the full row and time"
+            );
+            assert_eq!(
+                http(p, "GET", &path, &headers, &Value::Null),
+                (200, public.clone())
+            );
+        };
+        // Canonical, same-length encodings differing in just one public value.
+        for field in ["nonce", "ciphertext"] {
+            let mut changed = payload.clone();
+            let mut bytes = BASE64.decode(public[field].as_str().unwrap()).unwrap();
+            bytes[0] ^= 1;
+            changed["envelope"][field] = json!(BASE64.encode(bytes));
+            reject(&changed, 409, "PS015");
+        }
+        let fresh = key.encrypt_item(&item, &context).unwrap();
+        assert_ne!(fresh, envelope);
+        reject(
+            &json!({"expectedVersion":version-1,"envelope":fresh}),
+            409,
+            "PS015",
+        );
+        let mut different_item = item.clone();
+        different_item["title"] = json!("Different full DTO at the same revision");
+        let different_body = key.encrypt_item(&different_item, &context).unwrap();
+        reject(
+            &json!({"expectedVersion":version-1,"envelope":different_body}),
+            409,
+            "PS015",
+        );
+        if version == 2 {
+            reject(&first_payload, 409, "PS015");
+        }
+        let mut other_epoch = payload.clone();
+        other_epoch["envelope"]["context"]["keyEpoch"] = json!(2);
+        reject(&other_epoch, 409, "PS056");
+        for (pointer, value) in [
+            ("/expectedVersion", json!(version)),
+            ("/expectedVersion", json!("0")),
+            ("/envelope/format", json!(2)),
+            ("/envelope/format", json!("1")),
+            ("/envelope/context/itemVersion", json!("1")),
+            ("/envelope/context/keyEpoch", json!(0)),
+            (
+                "/envelope/context/itemId",
+                json!(ConnectId::generate().unwrap()),
+            ),
+            (
+                "/envelope/context/passwordBoxId",
+                json!(ConnectId::generate().unwrap()),
+            ),
+            ("/envelope/nonce", json!("bad")),
+            ("/envelope/ciphertext", json!("malformed")),
+        ] {
+            let mut bad = payload.clone();
+            *bad.pointer_mut(pointer).unwrap() = value;
+            reject(&bad, 400, "PS051");
+        }
+        for pointer in ["", "/envelope", "/envelope/context"] {
+            let mut bad = payload.clone();
+            bad.pointer_mut(pointer).unwrap()["plaintext"] = json!("forbidden");
+            reject(&bad, 400, "PS051");
+        }
+        for (credentials, status) in [
+            (String::new(), 401),
+            (format!("Authorization: Bearer {connect}\r\n"), 401),
+            (format!("Cookie: passshare_session={session}\r\n"), 403),
+            (
+                format!("Cookie: passshare_session={session}\r\nx-passshare-client: mobile\r\n"),
+                403,
+            ),
+            (
+                format!("Cookie: passshare_session={session}\r\nx-passshare-client: extension\r\n"),
+                403,
+            ),
+        ] {
+            assert_eq!(http(p, "PUT", &path, &credentials, &payload).0, status);
+            assert_eq!(snapshot(&item_id), before);
+        }
+
+        // Synthetic active-epoch change: an otherwise exact old envelope is
+        // rejected before replay recognition. This does not implement rotation.
+        db.sql(&format!(
+            "UPDATE encrypted_box_state SET key_epoch=2 WHERE box_id='{box_id}'"
+        ));
+        reject(&payload, 409, "PS056");
+        db.sql(&format!(
+            "UPDATE encrypted_box_state SET key_epoch=1 WHERE box_id='{box_id}'"
+        ));
+
+        // Exercise the authoritative DB checks on a validated exact envelope,
+        // independently of the HTTP middleware. Fixture changes roll back.
+        let sql_body = public.to_string().replace('\'', "''");
+        let operation = format!("SELECT passshare_encrypted_operation('{actor}','{session_id}','{box_id}','put','{item_id}',{},'{sql_body}'::jsonb,1)", version - 1);
+        for (mutation, status, code) in [
+            (
+                format!("UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id='{session_id}'"),
+                401,
+                "PS024",
+            ),
+            (
+                format!("DELETE FROM sessions WHERE id='{session_id}'"),
+                401,
+                "PS024",
+            ),
+            (
+                format!("DELETE FROM vault_memberships WHERE user_id='{actor}' AND vault_id='{box_id}'"),
+                403,
+                "PS016",
+            ),
+        ] {
+            let reply: Value = serde_json::from_str(
+                &db.sql(&format!("BEGIN; {mutation}; {operation}; ROLLBACK;")),
+            )
+            .unwrap();
+            assert_eq!(
+                (reply["status"].as_u64(), reply["code"].as_str()),
+                (Some(status), Some(code))
+            );
+            assert_eq!(snapshot(&item_id), before);
+        }
+        if version == 1 {
+            assert_eq!(http(p, "PUT", &path, &member_headers, &payload).0, 403);
+            db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES('{member}','{box_id}','member')"));
+            assert_eq!(http(p, "PUT", &path, &member_headers, &payload).0, 403);
+            db.sql(&format!("UPDATE vault_memberships SET confirmed_at=NOW(),role='viewer' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+            let reply = http(p, "PUT", &path, &member_headers, &payload);
+            assert_eq!((reply.0, reply.1["error"].as_str()), (403, Some("PS032")));
+            db.sql(&format!("UPDATE vault_memberships SET role='member' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+            assert_eq!(
+                http(p, "PUT", &path, &member_headers, &payload),
+                (200, public.clone())
+            );
+            assert_eq!(snapshot(&item_id), before);
+            first_payload = payload.clone();
+        } else {
+            db.sql(&format!(
+                "DELETE FROM vault_memberships WHERE user_id='{member}' AND vault_id='{box_id}'"
+            ));
+            assert_eq!(http(p, "PUT", &path, &member_headers, &payload).0, 403);
+            assert_eq!(
+                snapshot(&item_id),
+                before,
+                "removed writer cannot replay its own envelope"
+            );
+        }
+        last_payload = payload;
+    }
+
+    // Identical prepared create AND update requests start at one barrier. This
+    // synchronizes HTTP request starts, not observation of a DB lock waiter.
+    // The synthetic trigger above detects a second UPDATE even if snapshots
+    // would otherwise miss a fast redundant write before either response.
+    let race_path = format!("/api/encrypted/boxes/{box_id}/items/{race_id}");
+    let mut race_context = ItemContext {
+        item_id: race_id,
+        ..original_context.clone()
+    };
+    item["id"] = json!(race_context.item_id);
+    for version in [1, 2] {
+        race_context.item_version = version;
+        item["version"] = json!(version);
+        let envelope = key.encrypt_item(&item, &race_context).unwrap();
+        let public = serde_json::to_value(&envelope).unwrap();
+        let payload = json!({"expectedVersion":version-1,"envelope":public});
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let requests = (0..2)
+            .map(|_| {
+                let barrier = barrier.clone();
+                let path = race_path.clone();
+                let headers = headers.clone();
+                let body = payload.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    http(p, "PUT", &path, &headers, &body)
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        for request in requests {
+            assert_eq!(request.join().unwrap(), (200, public.clone()));
+        }
+        assert_eq!(
+            db.sql(&format!(
+                "SELECT count(*) FROM encrypted_items WHERE box_id='{box_id}' AND item_id='{}'",
+                race_context.item_id
+            )),
+            "1"
+        );
+        let before = snapshot(race_context.item_id.as_str());
+        let row: Value = serde_json::from_str(&before).unwrap();
+        assert_eq!(row["row"]["revision"], version);
+        assert_eq!(row["row"]["key_epoch"], 1);
+        assert_eq!(row["row"]["envelope"], public);
+        assert!(row["row"]["updated_at"].as_str().is_some());
+        let fetched = runtime
+            .block_on(sdk.get_item(box_id, race_context.item_id.as_str()))
+            .unwrap();
+        assert_eq!(fetched, envelope);
+        assert_eq!(key.decrypt_item(&fetched, &race_context).unwrap(), item);
+        assert_eq!(
+            http(p, "GET", &race_path, &headers, &Value::Null),
+            (200, public.clone())
+        );
+        assert_eq!(
+            http(p, "PUT", &race_path, &headers, &payload),
+            (200, public)
+        );
+        assert_eq!(snapshot(race_context.item_id.as_str()), before);
+    }
+    db.sql("DROP TRIGGER passshare_put_replay_write_fault ON encrypted_items; DROP FUNCTION passshare_put_replay_write_fault();");
+    runtime
+        .block_on(sdk.delete_item(box_id, &item_id, 2, 1))
+        .unwrap();
+    let tombstone = db.sql(&format!("SELECT to_jsonb(t)::text FROM encrypted_item_tombstones t WHERE box_id='{box_id}' AND item_id='{item_id}'"));
+    for payload in [&first_payload, &last_payload] {
+        let reply = http(p, "PUT", &path, &headers, payload);
+        assert_eq!((reply.0, reply.1["error"].as_str()), (409, Some("PS015")));
+        assert!(snapshot(&item_id).is_empty());
+        assert_eq!(db.sql(&format!("SELECT to_jsonb(t)::text FROM encrypted_item_tombstones t WHERE box_id='{box_id}' AND item_id='{item_id}'")), tombstone);
+    }
+    let error = runtime
+        .block_on(sdk.get_item(box_id, &item_id))
+        .unwrap_err();
+    assert_eq!((error.status(), error.code()), (Some(404), Some("PS012")));
+    runtime
+        .block_on(sdk.delete_item(box_id, race_context.item_id.as_str(), 2, 1))
+        .unwrap();
+    println!("encrypted PUT replay: full Core DTO create/update, SDK/JSONB replay without writes/time changes, different ciphertext/nonce CAS, later writer rejection, auth/CSRF/live DB guards, barrier-started identical create/update, and deleted ID rejection passed");
 }
 
 fn accept_encrypted_delete(
