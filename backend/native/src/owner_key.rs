@@ -15,7 +15,7 @@ fn failure() -> Value {
     json!({"status":400,"code":"PS051","message":"PS051: Invalid owner key bundle request"})
 }
 
-fn canonical_uuid(value: &str) -> bool {
+pub(crate) fn canonical_uuid(value: &str) -> bool {
     value.len() == 36
         && value != "00000000-0000-0000-0000-000000000000"
         && value.bytes().enumerate().all(|(i, b)| match i {

@@ -544,6 +544,7 @@ fn main() {
 fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let mut host = Host::start(db, network, mode);
     let p = host.port;
+    accept_atomic_setup(db, p);
     let (refresh, connect, box_id, auth_password) = signup_with_password(p);
     let (stranger, _, stranger_box, stranger_auth_password) = signup_with_password(p);
     let headers = format!("Authorization: Bearer {refresh}\r\n");
@@ -1366,6 +1367,237 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         401
     );
     println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation, private-box cascade, and owner key bundle unwrap/CAS/transfer/restart/cascade passed");
+}
+
+fn accept_atomic_setup(db: &Database, p: u16) {
+    let (session, connect, box_id, _) = signup_with_password(p);
+    let actor = db.sql(&format!(
+        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{box_id}' AND role='owner'"
+    ));
+    let headers = format!("Authorization: Bearer {session}\r\n");
+    let root = format!("/api/encrypted/boxes/{box_id}");
+    let setup = format!("{root}/setup");
+    let key = PasswordBoxKey::generate().unwrap();
+    let password = format!("setup-password-{}", ConnectId::generate().unwrap());
+    let salt = generate_salt().unwrap();
+    let master = owner_master(&password, &salt).unwrap();
+    let ctx = owner_context(&box_id, &actor, 1);
+    let bundle = owner_bundle(&key, &master, salt, &ctx);
+    let body = json!({"bundle":bundle});
+    for credentials in [
+        String::new(),
+        format!("Authorization: Bearer {connect}\r\n"),
+    ] {
+        assert_eq!(http(p, "POST", &setup, &credentials, &body).0, 401);
+    }
+    let (stranger, stranger_connect, stranger_box) = signup(p);
+    let stranger_actor=db.sql(&format!("SELECT user_id::text FROM vault_memberships WHERE vault_id='{stranger_box}' AND role='owner'"));
+    let stranger_body =
+        json!({"bundle":owner_bundle(&key,&master,salt,&owner_context(&box_id,&stranger_actor,1))});
+    assert_eq!(
+        http(
+            p,
+            "POST",
+            &setup,
+            &format!("Authorization: Bearer {stranger}\r\n"),
+            &stranger_body
+        )
+        .0,
+        403
+    );
+    for client in [
+        "",
+        "x-passshare-client: mobile\r\n",
+        "x-passshare-client: extension\r\n",
+    ] {
+        assert_eq!(
+            http(
+                p,
+                "POST",
+                &setup,
+                &format!("Cookie: passshare_session={session}\r\n{client}"),
+                &body
+            )
+            .0,
+            403
+        );
+    }
+    for pointer in ["", "/bundle", "/bundle/wrapped", "/bundle/wrapped/context"] {
+        let mut bad = body.clone();
+        bad.pointer_mut(pointer).unwrap()["password"] = json!("forbidden");
+        assert_eq!(http(p, "POST", &setup, &headers, &bad).0, 400);
+    }
+    // This failure occurs AFTER activation's INSERT, inside the same function.
+    db.sql(&format!("CREATE FUNCTION passshare_setup_fault() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN IF NEW.box_id='{box_id}' THEN RAISE EXCEPTION 'synthetic bundle insert failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER passshare_setup_fault BEFORE INSERT ON encrypted_owner_keys FOR EACH ROW EXECUTE FUNCTION passshare_setup_fault();"));
+    assert_eq!(http(p, "POST", &setup, &headers, &body).0, 503);
+    assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_box_state WHERE box_id='{box_id}')+(SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{box_id}')")),"0","failed bundle write must roll back activation");
+    assert_eq!(
+        http(p, "GET", &root, &headers, &Value::Null).1["mode"],
+        "compatibility"
+    );
+    db.sql("DROP TRIGGER passshare_setup_fault ON encrypted_owner_keys; DROP FUNCTION passshare_setup_fault();");
+    let csrf = ConnectId::generate().unwrap();
+    let cookie = format!(
+        "Cookie: passshare_session={session}; passshare_csrf={csrf}\r\nx-csrf-token: {csrf}\r\n"
+    );
+    let (status, created) = http(p, "POST", &setup, &cookie, &body);
+    assert_eq!(status, 200);
+    assert_eq!(
+        created,
+        json!({"mode":"encrypted","keyEpoch":1,"bundleVersion":1,"bundle":bundle})
+    );
+    // A lost first response is reconciled with the identical ciphertext. New
+    // random wrapping or key generation is a conflicting operation.
+    assert_eq!(
+        http(p, "POST", &setup, &headers, &body),
+        (200, created.clone())
+    );
+    let different = json!({"bundle":owner_bundle(&key,&master,salt,&ctx)});
+    assert_eq!(http(p, "POST", &setup, &headers, &different).0, 409);
+    let fetched = http(
+        p,
+        "GET",
+        &format!("{root}/owner-key"),
+        &headers,
+        &Value::Null,
+    );
+    assert_eq!(fetched, (200, json!({"bundleVersion":1,"bundle":bundle})));
+    let reopened = unwrap_bundle(&fetched.1["bundle"], &password, &ctx).unwrap();
+    let item_ctx = ItemContext {
+        password_box_id: box_id.parse().unwrap(),
+        item_id: ConnectId::generate().unwrap(),
+        item_version: 1,
+        key_epoch: 1,
+    };
+    let item = json!({"id":item_ctx.item_id,"version":item_ctx.item_version,
+        "vault":{"id":item_ctx.password_box_id},"title":"Atomic setup",
+        "fields":[{"value":ConnectId::generate().unwrap()}],"retained":[3,1,2]});
+    let envelope = key.encrypt_item(&item, &item_ctx).unwrap();
+    let item_path = format!("{root}/items/{}", item_ctx.item_id);
+    assert_eq!(
+        http(
+            p,
+            "PUT",
+            &item_path,
+            &headers,
+            &json!({"expectedVersion":0,"envelope":envelope})
+        )
+        .0,
+        200
+    );
+    let (status, stored_item) = http(p, "GET", &item_path, &headers, &Value::Null);
+    assert_eq!(status, 200);
+    assert_eq!(
+        reopened
+            .decrypt_item(&serde_json::from_value(stored_item).unwrap(), &item_ctx)
+            .unwrap(),
+        item
+    );
+    assert_eq!(
+        http(p, "POST", &setup, &headers, &body),
+        (200, created),
+        "exact replay remains safe after item writes"
+    );
+
+    // Different initial keys race from the same barrier; the losing key must
+    // never replace the winner or produce an orphaned activation.
+    let (race_session, _, race_box) = signup(p);
+    let race_actor = db.sql(&format!(
+        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{race_box}' AND role='owner'"
+    ));
+    let race_ctx = owner_context(&race_box, &race_actor, 1);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let bodies = [
+        json!({"bundle":owner_bundle(&key,&master,salt,&race_ctx)}),
+        json!({"bundle":owner_bundle(&PasswordBoxKey::generate().unwrap(),&master,salt,&race_ctx)}),
+    ];
+    let handles = bodies
+        .iter()
+        .map(|body| {
+            let body = body.clone();
+            let path = format!("/api/encrypted/boxes/{race_box}/setup");
+            let headers = format!("Authorization: Bearer {race_session}\r\n");
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                http(p, "POST", &path, &headers, &body)
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    let outcomes = handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(outcomes.iter().filter(|o| o.0 == 200).count(), 1);
+    assert_eq!(outcomes.iter().filter(|o| o.0 == 409).count(), 1);
+    let winner = outcomes.iter().find(|o| o.0 == 200).unwrap();
+    let persisted = http(
+        p,
+        "GET",
+        &format!("/api/encrypted/boxes/{race_box}/owner-key"),
+        &format!("Authorization: Bearer {race_session}\r\n"),
+        &Value::Null,
+    );
+    assert_eq!(persisted.1["bundle"], winner.1["bundle"]);
+    assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_box_state WHERE box_id='{race_box}')+(SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{race_box}')")),"2");
+
+    // These states are separate from the older enable function's acceptance.
+    let stranger_headers = format!("Authorization: Bearer {stranger}\r\n");
+    assert_eq!(
+        http(
+            p,
+            "POST",
+            &format!("/v1/vaults/{stranger_box}/items"),
+            &format!("Authorization: Bearer {stranger_connect}\r\n"),
+            &json!({"title":"Retained compatibility fixture","category":"LOGIN"})
+        )
+        .0,
+        201
+    );
+    let nonempty = json!({"bundle":owner_bundle(&key,&master,salt,&owner_context(&stranger_box,&stranger_actor,1))});
+    assert_setup_rejected_intact(db, p, &stranger_box, &stranger_headers, &nonempty, "PS055");
+
+    db.sql(&format!(
+        "UPDATE encrypted_box_state SET key_epoch=2 WHERE box_id='{box_id}'"
+    ));
+    assert_setup_rejected_intact(db, p, &box_id, &headers, &body, "PS056");
+    db.sql(&format!("UPDATE encrypted_box_state SET key_epoch=1 WHERE box_id='{box_id}'; DELETE FROM encrypted_owner_keys WHERE box_id='{box_id}'"));
+    assert_setup_rejected_intact(db, p, &box_id, &headers, &body, "PS015");
+
+    // Fixture for a transferred owner with the prior owner's bundle retained.
+    // Role changes are direct synthetic DB setup, not a transfer API claim.
+    db.sql(&format!("UPDATE vault_memberships SET role='member',confirmed_at=NOW() WHERE vault_id='{race_box}' AND user_id='{race_actor}'; INSERT INTO vault_memberships(vault_id,user_id,role) VALUES('{race_box}','{stranger_actor}','owner')"));
+    let replacement = json!({"bundle":owner_bundle(&key,&master,salt,&owner_context(&race_box,&stranger_actor,1))});
+    assert_setup_rejected_intact(db, p, &race_box, &stranger_headers, &replacement, "PS015");
+    println!("atomic setup: authorization/CSRF, strict public headers, post-activation failure rollback, exact replay, different-key rejection, full item decrypt and synchronized concurrent initialization passed");
+}
+
+fn assert_setup_rejected_intact(
+    db: &Database,
+    p: u16,
+    box_id: &str,
+    headers: &str,
+    body: &Value,
+    code: &str,
+) {
+    let snapshot = || {
+        db.sql(&format!("SELECT md5(jsonb_build_object('state',(SELECT to_jsonb(s) FROM encrypted_box_state s WHERE box_id='{box_id}'),'keys',(SELECT jsonb_agg(to_jsonb(k) ORDER BY owner_id) FROM encrypted_owner_keys k WHERE box_id='{box_id}'),'encrypted',(SELECT jsonb_agg(to_jsonb(i) ORDER BY item_id) FROM encrypted_items i WHERE box_id='{box_id}'),'plain',(SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM connect_items i WHERE vault_id='{box_id}'))::text)"))
+    };
+    let before = snapshot();
+    let (status, error) = http(
+        p,
+        "POST",
+        &format!("/api/encrypted/boxes/{box_id}/setup"),
+        headers,
+        body,
+    );
+    assert_eq!((status, error["error"].as_str()), (409, Some(code)));
+    assert_eq!(
+        snapshot(),
+        before,
+        "rejected setup must preserve every stored row"
+    );
 }
 
 #[cfg(test)]

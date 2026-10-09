@@ -61,6 +61,51 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- Enable and persist the initial owner bundle in ONE transaction. A committed
+-- reply may be lost: only an exact replay of the original revision-1 bundle is
+-- idempotent. A different key never replaces an existing bundle here.
+CREATE OR REPLACE FUNCTION passshare_encrypted_setup(
+  actor UUID, session_id UUID, box VARCHAR, body JSONB
+) RETURNS JSONB LANGUAGE plpgsql AS $$
+DECLARE
+  membership_role TEXT;
+  active_epoch BIGINT;
+  current_key encrypted_owner_keys%ROWTYPE;
+BEGIN
+  PERFORM id FROM connect_vaults WHERE id=box FOR UPDATE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS044','Password box not found'); END IF;
+  PERFORM id FROM users WHERE id=actor FOR SHARE;
+  PERFORM id FROM sessions WHERE id=session_id AND user_id=actor AND expires_at>clock_timestamp() FOR SHARE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired'); END IF;
+  SELECT role INTO membership_role FROM vault_memberships
+    WHERE user_id=actor AND vault_id=box AND passshare_membership_active(role,confirmed_at) FOR SHARE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(403,'PS016','Access denied to password box'); END IF;
+  IF membership_role<>'owner' THEN RETURN passshare_encrypted_error(403,'PS032','Password box owner access required'); END IF;
+  SELECT key_epoch INTO active_epoch FROM encrypted_box_state WHERE box_id=box;
+  IF active_epoch IS NOT NULL AND active_epoch<>1 THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+  SELECT * INTO current_key FROM encrypted_owner_keys WHERE box_id=box AND owner_id=actor;
+  IF FOUND THEN
+    IF active_epoch=1 AND current_key.revision=1 AND current_key.key_epoch=1 AND current_key.bundle=body THEN
+      RETURN jsonb_build_object('status',200,'body',jsonb_build_object('mode','encrypted','keyEpoch',1,'bundleVersion',1,'bundle',current_key.bundle));
+    END IF;
+    RETURN passshare_encrypted_error(409,'PS015','Initial owner key bundle differs');
+  END IF;
+  -- An old owner's bundle or any encrypted content must not be orphaned by a
+  -- fresh key. Only an empty legacy activation without any bundle can recover.
+  IF EXISTS(SELECT 1 FROM encrypted_owner_keys WHERE box_id=box)
+      OR EXISTS(SELECT 1 FROM encrypted_items WHERE box_id=box) THEN
+    RETURN passshare_encrypted_error(409,'PS015','Existing encrypted content requires its original key');
+  END IF;
+  IF EXISTS(SELECT 1 FROM connect_items WHERE vault_id=box) THEN
+    RETURN passshare_encrypted_error(409,'PS055','Existing plaintext requires client migration');
+  END IF;
+  IF active_epoch IS NULL THEN
+    INSERT INTO encrypted_box_state(box_id,key_epoch) VALUES(box,1);
+  END IF;
+  INSERT INTO encrypted_owner_keys(box_id,owner_id,revision,key_epoch,bundle) VALUES(box,actor,1,1,body);
+  RETURN jsonb_build_object('status',200,'body',jsonb_build_object('mode','encrypted','keyEpoch',1,'bundleVersion',1,'bundle',body));
+END $$;
 DROP TRIGGER IF EXISTS passshare_plaintext_boundary ON connect_items;
 CREATE TRIGGER passshare_plaintext_boundary BEFORE INSERT OR UPDATE ON connect_items
 FOR EACH ROW EXECUTE FUNCTION passshare_plaintext_boundary();
