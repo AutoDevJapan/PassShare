@@ -56,6 +56,7 @@ async function fetchWithRetry(input: string, init: RequestInit = {}): Promise<Re
   let lastError: unknown;
 
   for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt += 1) {
+    init.signal?.throwIfAborted();
     const isLastAttempt = attempt >= RETRY_MAX_ATTEMPTS - 1;
     try {
       const response = await fetch(input, init);
@@ -65,6 +66,7 @@ async function fetchWithRetry(input: string, init: RequestInit = {}): Promise<Re
       }
       return response;
     } catch (error) {
+      init.signal?.throwIfAborted();
       // Network-level failure (fetch throws, e.g. TypeError). Only retry
       // idempotent requests so a mutation that may already have been processed
       // is never double-submitted.
@@ -91,9 +93,10 @@ async function parseAuthError(response: Response): Promise<never> {
   throw new AuthApiError(body.message ?? "Request failed", body.error ?? body.code);
 }
 
-async function loadCsrfToken(): Promise<string> {
+async function loadCsrfToken(signal?: AbortSignal | null): Promise<string> {
   const response = await fetchWithRetry(`${API_BASE}/api/auth/csrf`, {
     credentials: "include",
+    signal,
   });
   if (!response.ok) {
     throw new AuthApiError("Failed to fetch CSRF token");
@@ -102,12 +105,12 @@ async function loadCsrfToken(): Promise<string> {
   return body.csrfToken;
 }
 
-async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
+export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers = new Headers(init.headers);
 
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-    headers.set("X-CSRF-Token", await loadCsrfToken());
+    headers.set("X-CSRF-Token", await loadCsrfToken(init.signal));
   }
 
   if (init.body && !headers.has("Content-Type")) {
@@ -205,8 +208,8 @@ export type ShareInvitation = {
   confirmationCode?: string;
 };
 
-export async function listVaultMembers(vaultId: string): Promise<VaultMember[]> {
-  const response = await authFetch(`/api/auth/vaults/${vaultId}/members`);
+export async function listVaultMembers(vaultId: string, signal?: AbortSignal): Promise<VaultMember[]> {
+  const response = await authFetch(`/api/auth/vaults/${encodeURIComponent(vaultId)}/members`, { signal });
   if (!response.ok) {
     return parseAuthError(response);
   }

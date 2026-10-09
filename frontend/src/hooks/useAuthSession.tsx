@@ -4,10 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { ConnectClient } from "@passshare/connect";
+import { lockCloudUi } from "../lib/cloud-worker";
 import {
   fetchConnectToken,
   fetchCurrentUser,
@@ -33,78 +35,117 @@ type AuthSessionContextValue = {
 
 const AuthSessionContext = createContext<AuthSessionContextValue | null>(null);
 
-async function buildConnectClient(onUser: (user: AuthUser | null) => void): Promise<ConnectClient | null> {
-  const user = await fetchCurrentUser();
-  onUser(user);
-  if (!user) {
-    return null;
-  }
-  const token = await fetchConnectToken();
-  return new ConnectClient({ host: getApiBaseUrl(), token: token.accessToken });
-}
-
 export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [connectClient, setConnectClient] = useState<ConnectClient | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const generation = useRef(0);
+  const mounted = useRef(true);
 
-  const refreshConnect = useCallback(async () => {
-    setConnectLoading(true);
-    try {
-      const client = await buildConnectClient(setUser);
-      setConnectClient(client);
-      return client;
-    } catch {
-      setConnectClient(null);
-      return null;
-    } finally {
-      setConnectLoading(false);
-    }
+  const invalidate = useCallback(() => {
+    const token = ++generation.current;
+    lockCloudUi();
+    setConnectClient(null);
+    return token;
   }, []);
 
+  const syncSession = useCallback(async (token: number): Promise<ConnectClient | null> => {
+    const active = () => mounted.current && generation.current === token;
+    const currentUser = await fetchCurrentUser();
+    if (!active()) return null;
+    // Drop the previous account before acquiring credentials for the current one.
+    setUser(currentUser);
+    if (!currentUser) return null;
+    const credentials = await fetchConnectToken();
+    if (!active()) return null;
+    const client = new ConnectClient({ host: getApiBaseUrl(), token: credentials.accessToken });
+    setConnectClient(client);
+    return client;
+  }, []);
+
+  const refreshConnect = useCallback(async () => {
+    const token = invalidate();
+    setLoading(false);
+    setConnectLoading(true);
+    try {
+      return await syncSession(token);
+    } catch {
+      return null;
+    } finally {
+      if (mounted.current && generation.current === token) setConnectLoading(false);
+    }
+  }, [invalidate, syncSession]);
+
   const refresh = useCallback(async () => {
+    const token = invalidate();
     setLoading(true);
+    setConnectLoading(true);
     try {
       await primeCsrfToken();
-      const currentUser = await fetchCurrentUser();
-      setUser(currentUser);
-      if (currentUser) {
-        await refreshConnect();
-      } else {
-        setConnectClient(null);
-      }
+      if (mounted.current && generation.current === token) await syncSession(token);
+    } catch {
+      // Only fetchCurrentUser's confirmed 401 clears the session. A temporary
+      // Connect credential failure keeps the user available for retry.
     } finally {
-      setLoading(false);
+      if (mounted.current && generation.current === token) {
+        setLoading(false);
+        setConnectLoading(false);
+      }
     }
-  }, [refreshConnect]);
+  }, [invalidate, syncSession]);
 
   useEffect(() => {
+    mounted.current = true;
     void refresh();
+    return () => { mounted.current = false; ++generation.current; lockCloudUi(); };
   }, [refresh]);
 
   const login = useCallback(
     async (email: string, password: string) => {
-      setUser(await loginRequest(email, password));
-      await refreshConnect();
+      const token = invalidate();
+      setUser(null);
+      setLoading(true);
+      setConnectLoading(true);
+      try {
+        const currentUser = await loginRequest(email, password);
+        if (!mounted.current || generation.current !== token) return;
+        setUser(currentUser);
+        await syncSession(token).catch(() => null);
+      } finally {
+        if (mounted.current && generation.current === token) { setLoading(false); setConnectLoading(false); }
+      }
     },
-    [refreshConnect],
+    [invalidate, syncSession],
   );
 
   const signup = useCallback(
     async (email: string, password: string) => {
-      setUser(await signupRequest(email, password));
-      await refreshConnect();
+      const token = invalidate();
+      setUser(null);
+      setLoading(true);
+      setConnectLoading(true);
+      try {
+        const currentUser = await signupRequest(email, password);
+        if (!mounted.current || generation.current !== token) return;
+        setUser(currentUser);
+        await syncSession(token).catch(() => null);
+      } finally {
+        if (mounted.current && generation.current === token) { setLoading(false); setConnectLoading(false); }
+      }
     },
-    [refreshConnect],
+    [invalidate, syncSession],
   );
 
   const logout = useCallback(async () => {
+    const token = invalidate();
+    setLoading(false);
+    setConnectLoading(false);
     await logoutRequest();
+    if (!mounted.current || generation.current !== token) return;
     setUser(null);
-    setConnectClient(null);
     await primeCsrfToken();
-  }, []);
+  }, [invalidate]);
 
   const value = useMemo(
     () => ({

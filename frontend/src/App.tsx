@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./app/AppShell";
 import { ProtectedRoute } from "./app/ProtectedRoute";
 import { ItemsPage } from "./pages/app/ItemsPage";
+import { CloudEncryptionPage } from "./pages/app/CloudEncryptionPage";
 import { VaultsPage } from "./pages/app/VaultsPage";
 import { VaultSharePage } from "./pages/app/VaultSharePage";
 import { InvitationsPage } from "./pages/app/InvitationsPage";
@@ -35,6 +36,7 @@ export function App() {
             <Route index element={<Navigate to="vaults" replace />} />
             <Route path="vaults" element={<VaultsPage />} />
             <Route path="vaults/:vaultId/items" element={<ItemsPage />} />
+            <Route path="vaults/:vaultId/encryption" element={<CloudEncryptionPage />} />
             <Route path="vaults/:vaultId/share" element={<VaultSharePage />} />
             <Route path="invitations" element={<InvitationsPage />} />
           </Route>
