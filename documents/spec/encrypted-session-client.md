@@ -56,6 +56,67 @@ SDKではそのバイトを観測できません。これをすべての不正�
 
 ## 検証
 
+### アカウント識別情報のSDK接続（親担当の検証前）
+
+[アカウント鍵の保存API](account-identity-api.md) に対し、デスクトップ・モバイル・CLIで共通に使える
+Rustの通信処理を追加しました。アプリへの組み込みや製品全体の完了を意味しません。
+
+- `AccountIdentityBundle` は `format: 1`、16バイトのsaltとCoreの `WrappedAccountIdentity` を持ちます。
+  `new` / `validate` は単独で構造を検査します。内側もformat 1、nonceは24バイト、暗号文は48バイトです。
+  Base64は標準アルファベット・必要なパディング・再符号化一致を要求します。
+- `AccountIdentityRecord` は `{bundleVersion,identity,bundle}` だけを受け付けます。
+  入れ子を含め未知フィールド・必須値のnull・異なる型を拒否します。数値は整数のJSON表現を要求し、
+  保存版は1〜9007199254740991、鍵の版は現在のAPIに合わせて1だけです。
+  応答のアカウントIDは小文字・ハイフン付き・非零のUUIDを要求します。
+- Coreに追加した `PublicAccountIdentity::validate_public() -> Result<()>` は、既存の非公開検証へ委譲します。
+  X25519の標準座標とSHA-256指紋の一致を検査し、暗号実装の型を公開しません。SDKにハッシュ実装や依存は追加しません。
+  Coreの対応版・HPKE・暗号化の意味は変えません。低位数の点に対するDH拒否は引き続きCore HPKEで行います。
+
+`get_account_identity(expected, expected_trusted_key_id)` は本文・queryなしで
+`GET /api/encrypted/account-identity` を呼びます。`expected` は呼出元が独立して保持する
+`AccountIdentityContext`、指紋も独立して信頼した値が必須です。応答の公開情報と暗号化情報の
+アカウント・鍵の版を一致させ、Coreで公開情報を検証してから、期待する文脈と指紋へ照合します。
+保存版と鍵の版は別の値です。このGETは呼出元の保存版を引数に取らないため、保存版の巻き戻り検知は保証しません。
+
+`put_account_identity(expected_version, identity, bundle, current_login_password)` は
+`PUT /api/encrypted/account-identity` を呼びます。期待保存版は0〜9007199254740990です。
+公開情報と暗号化情報の文脈、形式、公開鍵を送信前に検査します。期待保存版0ではパスワードを指定できず、
+1以上では空でない現在のログインパスワードが必要です。後者だけ本文最上位に `currentPassword` を送ります。
+成功はHTTP200、保存版が期待版+1、公開情報とbundleの全体が要求と完全一致する場合だけです。
+公開情報の不変性はAPIが保存済み記述との比較で保証します。SDKは過去の公開情報を内部に記憶しません。
+
+`get_member_identity(box_id, expected_trusted_identity)` は、独立して信頼した
+`PublicAccountIdentity` 全体を必須にするAPIを選びました。取得先のアカウントIDをこの値から作り、
+`GET /api/encrypted/boxes/:boxId/member-identities/:accountId` へ本文・queryなしで送ります。
+応答は `{identity}` だけを受け付け、Coreの検証後に公開情報全体の一致を要求します。
+相手のbundleや保存版を受け取るAPIや、相手の公開情報を書き換えるAPIは提供しません。
+パスワードボックスへの所属の確認はサーバーの責任です。応答にboxIdは含まれないので、SDKは送信先パスを束縛し、
+同じ公開情報がどのパスワードボックスで取得されたかの暗号学的な証明まではしません。
+招待の確認完了やサーバーから受け取った記述だけを、公開鍵を信頼する根拠にしてはいけません。
+
+SDKから `AccountIdentityContext` / `PublicAccountIdentity` / `WrappedAccountIdentity` と新しいDTOを再公開します。
+生の秘密鍵や暗号化パスワードを受け取る引数は追加しません。復号時は引き続き独立した期待文脈と指紋を
+Coreの `AccountIdentity::unwrap` に渡し、復号後の公開情報も確認します。
+ログインパスワードを受け取る文字列から、それが暗号化パスワードではないとSDKだけで判別することはできません。
+ログインパスワードの正当性はAPIの再認証で検査します。送信用バッファのゼロ化は既存所有者キー処理と同じく未対応です。
+
+既存のURL検証、HTTPクライアント、応答サイズ上限、プロキシ不使用、リダイレクト禁止、再試行なし、
+エラー本文の非表示を共有します。既存Connectトークン用クライアントは変更しません。
+
+今回追加したテストは、Core生成のidentityを使った保存・取得・包み直し・復号の一致、
+共有相手の公開情報だけの取得、異なるアカウント・鍵の版・指紋の拒否、公開鍵の座標不正と指紋不一致、
+Base64・数値・未知フィールド・null・欠落・重複フィールドの拒否を実際のTCP通信で確認するコードです。
+GETの本文0バイトとContent-Typeなし、PUTの本文と応答の完全一致、送信前の不正入力拒否、
+ログインパスワードの条件、エラー非表示・サイズ制限・競合の送信1回・リダイレクト非追従も含みます。
+送信なしの確認では同じ応答サーバーで前後の正常送信を確認します。Coreの公開ラッパーにも既存検証との対応を確認するテストを追加します。
+
+この担当ではビルド・テスト実行・外部通信・コミットを行っていません。親担当が変更クレートの検査とClippyを行い、
+マージ前の最終ソースで全workspaceとdoctestを一度検査します。正式Node／PostgreSQL・配布イメージの
+受入ツールはまだこのSDK経由へ拡張していないため、既存native66件・受入ツール4件の成功を
+今回のSDKの正式受入成功とは扱いません。既存のmain確認条件も維持します。
+Coreのソース変更に伴うWASMのソース指紋と配布証跡は、親担当がCI成果物から更新します。
+この変更では証跡ファイルを手作りしません。
+
 `encrypted_client.rs` 内のテストが、ローカルのTCP fixture（`std::net`＋スレッド、有限の期限）で実際のHTTPの
 パス・ヘッダー・JSONを観測します。Core生成の暗号文でPUT/GET往復と `decrypt_item`、リダイレクトでの
 Authorization非転送、不正URL・ID・版、応答サイズ上限、エラーの秘密非表示、期待文脈の不一致を確認します。

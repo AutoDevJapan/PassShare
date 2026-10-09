@@ -1,16 +1,20 @@
-//! Session-authenticated client for the encrypted storage and owner key bundle
-//! APIs (`/api/encrypted`). Contracts: `documents/spec/encrypted-storage-api.md`
-//! and `documents/spec/owner-key-bundle-api.md`.
+//! Session-authenticated client for encrypted storage, owner key bundles and
+//! account identities (`/api/encrypted`). Contracts:
+//! `documents/spec/encrypted-storage-api.md`, `documents/spec/owner-key-bundle-api.md`
+//! and `documents/spec/account-identity-api.md`.
 //!
 //! The client only moves opaque ciphertext. It holds no key, never decrypts and
 //! never accepts an encryption password. Callers must verify every response with
-//! Core (`decrypt_item` / `unwrap_for_owner`) against a context they trust; the
-//! server's answer is never used as the source of the expected context.
+//! Core (`decrypt_item` / `unwrap_for_owner` / `AccountIdentity::unwrap`) against
+//! a context they trust; the server's answer is never the expected context or pin.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fmt;
 use std::time::Duration;
 
-use passshare_core::cloud_crypto::{EncryptedItem, OwnerKeyContext, WrappedPasswordBoxKey};
+use passshare_core::cloud_crypto::{
+    AccountIdentityContext, EncryptedItem, OwnerKeyContext, PublicAccountIdentity,
+    WrappedAccountIdentity, WrappedPasswordBoxKey,
+};
 use passshare_core::ConnectId;
 use reqwest::header::{
     HeaderValue, ACCEPT, AUTHORIZATION, CONNECTION, CONTENT_LENGTH, TRANSFER_ENCODING,
@@ -147,6 +151,67 @@ impl OwnerKeyBundle {
 pub struct OwnerKeyRecord {
     pub bundle_version: u64,
     pub bundle: OwnerKeyBundle,
+}
+
+/// Opaque Core-wrapped account identity and its client KDF salt. No private key
+/// or encryption password is accepted by this transport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccountIdentityBundle {
+    pub format: u32,
+    /// Canonical padded standard Base64 of 16 bytes.
+    pub salt: String,
+    pub wrapped: WrappedAccountIdentity,
+}
+
+impl AccountIdentityBundle {
+    pub fn new(salt: String, wrapped: WrappedAccountIdentity) -> EncryptedSessionResult<Self> {
+        let bundle = Self {
+            format: 1,
+            salt,
+            wrapped,
+        };
+        bundle.validate()?;
+        Ok(bundle)
+    }
+
+    /// Standalone structural validation; authentication of the ciphertext stays
+    /// in Core `AccountIdentity::unwrap` with independently trusted inputs.
+    pub fn validate(&self) -> EncryptedSessionResult<()> {
+        self.problem()
+            .map_or(Ok(()), |m| Err(Error::InvalidArgument(m)))
+    }
+
+    fn problem(&self) -> Option<&'static str> {
+        let w = &self.wrapped;
+        if self.format != 1 || w.format != 1 {
+            Some("unsupported identity bundle format")
+        } else if !fixed_b64(&self.salt, 16) {
+            Some("identity salt must be canonical Base64 of 16 bytes")
+        } else if identity_context_problem(&w.context).is_some() {
+            Some("invalid account identity context")
+        } else if !fixed_b64(&w.nonce, 24) {
+            Some("identity nonce must be canonical Base64 of 24 bytes")
+        } else if !fixed_b64(&w.ciphertext, 48) {
+            Some("wrapped identity must be canonical Base64 of 48 bytes")
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AccountIdentityRecord {
+    pub bundle_version: u64,
+    pub identity: PublicAccountIdentity,
+    pub bundle: AccountIdentityBundle,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawMemberIdentity {
+    identity: PublicAccountIdentity,
 }
 
 #[derive(Deserialize)]
@@ -411,6 +476,97 @@ impl EncryptedSessionClient {
         Ok(record)
     }
 
+    /// The expected account, identity version and fingerprint must be held
+    /// independently of this response. Still unwrap in Core with these inputs.
+    pub async fn get_account_identity(
+        &self,
+        expected: &AccountIdentityContext,
+        expected_trusted_key_id: &str,
+    ) -> EncryptedSessionResult<AccountIdentityRecord> {
+        check_identity_expectation(expected, expected_trusted_key_id)?;
+        let url = self.endpoint(&["account-identity"])?;
+        let record = decode_identity_record(&self.send(Method::GET, url, None).await?)?;
+        if record.bundle.wrapped.context != *expected
+            || record.identity.key_id != expected_trusted_key_id
+        {
+            return Err(Error::ContextMismatch);
+        }
+        Ok(record)
+    }
+
+    /// Bootstrap at revision 0 carries no password. Rewrapping at a later
+    /// revision needs the current login password; public identity stays immutable
+    /// on the API. The caller supplies Core output, never a raw private key.
+    pub async fn put_account_identity(
+        &self,
+        expected_version: u64,
+        identity: &PublicAccountIdentity,
+        bundle: &AccountIdentityBundle,
+        current_login_password: Option<&str>,
+    ) -> EncryptedSessionResult<AccountIdentityRecord> {
+        if expected_version >= MAX_INTEGER {
+            return Err(Error::InvalidArgument("expected version out of range"));
+        }
+        if let Some(problem) = identity_pair_problem(identity, bundle) {
+            return Err(Error::InvalidArgument(problem));
+        }
+        let mut body =
+            json!({"expectedVersion": expected_version, "identity": identity, "bundle": bundle});
+        match (expected_version, current_login_password) {
+            (0, None) => {}
+            (0, Some(_)) => {
+                return Err(Error::InvalidArgument(
+                    "initial identity must not carry a password",
+                ))
+            }
+            (_, Some(password)) if !password.is_empty() => {
+                body["currentPassword"] = Value::String(password.to_owned());
+            }
+            _ => {
+                return Err(Error::InvalidArgument(
+                    "replacing an identity bundle requires the login password",
+                ))
+            }
+        }
+        let url = self.endpoint(&["account-identity"])?;
+        let record = decode_identity_record(&self.send(Method::PUT, url, Some(&body)).await?)?;
+        if record.bundle_version != expected_version + 1
+            || record.identity != *identity
+            || record.bundle != *bundle
+        {
+            return Err(Error::InvalidResponse(
+                "stored identity differs from the request",
+            ));
+        }
+        Ok(record)
+    }
+
+    /// Reads only public information for the trusted account in this box. The
+    /// whole descriptor must match an independently authenticated pin: neither
+    /// invitation proof nor a server descriptor establishes cryptographic trust.
+    pub async fn get_member_identity(
+        &self,
+        box_id: &str,
+        expected_trusted_identity: &PublicAccountIdentity,
+    ) -> EncryptedSessionResult<PublicAccountIdentity> {
+        check_id(box_id)?;
+        if let Some(problem) = public_identity_problem(expected_trusted_identity) {
+            return Err(Error::InvalidArgument(problem));
+        }
+        let account_id = expected_trusted_identity.account_id.to_string();
+        let url = self.endpoint(&["boxes", box_id, "member-identities", &account_id])?;
+        let bytes = self.send(Method::GET, url, None).await?;
+        let record: RawMemberIdentity = decode(&bytes)?;
+        check_canonical_account_ids(&bytes, &["/identity/accountId"])?;
+        if let Some(problem) = public_identity_problem(&record.identity) {
+            return Err(Error::InvalidResponse(problem));
+        }
+        if record.identity != *expected_trusted_identity {
+            return Err(Error::ContextMismatch);
+        }
+        Ok(record.identity)
+    }
+
     fn endpoint(&self, segments: &[&str]) -> EncryptedSessionResult<Url> {
         let mut url = self.base.clone();
         {
@@ -573,6 +729,103 @@ fn decode_record(bytes: &[u8]) -> EncryptedSessionResult<OwnerKeyRecord> {
     Ok(record)
 }
 
+fn fixed_b64(text: &str, bytes: usize) -> bool {
+    text.len() == 4 * bytes.div_ceil(3) && b64_len(text) == Some(bytes)
+}
+
+fn identity_context_problem(context: &AccountIdentityContext) -> Option<&'static str> {
+    if context.account_id.is_nil() || context.identity_version != 1 {
+        Some("account identity requires a nonnil account and identity version 1")
+    } else {
+        None
+    }
+}
+
+fn check_identity_expectation(
+    expected: &AccountIdentityContext,
+    trusted_key_id: &str,
+) -> EncryptedSessionResult<()> {
+    if let Some(problem) = identity_context_problem(expected) {
+        return Err(Error::InvalidArgument(problem));
+    }
+    if trusted_key_id.len() != 64
+        || !trusted_key_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(Error::InvalidArgument(
+            "invalid trusted identity fingerprint",
+        ));
+    }
+    Ok(())
+}
+
+fn public_identity_problem(identity: &PublicAccountIdentity) -> Option<&'static str> {
+    // The endpoint currently supports version 1 only; Core supports more versions.
+    if identity.identity_version != 1 || identity.validate_public().is_err() {
+        Some("invalid public account identity")
+    } else {
+        None
+    }
+}
+
+fn identity_pair_problem(
+    identity: &PublicAccountIdentity,
+    bundle: &AccountIdentityBundle,
+) -> Option<&'static str> {
+    public_identity_problem(identity)
+        .or_else(|| bundle.problem())
+        .or_else(|| {
+            let context = &bundle.wrapped.context;
+            (identity.account_id != context.account_id
+                || identity.identity_version != context.identity_version)
+                .then_some("public and wrapped identity contexts differ")
+        })
+}
+
+fn check_canonical_account_ids(bytes: &[u8], paths: &[&str]) -> EncryptedSessionResult<()> {
+    let value: Value = decode(bytes)?;
+    for path in paths {
+        // UUID parsing also accepts uppercase/simple/URN forms. Require the wire
+        // spelling emitted by the typed UUID's serializer, before returning it.
+        if !value
+            .pointer(path)
+            .and_then(Value::as_str)
+            .is_some_and(|s| {
+                s.len() == 36
+                    && s.bytes().enumerate().all(|(i, b)| {
+                        if [8, 13, 18, 23].contains(&i) {
+                            b == b'-'
+                        } else {
+                            b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+                        }
+                    })
+            })
+        {
+            return Err(Error::InvalidResponse("account id is not canonical"));
+        }
+    }
+    Ok(())
+}
+
+fn decode_identity_record(bytes: &[u8]) -> EncryptedSessionResult<AccountIdentityRecord> {
+    // Decode typed data directly, retaining serde's duplicate-field rejection.
+    let record: AccountIdentityRecord = decode(bytes)?;
+    check_canonical_account_ids(
+        bytes,
+        &["/identity/accountId", "/bundle/wrapped/context/accountId"],
+    )?;
+    if !(1..=MAX_INTEGER).contains(&record.bundle_version) {
+        return Err(Error::InvalidResponse(
+            "identity bundle version out of range",
+        ));
+    }
+    if let Some(problem) = identity_pair_problem(&record.identity, &record.bundle) {
+        return Err(Error::InvalidResponse(problem));
+    }
+    Ok(record)
+}
+
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> EncryptedSessionResult<T> {
     // serde errors can echo input fragments, so none is propagated.
     serde_json::from_slice(bytes)
@@ -622,7 +875,8 @@ fn b64_len(text: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use passshare_core::cloud_crypto::{ItemContext, PasswordBoxKey};
+    use passshare_core::cloud_crypto::{AccountIdentity, ItemContext, PasswordBoxKey};
+    use passshare_core::crypto::MasterKey;
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpListener};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -811,6 +1065,828 @@ mod tests {
     fn assert_api(err: EncryptedSessionError, status: u16, code: Option<&str>) {
         assert_eq!(err.status(), Some(status));
         assert_eq!(err.code(), code);
+    }
+
+    fn identity_fixture() -> (
+        AccountIdentity,
+        MasterKey,
+        PublicAccountIdentity,
+        AccountIdentityBundle,
+    ) {
+        let identity = AccountIdentity::generate(AccountIdentityContext {
+            account_id: OWNER.parse().unwrap(),
+            identity_version: 1,
+        })
+        .unwrap();
+        let root = MasterKey::generate().unwrap();
+        let public = identity.public_identity();
+        let bundle =
+            AccountIdentityBundle::new(STANDARD.encode([0u8; 16]), identity.wrap(&root).unwrap())
+                .unwrap();
+        (identity, root, public, bundle)
+    }
+
+    fn identity_record(
+        version: u64,
+        identity: &PublicAccountIdentity,
+        bundle: &AccountIdentityBundle,
+    ) -> Value {
+        json!({"bundleVersion": version, "identity": identity, "bundle": bundle})
+    }
+
+    #[tokio::test]
+    async fn account_identity_flow_binds_core_output_and_exact_http_contract() {
+        let (identity, root, public, bundle) = identity_fixture();
+        let next_root = MasterKey::generate().unwrap();
+        let next_bundle = AccountIdentityBundle::new(
+            STANDARD.encode([1u8; 16]),
+            identity.wrap(&next_root).unwrap(),
+        )
+        .unwrap();
+        let login_password = format!("login-{}", identity_fixture().2.key_id);
+        let initial = identity_record(1, &public, &bundle);
+        let updated = identity_record(2, &public, &next_bundle);
+        let server = Fixture::start(vec![
+            http(200, &initial),
+            http(200, &initial),
+            http(200, &initial),
+            http(200, &updated),
+            http(200, &updated),
+            http(200, &json!({"identity": public})),
+        ]);
+        let client = server.client();
+        let got = client
+            .get_account_identity(identity.context(), &public.key_id)
+            .await
+            .unwrap();
+        assert_eq!(got.bundle_version, 1);
+        assert_eq!(got.identity, public);
+        assert_eq!(got.bundle, bundle);
+        assert_eq!(
+            AccountIdentity::unwrap(
+                &got.bundle.wrapped,
+                &root,
+                identity.context(),
+                &public.key_id
+            )
+            .unwrap()
+            .public_identity(),
+            public
+        );
+        for _ in 0..2 {
+            let stored = client
+                .put_account_identity(0, &public, &bundle, None)
+                .await
+                .unwrap();
+            assert_eq!(stored.bundle, bundle);
+            assert_eq!(stored.bundle_version, 1);
+        }
+        let stored = client
+            .put_account_identity(1, &public, &next_bundle, Some(&login_password))
+            .await
+            .unwrap();
+        assert_eq!(stored.bundle_version, 2);
+        assert_eq!(stored.identity, public);
+        let got = client
+            .get_account_identity(identity.context(), &public.key_id)
+            .await
+            .unwrap();
+        assert_eq!(got.bundle, next_bundle);
+        assert_eq!(
+            AccountIdentity::unwrap(
+                &got.bundle.wrapped,
+                &next_root,
+                identity.context(),
+                &public.key_id
+            )
+            .unwrap()
+            .public_identity(),
+            public
+        );
+        assert!(AccountIdentity::unwrap(
+            &got.bundle.wrapped,
+            &root,
+            identity.context(),
+            &public.key_id
+        )
+        .is_err());
+        assert_eq!(
+            client
+                .get_member_identity(&box_id(), &public)
+                .await
+                .unwrap(),
+            public
+        );
+        let seen = server.finish();
+        assert_eq!(seen.len(), 6);
+        for (i, request) in seen.iter().enumerate() {
+            assert_eq!(
+                request.header("authorization"),
+                Some(format!("Bearer {TOKEN}").as_str())
+            );
+            assert_eq!(request.header("accept"), Some("application/json"));
+            if [0, 4, 5].contains(&i) {
+                assert!(request.body.is_empty());
+                assert_eq!(request.header("content-type"), None);
+            }
+        }
+        for i in [0, 4] {
+            assert_eq!(
+                seen[i].request_line,
+                "GET /api/encrypted/account-identity HTTP/1.1"
+            );
+        }
+        for i in [1, 2, 3] {
+            assert_eq!(
+                seen[i].request_line,
+                "PUT /api/encrypted/account-identity HTTP/1.1"
+            );
+        }
+        for i in [1, 2] {
+            assert_eq!(
+                seen[i].json(),
+                json!({"expectedVersion": 0, "identity": public, "bundle": bundle})
+            );
+        }
+        assert_eq!(
+            seen[3].json(),
+            json!({"expectedVersion": 1, "identity": public, "bundle": next_bundle,
+            "currentPassword": login_password})
+        );
+        assert_eq!(
+            seen[5].request_line,
+            format!(
+                "GET /api/encrypted/boxes/{}/member-identities/{OWNER} HTTP/1.1",
+                box_id()
+            )
+        );
+    }
+
+    #[test]
+    fn account_identity_bundle_validates_independently() {
+        let (_, _, _, bundle) = identity_fixture();
+        assert!(bundle.validate().is_ok());
+        let valid = serde_json::to_value(&bundle).unwrap();
+        for (path, values) in [
+            ("/format", vec![json!(0), json!(2)]),
+            ("/wrapped/format", vec![json!(0), json!(2)]),
+            (
+                "/salt",
+                vec![
+                    json!(STANDARD.encode([0u8; 15])),
+                    json!("AAAAAAAAAAAAAAAAAAAAAB=="),
+                ],
+            ),
+            (
+                "/wrapped/nonce",
+                vec![
+                    json!(STANDARD.encode([0u8; 23])),
+                    json!(" AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+                ],
+            ),
+            (
+                "/wrapped/ciphertext",
+                vec![json!(STANDARD.encode([0u8; 47])), json!("")],
+            ),
+            (
+                "/wrapped/context/accountId",
+                vec![json!("00000000-0000-0000-0000-000000000000")],
+            ),
+            (
+                "/wrapped/context/identityVersion",
+                vec![json!(0), json!(2), json!(MAX_INTEGER + 1)],
+            ),
+        ] {
+            for value in values {
+                let mut candidate = valid.clone();
+                *candidate.pointer_mut(path).unwrap() = value;
+                let candidate: AccountIdentityBundle = serde_json::from_value(candidate).unwrap();
+                assert!(candidate.validate().is_err(), "{path}");
+                // Constructor itself fixes the outer format at 1.
+                let rebuilt = AccountIdentityBundle::new(candidate.salt, candidate.wrapped);
+                if path == "/format" {
+                    assert_eq!(rebuilt.unwrap(), bundle);
+                } else {
+                    assert!(rebuilt.is_err(), "{path}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn account_identity_get_rejects_swapped_context_and_independent_pin() {
+        let (identity, _, public, bundle) = identity_fixture();
+        let valid = identity_record(1, &public, &bundle);
+        let mut other_account = valid.clone();
+        let account = "8b1f3c52-0a4e-4c1d-9a55-3f2d6e8b9c10";
+        other_account["identity"]["accountId"] = json!(account);
+        other_account["bundle"]["wrapped"]["context"]["accountId"] = json!(account);
+        let swapped_public = identity_fixture().2;
+        let mut swapped = valid.clone();
+        swapped["identity"] = json!(swapped_public);
+        let mut split = valid.clone();
+        split["bundle"]["wrapped"]["context"]["accountId"] = json!(account);
+        let mut unsupported = valid.clone();
+        unsupported["identity"]["identityVersion"] = json!(2);
+        unsupported["bundle"]["wrapped"]["context"]["identityVersion"] = json!(2);
+        let server = Fixture::start(vec![
+            http(200, &valid),
+            http(200, &other_account),
+            http(200, &swapped),
+            http(200, &valid),
+            http(200, &split),
+            http(200, &unsupported),
+            http(200, &valid),
+        ]);
+        let client = server.client();
+        assert!(client
+            .get_account_identity(identity.context(), &public.key_id)
+            .await
+            .is_ok());
+        for pin in [&public.key_id, &public.key_id, &swapped_public.key_id] {
+            assert_eq!(
+                client
+                    .get_account_identity(identity.context(), pin)
+                    .await
+                    .unwrap_err(),
+                Error::ContextMismatch
+            );
+        }
+        for _ in 0..2 {
+            assert!(matches!(
+                client
+                    .get_account_identity(identity.context(), &public.key_id)
+                    .await,
+                Err(Error::InvalidResponse(_))
+            ));
+        }
+        assert!(client
+            .get_account_identity(identity.context(), &public.key_id)
+            .await
+            .is_ok());
+        assert_eq!(server.finish().len(), 7);
+    }
+
+    #[tokio::test]
+    async fn account_identity_get_strict_json_and_crypto_validation() {
+        let (identity, _, public, bundle) = identity_fixture();
+        let valid = identity_record(1, &public, &bundle);
+        let mut rejected = Vec::new();
+        for path in [
+            "/bundleVersion",
+            "/identity/identityVersion",
+            "/bundle/format",
+            "/bundle/wrapped/format",
+            "/bundle/wrapped/context/identityVersion",
+        ] {
+            for value in [
+                json!(null),
+                json!("1"),
+                json!(true),
+                json!(-1),
+                json!(1.5),
+                json!(1.0),
+                json!(0),
+                json!(MAX_INTEGER + 1),
+            ] {
+                let mut bad = valid.clone();
+                *bad.pointer_mut(path).unwrap() = value;
+                rejected.push(http(200, &bad));
+            }
+            if path != "/bundleVersion" {
+                let mut bad = valid.clone();
+                *bad.pointer_mut(path).unwrap() = json!(2);
+                rejected.push(http(200, &bad));
+            }
+        }
+        for path in [
+            "/identity",
+            "/bundle",
+            "/bundle/wrapped",
+            "/bundle/wrapped/context",
+            "/identity/accountId",
+            "/identity/keyId",
+            "/identity/publicKey",
+            "/bundle/salt",
+            "/bundle/wrapped/nonce",
+            "/bundle/wrapped/ciphertext",
+        ] {
+            for value in [json!(null), json!([]), json!(42)] {
+                let mut bad = valid.clone();
+                *bad.pointer_mut(path).unwrap() = value;
+                rejected.push(http(200, &bad));
+            }
+        }
+        for path in [
+            "",
+            "/identity",
+            "/bundle",
+            "/bundle/wrapped",
+            "/bundle/wrapped/context",
+        ] {
+            let mut bad = valid.clone();
+            bad.pointer_mut(path)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert("privateKey".into(), json!(SECRET_BODY));
+            rejected.push(http(200, &bad));
+            let mut bad = valid.clone();
+            let object = bad.pointer_mut(path).unwrap().as_object_mut().unwrap();
+            let field = object.keys().next().unwrap().clone();
+            object.remove(&field);
+            rejected.push(http(200, &bad));
+        }
+        for path in ["/identity/accountId", "/bundle/wrapped/context/accountId"] {
+            for id in [
+                OWNER.to_uppercase(),
+                OWNER.replace('-', ""),
+                "00000000-0000-0000-0000-000000000000".into(),
+            ] {
+                let mut bad = valid.clone();
+                *bad.pointer_mut(path).unwrap() = json!(id);
+                rejected.push(http(200, &bad));
+            }
+        }
+        for (path, value) in [
+            ("/identity/keyId", json!("0".repeat(64))),
+            ("/identity/keyId", json!(public.key_id.to_uppercase())),
+            (
+                "/identity/publicKey",
+                json!(public.public_key.trim_end_matches('=')),
+            ),
+            ("/bundle/salt", json!("AAAAAAAAAAAAAAAAAAAAAB==")),
+            ("/bundle/wrapped/nonce", json!(STANDARD.encode([0u8; 23]))),
+            (
+                "/bundle/wrapped/ciphertext",
+                json!(STANDARD.encode([0u8; 47])),
+            ),
+        ] {
+            let mut bad = valid.clone();
+            *bad.pointer_mut(path).unwrap() = value;
+            rejected.push(http(200, &bad));
+        }
+        // Public synthetic coordinates with their correct SHA-256. Isolate the
+        // coordinate check; a fingerprint mismatch must not mask its absence.
+        for (point, fingerprint) in [
+            (
+                "//////////////////////////////////////////8=",
+                "af9613760f72635fbdb44a5a0a63c39f12af30f950a6ee5c971be188e89c4051",
+            ),
+            (
+                "7f///////////////////////////////////////38=",
+                "bd6174a7c16e1af07272966a9c071c8a3cf16b2726c50d672a09f60636b08901",
+            ),
+        ] {
+            let mut bad = valid.clone();
+            bad["identity"]["publicKey"] = json!(point);
+            bad["identity"]["keyId"] = json!(fingerprint);
+            rejected.push(http(200, &bad));
+        }
+        let mut chars = public.public_key.clone().into_bytes();
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let index = ALPHABET.iter().position(|&c| c == chars[42]).unwrap();
+        chars[42] = ALPHABET[index ^ 1];
+        let mut bad = valid.clone();
+        bad["identity"]["publicKey"] = json!(String::from_utf8(chars).unwrap());
+        rejected.push(http(200, &bad));
+        let duplicate = format!(
+            "{{\"bundleVersion\":1,\"bundleVersion\":1,\"identity\":{},\"bundle\":{}}}",
+            json!(public),
+            json!(bundle)
+        );
+        rejected.push(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{duplicate}",
+                duplicate.len()
+            )
+            .into_bytes(),
+        );
+        let count = rejected.len();
+        let mut replies = vec![http(200, &valid)];
+        replies.extend(rejected);
+        replies.push(http(200, &valid));
+        let server = Fixture::start(replies);
+        let client = server.client();
+        assert!(client
+            .get_account_identity(identity.context(), &public.key_id)
+            .await
+            .is_ok());
+        for i in 0..count {
+            let err = client
+                .get_account_identity(identity.context(), &public.key_id)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidResponse(_)),
+                "case {i}: {err:?}"
+            );
+            assert!(!format!("{err} {err:?}").contains(SECRET_BODY));
+        }
+        assert!(client
+            .get_account_identity(identity.context(), &public.key_id)
+            .await
+            .is_ok());
+        assert_eq!(server.finish().len(), count + 2);
+    }
+
+    #[tokio::test]
+    async fn identity_invalid_requests_do_not_send_http_with_positive_controls() {
+        let (identity, _, public, bundle) = identity_fixture();
+        let valid = identity_record(1, &public, &bundle);
+        // Use a live responding socket before and after invalid calls. An
+        // invalid call that sent anything would consume a response and be seen.
+        let server = Fixture::start(vec![
+            http(200, &valid),
+            http(200, &valid),
+            http(200, &valid),
+        ]);
+        let client = server.client();
+        assert!(client
+            .get_account_identity(identity.context(), &public.key_id)
+            .await
+            .is_ok());
+        let login_password = format!("login-{}", identity_fixture().2.key_id);
+        for (revision, password) in [
+            (0, Some(login_password.as_str())),
+            (0, Some("")),
+            (1, None),
+            (1, Some("")),
+            (MAX_INTEGER, Some(login_password.as_str())),
+            (MAX_INTEGER + 1, Some(login_password.as_str())),
+        ] {
+            assert!(matches!(
+                client
+                    .put_account_identity(revision, &public, &bundle, password)
+                    .await,
+                Err(Error::InvalidArgument(_))
+            ));
+        }
+        for version in [0, 2, MAX_INTEGER + 1] {
+            let mut context = identity.context().clone();
+            context.identity_version = version;
+            assert!(matches!(
+                client.get_account_identity(&context, &public.key_id).await,
+                Err(Error::InvalidArgument(_))
+            ));
+            let mut wrong_public = public.clone();
+            wrong_public.identity_version = version;
+            assert!(matches!(
+                client.get_member_identity(&box_id(), &wrong_public).await,
+                Err(Error::InvalidArgument(_))
+            ));
+            assert!(matches!(
+                client
+                    .put_account_identity(0, &wrong_public, &bundle, None)
+                    .await,
+                Err(Error::InvalidArgument(_))
+            ));
+        }
+        let mut context = identity.context().clone();
+        context.account_id = "00000000-0000-0000-0000-000000000000".parse().unwrap();
+        assert!(matches!(
+            client.get_account_identity(&context, &public.key_id).await,
+            Err(Error::InvalidArgument(_))
+        ));
+        for pin in [
+            String::new(),
+            "0".repeat(63),
+            "g".repeat(64),
+            public.key_id.to_uppercase(),
+        ] {
+            assert!(matches!(
+                client.get_account_identity(identity.context(), &pin).await,
+                Err(Error::InvalidArgument(_))
+            ));
+        }
+        for id in ["", "../", "A", "?box"] {
+            assert!(matches!(
+                client.get_member_identity(id, &public).await,
+                Err(Error::InvalidArgument(_))
+            ));
+        }
+        let mut wrong_public = public.clone();
+        wrong_public.key_id = "0".repeat(64);
+        assert!(matches!(
+            client.get_member_identity(&box_id(), &wrong_public).await,
+            Err(Error::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            client
+                .put_account_identity(0, &wrong_public, &bundle, None)
+                .await,
+            Err(Error::InvalidArgument(_))
+        ));
+        let mut wrong_public = public.clone();
+        wrong_public.account_id = context.account_id;
+        assert!(matches!(
+            client.get_member_identity(&box_id(), &wrong_public).await,
+            Err(Error::InvalidArgument(_))
+        ));
+        let mut wrong_public = public.clone();
+        wrong_public.public_key.pop();
+        assert!(matches!(
+            client.get_member_identity(&box_id(), &wrong_public).await,
+            Err(Error::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            client
+                .put_account_identity(0, &wrong_public, &bundle, None)
+                .await,
+            Err(Error::InvalidArgument(_))
+        ));
+        for (path, value) in [
+            ("/format", json!(2)),
+            ("/wrapped/format", json!(2)),
+            ("/salt", json!("AAAAAAAAAAAAAAAAAAAAAB==")),
+            ("/wrapped/nonce", json!(STANDARD.encode([0u8; 23]))),
+            ("/wrapped/ciphertext", json!(STANDARD.encode([0u8; 47]))),
+            (
+                "/wrapped/context/accountId",
+                json!("8b1f3c52-0a4e-4c1d-9a55-3f2d6e8b9c10"),
+            ),
+            ("/wrapped/context/identityVersion", json!(2)),
+        ] {
+            let mut value_bundle = json!(bundle);
+            *value_bundle.pointer_mut(path).unwrap() = value;
+            let bad: AccountIdentityBundle = serde_json::from_value(value_bundle).unwrap();
+            assert!(
+                matches!(
+                    client.put_account_identity(0, &public, &bad, None).await,
+                    Err(Error::InvalidArgument(_))
+                ),
+                "{path}"
+            );
+        }
+        assert!(client
+            .put_account_identity(0, &public, &bundle, None)
+            .await
+            .is_ok());
+        let seen = server.finish();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(
+            seen[0].request_line,
+            "GET /api/encrypted/account-identity HTTP/1.1"
+        );
+        assert_eq!(
+            seen[1].json(),
+            json!({"expectedVersion": 0, "identity": public, "bundle": bundle})
+        );
+    }
+
+    #[tokio::test]
+    async fn member_identity_returns_only_the_independently_trusted_public_descriptor() {
+        let (_, _, public, _) = identity_fixture();
+        let valid = json!({"identity": public});
+        let mut wrong_account = public.clone();
+        wrong_account.account_id = "8b1f3c52-0a4e-4c1d-9a55-3f2d6e8b9c10".parse().unwrap();
+        let wrong_key = identity_fixture().2;
+        let mut rejected = Vec::new();
+        for extra in [
+            "bundle",
+            "salt",
+            "nonce",
+            "ciphertext",
+            "email",
+            "bundleVersion",
+            "boxId",
+        ] {
+            let mut bad = valid.clone();
+            bad[extra] = json!(SECRET_BODY);
+            rejected.push(http(200, &bad));
+        }
+        for (path, value) in [
+            ("/identity", json!(null)),
+            ("/identity", json!([])),
+            ("/identity/accountId", json!(OWNER.to_uppercase())),
+            ("/identity/accountId", json!(null)),
+            ("/identity/identityVersion", json!(2)),
+            ("/identity/identityVersion", json!(MAX_INTEGER + 1)),
+            ("/identity/identityVersion", json!("1")),
+            ("/identity/identityVersion", json!(1.5)),
+            (
+                "/identity/publicKey",
+                json!(public.public_key.trim_end_matches('=')),
+            ),
+            ("/identity/keyId", json!("0".repeat(64))),
+        ] {
+            let mut bad = valid.clone();
+            *bad.pointer_mut(path).unwrap() = value;
+            rejected.push(http(200, &bad));
+        }
+        let mut bad = valid.clone();
+        bad["identity"]["trusted"] = json!(true);
+        rejected.push(http(200, &bad));
+        rejected.push(http(200, &json!({})));
+        rejected.push(http(
+            200,
+            &json!({"identity": {
+                "accountId": OWNER, "identityVersion": 1,
+                "publicKey": "7f///////////////////////////////////////38=",
+                "keyId": "bd6174a7c16e1af07272966a9c071c8a3cf16b2726c50d672a09f60636b08901",
+            }}),
+        ));
+        let count = rejected.len();
+        let mut replies = vec![
+            http(200, &valid),
+            http(200, &json!({"identity": wrong_account})),
+            http(200, &json!({"identity": wrong_key})),
+        ];
+        replies.extend(rejected);
+        replies.push(http(200, &valid));
+        let server = Fixture::start(replies);
+        let client = server.client();
+        assert_eq!(
+            client
+                .get_member_identity(&box_id(), &public)
+                .await
+                .unwrap(),
+            public
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                client
+                    .get_member_identity(&box_id(), &public)
+                    .await
+                    .unwrap_err(),
+                Error::ContextMismatch
+            );
+        }
+        for _ in 0..count {
+            assert!(matches!(
+                client.get_member_identity(&box_id(), &public).await,
+                Err(Error::InvalidResponse(_))
+            ));
+        }
+        let second_box = "c".repeat(26);
+        assert_eq!(
+            client
+                .get_member_identity(&second_box, &public)
+                .await
+                .unwrap(),
+            public
+        );
+        let seen = server.finish();
+        assert_eq!(seen.len(), count + 4);
+        for request in &seen[..seen.len() - 1] {
+            assert_eq!(
+                request.request_line,
+                format!(
+                    "GET /api/encrypted/boxes/{}/member-identities/{OWNER} HTTP/1.1",
+                    box_id()
+                )
+            );
+            assert!(request.body.is_empty());
+            assert_eq!(request.header("content-type"), None);
+        }
+        assert_eq!(
+            seen.last().unwrap().request_line,
+            format!("GET /api/encrypted/boxes/{second_box}/member-identities/{OWNER} HTTP/1.1")
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_put_requires_exact_identity_bundle_and_revision_response() {
+        let (_, _, public, bundle) = identity_fixture();
+        let valid = identity_record(1, &public, &bundle);
+        let other_public = identity_fixture().2;
+        let mut rejected = Vec::new();
+        for (path, value) in [
+            ("/bundleVersion", json!(2)),
+            ("/identity", json!(other_public)),
+            ("/bundle/salt", json!(STANDARD.encode([1u8; 16]))),
+            ("/bundle/wrapped/nonce", json!(STANDARD.encode([2u8; 24]))),
+            (
+                "/bundle/wrapped/ciphertext",
+                json!(STANDARD.encode([3u8; 48])),
+            ),
+        ] {
+            let mut bad = valid.clone();
+            *bad.pointer_mut(path).unwrap() = value;
+            rejected.push(http(200, &bad));
+        }
+        let count = rejected.len();
+        let mut replies = vec![http(200, &valid)];
+        replies.extend(rejected);
+        replies.push(http(200, &identity_record(2, &public, &bundle)));
+        replies.push(http(200, &identity_record(MAX_INTEGER, &public, &bundle)));
+        let server = Fixture::start(replies);
+        let client = server.client();
+        assert!(client
+            .put_account_identity(0, &public, &bundle, None)
+            .await
+            .is_ok());
+        for _ in 0..count {
+            assert!(matches!(
+                client.put_account_identity(0, &public, &bundle, None).await,
+                Err(Error::InvalidResponse(_))
+            ));
+        }
+        let login_password = format!("login-{}", identity_fixture().2.key_id);
+        assert_eq!(
+            client
+                .put_account_identity(1, &public, &bundle, Some(&login_password))
+                .await
+                .unwrap()
+                .bundle_version,
+            2
+        );
+        assert_eq!(
+            client
+                .put_account_identity(MAX_INTEGER - 1, &public, &bundle, Some(&login_password))
+                .await
+                .unwrap()
+                .bundle_version,
+            MAX_INTEGER
+        );
+        let seen = server.finish();
+        assert_eq!(seen.len(), count + 3);
+        assert_eq!(
+            seen.last().unwrap().json(),
+            json!({"expectedVersion": MAX_INTEGER - 1,
+            "identity": public, "bundle": bundle, "currentPassword": login_password})
+        );
+    }
+
+    #[tokio::test]
+    async fn identity_errors_are_redacted_bounded_and_not_retried_or_redirected() {
+        let (identity, _, public, bundle) = identity_fixture();
+        let login_password = format!("login-{}", identity_fixture().2.key_id);
+        let statuses = [401, 403, 404, 409, 429, 503];
+        let mut replies: Vec<_> = statuses.iter().map(|status| http(*status,
+            &json!({"error": "PS015", "message": format!("{TOKEN} {login_password} {SECRET_BODY}")}))).collect();
+        let target = Fixture::start(vec![
+            http(200, &json!({"identity": public})),
+            http(200, &json!({"identity": public})),
+        ]);
+        // Prove the redirect target is reachable and can observe requests.
+        assert_eq!(
+            target
+                .client()
+                .get_member_identity(&box_id(), &public)
+                .await
+                .unwrap(),
+            public
+        );
+        replies.push(format!("HTTP/1.1 307 X\r\nLocation: {}/stolen\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", target.url()).into_bytes());
+        replies.push(
+            format!(
+                "HTTP/1.1 200 X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                MAX_RESPONSE_BYTES + 1
+            )
+            .into_bytes(),
+        );
+        replies.push(http(
+            409,
+            &json!({"error": "PS015", "message": "x".repeat(MAX_ERROR_BYTES)}),
+        ));
+        let server = Fixture::start(replies);
+        let client = server.client();
+        for status in statuses {
+            let err = client
+                .put_account_identity(1, &public, &bundle, Some(&login_password))
+                .await
+                .unwrap_err();
+            let shown = format!("{err} {err:?}");
+            for secret in [TOKEN, login_password.as_str(), SECRET_BODY] {
+                assert!(!shown.contains(secret));
+            }
+            assert_api(err, status, Some("PS015"));
+        }
+        assert_api(
+            client
+                .put_account_identity(1, &public, &bundle, Some(&login_password))
+                .await
+                .unwrap_err(),
+            307,
+            None,
+        );
+        assert_eq!(
+            client
+                .get_account_identity(identity.context(), &public.key_id)
+                .await
+                .unwrap_err(),
+            Error::ResponseTooLarge
+        );
+        assert_api(
+            client
+                .put_account_identity(1, &public, &bundle, Some(&login_password))
+                .await
+                .unwrap_err(),
+            409,
+            None,
+        );
+        assert_eq!(server.finish().len(), statuses.len() + 3);
+        let target_seen = target.finish();
+        assert_eq!(target_seen.len(), 1);
+        assert_eq!(
+            target_seen[0].request_line,
+            format!(
+                "GET /api/encrypted/boxes/{}/member-identities/{OWNER} HTTP/1.1",
+                box_id()
+            )
+        );
+        assert!(target_seen[0].body.is_empty());
     }
 
     #[test]
