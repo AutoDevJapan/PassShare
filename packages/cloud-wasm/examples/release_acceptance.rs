@@ -41,7 +41,38 @@ process.stdin.on('end', () => {
   let refused = '';
   try { key.decrypt_item(JSON.stringify(f.envelope), JSON.stringify(f.context)); } catch (e) { refused = String(e); }
   key.free();
-  process.stdout.write(JSON.stringify({item, locked, refused}));
+  const accountA = {accountId: f.owner.ownerAccountId, identityVersion: 1};
+  const accountB = {accountId: '22222222-2222-4222-8222-222222222222', identityVersion: 1};
+  const accountC = {accountId: '33333333-3333-4333-8333-333333333333', identityVersion: 1};
+  const a = new api.CloudAccountIdentity(JSON.stringify(accountA));
+  const b = new api.CloudAccountIdentity(JSON.stringify(accountB));
+  const c = new api.CloudAccountIdentity(JSON.stringify(accountC));
+  const aPublic = a.publicIdentity(), bPublic = b.publicIdentity();
+  const pinnedA = JSON.parse(aPublic), pinnedB = JSON.parse(bPublic);
+  const identityBundle = a.wrap(f.password);
+  a.lock();
+  const restoredA = api.CloudAccountIdentity.unlock(identityBundle, f.password, JSON.stringify(accountA), pinnedA.keyId);
+  const ownerBox = new api.CloudPasswordBox(JSON.stringify(f.owner));
+  const sharedContext = {
+    passwordBoxId: f.owner.passwordBoxId, keyEpoch: f.owner.keyEpoch,
+    senderAccountId: accountA.accountId, recipientAccountId: accountB.accountId,
+    senderIdentityVersion: 1, recipientIdentityVersion: 1,
+    senderKeyId: pinnedA.keyId, recipientKeyId: pinnedB.keyId
+  };
+  const wrapped = ownerBox.wrapForRecipient(restoredA, bPublic, JSON.stringify(sharedContext));
+  const recipientBox = api.CloudPasswordBox.unlockForRecipient(wrapped, b, aPublic, JSON.stringify(sharedContext));
+  const complete = {...f.item, releaseRetained: [3, 1, 2, {unknown: ['kept', null, true]}]};
+  const sharedCiphertext = ownerBox.encrypt_item(JSON.stringify(complete), JSON.stringify(f.context));
+  const sharedItem = JSON.parse(recipientBox.decrypt_item(sharedCiphertext, JSON.stringify(f.context)));
+  let ownerWrapRefused = '', wrongRecipientRefused = '', lockedIdentityRefused = '', sharedLockedRefused = '';
+  try { recipientBox.wrap_for_owner(f.password); } catch (e) { ownerWrapRefused = String(e); }
+  try { api.CloudPasswordBox.unlockForRecipient(wrapped, c, aPublic, JSON.stringify(sharedContext)); } catch (e) { wrongRecipientRefused = String(e); }
+  b.lock();
+  try { b.publicIdentity(); } catch (e) { lockedIdentityRefused = String(e); }
+  recipientBox.lock();
+  try { recipientBox.decrypt_item(sharedCiphertext, JSON.stringify(f.context)); } catch (e) { sharedLockedRefused = String(e); }
+  for (const handle of [a, b, c, restoredA, ownerBox, recipientBox]) handle.free();
+  process.stdout.write(JSON.stringify({item, locked, refused, sharedItem, ownerWrapRefused, wrongRecipientRefused, lockedIdentityRefused, sharedLockedRefused}));
 });
 "#;
     let mut command = Command::new("node");
@@ -108,5 +139,21 @@ process.stdin.on('end', () => {
     assert_eq!(result["item"], fixture["item"]);
     assert_eq!(result["locked"], true);
     assert_eq!(result["refused"], "PS057: Password box is locked");
-    println!("actual release WASM: fixed format1/NFC restoration and locked rejection passed");
+    let mut complete = fixture["item"].clone();
+    complete["releaseRetained"] = serde_json::json!([3, 1, 2, {"unknown":["kept",null,true]}]);
+    assert_eq!(result["sharedItem"], complete);
+    assert_eq!(result["ownerWrapRefused"], "PS051: Invalid encrypted data");
+    assert_eq!(
+        result["wrongRecipientRefused"],
+        "PS051: Invalid encrypted data"
+    );
+    assert_eq!(
+        result["lockedIdentityRefused"],
+        "PS057: Account identity is locked"
+    );
+    assert_eq!(
+        result["sharedLockedRefused"],
+        "PS057: Password box is locked"
+    );
+    println!("actual release WASM: format1/NFC, generated JS identity/shared API, full DTO, recipient owner restriction and lock rejection passed");
 }

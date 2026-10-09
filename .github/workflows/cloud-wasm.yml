@@ -36,6 +36,7 @@ jobs:
         run: |
           cargo test --locked --target wasm32-unknown-unknown --test wasm
           cargo test --locked --target wasm32-unknown-unknown --test shared_key
+          cargo test --locked --target wasm32-unknown-unknown --test shared_api
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
       - name: Generate browser bindings from the tested module

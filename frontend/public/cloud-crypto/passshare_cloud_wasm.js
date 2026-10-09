@@ -1,5 +1,109 @@
 /* @ts-self-types="./passshare_cloud_wasm.d.ts" */
 
+export class CloudAccountIdentity {
+    static __wrap(ptr) {
+        const obj = Object.create(CloudAccountIdentity.prototype);
+        obj.__wbg_ptr = ptr;
+        CloudAccountIdentityFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        CloudAccountIdentityFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_cloudaccountidentity_free(ptr, 0);
+    }
+    lock() {
+        wasm.cloudaccountidentity_lock(this.__wbg_ptr);
+    }
+    /**
+     * @param {string} account_context_json
+     */
+    constructor(account_context_json) {
+        const ptr0 = passStringToWasm0(account_context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.cloudaccountidentity_new(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        CloudAccountIdentityFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {string}
+     */
+    publicIdentity() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.cloudaccountidentity_publicIdentity(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * @param {string} bundle_json
+     * @param {string} encryption_password
+     * @param {string} independently_held_account_context_json
+     * @param {string} expected_key_id
+     * @returns {CloudAccountIdentity}
+     */
+    static unlock(bundle_json, encryption_password, independently_held_account_context_json, expected_key_id) {
+        const ptr0 = passStringToWasm0(bundle_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(encryption_password, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(independently_held_account_context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(expected_key_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.cloudaccountidentity_unlock(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return CloudAccountIdentity.__wrap(ret[0]);
+    }
+    /**
+     * @param {string} encryption_password
+     * @returns {string}
+     */
+    wrap(encryption_password) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(encryption_password, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.cloudaccountidentity_wrap(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) CloudAccountIdentity.prototype[Symbol.dispose] = CloudAccountIdentity.prototype.free;
+
 export class CloudPasswordBox {
     static __wrap(ptr) {
         const obj = Object.create(CloudPasswordBox.prototype);
@@ -104,6 +208,56 @@ export class CloudPasswordBox {
         return CloudPasswordBox.__wrap(ret[0]);
     }
     /**
+     * @param {string} envelope_json
+     * @param {CloudAccountIdentity} recipient
+     * @param {string} trusted_sender_public_json
+     * @param {string} expected_shared_key_context_json
+     * @returns {CloudPasswordBox}
+     */
+    static unlockForRecipient(envelope_json, recipient, trusted_sender_public_json, expected_shared_key_context_json) {
+        const ptr0 = passStringToWasm0(envelope_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        _assertClass(recipient, CloudAccountIdentity);
+        const ptr1 = passStringToWasm0(trusted_sender_public_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(expected_shared_key_context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.cloudpasswordbox_unlockForRecipient(ptr0, len0, recipient.__wbg_ptr, ptr1, len1, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return CloudPasswordBox.__wrap(ret[0]);
+    }
+    /**
+     * @param {CloudAccountIdentity} sender
+     * @param {string} trusted_recipient_public_json
+     * @param {string} independently_held_shared_key_context_json
+     * @returns {string}
+     */
+    wrapForRecipient(sender, trusted_recipient_public_json, independently_held_shared_key_context_json) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            _assertClass(sender, CloudAccountIdentity);
+            const ptr0 = passStringToWasm0(trusted_recipient_public_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(independently_held_shared_key_context_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.cloudpasswordbox_wrapForRecipient(this.__wbg_ptr, sender.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
      * @param {string} encryption_password
      * @returns {string}
      */
@@ -183,8 +337,8 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 14, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_43741dd63aeba6c4___MessageEvent______true_);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 28, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h1be41c0c59e12a5d);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
@@ -208,10 +362,13 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_43741dd63aeba6c4___MessageEvent______true_(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_43741dd63aeba6c4___MessageEvent______true_(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h1be41c0c59e12a5d(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h1be41c0c59e12a5d(arg0, arg1, arg2);
 }
 
+const CloudAccountIdentityFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_cloudaccountidentity_free(ptr, 1));
 const CloudPasswordBoxFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_cloudpasswordbox_free(ptr, 1));
@@ -220,6 +377,12 @@ function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
     wasm.__wbindgen_externrefs.set(idx, obj);
     return idx;
+}
+
+function _assertClass(instance, klass) {
+    if (!(instance instanceof klass)) {
+        throw new Error(`expected instance of ${klass.name}`);
+    }
 }
 
 const CLOSURE_DTORS = (typeof FinalizationRegistry === 'undefined')

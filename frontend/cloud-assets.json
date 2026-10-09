@@ -1,7 +1,8 @@
 {
-  "sourceCommit": "75a4945f36005cd5b3fde2123b4c90ac1ee58da6",
-  "run": 37853040542,
-  "artifact": "passshare-cloud-wasm",
+  "sourceCommit": null,
+  "run": null,
+  "buildKind": "local-tested",
+  "toolchain": "rustc 1.95.0",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
     "Cargo.lock": "f16b9ce99e3fdea2bf3239453b39c57c54d3de1e5a00d2858c185cc96cec6683",
@@ -33,11 +34,12 @@
     "crates/passshare-core/src/domain/vault.rs": "ee0a12702ae14b48ecb5cb07d9593b7f3a14c36ef3ec4f6582df09cc974b4e2a",
     "crates/passshare-core/src/domain/payload.rs": "2610d0a3591b8c72722bdba28acc4820de18699d20dbb2a77cbbf7320c9c52e2",
     "packages/cloud-wasm/src/worker.rs": "d2524465ca9e6ce1b63347e06dd87a77cc1da28e6aee49cdd831d59f8bd21f9f",
-    "packages/cloud-wasm/src/lib.rs": "8c9b23f55a72253a18dab0069df6d186b47ca4e1832474a34b83f016aea2955b"
+    "packages/cloud-wasm/src/lib.rs": "1613786658e85b91cb75d284b1dbd19cd13a34347d3405cd9e647837a19a4368",
+    "packages/cloud-wasm/src/shared.rs": "125e2d2865bf5ae292d335bdbfdd1a4840f509ed7ea9f3a6a13f842b615af404"
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
-    "passshare_cloud_wasm.js": "4030e7008a819eb5922d81d8764ddb7ba80fc88f3046dc654418849754d5315c",
-    "passshare_cloud_wasm_bg.wasm": "41eb8c1654ac7912002168414b4d7f00e7658e41f52458098e27314b4dd573b7"
+    "passshare_cloud_wasm.js": "8eb1ca73b88a869db077a4591689d726a226603252769500456082a6215397b5",
+    "passshare_cloud_wasm_bg.wasm": "a04e82dc56d2508736b588588919d75c148cdf0c1bb50f5140d0871616766857"
   }
 }
