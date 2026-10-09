@@ -30,7 +30,7 @@ jobs:
           cargo build --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked
           cargo build --manifest-path backend/native/Cargo.toml --locked --bin passshare-mutations
       - name: Load the pinned PostgreSQL fixture
-        run: docker pull postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        run: docker pull mirror.gcr.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
       - name: Verify the formal Node entrypoint with PostgreSQL and Core encryption
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance backend/native/target/debug/passshare-mutations
       - name: Build the actual backend-only distribution image
