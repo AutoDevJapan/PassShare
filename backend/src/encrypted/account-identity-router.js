@@ -96,4 +96,3 @@ export async function createAccountIdentityRouter({ pool, authStore, loginGuardS
   mounted.use("/boxes/:boxId/member-identities/:accountId", router);
   return mounted;
 }
-

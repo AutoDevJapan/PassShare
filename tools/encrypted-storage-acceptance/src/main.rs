@@ -19,6 +19,8 @@ use std::{
     time::Duration,
 };
 
+mod go_session;
+
 // Usage: <production-native-binary> OR --image <prebuilt-production-image>.
 // Both modes require the preloaded pinned PostgreSQL image. Supplied images are never
 // mounted over or removed by the tool; the caller owns its build/tag lifecycle.
@@ -570,14 +572,19 @@ fn unwrap_bundle(
 fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     // Consume a valueless fixture prefix before the unchanged Node/image parser.
-    // A parent can add its independent --go-session seam alongside this one.
     let identity_fixture = args.first().is_some_and(|arg| arg == "--account-identity");
     let mode_args = if identity_fixture {
         &args[1..]
     } else {
         &args[..]
     };
-    let mode = Mode::parse(mode_args).unwrap_or_else(|reason| panic!("{reason}"));
+    let (go_executable, host_args) =
+        go_session::cli(mode_args).unwrap_or_else(|reason| panic!("{reason}"));
+    assert!(
+        !identity_fixture || go_executable.is_none(),
+        "fixture modes are mutually exclusive"
+    );
+    let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
     let mode = match mode {
         Mode::Node(binary) => {
             let binary = binary
@@ -600,7 +607,9 @@ fn main() {
     );
     let network = Network::start();
     let db = Database::start(&network);
-    if identity_fixture {
+    if let Some(executable) = go_executable {
+        go_session::run(&db, &network, &mode, &executable);
+    } else if identity_fixture {
         account_identity::run(&db, &network, &mode);
     } else {
         run_acceptance(&db, &network, &mode);
