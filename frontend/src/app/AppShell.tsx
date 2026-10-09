@@ -1,4 +1,4 @@
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import { LanguageSwitcher } from "@shared/ui/LanguageSwitcher";
 import { useAuthSession } from "../hooks/useAuthSession";
@@ -9,7 +9,6 @@ import { lockCloudUi } from "../lib/cloud-worker";
 export function AppShell() {
   const { t, locale } = useI18n();
   const { user, logout } = useAuthSession();
-  const navigate = useNavigate();
   const location = useLocation();
   const [logoutFailed, setLogoutFailed] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -30,7 +29,7 @@ export function AppShell() {
     setLoggingOut(true);
     setLogoutFailed(false);
     const token = generation.current;
-    try { await logout(() => { if (token === generation.current) navigate("/"); }); }
+    try { await logout(location.key); }
     catch { if (token === generation.current) setLogoutFailed(true); }
     finally {
       logoutPending.current = false;

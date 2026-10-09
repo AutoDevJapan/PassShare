@@ -92,6 +92,7 @@ export function CloudBoxGate({ compatibility, setup = false }: {
 export function CloudEncryptionPage() { return <CloudBoxGate setup />; }
 
 function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initialState: BoxState }) {
+  const location = useLocation();
   const { user, connectClient, logout } = useAuthSession();
   const { t } = useI18n();
   const ownerId = user?.id ?? "";
@@ -262,7 +263,7 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
     if (logoutPending.current) return;
     logoutPending.current = true;
     lockCloudUi();
-    const request = logout();
+    const request = logout(location.key);
     const token = generation.current;
     setLoggingOut(true);
     try { await request; }

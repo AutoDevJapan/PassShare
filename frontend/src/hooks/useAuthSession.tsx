@@ -28,7 +28,8 @@ type AuthSessionContextValue = {
   connectLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
-  logout: (onConfirmed?: () => void) => Promise<void>;
+  logout: (fromLocationKey?: string) => Promise<void>;
+  logoutLocationKey: string | null;
   refresh: () => Promise<void>;
   refreshConnect: () => Promise<ConnectClient | null>;
 };
@@ -40,6 +41,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [connectClient, setConnectClient] = useState<ConnectClient | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [logoutLocationKey, setLogoutLocationKey] = useState<string | null>(null);
   const generation = useRef(0);
   const mounted = useRef(true);
   const currentAccount = useRef<string | null>(null);
@@ -58,6 +60,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     // Drop the previous account before acquiring credentials for the current one.
     if (currentAccount.current !== (currentUser?.id ?? null)) setConnectClient(null);
     currentAccount.current = currentUser?.id ?? null;
+    setLogoutLocationKey(null);
     setUser(currentUser);
     if (!currentUser) return null;
     const credentials = await fetchConnectToken();
@@ -140,13 +143,15 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     [invalidate, syncSession],
   );
 
-  const logout = useCallback(async (onConfirmed?: () => void) => {
+  const logout = useCallback(async (fromLocationKey?: string) => {
     const token = invalidate();
     setLoading(false);
     setConnectLoading(false);
     await logoutRequest();
     if (!mounted.current || generation.current !== token) return;
-    onConfirmed?.();
+    // One route guard owns the destination after confirmed sign-out. Bind it
+    // to the requesting page so a late response cannot redirect a new page.
+    setLogoutLocationKey(fromLocationKey ?? null);
     currentAccount.current = null;
     setUser(null);
     await primeCsrfToken();
@@ -158,13 +163,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       loading,
       connectClient,
       connectLoading,
+      logoutLocationKey,
       login,
       signup,
       logout,
       refresh,
       refreshConnect,
     }),
-    [user, loading, connectClient, connectLoading, login, signup, logout, refresh, refreshConnect],
+    [user, loading, connectClient, connectLoading, logoutLocationKey, login, signup, logout, refresh, refreshConnect],
   );
 
   return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;

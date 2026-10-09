@@ -2,7 +2,7 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuthSession } from "../hooks/useAuthSession";
 
 export function ProtectedRoute() {
-  const { user, loading } = useAuthSession();
+  const { user, loading, logoutLocationKey } = useAuthSession();
   const location = useLocation();
 
   if (loading) {
@@ -14,7 +14,7 @@ export function ProtectedRoute() {
   }
 
   if (!user) {
-    return <Navigate to="/app/login" replace state={{ from: location.pathname }} />;
+    return <Navigate to={logoutLocationKey === location.key ? "/" : "/app/login"} replace state={{ from: location.pathname }} />;
   }
 
   return <Outlet />;
