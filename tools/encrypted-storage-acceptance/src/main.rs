@@ -2,6 +2,7 @@
 //! Owns a disposable Docker PostgreSQL and
 //! real Express host. No production configuration, model API or secret files.
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+mod account_identity;
 use passshare_core::{
     cloud_crypto::{ItemContext, OwnerKeyContext, PasswordBoxKey, WrappedPasswordBoxKey},
     crypto::{derive_master_key_with_params, generate_salt, MasterKey},
@@ -567,8 +568,16 @@ fn unwrap_bundle(
 }
 
 fn main() {
-    let mode = Mode::parse(&std::env::args_os().skip(1).collect::<Vec<_>>())
-        .unwrap_or_else(|reason| panic!("{reason}"));
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    // Consume a valueless fixture prefix before the unchanged Node/image parser.
+    // A parent can add its independent --go-session seam alongside this one.
+    let identity_fixture = args.first().is_some_and(|arg| arg == "--account-identity");
+    let mode_args = if identity_fixture {
+        &args[1..]
+    } else {
+        &args[..]
+    };
+    let mode = Mode::parse(mode_args).unwrap_or_else(|reason| panic!("{reason}"));
     let mode = match mode {
         Mode::Node(binary) => {
             let binary = binary
@@ -591,7 +600,11 @@ fn main() {
     );
     let network = Network::start();
     let db = Database::start(&network);
-    run_acceptance(&db, &network, &mode);
+    if identity_fixture {
+        account_identity::run(&db, &network, &mode);
+    } else {
+        run_acceptance(&db, &network, &mode);
+    }
     drop(db);
     drop(network);
     assert!(

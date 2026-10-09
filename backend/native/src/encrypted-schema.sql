@@ -74,6 +74,161 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- Account identity storage is independent of boxes. Only public descriptors
+-- and client-encrypted seeds live here; no server Core/AEAD/key dependency.
+CREATE OR REPLACE FUNCTION passshare_identity_base64(value JSONB, bytes INTEGER)
+RETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  decoded BYTEA;
+BEGIN
+  IF jsonb_typeof(value) IS DISTINCT FROM 'string' OR bytes NOT IN (16,24,32,48)
+      OR length(value #>> '{}') <> 4*((bytes+2)/3) THEN RETURN FALSE; END IF;
+  decoded:=decode(value #>> '{}','base64');
+  RETURN octet_length(decoded)=bytes AND encode(decoded,'base64')=(value #>> '{}');
+EXCEPTION WHEN data_exception THEN RETURN FALSE;
+END $$;
+
+CREATE TABLE IF NOT EXISTS encrypted_account_identities (
+  account_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  revision BIGINT NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+  identity JSONB NOT NULL CHECK ((
+    jsonb_typeof(identity)='object'
+    AND identity ?& ARRAY['accountId','identityVersion','publicKey','keyId']
+    AND identity-ARRAY['accountId','identityVersion','publicKey','keyId']='{}'::jsonb
+    AND jsonb_typeof(identity->'accountId')='string'
+    AND jsonb_typeof(identity->'identityVersion')='number'
+    AND jsonb_typeof(identity->'keyId')='string'
+    AND identity->>'accountId'=account_id::text
+    AND identity->>'identityVersion'='1'
+    AND identity->>'keyId' ~ '^[0-9a-f]{64}$'
+    AND CASE WHEN passshare_identity_base64(identity->'publicKey',32) THEN
+      identity->>'keyId'=encode(sha256(decode(identity->>'publicKey','base64')),'hex')
+      AND get_byte(decode(identity->>'publicKey','base64'),31)<128
+      AND NOT (get_byte(decode(identity->>'publicKey','base64'),31)=127
+        AND substring(encode(decode(identity->>'publicKey','base64'),'hex') FROM 3 FOR 60)=repeat('ff',30)
+        AND get_byte(decode(identity->>'publicKey','base64'),0)>=237)
+      ELSE FALSE END
+    AND octet_length(identity::text)<=512
+  ) IS TRUE),
+  bundle JSONB NOT NULL CHECK ((
+    jsonb_typeof(bundle)='object' AND bundle->>'format'='1'
+    AND jsonb_typeof(bundle->'format')='number'
+    AND bundle ?& ARRAY['format','salt','wrapped']
+    AND bundle-ARRAY['format','salt','wrapped']='{}'::jsonb
+    AND passshare_identity_base64(bundle->'salt',16)
+    AND jsonb_typeof(bundle->'wrapped')='object'
+    AND bundle->'wrapped' ?& ARRAY['format','context','nonce','ciphertext']
+    AND (bundle->'wrapped')-ARRAY['format','context','nonce','ciphertext']='{}'::jsonb
+    AND jsonb_typeof(bundle->'wrapped'->'format')='number'
+    AND bundle->'wrapped'->>'format'='1'
+    AND passshare_identity_base64(bundle->'wrapped'->'nonce',24)
+    AND passshare_identity_base64(bundle->'wrapped'->'ciphertext',48)
+    AND jsonb_typeof(bundle->'wrapped'->'context')='object'
+    AND bundle->'wrapped'->'context' ?& ARRAY['accountId','identityVersion']
+    AND (bundle->'wrapped'->'context')-ARRAY['accountId','identityVersion']='{}'::jsonb
+    AND jsonb_typeof(bundle->'wrapped'->'context'->'accountId')='string'
+    AND jsonb_typeof(bundle->'wrapped'->'context'->'identityVersion')='number'
+    AND bundle->'wrapped'->'context'->>'accountId'=account_id::text
+    AND bundle->'wrapped'->'context'->>'identityVersion'='1'
+    AND octet_length(bundle::text)<=2048
+  ) IS TRUE),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION passshare_account_identity_operation(
+  actor UUID, session_id UUID, operation TEXT, previous BIGINT,
+  descriptor JSONB, body JSONB, verified_snapshot TEXT
+) RETURNS JSONB LANGUAGE plpgsql AS $$
+DECLARE
+  current_hash TEXT;
+  current_identity encrypted_account_identities%ROWTYPE;
+BEGIN
+  -- Self operations never acquire box locks. Serialize bootstrap and CAS on
+  -- the existing account row, including the absent-identity case. Account
+  -- password operations also lock user before session; no new lock namespace.
+  IF operation='put' THEN
+    SELECT password_hash INTO current_hash FROM users WHERE id=actor FOR UPDATE;
+  ELSE
+    SELECT password_hash INTO current_hash FROM users WHERE id=actor FOR SHARE;
+  END IF;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired'); END IF;
+  PERFORM id FROM sessions WHERE id=session_id AND user_id=actor FOR SHARE;
+  IF NOT FOUND OR NOT EXISTS(SELECT 1 FROM sessions WHERE id=session_id AND user_id=actor AND expires_at>clock_timestamp()) THEN
+    RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired');
+  END IF;
+  SELECT * INTO current_identity FROM encrypted_account_identities WHERE account_id=actor;
+  IF operation='get' THEN
+    IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS012','Account identity not found'); END IF;
+    RETURN jsonb_build_object('status',200,'body',jsonb_build_object('bundleVersion',current_identity.revision,'identity',current_identity.identity,'bundle',current_identity.bundle));
+  END IF;
+  IF operation<>'put' OR previous IS NULL OR previous<0 OR previous>=9007199254740991
+      OR descriptor IS NULL OR body IS NULL THEN
+    RETURN passshare_encrypted_error(400,'PS051','Invalid account identity request');
+  END IF;
+  IF descriptor->>'accountId' IS DISTINCT FROM actor::text
+      OR body->'wrapped'->'context'->>'accountId' IS DISTINCT FROM actor::text THEN
+    RETURN passshare_encrypted_error(400,'PS051','Invalid account identity context');
+  END IF;
+  IF descriptor->>'identityVersion' IS DISTINCT FROM '1'
+      OR body->'wrapped'->'context'->>'identityVersion' IS DISTINCT FROM '1'
+      OR (current_identity.account_id IS NOT NULL AND current_identity.identity IS DISTINCT FROM descriptor) THEN
+    RETURN passshare_encrypted_error(409,'PS015','Account identity rotation is unsupported');
+  END IF;
+  IF previous>0 AND (verified_snapshot IS NULL OR verified_snapshot IS DISTINCT FROM encode(sha256(convert_to(current_hash,'UTF8')),'hex')) THEN
+    RETURN passshare_encrypted_error(401,'PS026','Reauthentication required to replace account identity bundle');
+  END IF;
+  IF previous=0 AND current_identity.revision=1 AND current_identity.identity=descriptor AND current_identity.bundle=body THEN
+    -- Exact revision-1 replay: no UPDATE, timestamp or xmin change.
+    RETURN jsonb_build_object('status',200,'body',jsonb_build_object('bundleVersion',1,'identity',current_identity.identity,'bundle',current_identity.bundle));
+  END IF;
+  IF COALESCE(current_identity.revision,0)<>previous THEN
+    RETURN passshare_encrypted_error(409,'PS015','Account identity bundle changed since it was read');
+  END IF;
+  IF current_identity.account_id IS NULL THEN
+    INSERT INTO encrypted_account_identities(account_id,revision,identity,bundle) VALUES(actor,1,descriptor,body);
+  ELSE
+    -- Public identity is immutable. Only the same private seed's wrapper may
+    -- be replaced; that binding can only be verified by the client's Core.
+    UPDATE encrypted_account_identities SET revision=previous+1,bundle=body,updated_at=NOW() WHERE account_id=actor;
+  END IF;
+  RETURN jsonb_build_object('status',200,'body',jsonb_build_object('bundleVersion',previous+1,'identity',descriptor,'bundle',body));
+END $$;
+
+CREATE OR REPLACE FUNCTION passshare_member_identity(
+  actor UUID, session_id UUID, box VARCHAR, target UUID
+) RETURNS JSONB LANGUAGE plpgsql AS $$
+DECLARE
+  descriptor JSONB;
+BEGIN
+  -- Same order as transfer/retirement: box parent, ordered users, session,
+  -- ordered memberships. Never insert a box FK after taking a user lock here.
+  PERFORM id FROM connect_vaults WHERE id=box FOR UPDATE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS044','Password box not found'); END IF;
+  PERFORM id FROM users WHERE id IN (actor,target) ORDER BY id FOR SHARE;
+  IF NOT EXISTS(SELECT 1 FROM users WHERE id=actor) THEN
+    RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired');
+  END IF;
+  PERFORM id FROM sessions WHERE id=session_id AND user_id=actor FOR SHARE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired'); END IF;
+  PERFORM user_id FROM vault_memberships WHERE vault_id=box AND user_id IN (actor,target) ORDER BY user_id FOR SHARE;
+  -- Pin liveness AFTER every potentially waiting lock, even for this read.
+  IF NOT EXISTS(SELECT 1 FROM sessions WHERE id=session_id AND user_id=actor AND expires_at>clock_timestamp()) THEN
+    RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired');
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM users WHERE id=target)
+      OR NOT EXISTS(SELECT 1 FROM vault_memberships WHERE vault_id=box AND user_id=actor AND passshare_membership_active(role,confirmed_at))
+      OR NOT EXISTS(SELECT 1 FROM vault_memberships WHERE vault_id=box AND user_id=target AND passshare_membership_active(role,confirmed_at)) THEN
+    RETURN passshare_encrypted_error(403,'PS016','Confirmed password box membership required');
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM encrypted_box_state WHERE box_id=box) THEN
+    RETURN passshare_encrypted_error(409,'PS055','Encrypted storage is not enabled');
+  END IF;
+  SELECT identity INTO descriptor FROM encrypted_account_identities WHERE account_id=target;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS012','Account identity not found'); END IF;
+  -- No private bundle, salt, ciphertext, revision, email or other account data.
+  RETURN jsonb_build_object('status',200,'body',jsonb_build_object('identity',descriptor));
+END $$;
+
 -- Enable and persist the initial owner bundle in ONE transaction. A committed
 -- reply may be lost: only an exact replay of the original revision-1 bundle is
 -- idempotent. A different key never replaces an existing bundle here.
