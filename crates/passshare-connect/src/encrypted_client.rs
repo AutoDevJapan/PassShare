@@ -1184,7 +1184,9 @@ mod tests {
             (box_id(), item_id(), 1, MAX_INTEGER + 1),
         ] {
             assert!(matches!(
-                client.delete_item(&box_arg, &item_arg, version, epoch).await,
+                client
+                    .delete_item(&box_arg, &item_arg, version, epoch)
+                    .await,
                 Err(Error::InvalidArgument(_))
             ));
         }
@@ -1199,7 +1201,11 @@ mod tests {
         for (request, version) in seen.iter().zip([1, MAX_INTEGER]) {
             assert_eq!(
                 request.request_line,
-                format!("DELETE /api/encrypted/boxes/{}/items/{} HTTP/1.1", box_id(), item_id())
+                format!(
+                    "DELETE /api/encrypted/boxes/{}/items/{} HTTP/1.1",
+                    box_id(),
+                    item_id()
+                )
             );
             assert_eq!(
                 request.header("authorization"),
@@ -1207,7 +1213,10 @@ mod tests {
             );
             assert_eq!(request.header("content-type"), Some("application/json"));
             assert_eq!(request.header("connection"), Some("close"));
-            assert_eq!(request.json(), json!({"expectedVersion":version,"keyEpoch":MAX_INTEGER}));
+            assert_eq!(
+                request.json(),
+                json!({"expectedVersion":version,"keyEpoch":MAX_INTEGER})
+            );
             assert!(!String::from_utf8_lossy(&request.body).contains(TOKEN));
         }
     }
@@ -1229,7 +1238,11 @@ mod tests {
         for status in [200, 201, 202, 205, 206, 299] {
             let server = Fixture::start(vec![http(status, &json!({}))]);
             assert_api(
-                server.client().delete_item(&box_id(), &item_id(), 1, 1).await.unwrap_err(),
+                server
+                    .client()
+                    .delete_item(&box_id(), &item_id(), 1, 1)
+                    .await
+                    .unwrap_err(),
                 status,
                 None,
             );
@@ -1241,7 +1254,10 @@ mod tests {
     async fn delete_conflicts_are_bounded_redacted_and_never_retried() {
         for code in ["PS015", "PS056"] {
             let server = Fixture::start(vec![
-                http(409, &json!({"error":code,"message":SECRET_BODY,"token":TOKEN})),
+                http(
+                    409,
+                    &json!({"error":code,"message":SECRET_BODY,"token":TOKEN}),
+                ),
                 empty_delete_reply(), // an automatic retry would consume this
             ]);
             let error = server
@@ -1256,11 +1272,16 @@ mod tests {
             assert_eq!(server.finish().len(), 1);
         }
         let server = Fixture::start(vec![format!(
-            "HTTP/1.1 503 Error\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{SECRET_BODY}", MAX_ERROR_BYTES + 1
+            "HTTP/1.1 503 Error\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{SECRET_BODY}",
+            MAX_ERROR_BYTES + 1
         )
         .into_bytes()]);
         assert_api(
-            server.client().delete_item(&box_id(), &item_id(), 1, 1).await.unwrap_err(),
+            server
+                .client()
+                .delete_item(&box_id(), &item_id(), 1, 1)
+                .await
+                .unwrap_err(),
             503,
             None,
         );
@@ -1275,7 +1296,11 @@ mod tests {
         )
         .into_bytes()]);
         assert_api(
-            origin.client().delete_item(&box_id(), &item_id(), 1, 1).await.unwrap_err(),
+            origin
+                .client()
+                .delete_item(&box_id(), &item_id(), 1, 1)
+                .await
+                .unwrap_err(),
             307,
             None,
         );
