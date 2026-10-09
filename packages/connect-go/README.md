@@ -13,7 +13,7 @@ import (
     "fmt"
     "log"
 
-    connect "github.com/autodevjapan/passshare/packages/connect-go"
+    connect "github.com/autodevjapan/passshare-connect"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("vaults: %d\n", len(vaults))
+    fmt.Printf("password boxes: %d\n", len(vaults))
 }
 ```
 
@@ -98,8 +98,20 @@ redacted and retains no URL/network error text. Do not log request bodies or the
 separate login-password argument. Go strings/HTTP buffers are not securely erased.
 
 See [Go transport contract](../../documents/spec/encrypted-session-go.md).
-The added `httptest` cases have **not been run in this implementation job**.
-The parent must run `go test ./...`, `go test -race ./...`, `go vet ./...`, formal
-Core/server interoperability, independent review and CI before merging.
+On 2026-10-10, `go test ./...`, `go test -race ./...` and `go vet ./...` passed
+on Windows with Go 1.27. A valid oversized JSON response and a counted reader
+exercise the response limits; removing the read limit in an owned copy makes
+the regression test fail at its intended assertion.
+The Rust acceptance tool drives a precompiled Go test through bounded stdin
+against the formal Node entrypoint and backend-only distribution image, each
+with an isolated PostgreSQL. Both runs passed: Core-generated full DTOs survive
+the HTTP roundtrip and decrypt unchanged; setup/save replay, owner
+reauthentication, deletion, stranger rejection and committed synthetic session
+revocation preserve the expected database state. The Go child receives session
+and reauthentication credentials through stdin, not arguments, files or
+environment variables. Independent reviews have zero
+remaining findings. Candidate CI and post-merge main still need confirmation.
+The import above follows this checkout's `go.mod`; these results do not claim
+a separately published Go module or release.
 Root source approval does not complete all client integration, shared keys,
 recovery, migration, encrypted attachments or M4 as a whole.
