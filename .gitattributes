@@ -1,0 +1,2 @@
+# Generated browser assets must retain the bytes accepted and hashed in CI.
+frontend/public/cloud-crypto/* -text

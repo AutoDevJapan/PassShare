@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Item } from "@passshare/connect";
 import { Link, useParams } from "react-router-dom";
 import { ConnectItemList } from "@shared/ui/ConnectItemList.js";
@@ -13,14 +13,26 @@ import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-i
 import { parseOnepasswordCsv } from "../../lib/csv-import";
 import { useAuthSession } from "../../hooks/useAuthSession";
 import { useItemLabels } from "../../hooks/useItemLabels";
+import { CloudBoxGate } from "./CloudEncryptionPage";
 
 export function ItemsPage() {
+  const { vaultId } = useParams();
+  const { user } = useAuthSession();
+  return <CloudBoxGate compatibility={(ensureCompatibility) =>
+    <CompatibilityItemsPage key={`${user?.id}:${vaultId}`} ensureCompatibility={ensureCompatibility} />} />;
+}
+
+function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: () => Promise<void> }) {
   const { vaultId = "" } = useParams();
   const { t } = useI18n();
   const labels = useItemLabels();
   const { user, connectClient, connectLoading, refreshConnect } = useAuthSession();
   const activeScope = useRef("");
   activeScope.current = `${user?.id ?? ""}:${vaultId}`;
+  useLayoutEffect(() => {
+    activeScope.current = `${user?.id ?? ""}:${vaultId}`;
+    return () => { activeScope.current = ""; loadGeneration.current += 1; };
+  }, [vaultId, user?.id]);
   const [vaultName, setVaultName] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
   const [documents, setDocuments] = useState<Record<string, Item>>({});
@@ -68,9 +80,15 @@ export function ItemsPage() {
     setError(null);
     try {
       const vault = await connectClient.getVault(vaultId);
+      await ensureCompatibility();
+      if (generation !== loadGeneration.current) return;
       const overviews = await connectClient.listItems(vaultId);
       const details = await Promise.all(
-        overviews.map((overview) => connectClient.getItem(vaultId, overview.id)),
+        overviews.map(async (overview) => {
+          await ensureCompatibility();
+          if (generation !== loadGeneration.current) throw new Error("Inactive item request");
+          return connectClient.getItem(vaultId, overview.id);
+        }),
       );
       if (generation !== loadGeneration.current) return;
       setVaultName(vault.name);
@@ -82,7 +100,7 @@ export function ItemsPage() {
     } finally {
       if (generation === loadGeneration.current) setItemsLoading(false);
     }
-  }, [connectClient, vaultId, t]);
+  }, [connectClient, vaultId, t, ensureCompatibility]);
 
   useEffect(() => {
     void loadItems();
@@ -123,6 +141,8 @@ export function ItemsPage() {
     setError(null);
     const scope = activeScope.current;
     try {
+      await ensureCompatibility();
+      if (scope !== activeScope.current) return;
       createOperation.current ??= crypto.randomUUID();
       await connectClient.createItem(vaultId, connectItemToCreateBody(values), createOperation.current);
       if (scope !== activeScope.current) return;
@@ -148,6 +168,8 @@ export function ItemsPage() {
     setError(null);
     const scope = activeScope.current;
     try {
+      await ensureCompatibility();
+      if (scope !== activeScope.current) return;
       await connectClient.editItemForm(vaultId, editingItem.id, editingItem.version, values);
       if (scope !== activeScope.current) return;
       setMode(null);
@@ -172,6 +194,8 @@ export function ItemsPage() {
     setError(null);
     const scope = activeScope.current;
     try {
+      await ensureCompatibility();
+      if (scope !== activeScope.current) return;
       await connectClient.deleteItem(vaultId, itemId);
       if (scope === activeScope.current) await loadItems();
     } catch {
@@ -204,6 +228,7 @@ export function ItemsPage() {
       const text = await file.text();
       const parsed = parseOnepasswordCsv(text);
       for (const row of parsed) {
+        await ensureCompatibility();
         if (scope !== activeScope.current) return;
         await connectClient.createItem(vaultId, connectItemToCreateBody(row));
         imported += 1;
@@ -234,7 +259,19 @@ export function ItemsPage() {
     setBusy(true);
     const scope = activeScope.current;
     try {
-      const result = await import1puxFile(connectClient, vaultId, file);
+      // The importer can issue several item requests; guard each request too.
+      const guardedClient = new Proxy(connectClient, {
+        get(target, property) {
+          const value = Reflect.get(target, property);
+          if (typeof value !== "function") return value;
+          return async (...args: unknown[]) => {
+            await ensureCompatibility();
+            if (scope !== activeScope.current) throw new Error("Inactive item request");
+            return Reflect.apply(value, target, args);
+          };
+        },
+      });
+      const result = await import1puxFile(guardedClient, vaultId, file);
       if (scope !== activeScope.current) return;
       setImportMessage(labels.import1puxSuccess.replace("{count}", String(result.imported)));
       await loadItems();
@@ -267,6 +304,9 @@ export function ItemsPage() {
           {t("app.vault.back")}
         </Link>
         <h1 className="ps-heading-2">{vaultName || t("app.item.listHeading")}</h1>
+        {itemsReady && items.length === 0 && <Link to={`/app/vaults/${vaultId}/encryption`} className="ps-button ps-button--secondary">
+          {t("cloud.setupTitle")}
+        </Link>}
         <Link to={`/app/vaults/${vaultId}/share`} className="ps-button ps-button--secondary">
           {t("app.share.link")}
         </Link>
