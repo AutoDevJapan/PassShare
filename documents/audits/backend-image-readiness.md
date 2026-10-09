@@ -51,3 +51,5 @@ test/web-session.test.js
 修正後の正式Dockerfileによるビルドは成功した。Linux amd64の実行イメージのconfig digestも修正前と同じ `sha256:68fa98cacf85553fe1c2a18072a788fffb1d0b537bb4f36587a8f5fdc8145649` だった。原ログは共有ToDo1163の作業記録 `D:/CC/Work/passshare-finish-1163-20261010/` に保存する。CIとマージ後のmain検査は、それぞれ最新ソースで別途確認する。キャッシュからの取得成功を、暗号化の全アプリ接続や製品全体の受入成功とは扱わない。
 
 次のCIでは検査用Rust・PostgreSQLにも同じ取得制限が発生したため、検査用Dockerfile、Compose、PostgreSQLサービス、復元演習も同じ取得方法へ統一した。main `fb19384220aefd93aef3f49139a8b28ff7931bfc` で成功したQuality Gate実行37987409693と復元演習37987409967のログを根拠に、Rust 1.86は `sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081`、PostgreSQL 16 bookwormは `sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4` に固定した。PostgreSQL 16 alpineは既存の `sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb` を維持する。Rust 1 bookwormとNodeは上記と同じ固定値を使う。検査を省略したり、失敗を成功へ置き換える変更ではない。
+
+独立した暗号文保存受入のPostgreSQLも、既存の `sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24` を維持して同じキャッシュから取得する。CIの事前取得と、受入ツールの `--pull=never` に渡す名前を一致させた。イメージの版やSQLはこの変更で変えていない。
