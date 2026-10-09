@@ -45,7 +45,12 @@ export async function createAccountIdentityRouter({ pool, authStore, loginGuardS
       try {
         if (Object.keys(req.query).length) throw authHttpError(400, "PS051", "Unexpected account identity selector");
         const put = name === "put";
-        const publicRequest = put && req.body && !Array.isArray(req.body) && typeof req.body === "object"
+        if (!put && (Number(req.headers["content-length"] ?? 0) > 0 || req.headers["transfer-encoding"] !== undefined)) {
+          throw authHttpError(400, "PS051", "Unexpected body on account identity lookup");
+        }
+        // Express may materialize {} for Content-Length: 0. GET has no public
+        // body; only PUT forwards the client object to the strict native plan.
+        const publicRequest = !put ? null : req.body && !Array.isArray(req.body) && typeof req.body === "object"
           ? { ...req.body } : req.body ?? null;
         if (put && publicRequest && typeof publicRequest === "object") delete publicRequest.currentPassword;
         const plan = await nativeMutation({ command: "account-identity-plan", operation: name,
