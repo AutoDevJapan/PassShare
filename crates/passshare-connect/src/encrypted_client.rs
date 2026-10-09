@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use passshare_core::cloud_crypto::{EncryptedItem, OwnerKeyContext, WrappedPasswordBoxKey};
 use passshare_core::ConnectId;
-use reqwest::header::{HeaderValue, ACCEPT, AUTHORIZATION};
+use reqwest::header::{
+    HeaderValue, ACCEPT, AUTHORIZATION, CONNECTION, CONTENT_LENGTH, TRANSFER_ENCODING,
+};
 use reqwest::redirect::Policy;
 use reqwest::{Client, Method, Response, Url};
 use serde::de::DeserializeOwned;
@@ -322,6 +324,30 @@ impl EncryptedSessionClient {
         Ok(stored)
     }
 
+    /// Compare-and-set deletion. Only HTTP 204 with an empty response succeeds.
+    /// There is no automatic retry; an explicit replay needs the same metadata.
+    pub async fn delete_item(
+        &self,
+        box_id: &str,
+        item_id: &str,
+        expected_version: u64,
+        key_epoch: u64,
+    ) -> EncryptedSessionResult<()> {
+        check_id(box_id)?;
+        check_id(item_id)?;
+        if !(1..=MAX_INTEGER).contains(&expected_version) {
+            return Err(Error::InvalidArgument("expected version out of range"));
+        }
+        if !(1..=MAX_INTEGER).contains(&key_epoch) {
+            return Err(Error::InvalidArgument("key epoch out of range"));
+        }
+        let url = self.endpoint(&["boxes", box_id, "items", item_id])?;
+        let body = json!({"expectedVersion":expected_version,"keyEpoch":key_epoch});
+        self.send_expected(Method::DELETE, url, Some(&body), 204)
+            .await?;
+        Ok(())
+    }
+
     /// `expected` is the caller's trusted context; the response must match it.
     pub async fn get_owner_key(
         &self,
@@ -403,6 +429,16 @@ impl EncryptedSessionClient {
         url: Url,
         body: Option<&Value>,
     ) -> EncryptedSessionResult<Vec<u8>> {
+        self.send_expected(method, url, body, 200).await
+    }
+
+    async fn send_expected(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<&Value>,
+        expected_status: u16,
+    ) -> EncryptedSessionResult<Vec<u8>> {
         let mut request = self
             .http
             .request(method, url)
@@ -411,14 +447,39 @@ impl EncryptedSessionClient {
         if let Some(body) = body {
             request = request.json(body);
         }
+        if expected_status == 204 {
+            // Do not reuse this connection if a peer emits forbidden bytes
+            // that the HTTP parser does not expose as a 204 response body.
+            request = request.header(CONNECTION, "close");
+        }
         let mut response = request.send().await.map_err(transport)?;
         let status = response.status();
-        if status.as_u16() != 200 {
+        if status.as_u16() != expected_status {
             // 3xx lands here too: redirects are never followed.
             let body = read_limited(&mut response, MAX_ERROR_BYTES).await.ok();
             return Err(Error::Api {
                 status: status.as_u16(),
                 code: body.as_deref().and_then(error_code),
+            });
+        }
+        if expected_status == 204 {
+            // HTTP parsers can discard a forbidden 204 body. Inspect the raw
+            // framing headers as well as all bytes exposed by the transport.
+            if response.headers().contains_key(TRANSFER_ENCODING)
+                || response
+                    .headers()
+                    .get_all(CONTENT_LENGTH)
+                    .iter()
+                    .any(|v| v.as_bytes() != b"0")
+            {
+                return Err(Error::InvalidResponse("delete response must be empty"));
+            }
+            return read_limited(&mut response, 0).await.map_err(|error| {
+                if error == Error::ResponseTooLarge {
+                    Error::InvalidResponse("delete response must be empty")
+                } else {
+                    error
+                }
             });
         }
         read_limited(&mut response, MAX_RESPONSE_BYTES).await
@@ -1101,6 +1162,125 @@ mod tests {
             .unwrap_err();
         assert_api(err, 409, Some("PS015"));
         assert_eq!(server.finish().len(), 1);
+    }
+
+    fn empty_delete_reply() -> Vec<u8> {
+        b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_vec()
+    }
+
+    #[tokio::test]
+    async fn delete_validates_before_http_and_sends_exact_method_body_and_auth() {
+        let server = Fixture::start(vec![
+            empty_delete_reply(),
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        ]);
+        let client = server.client();
+        for (box_arg, item_arg, version, epoch) in [
+            ("bad".to_owned(), item_id(), 1, 1),
+            (box_id(), "I".repeat(26), 1, 1),
+            (box_id(), item_id(), 0, 1),
+            (box_id(), item_id(), MAX_INTEGER + 1, 1),
+            (box_id(), item_id(), 1, 0),
+            (box_id(), item_id(), 1, MAX_INTEGER + 1),
+        ] {
+            assert!(matches!(
+                client.delete_item(&box_arg, &item_arg, version, epoch).await,
+                Err(Error::InvalidArgument(_))
+            ));
+        }
+        for version in [1, MAX_INTEGER] {
+            client
+                .delete_item(&box_id(), &item_id(), version, MAX_INTEGER)
+                .await
+                .unwrap();
+        }
+        let seen = server.finish();
+        assert_eq!(seen.len(), 2, "invalid arguments must not reach HTTP");
+        for (request, version) in seen.iter().zip([1, MAX_INTEGER]) {
+            assert_eq!(
+                request.request_line,
+                format!("DELETE /api/encrypted/boxes/{}/items/{} HTTP/1.1", box_id(), item_id())
+            );
+            assert_eq!(
+                request.header("authorization"),
+                Some(format!("Bearer {TOKEN}").as_str())
+            );
+            assert_eq!(request.header("content-type"), Some("application/json"));
+            assert_eq!(request.header("connection"), Some("close"));
+            assert_eq!(request.json(), json!({"expectedVersion":version,"keyEpoch":MAX_INTEGER}));
+            assert!(!String::from_utf8_lossy(&request.body).contains(TOKEN));
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_nonempty_204_framing_and_all_other_success_statuses() {
+        for response in [
+            http(204, &json!({"secret":SECRET_BODY})),
+            b"HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\nx\r\n0\r\n\r\n".to_vec(),
+        ] {
+            let server = Fixture::start(vec![response]);
+            assert!(server
+                .client()
+                .delete_item(&box_id(), &item_id(), 1, 1)
+                .await
+                .is_err());
+            assert_eq!(server.finish().len(), 1);
+        }
+        for status in [200, 201, 202, 205, 206, 299] {
+            let server = Fixture::start(vec![http(status, &json!({}))]);
+            assert_api(
+                server.client().delete_item(&box_id(), &item_id(), 1, 1).await.unwrap_err(),
+                status,
+                None,
+            );
+            assert_eq!(server.finish().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_conflicts_are_bounded_redacted_and_never_retried() {
+        for code in ["PS015", "PS056"] {
+            let server = Fixture::start(vec![
+                http(409, &json!({"error":code,"message":SECRET_BODY,"token":TOKEN})),
+                empty_delete_reply(), // an automatic retry would consume this
+            ]);
+            let error = server
+                .client()
+                .delete_item(&box_id(), &item_id(), 1, 1)
+                .await
+                .unwrap_err();
+            let shown = format!("{error} {error:?}");
+            assert!(!shown.contains(SECRET_BODY));
+            assert!(!shown.contains(TOKEN));
+            assert_api(error, 409, Some(code));
+            assert_eq!(server.finish().len(), 1);
+        }
+        let server = Fixture::start(vec![format!(
+            "HTTP/1.1 503 Error\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{SECRET_BODY}", MAX_ERROR_BYTES + 1
+        )
+        .into_bytes()]);
+        assert_api(
+            server.client().delete_item(&box_id(), &item_id(), 1, 1).await.unwrap_err(),
+            503,
+            None,
+        );
+        assert_eq!(server.finish().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_redirect_never_forwards_session_or_body() {
+        let target = Fixture::start(vec![empty_delete_reply()]);
+        let origin = Fixture::start(vec![format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: {}/stolen\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", target.url()
+        )
+        .into_bytes()]);
+        assert_api(
+            origin.client().delete_item(&box_id(), &item_id(), 1, 1).await.unwrap_err(),
+            307,
+            None,
+        );
+        assert_eq!(origin.finish().len(), 1);
+        assert!(target.finish().is_empty());
     }
 
     #[tokio::test]
