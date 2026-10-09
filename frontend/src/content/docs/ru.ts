@@ -131,7 +131,7 @@ export const docsRu: LocaleDocs = {
   },
   terms: {
     title: "Условия использования",
-    lead: "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API).",
+    lead: "Условия использования PassShare (веб-портал, Desktop, Mobile, расширение, Connect API). Оператор: AutoDevJapan. Контакты: contact@autodevjapan.com.",
     sections: [
       {
         id: "acceptance",
@@ -246,7 +246,7 @@ export const docsRu: LocaleDocs = {
         title: "6. Ваши права",
         paragraphs: [
           "Вы можете запросить доступ, исправление или удаление своих персональных данных.",
-          "Контакт: GitHub Issues или канал поддержки (скоро).",
+          "Контакты: contact@autodevjapan.com.",
         ],
       },
     ],

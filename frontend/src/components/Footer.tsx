@@ -73,6 +73,11 @@ export function Footer() {
 
           <div className="landing-footer__brand">
             <p className="landing-footer__logo">PassShare</p>
+            <p>{t("footer.operator")}: AutoDevJapan</p>
+            <p>
+              {t("footer.contact")}: {" "}
+              <a href="mailto:contact@autodevjapan.com">contact@autodevjapan.com</a>
+            </p>
             <p className="landing-footer__tagline">
               {t("footer.tagline.prefix")}
               {t("footer.tagline.box")}

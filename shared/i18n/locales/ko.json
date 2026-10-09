@@ -166,6 +166,8 @@
   "extension.settings.logout": "Sign out",
   "extension.settings.nativeMessaging": "Desktop Native Messaging ships in a follow-up phase (Issue #96).",
   "extension.settings.title": "Settings",
+  "footer.contact": "문의",
+  "footer.operator": "운영자",
   "footer.documentation": "Documentation",
   "footer.download": "Setup",
   "footer.faq": "FAQ",

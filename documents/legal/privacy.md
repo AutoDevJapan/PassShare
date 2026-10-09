@@ -33,6 +33,10 @@ Railway（PostgreSQL）および Vercel（フロントエンド）。アカウ�
 
 開示・訂正・削除を請求できます。
 
+## 運営事業者・お問い合わせ
+
+運営事業者は AutoDevJapan です。お問い合わせは [contact@autodevjapan.com](mailto:contact@autodevjapan.com) で受け付けます。
+
 ## 法務レビュー
 
 | 項目 | 状態 |

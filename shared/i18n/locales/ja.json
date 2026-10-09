@@ -166,6 +166,8 @@
   "extension.settings.logout": "ログアウト",
   "extension.settings.nativeMessaging": "Desktop Native Messaging は次フェーズで有効化されます（Issue #96）。",
   "extension.settings.title": "設定",
+  "footer.contact": "お問い合わせ",
+  "footer.operator": "運営事業者",
   "footer.documentation": "ドキュメント",
   "footer.download": "導入手順",
   "footer.faq": "よくある質問",
