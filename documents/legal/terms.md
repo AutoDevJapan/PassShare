@@ -33,6 +33,10 @@
 
 本規約は必要に応じて改定されます。重要な変更は Web 上で告知します。
 
+## 運営事業者・お問い合わせ
+
+運営事業者は AutoDevJapan です。お問い合わせは [contact@autodevjapan.com](mailto:contact@autodevjapan.com) で受け付けます。
+
 ## 法務レビュー
 
 | 項目 | 状態 |

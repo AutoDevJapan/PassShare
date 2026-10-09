@@ -128,7 +128,7 @@ export const docsEn: LocaleDocs = {
   },
   terms: {
     title: "Terms of service",
-    lead: "Terms for PassShare (web portal, desktop, mobile, extension, Connect API).",
+    lead: "Terms for PassShare (web portal, desktop, mobile, extension, Connect API). Operated by AutoDevJapan. Contact: contact@autodevjapan.com.",
     sections: [
       {
         id: "acceptance",
@@ -241,7 +241,7 @@ export const docsEn: LocaleDocs = {
         title: "6. Your rights",
         paragraphs: [
           "You may request access, correction, or deletion of your personal data.",
-          "Contact: GitHub Issues or support channel (coming soon).",
+          "Contact: contact@autodevjapan.com.",
         ],
       },
     ],
