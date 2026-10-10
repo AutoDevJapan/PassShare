@@ -162,7 +162,7 @@ export async function createApp(options = {}) {
       // Retain lexical numbers and duplicate keys for strict Rust attachment
       // validation before Express's JSON.parse can normalize them away.
       verify: (req, _res, buffer) => {
-        if (buffer.length > 0 && req.originalUrl.startsWith("/api/encrypted/") && /\/attachments(\/|\?|$)/.test(req.originalUrl)) {
+        if (buffer.length > 0 && /^\/api\/encrypted\//i.test(req.originalUrl) && /\/(attachments|migrations)(\/|\?|$)/i.test(req.originalUrl)) {
           req.encryptedAttachmentJson = buffer.toString("utf8");
         }
       },

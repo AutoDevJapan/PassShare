@@ -240,14 +240,19 @@ impl Database {
         assert!(ready, "PostgreSQL readiness");
         db
     }
+    #[track_caller]
     fn sql(&self, sql: &str) -> String {
         self.sql_before(sql, std::time::Instant::now() + Duration::from_secs(15))
     }
+    #[track_caller]
     fn sql_before(&self, sql: &str, deadline: std::time::Instant) -> String {
         let mut cmd = self.psql(true, None);
         // SQLSTATE is safe diagnostic metadata; verbose text is never logged.
         cmd.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"]);
-        fixture_sql(cmd, sql, deadline).unwrap_or_else(|reason| panic!("fixture SQL {reason}"))
+        match fixture_sql(cmd, sql, deadline) {
+            Ok(value) => value,
+            Err(reason) => panic!("fixture SQL {reason}"),
+        }
     }
     fn psql(&self, interactive: bool, label: Option<&str>) -> Command {
         let mut c = if let Some(local) = &self.local {
@@ -310,7 +315,7 @@ impl Drop for SqlChild {
 // Only SQLSTATE and schema-owned identifiers may leave PostgreSQL stderr.
 // Never report arbitrary quoted names, function arguments, SQL or row values.
 fn sql_error_metadata(diagnostic: &str) -> Vec<(String, Option<String>)> {
-    const SCHEMA: &str = include_str!("../../../backend/native/src/encrypted-schema.sql");
+    const SCHEMA: &str = passshare_mutations::encrypted::SCHEMA;
     diagnostic
         .lines()
         .filter_map(|line| {
@@ -964,6 +969,10 @@ fn acceptance_state_hash(db: &Database) -> String {
         "encrypted_rotation_items",
         "encrypted_rotation_grants",
         "encrypted_rotation_attachments",
+        "encrypted_migration_sources",
+        "encrypted_migrations",
+        "encrypted_migration_items",
+        "encrypted_migration_files",
     ];
     let parts: Vec<_> = tables.iter().map(|t| format!("SELECT '{t}' AS name, COALESCE(string_agg(md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text),',' ORDER BY md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text)),'') AS digest FROM {t} r")).collect();
     db.sql(&format!(
@@ -1106,7 +1115,12 @@ fn main() {
     let (local_manifest, args) =
         local_postgres::prefix(&args).expect("explicit local fixture prefix");
     let attachment_fixture = args.first().is_some_and(|a| a == "--encrypted-attachments");
-    let args = if attachment_fixture { &args[1..] } else { args };
+    let migration_fixture = args.first().is_some_and(|a| a == "--encrypted-migration");
+    let args = if attachment_fixture || migration_fixture {
+        &args[1..]
+    } else {
+        args
+    };
     let (restore_fixture, args) = sharing_rotation::encrypted_restore::prefix(args)
         .expect("explicit encrypted restore fixture prefix");
     let legacy_expiry = args.first().is_some_and(|a| a == "--legacy-expiry");
@@ -1135,7 +1149,11 @@ fn main() {
         fixture_prefix(args).unwrap_or_else(|reason| panic!("{reason}"));
     local_postgres::validate_mode(
         local_manifest.is_some(),
-        sharing_fixture || legacy_expiry || restore_fixture || attachment_fixture,
+        sharing_fixture
+            || legacy_expiry
+            || restore_fixture
+            || attachment_fixture
+            || migration_fixture,
         mode_args,
     )
     .expect("local PostgreSQL requires an explicit supported Node fixture");
@@ -1148,7 +1166,7 @@ fn main() {
     let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
     assert!(
         local_manifest.is_none()
-            || ((sharing_fixture || legacy_expiry || restore_fixture || attachment_fixture)
+            || ((sharing_fixture || legacy_expiry || restore_fixture || attachment_fixture || migration_fixture)
                 && matches!(mode, Mode::Node(_))),
         "local PostgreSQL is explicitly supported only for Node sharing, expiry or restore acceptance"
     );
@@ -1169,7 +1187,9 @@ fn main() {
         }
     };
     let (network, db) = if let Some(manifest) = local_manifest {
-        let local = if attachment_fixture {
+        let local = if migration_fixture {
+            local_postgres::LocalPostgres::start_migration(&manifest)
+        } else if attachment_fixture {
             local_postgres::LocalPostgres::start_attachments(&manifest)
         } else {
             local_postgres::LocalPostgres::start(&manifest)
@@ -1195,7 +1215,7 @@ fn main() {
         (network, db)
     };
     assert!(
-        !attachment_fixture
+        !(attachment_fixture || migration_fixture)
             || !(restore_fixture
                 || sharing_fixture
                 || identity_fixture
@@ -1203,7 +1223,9 @@ fn main() {
                 || go_executable.is_some()),
         "fixture modes are mutually exclusive"
     );
-    if attachment_fixture {
+    if migration_fixture {
+        sharing_rotation::encrypted_migration::run(&db, &network, &mode);
+    } else if attachment_fixture {
         sharing_rotation::encrypted_attachments::run(&db, &network, &mode);
     } else if restore_fixture {
         sharing_rotation::encrypted_restore::run(&db, &network, &mode);

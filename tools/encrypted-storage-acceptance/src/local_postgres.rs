@@ -40,6 +40,7 @@ pub struct LocalPostgres {
     pub database: String,
     passfile: PathBuf,
     pub ownership_id: String,
+    purpose: &'static str,
 }
 impl LocalPostgres {
     pub fn start(manifest: &PathBuf) -> Self {
@@ -47,6 +48,12 @@ impl LocalPostgres {
     }
     pub fn start_attachments(manifest: &PathBuf) -> Self {
         Self::start_named(manifest, "attach_")
+    }
+    pub fn start_migration(manifest: &PathBuf) -> Self {
+        let local = Self::start_named(manifest, "migration_");
+        local.query(&format!("CREATE SCHEMA passshare_migration_control; CREATE TABLE passshare_migration_control.binding(owner_id text NOT NULL,purpose text NOT NULL,database_name text NOT NULL); INSERT INTO passshare_migration_control.binding VALUES('{}','encrypted-migration-source',current_database())",local.ownership_id));
+        println!("migration resource: database={} server_port={} fixture_owner={} purpose=encrypted-migration-source",local.database,local.port,local.ownership_id);
+        local
     }
     fn start_named(manifest: &PathBuf, prefix: &str) -> Self {
         let file = std::fs::File::open(manifest).expect("owned fixture manifest must exist");
@@ -114,6 +121,7 @@ impl LocalPostgres {
             database: "passshare".to_owned(),
             passfile,
             ownership_id: owner.to_owned(),
+            purpose: "acceptance-source",
         };
         // The nonce and server major version prevent accidentally selecting an
         // unrelated DB. No environment DATABASE_URL is read as a fallback.
@@ -139,6 +147,7 @@ impl LocalPostgres {
             database: "passshare".to_owned(),
             passfile: self.passfile.clone(),
             ownership_id: self.ownership_id.clone(),
+            purpose: "acceptance-restore",
         };
         assert!(local.query("SELECT owner_id FROM passshare_fixture_owner") == self.ownership_id);
         local.create_database(if self.database.starts_with("passshare1163_attach_") {
@@ -149,7 +158,7 @@ impl LocalPostgres {
         local
     }
     fn create_database(&mut self, prefix: &str) {
-        assert!(matches!(prefix, "" | "attach_"));
+        assert!(matches!(prefix, "" | "attach_" | "migration_"));
         let name = format!("passshare1163_{prefix}{}", ConnectId::generate().unwrap());
         let mut cmd = self.client();
         // Windows fixture creation can exceed the normal 10-second statement
@@ -165,6 +174,28 @@ impl LocalPostgres {
             Duration::from_secs(60),
         )
         .expect("bounded owned database creation failed");
+        let marker = format!(
+            "passshare-acceptance:{}:{}:{}",
+            self.ownership_id, self.purpose, self.database
+        );
+        let catalog = Self {
+            psql: self.psql.clone(),
+            port: self.port,
+            database: "passshare".to_owned(),
+            passfile: self.passfile.clone(),
+            ownership_id: self.ownership_id.clone(),
+            purpose: self.purpose,
+        };
+        catalog.query(&format!(
+            "COMMENT ON DATABASE {} IS '{marker}'",
+            self.database
+        ));
+        // The catalog marker remains readable even if PostgreSQL has marked a
+        // partially dropped database invalid. Do not depend on connecting to it.
+        println!(
+            "local PostgreSQL resource created: database={} port={} owner={}",
+            self.database, self.port, self.ownership_id
+        );
     }
     pub fn archive_client(&self, program: &str) -> Command {
         assert!(matches!(program, "pg_dump" | "pg_restore"));
@@ -256,14 +287,34 @@ impl Drop for LocalPostgres {
             return;
         }
         let name = std::mem::replace(&mut self.database, "passshare".to_owned());
-        if control(
-            self.client(),
-            &format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"),
-        )
-        .is_err()
-        {
+        let marker = format!(
+            "passshare-acceptance:{}:{}:{name}",
+            self.ownership_id, self.purpose
+        );
+        let guard=format!("SELECT count(*) FROM pg_database d WHERE datname='{name}' AND datdba=(SELECT oid FROM pg_roles WHERE rolname='passshare') AND shobj_description(d.oid,'pg_database')='{marker}'");
+        if control(self.client(), &guard).as_deref() != Ok("1") {
             CLEANUP_FAILED.store(true, Ordering::SeqCst);
-            eprintln!("owned local PostgreSQL database cleanup failed");
+            eprintln!(
+                "local database ownership/purpose catalog guard failed; preserved database={name}"
+            );
+            return;
+        }
+        let mut cmd = self.client();
+        cmd.env(
+            "PGOPTIONS",
+            "-c statement_timeout=55000 -c lock_timeout=10000",
+        );
+        if let Err(reason) = control_with_budget(
+            cmd,
+            &format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"),
+            Duration::from_secs(60),
+        ) {
+            CLEANUP_FAILED.store(true, Ordering::SeqCst);
+            eprintln!(
+                "owned local PostgreSQL database cleanup failed database={name} category={reason}"
+            );
+        } else {
+            println!("owned local PostgreSQL resource dropped: database={name}");
         }
     }
 }

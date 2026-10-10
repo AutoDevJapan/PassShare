@@ -70,6 +70,10 @@ fn security_state(db: &Database) -> String {
         "encrypted_attachments",
         "encrypted_attachment_tombstones",
         "encrypted_rotation_attachments",
+        "encrypted_migration_sources",
+        "encrypted_migrations",
+        "encrypted_migration_items",
+        "encrypted_migration_files",
     ];
     let parts = tables.iter().map(|t| format!("SELECT '{t}' AS name, count(*)::text || ':' || COALESCE(string_agg(md5(to_jsonb(r)::text),',' ORDER BY md5(to_jsonb(r)::text)),'') AS hash FROM {t} r")).collect::<Vec<_>>();
     db.sql(&format!(
@@ -81,6 +85,13 @@ fn security_state(db: &Database) -> String {
 fn bind(db: &Database, owner: &str, purpose: &str) {
     assert!(owner.len() == 32 && owner.bytes().all(|c| c.is_ascii_hexdigit()));
     assert!(matches!(purpose, "source" | "restore"));
+    if db.sql("SELECT to_regclass('passshare_acceptance_control.binding') IS NOT NULL") == "t" {
+        assert!(
+            bound(db, owner, purpose),
+            "existing archive purpose/ownership must match"
+        );
+        return;
+    }
     db.sql(&format!("CREATE SCHEMA passshare_acceptance_control; CREATE TABLE passshare_acceptance_control.binding(owner_id text NOT NULL, purpose text NOT NULL, database_name text NOT NULL); INSERT INTO passshare_acceptance_control.binding VALUES('{owner}','{purpose}',current_database())"));
 }
 
