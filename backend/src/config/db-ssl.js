@@ -23,7 +23,24 @@ function parseDatabaseUrl(databaseUrl) {
   }
 }
 
+function trustedPrivateHosts(env) {
+  const declared = env.DATABASE_TRUSTED_PRIVATE_HOSTS?.trim();
+  if (!declared) return [];
+  return declared.split(",").map((entry) => {
+    const host = entry.trim().toLowerCase();
+    // Exact ASCII host names / IPv4 literals: no wildcard, URL, port, encoding or suffix
+    // matching. Trust in the network itself must be established by deployment.
+    const labels = host.split(".");
+    if (host.length > 253 || labels.some((label) => label.length > 63 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) {
+      throw new Error("Invalid trusted private database hosts configuration");
+    }
+    return host;
+  });
+}
+
 function resolveParsedSsl({ hostname, sslmode, url }, env) {
+  const declaredHosts = trustedPrivateHosts(env);
   // A terminal DNS dot denotes the same host; pg still consumes the original
   // hostname for connection and certificate identity checking.
   const host = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
@@ -33,20 +50,24 @@ function resolveParsedSsl({ hostname, sslmode, url }, env) {
   if (ca) return { ca, rejectUnauthorized: true };
 
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(host);
+  const lastParam = (key) => url.searchParams.getAll(key).at(-1);
   const requestsTls = (sslmode !== null && sslmode !== "disable" && sslmode !== "allow") ||
-    ["true", "1", "no-verify"].includes(url.searchParams.get("ssl")) ||
-    ["sslcert", "sslkey", "sslrootcert"].some((key) => Boolean(url.searchParams.get(key))) ||
-    url.searchParams.get("sslnegotiation") === "direct";
-  if (local && !requestsTls) return undefined;
+    ["true", "1", "no-verify"].includes(lastParam("ssl")) ||
+    ["sslcert", "sslkey", "sslrootcert"].some((key) => Boolean(lastParam(key))) ||
+    lastParam("sslnegotiation") === "direct";
+  // Private declarations must match the host pg consumes, including a terminal
+  // dot. Keep the established VPC/loopback canonicalization separate.
+  if ((local || declaredHosts.includes(hostname)) && !requestsTls) return undefined;
 
-  // Every host outside the trusted VPC/loopback boundary uses verified TLS,
+  // Every host outside the trusted VPC/loopback/declared boundary uses verified TLS,
   // including hosts unrelated to Railway and URLs requesting sslmode=disable.
   return { rejectUnauthorized: env.DATABASE_SSL_ALLOW_INSECURE !== "true" };
 }
 
 /**
  * Resolve TLS policy: Railway VPC -> no TLS; pinned CA -> verified TLS;
- * loopback without a TLS request -> no TLS; all other hosts -> verified TLS.
+ * loopback or an operator-declared private host without a TLS request -> no TLS;
+ * all other hosts -> verified TLS. A pinned CA overrides the private declaration.
  * Only the exact DATABASE_SSL_ALLOW_INSECURE=true opt-out disables verification,
  * and it never overrides a pinned CA. URL TLS settings cannot weaken the policy.
  * @param {string | null | undefined} databaseUrl
