@@ -184,11 +184,15 @@ impl Database {
             .unwrap();
         assert!(status.success(), "start isolated PostgreSQL");
         let ready = (0..150).any(|_| {
-            if command("docker")
+            let mut probe = command("docker")
                 .args([
                     "exec",
                     "--env",
                     "PGPASSWORD=passshare",
+                    "--env",
+                    "PGCONNECT_TIMEOUT=2",
+                    "--env",
+                    "PGOPTIONS=-c statement_timeout=2000",
                     &db.name,
                     // The initialization server accepts socket connections
                     // before the selected database exists. Require its final
@@ -209,15 +213,29 @@ impl Database {
                 ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status()
-                .unwrap()
-                .success()
-            {
-                true
-            } else {
+                .spawn()
+                .expect("PostgreSQL readiness probe launch");
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let ready = loop {
+                if let Some(status) = probe.try_wait().expect("PostgreSQL readiness probe wait") {
+                    break status.success();
+                }
+                if std::time::Instant::now() >= deadline {
+                    let _ = probe.kill();
+                    if !reap_before(
+                        &mut probe,
+                        std::time::Instant::now() + Duration::from_secs(2),
+                    ) {
+                        CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                    }
+                    break false;
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+            if !ready {
                 thread::sleep(Duration::from_millis(100));
-                false
             }
+            ready
         });
         assert!(ready, "PostgreSQL readiness");
         db
