@@ -107,12 +107,13 @@ SQL本文や暗号文をログへ出さず、静的なエラー分類から調�
 
 正式Node＋Docker PostgreSQLと正式 `--image` の実実行、およびCIはこの独立作業では未検証。
 親の統合時に、既存のCIが用意するnativeと配布イメージで次の追加実行が必要である。
-既存workflowには新方式の起動手順が無いため、既存CIの成功だけを本方式の成功に数えない。
+正式Nodeと配布イメージの2方式をCIへ追加済み。新方式の成功結果は確認中であり、
+以前のCIの成功だけを本方式の成功に数えない。
 
 ```text
 tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-restore backend/native/target/debug/passshare-mutations
 tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-restore --image passshare-todo1163-encrypted-api
 ```
 
-変更は受入ツールとこの仕様書だけで、新規依存、backend/Core/SDK/他のtoolの変更はない。
+変更は受入ツール、この仕様書、2方式を実行するCI接続だけで、新規依存やbackend/Core/SDK/他のtoolの変更はない。
 この測定で親の22条件やM4/M8の達成を宣言しない。

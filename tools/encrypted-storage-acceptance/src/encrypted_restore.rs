@@ -731,7 +731,8 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
         a_key.encrypt_item(&denied_dto, &context(&a, id, candidate.previous + 2, 2)),
         "well-formed removed member write probe",
     );
-    call(
+    rejected(
+        &restored,
         rp,
         &b,
         "PUT",
