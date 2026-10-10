@@ -26,7 +26,7 @@ fn neutralize_formula(value: &str) -> String {
 /// silently lose data during a backup (#364). For those items the Password
 /// column is left empty and their content is preserved in the Notes column.
 ///
-/// Each cell is passed through [`neutralize_formula`] to prevent spreadsheet
+/// Each cell is passed through the internal `neutralize_formula` helper to prevent spreadsheet
 /// formula injection.
 pub fn export_onepassword_csv(items: &[Item]) -> String {
     let mut writer = csv::WriterBuilder::new()
