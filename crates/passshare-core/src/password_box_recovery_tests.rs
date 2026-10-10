@@ -130,57 +130,35 @@ fn first_save_and_rekey_preserve_reference_extensions_and_duplicate_url_metadata
     file.save_to_path(&path).unwrap();
     drop(pb);
     let original = raw_payload(&path, old_password().as_str());
-    assert_eq!(
-        original.0["items"][0]["vault"]["name"],
-        "synthetic-reference-name"
-    );
-    assert_eq!(
-        original.0["items"][0]["urls"][1]["extension"],
-        "second-only"
-    );
+    assert!(original.0["items"][0]["vault"]["name"] == "synthetic-reference-name");
+    assert!(original.0["items"][0]["urls"][1]["extension"] == "second-only");
     let mut opened = PasswordBox::open(&path, old_password().as_str()).unwrap();
     opened.save(old_password().as_str()).unwrap();
     drop(opened);
     let saved = raw_payload(&path, old_password().as_str());
-    assert_eq!(
-        saved.0["items"][0]["vault"],
-        original.0["items"][0]["vault"]
-    );
-    assert_eq!(saved.0["items"][0]["urls"], original.0["items"][0]["urls"]);
+    assert!(saved.0["items"][0]["vault"] == original.0["items"][0]["vault"]);
+    assert!(saved.0["items"][0]["urls"] == original.0["items"][0]["urls"]);
     let mut reordered = PasswordBox::open(&path, old_password().as_str()).unwrap();
     reordered.payload.items[0].urls.reverse();
     reordered.save(old_password().as_str()).unwrap();
     drop(reordered);
     let ordered = raw_payload(&path, old_password().as_str());
-    assert_eq!(
-        ordered.0["items"][0]["urls"][0],
-        original.0["items"][0]["urls"][1]
-    );
-    assert_eq!(
-        ordered.0["items"][0]["urls"][1],
-        original.0["items"][0]["urls"][0]
-    );
+    assert!(ordered.0["items"][0]["urls"][0] == original.0["items"][0]["urls"][1]);
+    assert!(ordered.0["items"][0]["urls"][1] == original.0["items"][0]["urls"][0]);
     let mut removed = PasswordBox::open(&path, old_password().as_str()).unwrap();
     removed.payload.items[0].urls.remove(1);
     removed.save(old_password().as_str()).unwrap();
     drop(removed);
     let retained = raw_payload(&path, old_password().as_str());
-    assert_eq!(
-        retained.0["items"][0]["urls"],
-        serde_json::json!([original.0["items"][0]["urls"][1]])
+    assert!(
+        retained.0["items"][0]["urls"] == serde_json::json!([original.0["items"][0]["urls"][1]])
     );
     let mut recovered = PasswordBox::recover(&path, &code).unwrap();
     recovered.rekey_recovered(new_password().as_str()).unwrap();
     drop(recovered);
     let rekeyed = raw_payload(&path, new_password().as_str());
-    assert_eq!(
-        rekeyed.0["items"][0]["vault"],
-        original.0["items"][0]["vault"]
-    );
-    assert_eq!(
-        rekeyed.0["items"][0]["urls"],
-        retained.0["items"][0]["urls"]
-    );
+    assert!(rekeyed.0["items"][0]["vault"] == original.0["items"][0]["vault"]);
+    assert!(rekeyed.0["items"][0]["urls"] == retained.0["items"][0]["urls"]);
 }
 
 #[test]
@@ -227,20 +205,14 @@ fn v2_restart_recover_rekey_preserves_full_json_and_code() {
     assert!(reopened.payload == expected);
     reopened.save(new_password().as_str()).unwrap();
     assert!(raw_payload(&path, new_password().as_str()).0 == raw_before.0);
-    assert_eq!(
-        PasswordBox::recover(&path, &code).unwrap().payload,
-        expected
-    );
-    assert_eq!(
+    assert!(PasswordBox::recover(&path, &code).unwrap().payload == expected);
+    assert!(
         PasswordBox::open(&backup, old_password().as_str())
             .unwrap()
-            .payload,
-        expected
+            .payload
+            == expected
     );
-    assert_eq!(
-        PasswordBox::recover(&backup, &code).unwrap().payload,
-        expected
-    );
+    assert!(PasswordBox::recover(&backup, &code).unwrap().payload == expected);
 }
 
 #[test]
@@ -552,10 +524,7 @@ fn recovered_lock_and_drop_scrub_owned_buffers_and_return_no_secrets() {
     assert!(recovered.original_payload.is_none());
     recovered.lock();
     assert!(recovered.recovery_secret() == Err(PassShareError::BoxLocked));
-    assert_eq!(
-        recovered.list_connect_items(),
-        Err(PassShareError::BoxLocked)
-    );
+    assert!(recovered.list_connect_items() == Err(PassShareError::BoxLocked));
     assert_eq!(
         recovered.rekey_recovered(new_password().as_str()),
         Err(PassShareError::BoxLocked)
@@ -587,17 +556,11 @@ fn unknown_item_fields_survive_but_removed_known_fields_stay_removed() {
     assert!(raw.0["items"][0].get("tags").is_none());
     assert!(raw.0["items"][0].get("lastEditedBy").is_none());
     assert!(raw.0["items"][0]["fields"][0].get("purpose").is_none());
-    assert_eq!(raw.0["items"][0]["version"], 17);
-    assert_eq!(
-        raw.0["items"][0]["files"][0]["contentPath"],
-        "attachments/ref"
-    );
+    assert!(raw.0["items"][0]["version"] == 17);
+    assert!(raw.0["items"][0]["files"][0]["contentPath"] == "attachments/ref");
     pb.apply_and_save(SavedChange::Delete(&id), old_password().as_str())
         .unwrap();
-    assert_eq!(
-        raw_payload(&path, old_password().as_str()).0["items"],
-        serde_json::json!([])
-    );
+    assert!(raw_payload(&path, old_password().as_str()).0["items"] == serde_json::json!([]));
 }
 
 #[test]
@@ -662,11 +625,11 @@ fn binding_rejects_a_wrapper_with_correct_key_and_different_payload_code() {
     });
     file.save_to_path(&path).unwrap();
     // Unwrapping and primary decryption both succeed; payload/code binding must fail.
-    assert_eq!(
+    assert!(
         PasswordBox::unwrap_recovery_key(&file, fixed_code().as_str())
             .unwrap()
-            .as_bytes(),
-        key.as_bytes()
+            .as_bytes()
+            == key.as_bytes()
     );
     assert_eq!(
         PasswordBox::recover(&path, fixed_code().as_str()).err(),
