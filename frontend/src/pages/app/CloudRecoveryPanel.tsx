@@ -71,6 +71,7 @@ export function CloudRecoveryBackup({ worker, scope }: { worker: CloudWorker; sc
     if (operation.current || document.visibilityState === "hidden" || user?.id !== scope.ownerAccountId) return;
     const controller = new AbortController();
     operation.current = controller;
+    const timeout = setTimeout(() => { controller.abort(); clear(); }, 60_000);
     const token = ++generation.current;
     const active = () => generation.current === token && !controller.signal.aborted && current.current.worker === worker &&
       current.current.userId === scope.ownerAccountId && current.current.location === location.key && document.visibilityState !== "hidden";
@@ -94,6 +95,7 @@ export function CloudRecoveryBackup({ worker, scope }: { worker: CloudWorker; sc
       if (error instanceof CloudApiError && (error.status === 401 || error.status === 403 || error.code === "PS056")) lockCloudUi();
       else setError("cloudRecovery.backupFailed");
     } finally {
+      clearTimeout(timeout);
       text = "";
       if (transfer) transfer.recoveryCode = "";
       transfer = null;
@@ -197,6 +199,16 @@ export function CloudRecoveryPanel({ scope, visible, onCancel, onComplete }: {
       password: password.current?.value ?? "", login: login.current?.value ?? "", worker: null };
     clearInputs();
     session.task = task; session.error = null;
+    // HTTP may outlive the temporary worker. Bound each whole attempt too;
+    // preserve a sent envelope as uncertain while clearing credential refs.
+    const timeout = setTimeout(() => {
+      if (session.task !== task) return;
+      stop(false);
+      if (session.prepared?.sent) { session.prepared.uncertain = true; session.outcome = "unknown"; }
+      session.error = session.prepared?.sent ? "cloudRecovery.unknown" : "cloudRecovery.failed";
+      session.task = null;
+      changed();
+    }, 120_000);
     const token = ++session.generation;
     const active = () => session.alive && current.current.session === session && current.current.userId === scope.ownerAccountId &&
       current.current.visible && session.generation === token && !task.controller.signal.aborted && document.visibilityState !== "hidden";
@@ -314,6 +326,7 @@ export function CloudRecoveryPanel({ scope, visible, onCancel, onComplete }: {
       session.error = session.outcome === "conflict" ? "cloudRecovery.conflict" : session.outcome === "unknown" ? "cloudRecovery.unknown" :
         session.outcome === "rejected" ? "cloudRecovery.rejected" : session.outcome === "saved" ? "cloudRecovery.verifyFailed" : "cloudRecovery.failed";
     } finally {
+      clearTimeout(timeout);
       task.code = ""; task.password = ""; task.login = ""; fileText = ""; wrapped = ""; closeWorker();
       if (session.task === task) session.task = null;
       if (session.alive && current.current.session === session) changed();
