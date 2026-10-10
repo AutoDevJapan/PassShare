@@ -520,6 +520,7 @@ fn update_primary_url(urls: &mut Vec<ItemUrl>, url: Option<String>) {
             urls[index].href = href;
         }
         None if !href.is_empty() => urls.push(ItemUrl {
+            extensions: Default::default(),
             label: String::new(),
             primary: true,
             href,
@@ -838,16 +839,19 @@ mod smoke_tests {
         );
         original.urls = vec![
             ItemUrl {
+                extensions: Default::default(),
                 label: "Secondary".into(),
                 primary: false,
                 href: "https://secondary.example/".into(),
             },
             ItemUrl {
+                extensions: Default::default(),
                 label: "Primary".into(),
                 primary: true,
                 href: "https://primary.example/".into(),
             },
             ItemUrl {
+                extensions: Default::default(),
                 label: "Other primary".into(),
                 primary: true,
                 href: "https://third.example/".into(),
@@ -907,6 +911,7 @@ mod smoke_tests {
         assert_eq!(
             empty,
             vec![ItemUrl {
+                extensions: Default::default(),
                 label: String::new(),
                 primary: true,
                 href: "https://new.example/".into()
@@ -938,11 +943,13 @@ mod smoke_tests {
         original.fields.push(extra);
         original.urls = vec![
             ItemUrl {
+                extensions: Default::default(),
                 label: "Secondary".into(),
                 primary: false,
                 href: "https://secondary.example/".into(),
             },
             ItemUrl {
+                extensions: Default::default(),
                 label: "Primary".into(),
                 primary: true,
                 href: "https://primary.example/".into(),

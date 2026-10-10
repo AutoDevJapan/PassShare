@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use super::item::Item;
 use super::login_item::LoginItem;
@@ -52,7 +53,10 @@ enum RawPasswordBoxPayload {
 }
 
 impl RawPasswordBoxPayload {
-    fn into_payload(self, vault_name: &str) -> Result<PasswordBoxPayload, crate::error::PassShareError> {
+    fn into_payload(
+        self,
+        vault_name: &str,
+    ) -> Result<PasswordBoxPayload, crate::error::PassShareError> {
         match self {
             RawPasswordBoxPayload::V2(payload) => Ok(payload),
             RawPasswordBoxPayload::Legacy(legacy) => {
@@ -62,14 +66,18 @@ impl RawPasswordBoxPayload {
     }
 }
 
-pub fn deserialize_payload(bytes: &[u8], vault_name: &str) -> Result<PasswordBoxPayload, crate::error::PassShareError> {
+pub fn deserialize_payload(
+    bytes: &[u8],
+    vault_name: &str,
+) -> Result<PasswordBoxPayload, crate::error::PassShareError> {
     // Bytes here are already decrypted (the AEAD auth tag verified), so they came
     // from a genuine PassShare box. Distinguish two failure modes:
     //   * invalid JSON / structure  -> CorruptFile
     //   * valid JSON but a newer     -> UnsupportedVersion
     //     `payloadVersion` we don't understand
-    let value: serde_json::Value =
-        serde_json::from_slice(bytes).map_err(|_| crate::error::PassShareError::CorruptFile)?;
+    let value = ParsedPlaintext(
+        serde_json::from_slice(bytes).map_err(|_| crate::error::PassShareError::CorruptFile)?,
+    );
 
     // Peek the version BEFORE the typed parse: `payload_version` is a plain field,
     // so a newer-but-structurally-compatible payload would otherwise silently
@@ -78,6 +86,7 @@ pub fn deserialize_payload(bytes: &[u8], vault_name: &str) -> Result<PasswordBox
     // so the UI can prompt an app upgrade. Legacy payloads carry no `payloadVersion`
     // and fall through to the untagged parse + migration below.
     if let Some(version) = value
+        .0
         .get("payloadVersion")
         .and_then(serde_json::Value::as_u64)
     {
@@ -86,9 +95,31 @@ pub fn deserialize_payload(bytes: &[u8], vault_name: &str) -> Result<PasswordBox
         }
     }
 
-    let raw: RawPasswordBoxPayload =
-        serde_json::from_value(value).map_err(|_| crate::error::PassShareError::CorruptFile)?;
+    // Borrow from the guard so ignored extensions and error paths do not
+    // consume an unguarded plaintext JSON allocation.
+    let raw = RawPasswordBoxPayload::deserialize(&value.0)
+        .map_err(|_| crate::error::PassShareError::CorruptFile)?;
     raw.into_payload(vault_name)
+}
+
+struct ParsedPlaintext(serde_json::Value);
+impl Drop for ParsedPlaintext {
+    fn drop(&mut self) {
+        fn clear(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::String(text) => text.zeroize(),
+                serde_json::Value::Array(values) => values.iter_mut().for_each(clear),
+                serde_json::Value::Object(values) => {
+                    for (mut key, mut value) in std::mem::take(values) {
+                        key.zeroize();
+                        clear(&mut value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        clear(&mut self.0);
+    }
 }
 
 #[cfg(test)]

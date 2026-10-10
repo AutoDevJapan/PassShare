@@ -5,8 +5,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::crypto::{
-    decrypt, derive_master_key, derive_master_key_with_params, encrypt, generate_recovery_secret,
-    generate_salt, FILE_VERSION, KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST,
+    decrypt, decrypt_recovery_key, derive_master_key, derive_master_key_with_params, encrypt,
+    encrypt_recovery_key, generate_recovery_secret, generate_salt, recovery_key, MasterKey,
+    KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST, RECOVERY_FILE_VERSION,
 };
 use crate::domain::connect_id::ConnectId;
 use crate::domain::item::Item;
@@ -18,7 +19,7 @@ use crate::error::PassShareError;
 use crate::export::export_onepassword_csv;
 use crate::generator::{generate_password, PasswordGeneratorOptions};
 use crate::import::import_onepassword_csv;
-use crate::storage::file_format::{KdfParams, PasswordBoxFile, StoredCipher};
+use crate::storage::file_format::{KdfParams, PasswordBoxFile, RecoveryWrapper, StoredCipher};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasswordBoxState {
@@ -41,6 +42,12 @@ pub struct PasswordBox {
     state: PasswordBoxState,
     payload: PasswordBoxPayload,
     salt: Option<[u8; 16]>,
+    file_version: u32,
+    recovery_only: bool,
+    // Keep the authenticated JSON for fields not represented by the current DTO.
+    // It is merged at save, and its serialized buffer is scrubbed on teardown.
+    original_payload: Option<Zeroizing<Vec<u8>>>,
+    source_fingerprint: Option<[u8; 32]>,
 }
 
 impl PasswordBox {
@@ -59,6 +66,10 @@ impl PasswordBox {
             state: self.state,
             payload: self.payload.clone(),
             salt: self.salt,
+            file_version: self.file_version,
+            recovery_only: self.recovery_only,
+            original_payload: self.original_payload.clone(),
+            source_fingerprint: self.source_fingerprint,
         };
         let count = match change {
             SavedChange::Add(item) => {
@@ -81,20 +92,27 @@ impl PasswordBox {
         };
         staged.save(master_password)?;
         std::mem::swap(&mut self.payload, &mut staged.payload);
+        std::mem::swap(&mut self.original_payload, &mut staged.original_payload);
+        std::mem::swap(&mut self.source_fingerprint, &mut staged.source_fingerprint);
         Ok(count)
     }
 
     pub fn create(path: impl AsRef<Path>, master_password: &str) -> Result<Self, PassShareError> {
         let path = path.as_ref().to_path_buf();
         let vault_name = default_vault_name(&path);
+        let vault = Vault::new(vault_name)?;
         let salt = generate_salt()?;
         let recovery_secret = generate_recovery_secret()?;
-        let payload = PasswordBoxPayload::new(Vault::new(vault_name)?, Some(recovery_secret));
+        let payload = PasswordBoxPayload::new(vault, Some(recovery_secret));
         let mut pb = Self {
             path,
             state: PasswordBoxState::Unlocked,
             payload,
             salt: Some(salt),
+            file_version: RECOVERY_FILE_VERSION,
+            recovery_only: false,
+            original_payload: None,
+            source_fingerprint: None,
         };
         pb.save(master_password)?;
         Ok(pb)
@@ -114,16 +132,194 @@ impl PasswordBox {
             file.kdf.time_cost,
             file.kdf.parallelism,
         )?;
-        let nonce = file.cipher.nonce_bytes()?;
-        let plaintext = Zeroizing::new(decrypt(&file.ciphertext, &key, &nonce)?);
-        let vault_name = default_vault_name(&path);
-        let payload = deserialize_payload(&plaintext, &vault_name)?;
-        Ok(Self {
+        let pb = Self::open_with_key(path, &file, &key, false)?;
+        if file.version == RECOVERY_FILE_VERSION {
+            let aad = file.recovery_aad()?;
+            if !pb.recovery_binding_matches(&file, &key, &aad) {
+                return Err(PassShareError::CorruptFile);
+            }
+        }
+        Ok(pb)
+    }
+
+    /// Read-only recovery. No password or recovered master key is retained.
+    /// Call `rekey_recovered` explicitly before attempting any saved mutation.
+    pub fn recover(path: impl AsRef<Path>, code: &str) -> Result<Self, PassShareError> {
+        let path = path.as_ref().to_path_buf();
+        let file = PasswordBoxFile::load_from_path(&path)?;
+        file.validate_version()?;
+        let key = Self::unwrap_recovery_key(&file, code)?;
+        let pb = Self::open_with_key(path, &file, &key, true)?;
+        if pb.payload.recovery_secret.as_deref() != Some(code) {
+            return Err(PassShareError::CorruptFile);
+        }
+        Ok(pb)
+    }
+
+    fn unwrap_recovery_key(
+        file: &PasswordBoxFile,
+        code: &str,
+    ) -> Result<MasterKey, PassShareError> {
+        let aad = file.recovery_aad()?;
+        Self::unwrap_recovery_key_with_aad(file, code, &aad)
+    }
+
+    fn unwrap_recovery_key_with_aad(
+        file: &PasswordBoxFile,
+        code: &str,
+        aad: &[u8],
+    ) -> Result<MasterKey, PassShareError> {
+        let wrapper = file.recovery.as_ref().ok_or(PassShareError::CorruptFile)?;
+        let recovery = recovery_key(code)?;
+        decrypt_recovery_key(
+            &wrapper.ciphertext,
+            &recovery,
+            &wrapper.cipher.nonce_bytes()?,
+            aad,
+        )
+    }
+
+    // Normal opening already authenticated the primary payload. This check
+    // reveals only whether its recovery wrapper binds the same master key;
+    // neither the code nor the unwrapped key leaves the verification boundary.
+    fn recovery_binding_matches(
+        &self,
+        file: &PasswordBoxFile,
+        expected: &MasterKey,
+        aad: &[u8],
+    ) -> bool {
+        let Some(code) = self.payload.recovery_secret.as_deref() else {
+            return false;
+        };
+        match Self::unwrap_recovery_key_with_aad(file, code, aad) {
+            Ok(recovered) => recovered.as_bytes() == expected.as_bytes(),
+            Err(_) => false,
+        }
+    }
+
+    fn open_with_key(
+        path: PathBuf,
+        file: &PasswordBoxFile,
+        key: &MasterKey,
+        recovery_only: bool,
+    ) -> Result<Self, PassShareError> {
+        let plaintext =
+            Zeroizing::new(decrypt(&file.ciphertext, key, &file.cipher.nonce_bytes()?)?);
+        #[derive(serde::Deserialize)]
+        struct FormatBinding {
+            #[serde(default, rename = "localKeyRecoveryVersion")]
+            recovery_version: Option<u32>,
+        }
+        let binding: FormatBinding =
+            serde_json::from_slice(&plaintext).map_err(|_| PassShareError::CorruptFile)?;
+        if (file.version == RECOVERY_FILE_VERSION
+            && binding.recovery_version != Some(RECOVERY_FILE_VERSION))
+            || (file.version != RECOVERY_FILE_VERSION && binding.recovery_version.is_some())
+        {
+            return Err(PassShareError::CorruptFile);
+        }
+        // Construct a scrub-on-drop owner before fallible payload deserialization.
+        let mut pb = Self {
             path,
             state: PasswordBoxState::Unlocked,
-            payload,
-            salt: Some(salt),
-        })
+            payload: PasswordBoxPayload::new(Vault::new("_")?, None),
+            salt: Some(file.kdf.salt_bytes()?),
+            file_version: file.version,
+            recovery_only,
+            original_payload: Some(plaintext),
+            source_fingerprint: Some(file.fingerprint()?),
+        };
+        pb.payload = deserialize_payload(
+            pb.original_payload.as_ref().unwrap(),
+            &default_vault_name(&pb.path),
+        )?;
+        Ok(pb)
+    }
+
+    /// Explicit v1 opt-in. Authentication and atomic save must succeed before
+    /// publishing the new version/code to this object. v2 uses the same code.
+    pub fn enable_recovery(
+        &mut self,
+        current_master_password: &str,
+    ) -> Result<Zeroizing<String>, PassShareError> {
+        self.ensure_unlocked()?;
+        if self.recovery_only {
+            return Err(PassShareError::InvalidMasterPassword);
+        }
+        let authenticated = Self::open(&self.path, current_master_password)?;
+        if authenticated.source_fingerprint != self.source_fingerprint {
+            return Err(PassShareError::CorruptFile);
+        }
+        let code = Zeroizing::new(match &self.payload.recovery_secret {
+            Some(code) => code.clone(),
+            None => generate_recovery_secret()?,
+        });
+        recovery_key(&code)?;
+        let salt = self.salt.ok_or(PassShareError::CorruptFile)?;
+        let saved = self.write_with_password(
+            current_master_password,
+            salt,
+            RECOVERY_FILE_VERSION,
+            Some(&code),
+        )?;
+        self.publish_saved(saved);
+        if let Some(previous) = &mut self.payload.recovery_secret {
+            previous.zeroize();
+        }
+        self.payload.recovery_secret = Some(code.to_string());
+        self.file_version = RECOVERY_FILE_VERSION;
+        Ok(code)
+    }
+
+    /// Atomically re-encrypt a recovered box with a fresh salt and new password.
+    /// The recovery code is intentionally reusable until explicitly rotated.
+    pub fn rekey_recovered(&mut self, new_password: &str) -> Result<(), PassShareError> {
+        self.ensure_unlocked()?;
+        if !self.recovery_only {
+            return Err(PassShareError::CorruptFile);
+        }
+        if new_password.is_empty() {
+            return Err(PassShareError::PasswordRequired);
+        }
+        let salt = generate_salt()?;
+        let saved = self.write_with_password(
+            new_password,
+            salt,
+            RECOVERY_FILE_VERSION,
+            self.payload.recovery_secret.as_deref(),
+        )?;
+        self.publish_saved(saved);
+        self.salt = Some(salt);
+        self.recovery_only = false;
+        Ok(())
+    }
+
+    /// Replace the code on the current file; older backups retain their old code.
+    pub fn rotate_recovery(
+        &mut self,
+        current_master_password: &str,
+    ) -> Result<Zeroizing<String>, PassShareError> {
+        self.ensure_unlocked()?;
+        if self.recovery_only || self.file_version != RECOVERY_FILE_VERSION {
+            return Err(PassShareError::CorruptFile);
+        }
+        let authenticated = Self::open(&self.path, current_master_password)?;
+        if authenticated.source_fingerprint != self.source_fingerprint {
+            return Err(PassShareError::CorruptFile);
+        }
+        let code = Zeroizing::new(generate_recovery_secret()?);
+        let saved = self.write_with_password(
+            current_master_password,
+            self.salt.ok_or(PassShareError::CorruptFile)?,
+            RECOVERY_FILE_VERSION,
+            Some(&code),
+        )?;
+        self.publish_saved(saved);
+        if let Some(previous) = &mut self.payload.recovery_secret {
+            previous.zeroize();
+        }
+        self.payload.recovery_secret = Some(code.to_string());
+        Ok(code)
     }
 
     pub fn state(&self) -> PasswordBoxState {
@@ -277,17 +473,32 @@ impl PasswordBox {
 
     pub fn save(&mut self, master_password: &str) -> Result<(), PassShareError> {
         self.ensure_unlocked()?;
+        if self.recovery_only {
+            return Err(PassShareError::InvalidMasterPassword);
+        }
         let salt = self.salt.ok_or(PassShareError::CorruptFile)?;
+        let saved = self.write_with_password(
+            master_password,
+            salt,
+            self.file_version,
+            self.payload.recovery_secret.as_deref(),
+        )?;
+        self.publish_saved(saved);
+        Ok(())
+    }
+
+    fn write_with_password(
+        &self,
+        master_password: &str,
+        salt: [u8; 16],
+        version: u32,
+        code: Option<&str>,
+    ) -> Result<(Zeroizing<Vec<u8>>, [u8; 32]), PassShareError> {
         let key = derive_master_key(master_password, &salt)?;
-        self.payload.sync_vault_item_count();
-        // Serializing our own in-memory payload: a failure is an internal bug.
-        let plaintext = Zeroizing::new(
-            serde_json::to_vec(&self.payload)
-                .map_err(|e| PassShareError::Internal(e.to_string()))?,
-        );
+        let plaintext = self.serialize_preserving_extensions(version, code)?;
         let (ciphertext, nonce) = encrypt(&plaintext, &key)?;
-        let file = PasswordBoxFile {
-            version: FILE_VERSION,
+        let mut file = PasswordBoxFile {
+            version,
             kdf: KdfParams {
                 algorithm: "argon2id".to_string(),
                 salt: BASE64.encode(salt),
@@ -300,9 +511,72 @@ impl PasswordBox {
                 nonce: BASE64.encode(nonce),
             },
             ciphertext,
+            recovery: None,
         };
+        if version == RECOVERY_FILE_VERSION {
+            let recovery = recovery_key(code.ok_or(PassShareError::CorruptFile)?)?;
+            let (ciphertext, nonce) = encrypt_recovery_key(&key, &recovery, &file.recovery_aad()?)?;
+            file.recovery = Some(RecoveryWrapper {
+                cipher: StoredCipher {
+                    algorithm: "xchacha20poly1305".into(),
+                    nonce: BASE64.encode(nonce),
+                },
+                ciphertext,
+            });
+        }
+        let fingerprint = file.fingerprint()?;
+        if let Some(expected) = self.source_fingerprint {
+            let current = PasswordBoxFile::load_from_path(&self.path)?;
+            if current.fingerprint()? != expected {
+                return Err(PassShareError::CorruptFile);
+            }
+        }
         file.save_to_path(&self.path)?;
-        Ok(())
+        Ok((plaintext, fingerprint))
+    }
+
+    fn publish_saved(&mut self, (plaintext, fingerprint): (Zeroizing<Vec<u8>>, [u8; 32])) {
+        self.original_payload = Some(plaintext);
+        self.source_fingerprint = Some(fingerprint);
+    }
+
+    fn serialize_preserving_extensions(
+        &self,
+        version: u32,
+        code: Option<&str>,
+    ) -> Result<Zeroizing<Vec<u8>>, PassShareError> {
+        let mut current = SecretJson(
+            serde_json::to_value(&self.payload)
+                .map_err(|e| PassShareError::Internal(e.to_string()))?,
+        );
+        if version == RECOVERY_FILE_VERSION {
+            current.0["localKeyRecoveryVersion"] = serde_json::json!(RECOVERY_FILE_VERSION);
+        }
+        if let Some(code) = code {
+            if let Some(previous) = current.0.get_mut("recoverySecret") {
+                scrub_json(previous);
+            }
+            current.0["recoverySecret"] = serde_json::Value::String(code.to_owned());
+        } else if let Some(object) = current.0.as_object_mut() {
+            if let Some(mut removed) = object.remove("recoverySecret") {
+                scrub_json(&mut removed);
+            }
+        }
+        let mut original = SecretJson(match &self.original_payload {
+            Some(bytes) => {
+                serde_json::from_slice(bytes).map_err(|_| PassShareError::CorruptFile)?
+            }
+            None => serde_json::Value::Null,
+        });
+        // Legacy plaintext is migrated to the typed payload rather than merged.
+        if original.0.get("vault").is_none() {
+            scrub_json(&mut original.0);
+            original.0 = serde_json::Value::Null;
+        }
+        merge_extensions(&mut current.0, &original.0, "payload");
+        Ok(Zeroizing::new(
+            serde_json::to_vec(&current.0).map_err(|e| PassShareError::Internal(e.to_string()))?,
+        ))
     }
 
     pub fn lock(&mut self) {
@@ -314,6 +588,9 @@ impl PasswordBox {
             self.payload = PasswordBoxPayload::new(vault, None);
         }
         self.salt = None;
+        self.original_payload = None;
+        self.recovery_only = false;
+        self.source_fingerprint = None;
     }
 
     /// Scrub every plaintext secret still held in the in-memory payload.
@@ -336,6 +613,7 @@ impl PasswordBox {
         if let Some(secret) = self.payload.recovery_secret.as_mut() {
             secret.zeroize();
         }
+        self.original_payload = None;
     }
 
     pub fn generate_password(options: PasswordGeneratorOptions) -> String {
@@ -366,6 +644,14 @@ fn scrub_item_fields(item: &mut Item) {
     for field in &mut item.fields {
         field.value.zeroize();
     }
+    for url in &mut item.urls {
+        url.href.zeroize();
+        url.label.zeroize();
+        for (mut key, mut value) in std::mem::take(&mut url.extensions) {
+            key.zeroize();
+            scrub_json(&mut value);
+        }
+    }
     #[cfg(test)]
     saved_change_tests::observe_scrubbed_item(item);
 }
@@ -382,6 +668,119 @@ use std::str::FromStr;
 #[cfg(test)]
 #[path = "password_box_saved_tests.rs"]
 mod saved_change_tests;
+
+#[cfg(test)]
+#[path = "password_box_recovery_tests.rs"]
+mod recovery_tests;
+
+/// Ensure temporary JSON copies, including unknown secret fields, are scrubbed.
+struct SecretJson(serde_json::Value);
+
+impl Drop for SecretJson {
+    fn drop(&mut self) {
+        scrub_json(&mut self.0);
+    }
+}
+
+fn scrub_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(s) => s.zeroize(),
+        serde_json::Value::Array(values) => values.iter_mut().for_each(scrub_json),
+        serde_json::Value::Object(values) => {
+            for (mut key, mut value) in std::mem::take(values) {
+                key.zeroize();
+                scrub_json(&mut value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn merge_extensions(current: &mut serde_json::Value, original: &serde_json::Value, context: &str) {
+    // URLs now carry their own extensions. Never infer identity from href or
+    // reinsert properties that a caller explicitly removed from that value.
+    if context == "urls" {
+        return;
+    }
+    use serde_json::Value;
+    match (current, original) {
+        (Value::Object(current), Value::Object(original)) => {
+            let known: &[&str] = match context {
+                "payload" => &[
+                    "payloadVersion",
+                    "vault",
+                    "items",
+                    "recoverySecret",
+                    "localKeyRecoveryVersion",
+                ],
+                "vault" => &[
+                    "id",
+                    "name",
+                    "description",
+                    "type",
+                    "items",
+                    "createdAt",
+                    "updatedAt",
+                    "contentVersion",
+                    "attributeVersion",
+                ],
+                "vault-ref" => &["id"],
+                "items" => &[
+                    "id",
+                    "title",
+                    "category",
+                    "vault",
+                    "fields",
+                    "sections",
+                    "urls",
+                    "tags",
+                    "favorite",
+                    "createdAt",
+                    "updatedAt",
+                    "lastEditedBy",
+                ],
+                "fields" => &["id", "label", "type", "purpose", "value", "section"],
+                "sections" => &["id", "label"],
+                "urls" => &["href", "primary", "label"],
+                "section" => &["id"],
+                _ => &[],
+            };
+            for (name, previous) in original {
+                if let Some(value) = current.get_mut(name) {
+                    // The payload owns a full Vault; an Item owns only a
+                    // reference. Preserve extensions on that narrower DTO.
+                    let nested = if context == "items" && name == "vault" {
+                        "vault-ref"
+                    } else {
+                        name
+                    };
+                    merge_extensions(value, previous, nested);
+                } else if !known.contains(&name.as_str()) {
+                    current.insert(name.clone(), previous.clone());
+                }
+            }
+        }
+        (Value::Array(current), Value::Array(original))
+            if matches!(context, "items" | "fields" | "sections" | "urls") =>
+        {
+            let key = if context == "urls" { "href" } else { "id" };
+            let mut used = vec![false; original.len()];
+            for value in current {
+                if let Some((index, previous)) =
+                    original.iter().enumerate().find(|(index, previous)| {
+                        !used[*index]
+                            && value.get(key).is_some()
+                            && previous.get(key) == value.get(key)
+                    })
+                {
+                    used[index] = true;
+                    merge_extensions(value, previous, context);
+                }
+            }
+        }
+        _ => {}
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -636,7 +1035,7 @@ mod tests {
         PasswordBox::create(&path, "correct-password").unwrap();
 
         let mut stored = PasswordBoxFile::load_from_path(&path).unwrap();
-        stored.version = FILE_VERSION + 1;
+        stored.version = RECOVERY_FILE_VERSION + 1;
         stored.save_to_path(&path).unwrap();
 
         assert_eq!(
