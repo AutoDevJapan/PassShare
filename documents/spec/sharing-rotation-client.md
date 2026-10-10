@@ -1,5 +1,53 @@
 # Rust SDK: 共有鍵の配布と一括鍵更新
 
+## 正式Webの接続範囲（ToDo1163、2026-10-11）
+
+Webの `CloudSharingPanel` / `sharing-api.ts` は、承認済みの配置で本人コードの表示・コピー、
+相手から別の連絡手段で受け取る64hexコードのRust照合、初回grant保存とself grant復元を接続する。
+コード確認前は共有ボタンを無効にする。以前渡した内容を回収できないことを表示する。
+ja/en/ruを含む10localeの文言を用意し、320px向けの折返しを指定する。実Chromeの計測は親の受入。
+
+所有者は開いたボックスと同じWorkerへ自身のidentityを専用パスワードで開く。
+正式snapshotの全memberページを同revisionで取得し、期待owner/epoch・ページ順・件数を検査する。
+独立確認したrecipient descriptorと現所属からRustが共有文脈を選び、既存CoreのAuth HPKEで包む。
+正式PUTは `{expectedStateRevision,keyEpoch,expectedVersion:0,envelope}`。
+返信のgrantVersion=1、epoch、revision>=開始revision、暗号文全JSONの一致を確認する。
+同じaccount/box/recipient/epochのWeb Lock内で暗号文だけのpendingを保存し、
+応答喪失後も同じエンベロープを使い、成功確認後にre-read一致を確認して除く。
+
+受信者は自分のidentityを開き、独立確認したsenderとrecipientの指紋・版、正式member一覧の現所属、
+正式box stateのepochをRustへ渡す。self envelopeから期待値を作らない。
+正式 `/grants/me` の全contextを期待値と照合し、`sharedReceiveUnlock` 後は既存の
+`EncryptedItemsPage` でfull JSONを読み、編集時も原文全体をRustへ渡す。
+受信者のowner wrap/recoveryMaterialは引き続き拒否する。
+確認済みmemberと公開鍵確認は別条件で、PUT/self GETの現所属認可はサーバーにも必要。
+
+**M4-BのWeb除名は未接続。** encrypted boxは旧simple removeを呼ばず、成功表示もしない。
+UIは「添付を含む鍵更新の接続が未完了」と表示し、除名を無効にする。
+互換保存でのみ、正式stateまたは機能off時のauthoritative Connect metadataで互換を確認して旧経路を維持する。
+全項目snapshot、添付、new owner bundle、remaining grants、commitを原子的に扱う契約の完成後に親が接続する。
+添付を落としてrotation成功にはしない。原ToDoの22条件、M4/M5全体をdoneにしない。
+
+検証用 `packages/cloud-wasm/examples/web_transport_acceptance.rs` はRustがNodeを起動して、
+生成した実WASM、実TypeScript transport、実React部品・認証providerを呼ぶ。
+Nodeのmessage/clock/event/HTTPとmember状態は合成。React 19.2.7と同版のreact-test-rendererは
+所有記録付きの一時フォルダだけに置き、リポジトリの依存やlockを変更しない。
+3公開WASM suites、native39件、strict code・旧owner経路・full JSON・取消/遅着・アカウント切替・
+pin欠落・peer変更・5分identity-only・trusted input・時計停止/逆行・資格情報変更を対象とする。
+実行するexampleの引数は、Node用生成bindings、frontendのtypescript、repo root、react-test-rendererの4絶対パス。
+正式API/PG/Chrome、配布assets/manifest、最終workspace/CIは親scope。
+
+このWeb子での実行結果: frozen install、SDK build、frontend型検査、10locale/438キーの検査、
+cloud-wasm native39件、WASMのwasm4件/shared_api5件/shared_key1件、release wasm32 build、
+native all-targets Clippy、doc（0例）、実release WASM＋TypeScript/Reactの受入exampleが成功した。
+Reactの取消・遅着・unmount・account切替・pin欠落・別パスワードでの復元・peerコード不一致/変更、
+認証providerで同じ資格情報の保持と資格情報変更時の施錠を確認した。
+共有画面の実部品でも、encrypted boxでの旧除名呼出し拒否、互換保存での従来除名、
+資格情報変更後に遅れて返った招待確認コードの破棄を確認した（HTTPは合成）。
+frontend buildは `packages/cloud-wasm/src/worker.rs` の指紋不一致で失敗した。
+これは未更新の正式配布assets/manifestを成功と扱わない結果で、親の正式CI取得後まで未完了である。
+CI、workspace全件、正式Node/API/PG、Chrome/320px計測、rotation/添付の原子的受入は実行していない。
+
 この文書は originalToDo1163 の Rust SDK 通信部分を記録する。実装は
 `crates/passshare-connect/src/sharing_client.rs`。共有開始から失効までの正式な受入、
 M4、全クライアントの完成を示すものではない。

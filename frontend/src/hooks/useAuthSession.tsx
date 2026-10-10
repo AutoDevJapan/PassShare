@@ -46,10 +46,12 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const generation = useRef(0);
   const mounted = useRef(true);
   const currentAccount = useRef<string | null>(null);
+  const currentCredential = useRef<string | null>(null);
 
   const invalidate = useCallback(() => {
     const token = ++generation.current;
     lockCloudUi();
+    currentCredential.current = null;
     setConnectClient(null);
     return token;
   }, []);
@@ -62,6 +64,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     // A valid same-account refresh keeps the opened worker and its draft alive.
     if (!currentUser || currentAccount.current !== currentUser.id) {
       lockCloudUi();
+      currentCredential.current = null;
       setConnectClient(null);
     }
     currentAccount.current = currentUser?.id ?? null;
@@ -74,6 +77,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!active()) return null;
     if (response.status === 401 || response.status === 403) {
       lockCloudUi();
+      currentCredential.current = null;
       currentAccount.current = null;
       setConnectClient(null);
       setUser(null);
@@ -82,6 +86,10 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!response.ok) throw new Error("Connect credential refresh failed");
     const credentials = await response.json() as ConnectTokenResponse;
     if (!active()) return null;
+    // Same-account metadata refresh with the same credential preserves drafts.
+    // A changed credential is a new lifetime boundary for all private handles.
+    if (currentCredential.current !== null && currentCredential.current !== credentials.accessToken) lockCloudUi();
+    currentCredential.current = credentials.accessToken;
     const client = new ConnectClient({ host: getApiBaseUrl(), token: credentials.accessToken });
     setConnectClient(client);
     return client;
@@ -126,7 +134,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    return () => { mounted.current = false; ++generation.current; lockCloudUi(); };
+    return () => { mounted.current = false; ++generation.current; currentCredential.current = null; lockCloudUi(); };
   }, [refresh]);
 
   const login = useCallback(

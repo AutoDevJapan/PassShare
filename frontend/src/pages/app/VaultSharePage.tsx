@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useI18n } from "@shared/i18n/I18nProvider";
 import {
@@ -12,17 +12,58 @@ import {
   type VaultMember,
 } from "../../lib/auth-api";
 import { useAuthSession } from "../../hooks/useAuthSession";
+import { CloudApiError, getBoxState } from "../../lib/cloud-api";
 
 export function VaultSharePage() {
   const { vaultId = "" } = useParams();
+  const { user } = useAuthSession();
+  return <VaultShareScreen key={`${user?.id}:${vaultId}`} />;
+}
+
+function VaultShareScreen() {
+  const { vaultId = "" } = useParams();
   const { t } = useI18n();
-  const { user, refreshConnect } = useAuthSession();
+  const { user, connectClient, refreshConnect } = useAuthSession();
   const [members, setMembers] = useState<VaultMember[]>([]);
   const [invitations, setInvitations] = useState<ShareInvitation[]>([]);
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState<ShareInvitation | null>(null);
+  const lifetime = useRef(0);
+  useLayoutEffect(() => {
+    const clear = () => { ++lifetime.current; setConfirmation(null); setEmail(""); setBusy(false); };
+    const background = () => { if (document.visibilityState === "hidden") clear(); };
+    window.addEventListener("passshare:cloud-lock", clear);
+    window.addEventListener("pagehide", clear);
+    document.addEventListener("visibilitychange", background);
+    return () => {
+      ++lifetime.current;
+      window.removeEventListener("passshare:cloud-lock", clear);
+      window.removeEventListener("pagehide", clear);
+      document.removeEventListener("visibilitychange", background);
+    };
+  }, []);
+  const [encrypted, setEncrypted] = useState<boolean | null>(null);
+  async function encryptedMode(signal?: AbortSignal): Promise<boolean> {
+    try { return (await getBoxState(vaultId, signal)).mode === "encrypted"; }
+    catch (error) {
+      if (!(error instanceof CloudApiError) || error.status !== 404 || !connectClient || encrypted === true) throw error;
+      // The metadata route rejects encrypted boxes even with the feature off.
+      // A 404 on its own is never enough to permit the legacy remove operation.
+      signal?.throwIfAborted();
+      await connectClient.getVault(vaultId);
+      signal?.throwIfAborted();
+      return false;
+    }
+  }
+  useEffect(() => {
+    const controller = new AbortController(); setEncrypted(null);
+    void encryptedMode(controller.signal).then((mode) => {
+      if (!controller.signal.aborted) setEncrypted(mode);
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [vaultId, user?.id, connectClient]);
   useEffect(() => { setConfirmation(null); }, [vaultId, user?.id]);
 
   const isOwner = members.some(
@@ -71,15 +112,18 @@ export function VaultSharePage() {
     }
     setBusy(true);
     setError(null);
+    const version = lifetime.current;
     try {
       const invitation = await inviteToVault(vaultId, email.trim());
+      if (version !== lifetime.current) return;
       setConfirmation({ ...invitation, vaultId });
       setEmail("");
       await loadInvitations();
     } catch (err) {
+      if (version !== lifetime.current) return;
       setError(err instanceof AuthApiError ? err.message : t("app.share.inviteError"));
     } finally {
-      setBusy(false);
+      if (version === lifetime.current) setBusy(false);
     }
   }
 
@@ -90,6 +134,9 @@ export function VaultSharePage() {
     setBusy(true);
     setError(null);
     try {
+      // Always recheck authoritative mode. The old remove route cannot perform
+      // atomic key rotation, including attachments, for an encrypted box.
+      if (await encryptedMode()) { setEncrypted(true); setError(t("sharing.rotationPending")); return; }
       await removeVaultMember(vaultId, memberId);
       await loadMembers();
       await refreshConnect();
@@ -136,6 +183,10 @@ export function VaultSharePage() {
           {error}
         </p>
       ) : null}
+      {encrypted && <section className="ps-card app-share-section">
+        <Link className="ps-button" to={`/app/vaults/${vaultId}/items`}>{t("sharing.title")}</Link>
+        <p>{t("sharing.rotationPending")}</p>
+      </section>}
 
       {isOwner ? (
         <form className="app-inline-form ps-card" onSubmit={(event) => void handleInvite(event)}>
@@ -184,7 +235,7 @@ export function VaultSharePage() {
                 <button
                   type="button"
                   className="ps-button ps-button--secondary"
-                  disabled={busy}
+                  disabled={busy || encrypted !== false}
                   onClick={() => void handleRemoveMember(member.userId)}
                 >
                   {t("app.share.removeMember")}

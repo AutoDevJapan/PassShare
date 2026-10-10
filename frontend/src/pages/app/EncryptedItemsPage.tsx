@@ -53,7 +53,7 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
   lockRef.current = onLock;
   const formHost = useRef<HTMLDivElement>(null);
   const changed = () => redraw((revision) => revision + 1);
-  const active = (controller?: AbortController) => session.alive && current.current.session === session &&
+  const active = (controller?: AbortController) => session.alive && !worker.isClosed && current.current.session === session &&
     current.current.userId === ownerAccountId && !controller?.signal.aborted && document.visibilityState !== "hidden";
   function revoke() { clear(session); changed(); lockRef.current(); }
 
@@ -160,7 +160,9 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
     window.addEventListener("pagehide", stop);
     window.addEventListener("popstate", stop);
     document.addEventListener("visibilitychange", background);
-    void worker.closed.then(() => { if (active()) stop(); });
+    void worker.closed.then(() => {
+      if (session.alive && current.current.session === session && current.current.userId === ownerAccountId) stop();
+    });
     if (active()) void oneFlight(load);
     return () => {
       clear(session);
