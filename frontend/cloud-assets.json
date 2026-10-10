@@ -40,7 +40,9 @@
     "packages/cloud-wasm/src/recovery.rs": "50cc8af8b7663dc46cf5cdc667a871df569da9587043853dbd3665dfd4a1e997",
     "crates/passshare-core/src/password_box_recovery_tests.rs": "508ba3a1a92579562f6ae62b83ae4d0983a94e20aaaa5b9bbb9a170d36284e79",
     "crates/passshare-core/src/cloud_crypto/attachments.rs": "6882b86d444c88ba061a55dbd3d281ffbb41172ed05b7d5c953ffbe0169668f3",
-    "packages/cloud-wasm/src/attachment.rs": "e0aa890e9e260a7ae5b0931229a15b4b82734f6467fee71df9ac4f3b17f64c6a"
+    "packages/cloud-wasm/src/attachment.rs": "e0aa890e9e260a7ae5b0931229a15b4b82734f6467fee71df9ac4f3b17f64c6a",
+    "crates/passshare-core/src/cloud_crypto/migration.rs": "cd92097c4f6010cd51c1adeaf5261294e50ae6d5321200407fedb846ed7ff091",
+    "crates/passshare-core/src/cloud_crypto/migration/tests.rs": "a11888c9dbfda103b74aceeb82f9134898304c29e3de12f9b7552f3552a9df91"
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
