@@ -29,18 +29,17 @@ pub struct MasterKey([u8; 32]);
 impl MasterKey {
     /// Generate an account root key locally, independently of authentication.
     pub fn generate() -> Result<Self, PassShareError> {
-        let mut key = Self([0u8; 32]);
-        fill(&mut key.0).map_err(|_| PassShareError::Internal("Key generation failed".into()))?;
-        Ok(key)
+        let mut key = Zeroizing::new([0u8; 32]);
+        fill(key.as_mut()).map_err(|_| PassShareError::Internal("Key generation failed".into()))?;
+        Ok(Self(*key))
     }
 
     pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self, PassShareError> {
         if bytes.len() != 32 {
             return Err(PassShareError::CorruptFile);
         }
-        let mut key = Self([0; 32]);
-        key.0.copy_from_slice(bytes);
-        Ok(key)
+        let key: [u8; 32] = bytes.try_into().map_err(|_| PassShareError::CorruptFile)?;
+        Ok(Self(key))
     }
 
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -61,9 +60,9 @@ pub fn derive_master_key_with_params(
     let params = Params::new(memory_kib, time_cost, parallelism, Some(32))
         .map_err(|_| PassShareError::CorruptFile)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut output = MasterKey([0u8; 32]);
-    argon2.hash_password_into(password.as_bytes(), salt, &mut output.0)?;
-    Ok(output)
+    let mut output = Zeroizing::new([0u8; 32]);
+    argon2.hash_password_into(password.as_bytes(), salt, output.as_mut())?;
+    Ok(MasterKey(*output))
 }
 
 /// Bound untrusted header costs before either normal opening or recovery.
