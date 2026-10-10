@@ -1,15 +1,16 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     XChaCha20Poly1305, XNonce,
 };
 use getrandom::fill;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::error::PassShareError;
 
 pub const FILE_VERSION: u32 = 1;
+pub const RECOVERY_FILE_VERSION: u32 = 2;
 pub const KDF_MEMORY_KIB: u32 = 65536;
 pub const KDF_TIME_COST: u32 = 3;
 pub const KDF_PARALLELISM: u32 = 4;
@@ -28,8 +29,16 @@ pub struct MasterKey([u8; 32]);
 impl MasterKey {
     /// Generate an account root key locally, independently of authentication.
     pub fn generate() -> Result<Self, PassShareError> {
-        let mut key = [0u8; 32];
-        fill(&mut key).map_err(|_| PassShareError::Internal("Key generation failed".into()))?;
+        let mut key = Zeroizing::new([0u8; 32]);
+        fill(key.as_mut()).map_err(|_| PassShareError::Internal("Key generation failed".into()))?;
+        Ok(Self(*key))
+    }
+
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self, PassShareError> {
+        if bytes.len() != 32 {
+            return Err(PassShareError::CorruptFile);
+        }
+        let key: [u8; 32] = bytes.try_into().map_err(|_| PassShareError::CorruptFile)?;
         Ok(Self(key))
     }
 
@@ -47,17 +56,28 @@ pub fn derive_master_key_with_params(
     time_cost: u32,
     parallelism: u32,
 ) -> Result<MasterKey, PassShareError> {
-    if memory_kib < KDF_MIN_MEMORY_KIB
-        || time_cost < KDF_MIN_TIME_COST
-        || parallelism < KDF_MIN_PARALLELISM
+    validate_kdf_params(memory_kib, time_cost, parallelism)?;
+    let params = Params::new(memory_kib, time_cost, parallelism, Some(32))
+        .map_err(|_| PassShareError::CorruptFile)?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut output = Zeroizing::new([0u8; 32]);
+    argon2.hash_password_into(password.as_bytes(), salt, output.as_mut())?;
+    Ok(MasterKey(*output))
+}
+
+/// Bound untrusted header costs before either normal opening or recovery.
+pub(crate) fn validate_kdf_params(
+    memory_kib: u32,
+    time_cost: u32,
+    parallelism: u32,
+) -> Result<(), PassShareError> {
+    if !(KDF_MIN_MEMORY_KIB..=262144).contains(&memory_kib)
+        || !(KDF_MIN_TIME_COST..=10).contains(&time_cost)
+        || !(KDF_MIN_PARALLELISM..=16).contains(&parallelism)
     {
         return Err(PassShareError::CorruptFile);
     }
-    let params = Params::new(memory_kib, time_cost, parallelism, Some(32))?;
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut output = [0u8; 32];
-    argon2.hash_password_into(password.as_bytes(), salt, &mut output)?;
-    Ok(MasterKey(output))
+    Ok(())
 }
 
 pub fn derive_master_key(password: &str, salt: &[u8]) -> Result<MasterKey, PassShareError> {
@@ -77,9 +97,67 @@ pub fn generate_salt() -> Result<[u8; 16], PassShareError> {
 }
 
 pub fn generate_recovery_secret() -> Result<String, PassShareError> {
-    let mut bytes = [0u8; RECOVERY_SECRET_BYTES];
-    fill(&mut bytes).map_err(|e| PassShareError::Internal(e.to_string()))?;
-    Ok(BASE64.encode(bytes))
+    let mut bytes = Zeroizing::new([0u8; RECOVERY_SECRET_BYTES]);
+    fill(bytes.as_mut()).map_err(|e| PassShareError::Internal(e.to_string()))?;
+    Ok(BASE64.encode(bytes.as_ref()))
+}
+
+pub(crate) fn recovery_key(code: &str) -> Result<MasterKey, PassShareError> {
+    if code.len() != 44 {
+        return Err(PassShareError::CorruptFile);
+    }
+    let mut bytes = Zeroizing::new([0u8; RECOVERY_SECRET_BYTES]);
+    let count = BASE64
+        .decode_slice(code, bytes.as_mut())
+        .map_err(|_| PassShareError::CorruptFile)?;
+    let canonical = Zeroizing::new(BASE64.encode(bytes.as_ref()));
+    if count != RECOVERY_SECRET_BYTES || canonical.as_str() != code {
+        return Err(PassShareError::CorruptFile);
+    }
+    MasterKey::from_bytes(bytes.as_ref())
+}
+
+pub(crate) fn encrypt_recovery_key(
+    master: &MasterKey,
+    recovery: &MasterKey,
+    aad: &[u8],
+) -> Result<(Vec<u8>, [u8; 24]), PassShareError> {
+    let cipher = XChaCha20Poly1305::new_from_slice(recovery.as_bytes())
+        .map_err(|_| PassShareError::CorruptFile)?;
+    let mut nonce = [0; 24];
+    fill(&mut nonce).map_err(|e| PassShareError::Internal(e.to_string()))?;
+    let ciphertext = cipher
+        .encrypt(
+            &XNonce::from(nonce),
+            Payload {
+                msg: master.as_bytes(),
+                aad,
+            },
+        )
+        .map_err(|_| PassShareError::CorruptFile)?;
+    Ok((ciphertext, nonce))
+}
+
+pub(crate) fn decrypt_recovery_key(
+    ciphertext: &[u8],
+    recovery: &MasterKey,
+    nonce: &[u8; 24],
+    aad: &[u8],
+) -> Result<MasterKey, PassShareError> {
+    let cipher = XChaCha20Poly1305::new_from_slice(recovery.as_bytes())
+        .map_err(|_| PassShareError::CorruptFile)?;
+    let bytes = Zeroizing::new(
+        cipher
+            .decrypt(
+                &XNonce::from(*nonce),
+                Payload {
+                    msg: ciphertext,
+                    aad,
+                },
+            )
+            .map_err(|_| PassShareError::CorruptFile)?,
+    );
+    MasterKey::from_bytes(&bytes)
 }
 
 pub fn encrypt(plaintext: &[u8], key: &MasterKey) -> Result<(Vec<u8>, [u8; 24]), PassShareError> {

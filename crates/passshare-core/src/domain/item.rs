@@ -34,6 +34,9 @@ pub struct ItemUrl {
     #[serde(default)]
     pub primary: bool,
     pub href: String,
+    /// Preserve properties on the URL itself when it moves or is removed.
+    #[serde(flatten)]
+    pub extensions: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,7 +79,8 @@ impl Item {
         let now = Utc::now();
         let fields = vec![
             Field::new("username", FieldType::String, "")?.with_purpose(FieldPurpose::Username),
-            Field::new("password", FieldType::Concealed, password)?.with_purpose(FieldPurpose::Password),
+            Field::new("password", FieldType::Concealed, password)?
+                .with_purpose(FieldPurpose::Password),
             Field::new("notes", FieldType::String, "")?,
         ];
 
@@ -112,7 +116,8 @@ impl Item {
 
         let now = Utc::now();
         let fields = vec![
-            Field::new("password", FieldType::Concealed, password)?.with_purpose(FieldPurpose::Password),
+            Field::new("password", FieldType::Concealed, password)?
+                .with_purpose(FieldPurpose::Password),
             Field::new("notes", FieldType::String, "")?.with_purpose(FieldPurpose::Notes),
         ];
 
@@ -144,7 +149,9 @@ impl Item {
         }
 
         let now = Utc::now();
-        let fields = vec![Field::new("notesPlain", FieldType::String, body)?.with_purpose(FieldPurpose::Notes)];
+        let fields =
+            vec![Field::new("notesPlain", FieldType::String, body)?
+                .with_purpose(FieldPurpose::Notes)];
 
         Ok(Self {
             id: ConnectId::generate()?,
@@ -170,6 +177,7 @@ impl Item {
     ) -> Result<Self, PassShareError> {
         if let Some(url) = url.filter(|u| !u.is_empty()) {
             self.urls.push(ItemUrl {
+                extensions: Default::default(),
                 label: String::new(),
                 primary: true,
                 href: url,
@@ -277,22 +285,35 @@ impl Item {
         self.touch();
     }
 
-    pub fn set_field_by_purpose(&mut self, purpose: FieldPurpose, value: &str) -> Result<(), PassShareError> {
+    pub fn set_field_by_purpose(
+        &mut self,
+        purpose: FieldPurpose,
+        value: &str,
+    ) -> Result<(), PassShareError> {
         if let Some(field) = self.fields.iter_mut().find(|f| f.purpose == Some(purpose)) {
             field.value = value.to_string();
             self.touch();
             return Ok(());
         }
-        Err(PassShareError::Internal(format!("missing field purpose {:?}", purpose)))
+        Err(PassShareError::Internal(format!(
+            "missing field purpose {:?}",
+            purpose
+        )))
     }
 
     pub fn set_field_by_label(&mut self, label: &str, value: &str) -> Result<(), PassShareError> {
-        if let Some(field) = self.fields.iter_mut().find(|f| f.label.eq_ignore_ascii_case(label)) {
+        if let Some(field) = self
+            .fields
+            .iter_mut()
+            .find(|f| f.label.eq_ignore_ascii_case(label))
+        {
             field.value = value.to_string();
             self.touch();
             return Ok(());
         }
-        Err(PassShareError::Internal(format!("missing field label {label}")))
+        Err(PassShareError::Internal(format!(
+            "missing field label {label}"
+        )))
     }
 
     fn touch(&mut self) {
@@ -313,7 +334,10 @@ impl Item {
             || self
                 .field_value_by_purpose(FieldPurpose::Notes)
                 .is_some_and(|v| v.to_lowercase().contains(&q))
-            || self.fields.iter().any(|f| f.value.to_lowercase().contains(&q))
+            || self
+                .fields
+                .iter()
+                .any(|f| f.value.to_lowercase().contains(&q))
     }
 }
 
@@ -352,6 +376,9 @@ mod tests {
 
         let note = Item::new_secure_note(vault.id, "Memo", "hello").unwrap();
         assert_eq!(note.category, ItemCategory::SecureNote);
-        assert_eq!(note.field_value_by_label("notesPlain"), Some("hello".into()));
+        assert_eq!(
+            note.field_value_by_label("notesPlain"),
+            Some("hello".into())
+        );
     }
 }

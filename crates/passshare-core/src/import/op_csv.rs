@@ -26,11 +26,7 @@ pub fn import_onepassword_csv(vault: &Vault, csv_data: &str) -> Result<Vec<Item>
     let mut items = Vec::new();
     for result in reader.records() {
         let record = result.map_err(|e| PassShareError::ImportError(e.to_string()))?;
-        let title = record
-            .get(title_idx)
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let title = record.get(title_idx).unwrap_or("").trim().to_string();
         if title.is_empty() {
             continue;
         }
@@ -60,6 +56,7 @@ pub fn import_onepassword_csv(vault: &Vault, csv_data: &str) -> Result<Vec<Item>
         if let Some(idx) = column_map.get("url").or_else(|| column_map.get("website")) {
             if let Some(url) = record.get(*idx).filter(|v| !v.is_empty()) {
                 item.urls.push(ItemUrl {
+                    extensions: Default::default(),
                     label: String::new(),
                     primary: true,
                     href: url.to_string(),

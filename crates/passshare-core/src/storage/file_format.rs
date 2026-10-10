@@ -4,12 +4,14 @@ use std::path::Path;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
-use crate::crypto::FILE_VERSION;
+use crate::crypto::{validate_kdf_params, FILE_VERSION, RECOVERY_FILE_VERSION};
 use crate::error::PassShareError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct KdfParams {
     pub algorithm: String,
     pub salt: String,
@@ -25,6 +27,7 @@ impl KdfParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct StoredCipher {
     pub algorithm: String,
     pub nonce: String,
@@ -37,12 +40,23 @@ impl StoredCipher {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryWrapper {
+    pub cipher: StoredCipher,
+    #[serde(with = "base64_bytes")]
+    pub ciphertext: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PasswordBoxFile {
     pub version: u32,
     pub kdf: KdfParams,
     pub cipher: StoredCipher,
     #[serde(with = "base64_bytes")]
     pub ciphertext: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<RecoveryWrapper>,
 }
 
 impl PasswordBoxFile {
@@ -103,13 +117,50 @@ impl PasswordBoxFile {
     }
 
     pub fn validate_version(&self) -> Result<(), PassShareError> {
-        if self.version != FILE_VERSION {
+        if !matches!(self.version, FILE_VERSION | RECOVERY_FILE_VERSION)
+            || (self.version == FILE_VERSION && self.recovery.is_some())
+            || (self.version == RECOVERY_FILE_VERSION && self.recovery.is_none())
+        {
             return Err(PassShareError::CorruptFile);
         }
         if self.kdf.algorithm != "argon2id" || self.cipher.algorithm != "xchacha20poly1305" {
             return Err(PassShareError::CorruptFile);
         }
+        validate_kdf_params(
+            self.kdf.memory_kib,
+            self.kdf.time_cost,
+            self.kdf.parallelism,
+        )?;
+        self.kdf.salt_bytes()?;
+        self.cipher.nonce_bytes()?;
+        if let Some(wrapper) = &self.recovery {
+            if wrapper.cipher.algorithm != "xchacha20poly1305" || wrapper.ciphertext.len() != 48 {
+                return Err(PassShareError::CorruptFile);
+            }
+            wrapper.cipher.nonce_bytes()?;
+        }
         Ok(())
+    }
+
+    /// Bind the wrapper to the complete primary envelope, not only its nonce.
+    /// Tuple serialization fixes field order; ciphertext is hashed incrementally.
+    pub(crate) fn recovery_aad(&self) -> Result<Vec<u8>, PassShareError> {
+        let header = serde_json::to_vec(&(&self.kdf, &self.cipher))
+            .map_err(|e| PassShareError::Internal(e.to_string()))?;
+        let mut hash = Sha256::new();
+        hash.update((header.len() as u64).to_be_bytes());
+        hash.update(header);
+        hash.update(&self.ciphertext);
+        let mut aad = b"PassShare/pbox/recovery-master-key/v2\0".to_vec();
+        aad.extend_from_slice(&self.version.to_be_bytes());
+        aad.extend_from_slice(&hash.finalize());
+        Ok(aad)
+    }
+
+    pub(crate) fn fingerprint(&self) -> Result<[u8; 32], PassShareError> {
+        let bytes =
+            serde_json::to_vec(self).map_err(|e| PassShareError::Internal(e.to_string()))?;
+        Ok(Sha256::digest(bytes).into())
     }
 }
 
@@ -139,9 +190,10 @@ fn decode_fixed<const N: usize>(encoded: &str) -> Result<[u8; N], PassShareError
     if bytes.len() != N {
         return Err(PassShareError::CorruptFile);
     }
-    let mut out = [0u8; N];
-    out.copy_from_slice(&bytes);
-    Ok(out)
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| PassShareError::CorruptFile)
 }
 
 mod base64_bytes {
@@ -186,6 +238,7 @@ mod tests {
                 nonce: BASE64.encode([2u8; 24]),
             },
             ciphertext,
+            recovery: None,
         }
     }
 
