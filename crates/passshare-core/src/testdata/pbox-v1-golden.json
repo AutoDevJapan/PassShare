@@ -1,0 +1,19 @@
+{
+  "masterPassword": "synthetic-old-password",
+  "recoveryCode": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+  "file": {
+    "version": 1,
+    "kdf": {
+      "algorithm": "argon2id",
+      "salt": "AQEBAQEBAQEBAQEBAQEBAQ==",
+      "memory_kib": 65536,
+      "time_cost": 3,
+      "parallelism": 4
+    },
+    "cipher": {
+      "algorithm": "xchacha20poly1305",
+      "nonce": "AgICAgICAgICAgICAgICAgICAgICAgIC"
+    },
+    "ciphertext": "uk2E9pzsrI6RYnpuSfPcLalhiP2iy3MLWWGWhiN7gZ/Zwa5/UUX8Is4Zb9XV8JHe+kKJZfVzOxULib9Y49G2Z5/SQ32T+WGBNABjYp0E2GKJPtSy2YFpZ9xoMyRv/TPVEziLPj+pVBFR4VCsdRLT3wbjed26usQeSin+4gD8c5LyaEeL2Axop4Ur3VVvVcW0MANAOcjiO7doM/q4Ryv+e6Q938NpFZal4t3nU+NZaHcB95mArO0rZxd+NsnGyZAQf0KMWwUayw9tuqaemFRljdYQXOsQlx4Nu5tFV3mnq0wFK/t2m7vLeX1rtLJFZQNMSX/anrEJQQ/8vLAtkIGTto0cU7XQ/qn0yOYvmh8h+aueRspvSUzBo2IPuCkH+b1Wrwsa9RHwewKypAEVvp+ZuIOu0HdM2G4Vz6if3z/j9Q=="
+  }
+}

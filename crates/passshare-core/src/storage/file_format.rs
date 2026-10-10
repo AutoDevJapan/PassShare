@@ -190,9 +190,10 @@ fn decode_fixed<const N: usize>(encoded: &str) -> Result<[u8; N], PassShareError
     if bytes.len() != N {
         return Err(PassShareError::CorruptFile);
     }
-    let mut out = [0u8; N];
-    out.copy_from_slice(&bytes);
-    Ok(out)
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| PassShareError::CorruptFile)
 }
 
 mod base64_bytes {
