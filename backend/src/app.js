@@ -159,6 +159,13 @@ export async function createApp(options = {}) {
     express.json({
       limit: "2mb",
       type: ["application/json", "application/json-patch+json"],
+      // Retain lexical numbers and duplicate keys for strict Rust attachment
+      // validation before Express's JSON.parse can normalize them away.
+      verify: (req, _res, buffer) => {
+        if (buffer.length > 0 && req.originalUrl.startsWith("/api/encrypted/") && /\/attachments(\/|\?|$)/.test(req.originalUrl)) {
+          req.encryptedAttachmentJson = buffer.toString("utf8");
+        }
+      },
     }),
   );
   const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });

@@ -361,7 +361,7 @@ BEGIN
     IF current_item.item_id IS NOT NULL THEN
       IF current_item.key_epoch<>active_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
       IF current_item.revision<>previous THEN RETURN passshare_encrypted_error(409,'PS015','Item changed since it was read'); END IF;
-      IF (SELECT state_revision FROM encrypted_box_state WHERE box_id=box)>=9007199254740991 THEN RETURN passshare_encrypted_error(409,'PS015','Safe integer limit reached'); END IF;
+      IF (SELECT state_revision FROM encrypted_box_state WHERE box_id=box)>9007199254740990-(SELECT count(*) FROM encrypted_attachments WHERE box_id=box AND item_id=item) THEN RETURN passshare_encrypted_error(409,'PS015','Safe integer limit reached'); END IF;
       DELETE FROM encrypted_items WHERE box_id=box AND item_id=item;
       -- If insertion fails, the preceding deletion is rolled back as well.
       INSERT INTO encrypted_item_tombstones(box_id,item_id,last_live_version,key_epoch)
@@ -607,6 +607,156 @@ CREATE TABLE IF NOT EXISTS encrypted_rotation_grants (
   FOREIGN KEY(recipient_id) REFERENCES encrypted_account_identities(account_id)
 );
 
+-- Attachments contain ONLY the Core public envelope. All measurements are the
+-- UTF8 bytes of the persisted JSONB envelope, not its public plaintext length.
+CREATE OR REPLACE FUNCTION passshare_attachment_shape(v JSONB, box VARCHAR, item VARCHAR, attachment VARCHAR, rev BIGINT, epoch BIGINT)
+RETURNS BOOLEAN LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE c JSONB:=v->'context'; size BIGINT; t TEXT; b BYTEA;
+BEGIN
+  IF (box ~ '^[a-z0-9]{26}$' AND item ~ '^[a-z0-9]{26}$' AND attachment ~ '^[a-z0-9]{26}$'
+    AND rev BETWEEN 1 AND 9007199254740991 AND epoch BETWEEN 1 AND 9007199254740991
+    AND passshare_exact_object(v,ARRAY['format','context','contentBytes','nonce','ciphertext'])
+    AND jsonb_typeof(v->'format')='number' AND v->>'format'='1'
+    AND passshare_exact_object(c,ARRAY['passwordBoxId','itemId','attachmentId','attachmentVersion','keyEpoch'])
+    AND jsonb_typeof(c->'passwordBoxId')='string' AND c->>'passwordBoxId'=box
+    AND jsonb_typeof(c->'itemId')='string' AND c->>'itemId'=item
+    AND jsonb_typeof(c->'attachmentId')='string' AND c->>'attachmentId'=attachment
+    AND passshare_safe_number(c->'attachmentVersion',1) AND c->>'attachmentVersion'=rev::text
+    AND passshare_safe_number(c->'keyEpoch',1) AND c->>'keyEpoch'=epoch::text
+    AND passshare_safe_number(v->'contentBytes',0) AND passshare_identity_base64(v->'nonce',24)
+    AND jsonb_typeof(v->'ciphertext')='string' AND octet_length(v::text)<=1404000) IS NOT TRUE THEN RETURN FALSE; END IF;
+  size:=(v->>'contentBytes')::bigint; t:=v->>'ciphertext';
+  IF size>1048576 OR length(t)>1403592 THEN RETURN FALSE; END IF;
+  b:=decode(t,'base64');
+  RETURN octet_length(b) BETWEEN 20+size AND 4116+size AND replace(encode(b,'base64'),chr(10),'')=t;
+EXCEPTION WHEN data_exception THEN RETURN FALSE;
+END $$;
+CREATE TABLE IF NOT EXISTS encrypted_attachments (
+  box_id VARCHAR(26) NOT NULL, item_id VARCHAR(26) NOT NULL,
+  attachment_id VARCHAR(26) NOT NULL,
+  revision BIGINT NOT NULL CHECK (revision BETWEEN 1 AND 9007199254740991),
+  key_epoch BIGINT NOT NULL CHECK (key_epoch BETWEEN 1 AND 9007199254740991),
+  envelope JSONB NOT NULL CHECK (passshare_attachment_shape(envelope,box_id,item_id,attachment_id,revision,key_epoch) IS TRUE),
+  last_request_hash TEXT CHECK (last_request_hash ~ '^[0-9a-f]{64}$'),
+  last_state_revision BIGINT CHECK (last_state_revision BETWEEN 1 AND 9007199254740991),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY(box_id,item_id,attachment_id),
+  FOREIGN KEY(box_id,item_id) REFERENCES encrypted_items(box_id,item_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS encrypted_attachment_tombstones (
+  box_id VARCHAR(26) NOT NULL REFERENCES encrypted_box_state(box_id) ON DELETE CASCADE,
+  item_id VARCHAR(26) NOT NULL CHECK (item_id ~ '^[a-z0-9]{26}$'),
+  attachment_id VARCHAR(26) NOT NULL CHECK (attachment_id ~ '^[a-z0-9]{26}$'),
+  last_live_version BIGINT NOT NULL CHECK (last_live_version BETWEEN 1 AND 9007199254740991),
+  key_epoch BIGINT NOT NULL CHECK (key_epoch BETWEEN 1 AND 9007199254740991),
+  item_revision BIGINT NOT NULL CHECK (item_revision BETWEEN 1 AND 9007199254740991),
+  last_request_hash TEXT NOT NULL CHECK (last_request_hash ~ '^[0-9a-f]{64}$'),
+  last_state_revision BIGINT NOT NULL CHECK (last_state_revision BETWEEN 1 AND 9007199254740991),
+  PRIMARY KEY(box_id,item_id,attachment_id)
+);
+CREATE TABLE IF NOT EXISTS encrypted_rotation_attachments (
+  box_id VARCHAR(26) NOT NULL, operation_id UUID NOT NULL,
+  item_id VARCHAR(26) NOT NULL, attachment_id VARCHAR(26) NOT NULL,
+  previous BIGINT NOT NULL CHECK (previous BETWEEN 1 AND 9007199254740990),
+  key_epoch BIGINT NOT NULL CHECK (key_epoch BETWEEN 2 AND 9007199254740991),
+  envelope JSONB NOT NULL CHECK (passshare_attachment_shape(envelope,box_id,item_id,attachment_id,previous+1,key_epoch) IS TRUE),
+  PRIMARY KEY(box_id,operation_id,item_id,attachment_id),
+  FOREIGN KEY(box_id,operation_id) REFERENCES encrypted_rotations(box_id,operation_id) ON DELETE CASCADE
+);
+ALTER TABLE encrypted_rotations ADD COLUMN IF NOT EXISTS attachment_count BIGINT NOT NULL DEFAULT 0
+  CHECK (attachment_count BETWEEN 0 AND 9007199254740991);
+
+CREATE OR REPLACE FUNCTION passshare_attachment_operation(actor UUID, session_id UUID, box VARCHAR, operation TEXT,
+  item VARCHAR, attachment VARCHAR, request JSONB) RETURNS JSONB LANGUAGE plpgsql AS $$
+DECLARE state encrypted_box_state%ROWTYPE; live_item encrypted_items%ROWTYPE; live encrypted_attachments%ROWTYPE;
+  dead encrypted_attachment_tombstones%ROWTYPE; membership_role TEXT; previous BIGINT; item_previous BIGINT; epoch BIGINT;
+  expected_revision BIGINT; digest TEXT; item_body JSONB; body JSONB; final_revision BIGINT; byte_total BIGINT; live_count BIGINT;
+BEGIN
+  IF box IS NULL OR box !~ '^[a-z0-9]{26}$' OR item IS NULL OR item !~ '^[a-z0-9]{26}$'
+    OR attachment IS NULL OR attachment !~ '^[a-z0-9]{26}$' THEN RETURN passshare_encrypted_error(400,'PS051','Invalid attachment selector'); END IF;
+  PERFORM id FROM connect_vaults WHERE id=box FOR UPDATE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS044','Password box not found'); END IF;
+  PERFORM id FROM users WHERE id=actor FOR SHARE;
+  PERFORM id FROM sessions WHERE id=session_id AND user_id=actor FOR SHARE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired'); END IF;
+  SELECT role INTO membership_role FROM vault_memberships WHERE vault_id=box AND user_id=actor
+    AND passshare_membership_active(role,confirmed_at) FOR SHARE;
+  IF NOT FOUND THEN RETURN passshare_encrypted_error(403,'PS016','Confirmed password box membership required'); END IF;
+  SELECT * INTO state FROM encrypted_box_state WHERE box_id=box FOR UPDATE;
+  SELECT * INTO live_item FROM encrypted_items WHERE box_id=box AND item_id=item FOR UPDATE;
+  SELECT * INTO live FROM encrypted_attachments WHERE box_id=box AND item_id=item AND attachment_id=attachment FOR UPDATE;
+  SELECT * INTO dead FROM encrypted_attachment_tombstones WHERE box_id=box AND item_id=item AND attachment_id=attachment FOR UPDATE;
+  PERFORM passshare_require_live_session(actor,session_id);
+  IF state.box_id IS NULL THEN RETURN passshare_encrypted_error(409,'PS055','Encrypted storage is not enabled'); END IF;
+  IF membership_role<>'owner' AND NOT EXISTS(SELECT 1 FROM encrypted_key_grants WHERE box_id=box AND recipient_id=actor AND key_epoch=state.key_epoch) THEN
+    RETURN passshare_encrypted_error(403,'PS016','Current shared key required'); END IF;
+  IF live_item.item_id IS NULL THEN RETURN passshare_encrypted_error(409,'PS015','Current parent item required'); END IF;
+  IF operation='get' THEN
+    IF NOT passshare_exact_object(request,ARRAY['revision']) OR NOT passshare_safe_number(request->'revision',1) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid attachment selector'); END IF;
+    IF (request->>'revision')::bigint<>state.state_revision THEN RETURN passshare_encrypted_error(409,'PS015','Attachment snapshot changed'); END IF;
+    IF live.attachment_id IS NULL THEN RETURN passshare_encrypted_error(404,'PS012','Attachment not found'); END IF;
+    IF live.key_epoch<>state.key_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+    PERFORM passshare_require_live_session(actor,session_id);
+    RETURN jsonb_build_object('status',200,'body',live.envelope);
+  END IF;
+  IF membership_role NOT IN ('owner','member') THEN RETURN passshare_encrypted_error(403,'PS032','Write access required'); END IF;
+  IF operation NOT IN ('put','delete') OR NOT passshare_exact_object(request,
+    CASE WHEN operation='put' THEN ARRAY['expectedStateRevision','item','expectedVersion','envelope'] ELSE ARRAY['expectedStateRevision','item','expectedVersion','keyEpoch'] END)
+    OR NOT passshare_safe_number(request->'expectedStateRevision',1)
+    OR NOT passshare_safe_number(request->'expectedVersion',CASE WHEN operation='put' THEN 0 ELSE 1 END)
+    OR NOT passshare_exact_object(request->'item',ARRAY['expectedVersion','envelope'])
+    OR NOT passshare_safe_number(request->'item'->'expectedVersion',1) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid attachment mutation'); END IF;
+  previous:=(request->>'expectedVersion')::bigint; item_previous:=(request->'item'->>'expectedVersion')::bigint;
+  expected_revision:=(request->>'expectedStateRevision')::bigint; item_body:=request->'item'->'envelope'; body:=request->'envelope';
+  IF item_previous>=9007199254740991 OR (operation='put' AND previous>=9007199254740991) THEN RETURN passshare_encrypted_error(409,'PS015','Safe integer limit reached'); END IF;
+  IF NOT passshare_safe_number(item_body->'context'->'keyEpoch',1) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid attachment context'); END IF;
+  epoch:=(item_body->'context'->>'keyEpoch')::bigint;
+  IF NOT passshare_item_shape(item_body,box,item,item_previous+1,epoch)
+    OR (operation='put' AND NOT passshare_attachment_shape(body,box,item,attachment,previous+1,epoch))
+    OR (operation='delete' AND (NOT passshare_safe_number(request->'keyEpoch',1) OR (request->>'keyEpoch')::bigint<>epoch)) THEN
+    RETURN passshare_encrypted_error(400,'PS051','Invalid attachment context'); END IF;
+  IF epoch<>state.key_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+  digest:=encode(sha256(convert_to(request::text,'UTF8')),'hex');
+  -- Replay proves BOTH resources and the original state selector. Any intervening
+  -- live change or different payload is a conflict, even after reply loss.
+  IF live_item.revision=item_previous+1 AND live_item.envelope=item_body AND live_item.key_epoch=epoch THEN
+    IF operation='put' AND live.revision=previous+1 AND live.envelope=body AND live.key_epoch=epoch
+      AND live.last_request_hash=digest AND live.last_state_revision=state.state_revision THEN
+      PERFORM passshare_require_live_session(actor,session_id);
+      RETURN jsonb_build_object('status',200,'body',jsonb_build_object('stateRevision',state.state_revision,'itemVersion',live_item.revision,'attachmentVersion',live.revision,'keyEpoch',epoch));
+    ELSIF operation='delete' AND live.attachment_id IS NULL AND dead.last_request_hash=digest
+      AND dead.last_state_revision=state.state_revision AND dead.item_revision=live_item.revision AND dead.key_epoch=epoch THEN
+      PERFORM passshare_require_live_session(actor,session_id);
+      RETURN jsonb_build_object('status',200,'body',jsonb_build_object('stateRevision',state.state_revision,'itemVersion',live_item.revision,'deleted',true,'keyEpoch',epoch));
+    END IF;
+  END IF;
+  IF expected_revision<>state.state_revision OR live_item.revision<>item_previous OR live_item.key_epoch<>epoch
+    OR coalesce(live.revision,0)<>previous OR (live.attachment_id IS NOT NULL AND live.key_epoch<>epoch)
+    OR dead.attachment_id IS NOT NULL THEN RETURN passshare_encrypted_error(409,'PS015','Item or attachment changed; deleted IDs cannot be reused'); END IF;
+  IF state.state_revision>9007199254740989 THEN RETURN passshare_encrypted_error(409,'PS015','Safe integer limit reached'); END IF;
+  SELECT count(*),coalesce(sum(octet_length(envelope::text)),0) INTO live_count,byte_total FROM encrypted_attachments WHERE box_id=box;
+  IF operation='put' AND (live_count+CASE WHEN live.attachment_id IS NULL THEN 1 ELSE 0 END>1024
+    OR byte_total-coalesce(octet_length(live.envelope::text),0)+octet_length(body::text)>1073741824) THEN RETURN passshare_encrypted_error(409,'PS015','Attachment storage budget exceeded'); END IF;
+  final_revision:=state.state_revision+2;
+  UPDATE encrypted_items SET revision=item_previous+1,envelope=item_body,updated_at=clock_timestamp() WHERE box_id=box AND item_id=item;
+  IF operation='put' THEN
+    INSERT INTO encrypted_attachments(box_id,item_id,attachment_id,revision,key_epoch,envelope,last_request_hash,last_state_revision)
+      VALUES(box,item,attachment,previous+1,epoch,body,digest,final_revision)
+      ON CONFLICT(box_id,item_id,attachment_id) DO UPDATE SET revision=EXCLUDED.revision,key_epoch=EXCLUDED.key_epoch,
+        envelope=EXCLUDED.envelope,last_request_hash=digest,last_state_revision=final_revision,updated_at=clock_timestamp();
+  ELSE
+    DELETE FROM encrypted_attachments WHERE box_id=box AND item_id=item AND attachment_id=attachment;
+    INSERT INTO encrypted_attachment_tombstones(box_id,item_id,attachment_id,last_live_version,key_epoch,item_revision,last_request_hash,last_state_revision)
+      VALUES(box,item,attachment,previous,epoch,item_previous+1,digest,final_revision);
+  END IF;
+  PERFORM passshare_require_live_session(actor,session_id);
+  RETURN jsonb_build_object('status',200,'body',CASE WHEN operation='put' THEN
+    jsonb_build_object('stateRevision',final_revision,'itemVersion',item_previous+1,'attachmentVersion',previous+1,'keyEpoch',epoch)
+    ELSE jsonb_build_object('stateRevision',final_revision,'itemVersion',item_previous+1,'deleted',true,'keyEpoch',epoch) END);
+EXCEPTION WHEN SQLSTATE 'P0024' THEN RETURN passshare_encrypted_error(401,'PS024','Session is invalid or expired');
+  WHEN SQLSTATE 'P0015' OR numeric_value_out_of_range THEN RETURN passshare_encrypted_error(409,'PS015','Attachment state conflict');
+END $$;
+
 CREATE OR REPLACE FUNCTION passshare_grant_identity_matches(v JSONB, box VARCHAR, sender UUID, recipient UUID)
 RETURNS BOOLEAN LANGUAGE SQL STABLE AS $$
   SELECT EXISTS(SELECT 1 FROM vault_memberships s JOIN vault_memberships r ON r.vault_id=s.vault_id
@@ -671,7 +821,7 @@ BEGIN
   RETURN NEW;
 END $$;
 DO $$ DECLARE t TEXT; BEGIN
-  FOREACH t IN ARRAY ARRAY['encrypted_items','encrypted_owner_keys','encrypted_key_grants','vault_memberships'] LOOP
+  FOREACH t IN ARRAY ARRAY['encrypted_items','encrypted_attachments','encrypted_owner_keys','encrypted_key_grants','vault_memberships'] LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS passshare_live_revision ON %I',t);
     EXECUTE format('CREATE TRIGGER passshare_live_revision AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION passshare_live_revision()',t);
   END LOOP;
@@ -691,6 +841,8 @@ DECLARE
   rotation encrypted_rotations%ROWTYPE;
   staged_item encrypted_rotation_items%ROWTYPE;
   staged_grant encrypted_rotation_grants%ROWTYPE;
+  staged_attachment encrypted_rotation_attachments%ROWTYPE;
+  live_attachment encrypted_attachments%ROWTYPE;
   live_item encrypted_items%ROWTYPE;
   recipient UUID;
   removed UUID;
@@ -704,6 +856,9 @@ DECLARE
   stage_size BIGINT;
   live_count BIGINT;
   live_grants BIGINT;
+  live_attachments BIGINT;
+  attachment_item VARCHAR;
+  attachment_id_value VARCHAR;
   increments BIGINT;
   body JSONB;
 BEGIN
@@ -728,12 +883,16 @@ BEGIN
   SELECT * INTO owner_key FROM encrypted_owner_keys WHERE box_id=box AND owner_id=actor FOR UPDATE;
   PERFORM recipient_id FROM encrypted_key_grants WHERE box_id=box ORDER BY recipient_id FOR UPDATE;
   PERFORM item_id FROM encrypted_items WHERE box_id=box ORDER BY item_id FOR UPDATE;
+  PERFORM attachment_id FROM encrypted_attachments WHERE box_id=box ORDER BY item_id,attachment_id FOR UPDATE;
   PERFORM item_id FROM encrypted_rotation_items WHERE box_id=box
     AND operation_id IN (SELECT operation_id FROM encrypted_rotations WHERE box_id=box AND (status='pending' OR operation_id=op_id))
     ORDER BY operation_id,item_id FOR UPDATE;
   PERFORM recipient_id FROM encrypted_rotation_grants WHERE box_id=box
     AND operation_id IN (SELECT operation_id FROM encrypted_rotations WHERE box_id=box AND (status='pending' OR operation_id=op_id))
     ORDER BY operation_id,recipient_id FOR UPDATE;
+  PERFORM attachment_id FROM encrypted_rotation_attachments WHERE box_id=box
+    AND operation_id IN (SELECT operation_id FROM encrypted_rotations WHERE box_id=box AND (status='pending' OR operation_id=op_id))
+    ORDER BY operation_id,item_id,attachment_id FOR UPDATE;
   PERFORM account_id FROM encrypted_account_identities WHERE account_id=actor
     OR account_id IN (SELECT user_id FROM vault_memberships WHERE vault_id=box) ORDER BY account_id FOR KEY SHARE;
   IF operation='commit' AND rotation.status='pending' THEN
@@ -776,9 +935,19 @@ BEGIN
       'ownerAccountId',actor,'ownerBundleVersion',owner_key.revision,
       'memberCount',(SELECT count(*) FROM vault_memberships WHERE vault_id=box),
       'liveItemCount',(SELECT count(*) FROM encrypted_items WHERE box_id=box),
-      'grantCount',(SELECT count(*) FROM encrypted_key_grants WHERE box_id=box AND key_epoch=state.key_epoch)));
+      'grantCount',(SELECT count(*) FROM encrypted_key_grants WHERE box_id=box AND key_epoch=state.key_epoch))
+      || CASE WHEN EXISTS(SELECT 1 FROM encrypted_attachments WHERE box_id=box) THEN
+        jsonb_build_object('liveAttachmentCount',(SELECT count(*) FROM encrypted_attachments WHERE box_id=box),
+          'liveAttachmentBytes',(SELECT coalesce(sum(octet_length(envelope::text)),0) FROM encrypted_attachments WHERE box_id=box)) ELSE '{}'::jsonb END);
   END IF;
-  IF operation IN ('members','items','item') THEN
+  IF operation IN ('members','items','item','attachments','attachment') THEN
+    IF operation IN ('attachments','attachment') AND (NOT passshare_exact_object(request,
+        CASE WHEN operation='attachments' THEN ARRAY['revision','after'] ELSE ARRAY['revision'] END)
+      OR NOT passshare_safe_number(request->'revision',1)
+      OR (operation='attachments' AND request->'after'<>'null'::jsonb
+        AND (jsonb_typeof(request->'after') IS DISTINCT FROM 'string' OR request->>'after' !~ '^[a-z0-9]{26}:[a-z0-9]{26}$'))
+      OR (operation='attachment' AND (target IS NULL OR target !~ '^[a-z0-9]{26}:[a-z0-9]{26}$'))) THEN
+      RETURN passshare_encrypted_error(400,'PS051','Invalid attachment snapshot selector'); END IF;
     IF (request->>'revision')::bigint IS DISTINCT FROM state.state_revision THEN RETURN passshare_encrypted_error(409,'PS015','Sharing snapshot changed'); END IF;
     IF operation='members' THEN
       SELECT coalesce(jsonb_agg(jsonb_build_object('accountId',user_id,'role',role,
@@ -794,6 +963,18 @@ BEGIN
       PERFORM passshare_require_live_session(actor,session_id);
   RETURN jsonb_build_object('status',200,'body',jsonb_build_object('stateRevision',state.state_revision,'items',page,
         'nextCursor',CASE WHEN jsonb_array_length(page)=100 THEN page->99->>'itemId' ELSE NULL END));
+    ELSIF operation='attachments' THEN
+      SELECT coalesce(jsonb_agg(jsonb_build_object('itemId',item_id,'attachmentId',attachment_id,'attachmentVersion',revision,'keyEpoch',key_epoch) ORDER BY item_id,attachment_id),'[]'::jsonb)
+        INTO page FROM (SELECT * FROM encrypted_attachments WHERE box_id=box
+          AND (request->>'after' IS NULL OR item_id||':'||attachment_id>request->>'after') ORDER BY item_id,attachment_id LIMIT 100) p;
+      PERFORM passshare_require_live_session(actor,session_id);
+      RETURN jsonb_build_object('status',200,'body',jsonb_build_object('stateRevision',state.state_revision,'attachments',page,
+        'nextCursor',CASE WHEN jsonb_array_length(page)=100 THEN (page->99->>'itemId')||':'||(page->99->>'attachmentId') ELSE NULL END));
+    ELSIF operation='attachment' THEN
+      SELECT envelope INTO body FROM encrypted_attachments WHERE box_id=box AND item_id=split_part(target,':',1) AND attachment_id=split_part(target,':',2);
+      IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS012','Attachment not found'); END IF;
+      PERFORM passshare_require_live_session(actor,session_id);
+      RETURN jsonb_build_object('status',200,'body',body);
     ELSE
       SELECT envelope INTO body FROM encrypted_items WHERE box_id=box AND item_id=target;
       IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS012','Item not found'); END IF;
@@ -829,7 +1010,7 @@ BEGIN
     PERFORM passshare_require_live_session(actor,session_id);
   RETURN jsonb_build_object('status',200,'body',jsonb_build_object('grantVersion',1,'keyEpoch',state.key_epoch,'stateRevision',expected_revision,'envelope',body));
   END IF;
-  IF operation NOT IN ('start','stage-item','stage-grant','commit','status','abort') OR op_id IS NULL THEN
+  IF operation NOT IN ('start','stage-item','stage-attachment','stage-grant','commit','status','abort') OR op_id IS NULL THEN
     RETURN passshare_encrypted_error(400,'PS051','Invalid sharing operation');
   END IF;
   IF rotation.operation_id IS NOT NULL AND rotation.actor_id<>actor THEN RETURN passshare_encrypted_error(403,'PS032','Rotation owner access required'); END IF;
@@ -839,7 +1020,8 @@ BEGIN
   RETURN jsonb_build_object('status',200,'body',jsonb_build_object('operationId',op_id,
       'status',CASE WHEN rotation.status='pending' AND rotation.expires_at<=clock_timestamp() THEN 'expired' ELSE rotation.status END,
       'itemCount',rotation.item_count,'grantCount',rotation.grant_count,'stagedBytes',rotation.staged_bytes,
-      'expiresAt',rotation.expires_at,'result',rotation.result));
+      'expiresAt',rotation.expires_at,'result',rotation.result)
+      || CASE WHEN rotation.attachment_count>0 THEN jsonb_build_object('attachmentCount',rotation.attachment_count) ELSE '{}'::jsonb END);
   END IF;
   IF operation='abort' THEN
     IF rotation.status='committed' THEN RETURN passshare_encrypted_error(409,'PS015','Committed rotation cannot be aborted'); END IF;
@@ -883,13 +1065,14 @@ BEGIN
       RETURN passshare_encrypted_error(409,'PS015','Another rotation is pending');
     END IF;
     SELECT count(*) INTO live_count FROM encrypted_items WHERE box_id=box;
+    SELECT count(*) INTO live_attachments FROM encrypted_attachments WHERE box_id=box;
     SELECT count(*) INTO live_grants FROM encrypted_key_grants WHERE box_id=box AND key_epoch=old_epoch AND recipient_id<>removed;
     stage_size:=octet_length((request->'bundle')::text);
     -- Opportunistic GC only after all business checks for a successful start.
     DELETE FROM encrypted_rotations WHERE box_id=box AND status='pending' AND expires_at<=clock_timestamp();
     INSERT INTO encrypted_rotations(box_id,operation_id,actor_id,header,header_hash,status,staged_bytes,byte_limit)
       VALUES(box,op_id,actor,request,encode(sha256(convert_to(request::text,'UTF8')),'hex'),'pending',stage_size,
-        least(1073741824::bigint,live_count*1500000+live_grants*2048+2048));
+        least(1073741824::bigint,live_count*1500000+live_attachments*1404000+live_grants*2048+2048));
     PERFORM passshare_require_live_session(actor,session_id);
   RETURN jsonb_build_object('status',200,'body',jsonb_build_object('operationId',op_id,'status','pending'));
   END IF;
@@ -932,6 +1115,30 @@ BEGIN
     PERFORM passshare_require_live_session(actor,session_id);
   RETURN jsonb_build_object('status',200,'body',jsonb_build_object('operationId',op_id,'itemId',target,'itemVersion',live_item.revision+1,'keyEpoch',new_epoch));
   END IF;
+  IF operation='stage-attachment' THEN
+    attachment_item:=split_part(target,':',1); attachment_id_value:=split_part(target,':',2); body:=request->'envelope';
+    IF NOT passshare_exact_object(request,ARRAY['expectedVersion','envelope']) OR NOT passshare_safe_number(request->'expectedVersion',1) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid attachment stage'); END IF;
+    SELECT * INTO live_attachment FROM encrypted_attachments WHERE box_id=box AND item_id=attachment_item AND attachment_id=attachment_id_value;
+    IF NOT FOUND OR live_attachment.revision IS DISTINCT FROM (request->>'expectedVersion')::bigint OR live_attachment.key_epoch<>old_epoch THEN
+      RETURN passshare_encrypted_error(409,'PS015','Live attachment changed or does not exist'); END IF;
+    IF live_attachment.revision>=9007199254740991 THEN RETURN passshare_encrypted_error(409,'PS015','Safe integer limit reached'); END IF;
+    IF NOT passshare_attachment_shape(body,box,attachment_item,attachment_id_value,live_attachment.revision+1,new_epoch) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid staged attachment'); END IF;
+    SELECT * INTO staged_attachment FROM encrypted_rotation_attachments WHERE box_id=box AND operation_id=op_id AND item_id=attachment_item AND attachment_id=attachment_id_value;
+    IF FOUND THEN
+      IF staged_attachment.previous=live_attachment.revision AND staged_attachment.envelope=body THEN
+        PERFORM passshare_require_live_session(actor,session_id);
+        RETURN jsonb_build_object('status',200,'body',jsonb_build_object('operationId',op_id,'itemId',attachment_item,'attachmentId',attachment_id_value,'attachmentVersion',live_attachment.revision+1,'keyEpoch',new_epoch));
+      END IF;
+      RETURN passshare_encrypted_error(409,'PS015','Staged attachment differs');
+    END IF;
+    stage_size:=octet_length(body::text);
+    IF rotation.attachment_count>=(SELECT count(*) FROM encrypted_attachments WHERE box_id=box) OR rotation.staged_bytes+stage_size>rotation.byte_limit THEN RETURN passshare_encrypted_error(409,'PS015','Rotation staging budget exceeded'); END IF;
+    INSERT INTO encrypted_rotation_attachments(box_id,operation_id,item_id,attachment_id,previous,key_epoch,envelope)
+      VALUES(box,op_id,attachment_item,attachment_id_value,live_attachment.revision,new_epoch,body);
+    UPDATE encrypted_rotations SET attachment_count=attachment_count+1,staged_bytes=staged_bytes+stage_size WHERE box_id=box AND operation_id=op_id;
+    PERFORM passshare_require_live_session(actor,session_id);
+    RETURN jsonb_build_object('status',200,'body',jsonb_build_object('operationId',op_id,'itemId',attachment_item,'attachmentId',attachment_id_value,'attachmentVersion',live_attachment.revision+1,'keyEpoch',new_epoch));
+  END IF;
   IF operation='stage-grant' THEN
     recipient:=target::uuid; body:=request->'envelope';
     IF recipient=removed OR NOT EXISTS(SELECT 1 FROM encrypted_key_grants WHERE box_id=box AND recipient_id=recipient AND key_epoch=old_epoch)
@@ -954,6 +1161,15 @@ BEGIN
   RETURN jsonb_build_object('status',200,'body',jsonb_build_object('operationId',op_id,'recipientAccountId',recipient,'keyEpoch',new_epoch));
   END IF;
   -- Commit proves ID AND revision equality in BOTH directions, not just counts.
+  IF EXISTS(SELECT item_id,attachment_id,revision FROM encrypted_attachments WHERE box_id=box
+      EXCEPT SELECT item_id,attachment_id,previous FROM encrypted_rotation_attachments WHERE box_id=box AND operation_id=op_id)
+    OR EXISTS(SELECT item_id,attachment_id,previous FROM encrypted_rotation_attachments WHERE box_id=box AND operation_id=op_id
+      EXCEPT SELECT item_id,attachment_id,revision FROM encrypted_attachments WHERE box_id=box)
+    OR EXISTS(SELECT 1 FROM encrypted_attachments WHERE box_id=box AND key_epoch<>old_epoch)
+    OR EXISTS(SELECT 1 FROM encrypted_rotation_attachments WHERE box_id=box AND operation_id=op_id AND key_epoch<>new_epoch) THEN
+    RETURN passshare_encrypted_error(409,'PS015','Complete current live attachment set required'); END IF;
+  IF (SELECT coalesce(sum(octet_length(envelope::text)),0) FROM encrypted_rotation_attachments WHERE box_id=box AND operation_id=op_id)>1073741824
+    OR (SELECT count(*) FROM encrypted_rotation_attachments WHERE box_id=box AND operation_id=op_id)>1024 THEN RETURN passshare_encrypted_error(409,'PS015','Attachment storage budget exceeded'); END IF;
   IF EXISTS(SELECT item_id,revision FROM encrypted_items WHERE box_id=box
       EXCEPT SELECT item_id,previous FROM encrypted_rotation_items WHERE box_id=box AND operation_id=op_id)
     OR EXISTS(SELECT item_id,previous FROM encrypted_rotation_items WHERE box_id=box AND operation_id=op_id
@@ -973,16 +1189,21 @@ BEGIN
   END IF;
   SELECT count(*) INTO live_count FROM encrypted_items WHERE box_id=box;
   SELECT count(*) INTO live_grants FROM encrypted_key_grants WHERE box_id=box;
+  SELECT count(*) INTO live_attachments FROM encrypted_attachments WHERE box_id=box;
   -- Each actual live-row change has a revision trigger; reserve the complete
   -- increment budget BEFORE any write. epoch itself contributes one increment.
-  increments:=live_count+live_grants+rotation.grant_count+3;
+  increments:=live_count+live_attachments+live_grants+rotation.grant_count+3;
   IF state.state_revision>9007199254740991-increments OR old_epoch>=9007199254740991 OR owner_version>=9007199254740991
-    OR EXISTS(SELECT 1 FROM encrypted_items WHERE box_id=box AND revision>=9007199254740991) THEN
+    OR EXISTS(SELECT 1 FROM encrypted_items WHERE box_id=box AND revision>=9007199254740991)
+    OR EXISTS(SELECT 1 FROM encrypted_attachments WHERE box_id=box AND revision>=9007199254740991) THEN
     RETURN passshare_encrypted_error(409,'PS015','Safe integer limit reached');
   END IF;
   IF NOT passshare_owner_shape(rotation.header->'bundle',box,actor,new_epoch) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid staged owner bundle'); END IF;
   UPDATE encrypted_items i SET revision=s.previous+1,key_epoch=new_epoch,envelope=s.envelope,updated_at=clock_timestamp()
     FROM encrypted_rotation_items s WHERE s.box_id=box AND s.operation_id=op_id AND i.box_id=box AND i.item_id=s.item_id;
+  UPDATE encrypted_attachments a SET revision=s.previous+1,key_epoch=new_epoch,envelope=s.envelope,
+    last_request_hash=NULL,last_state_revision=NULL,updated_at=clock_timestamp()
+    FROM encrypted_rotation_attachments s WHERE s.box_id=box AND s.operation_id=op_id AND a.box_id=box AND a.item_id=s.item_id AND a.attachment_id=s.attachment_id;
   UPDATE encrypted_owner_keys SET revision=owner_version+1,key_epoch=new_epoch,bundle=rotation.header->'bundle',updated_at=clock_timestamp()
     WHERE box_id=box AND owner_id=actor;
   DELETE FROM encrypted_key_grants WHERE box_id=box;
@@ -995,9 +1216,11 @@ BEGIN
   UPDATE encrypted_box_state SET key_epoch=new_epoch,state_revision=state_revision+1 WHERE box_id=box;
   SELECT state_revision INTO expected_revision FROM encrypted_box_state WHERE box_id=box;
   reply:=jsonb_build_object('operationId',op_id,'status','committed','keyEpoch',new_epoch,'stateRevision',expected_revision,
-    'ownerBundleVersion',owner_version+1,'removedAccountId',removed,'itemCount',live_count,'grantCount',rotation.grant_count);
+    'ownerBundleVersion',owner_version+1,'removedAccountId',removed,'itemCount',live_count,'grantCount',rotation.grant_count)
+    || CASE WHEN live_attachments>0 THEN jsonb_build_object('attachmentCount',live_attachments) ELSE '{}'::jsonb END;
   DELETE FROM encrypted_rotation_items WHERE box_id=box AND operation_id=op_id;
   DELETE FROM encrypted_rotation_grants WHERE box_id=box AND operation_id=op_id;
+  DELETE FROM encrypted_rotation_attachments WHERE box_id=box AND operation_id=op_id;
   UPDATE encrypted_rotations SET status='committed',header=NULL,result=reply,staged_bytes=0 WHERE box_id=box AND operation_id=op_id;
   PERFORM passshare_require_live_session(actor,session_id);
   RETURN jsonb_build_object('status',200,'body',reply);

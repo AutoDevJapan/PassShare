@@ -4,6 +4,7 @@ pub mod account_page;
 pub mod create;
 pub mod edit;
 pub mod encrypted;
+pub mod encrypted_attachment;
 pub mod encrypted_rotation;
 pub mod encrypted_setup;
 pub mod lifecycle_page;
@@ -16,11 +17,15 @@ pub mod shared_grant;
 use serde_json::{json, Value};
 
 pub fn dispatch(input: &Value) -> Value {
+    if input.get("requestJson").is_some() {
+        return encrypted_attachment::dispatch_raw(input);
+    }
     match input.get("command").and_then(Value::as_str) {
         Some("account-lifecycle-page") => lifecycle_page::render(input),
         Some("account-lifecycle-form") => lifecycle_page::validate_form(input),
         Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),
         Some("encrypted-plan") => encrypted::plan(input),
+        Some("encrypted-attachment-plan") => encrypted_attachment::plan(input),
         Some("shared-grant-plan") => shared_grant::plan(input),
         Some("encrypted-rotation-plan") => encrypted_rotation::plan(input),
         Some("encrypted-setup-plan") => encrypted_setup::plan(input),

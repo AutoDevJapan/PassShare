@@ -43,6 +43,12 @@ pub struct LocalPostgres {
 }
 impl LocalPostgres {
     pub fn start(manifest: &PathBuf) -> Self {
+        Self::start_named(manifest, "")
+    }
+    pub fn start_attachments(manifest: &PathBuf) -> Self {
+        Self::start_named(manifest, "attach_")
+    }
+    fn start_named(manifest: &PathBuf, prefix: &str) -> Self {
         let file = std::fs::File::open(manifest).expect("owned fixture manifest must exist");
         let mut bytes = Vec::new();
         file.take(16 * 1024 + 1).read_to_end(&mut bytes).unwrap();
@@ -120,7 +126,7 @@ impl LocalPostgres {
             (160000..170000).contains(&version),
             "PostgreSQL 16 fixture required"
         );
-        local.create_database();
+        local.create_database(prefix);
         local.query(&format!("CREATE TABLE passshare_fixture_owner(owner_id text PRIMARY KEY); INSERT INTO passshare_fixture_owner VALUES('{owner}')"));
         local
     }
@@ -135,11 +141,16 @@ impl LocalPostgres {
             ownership_id: self.ownership_id.clone(),
         };
         assert!(local.query("SELECT owner_id FROM passshare_fixture_owner") == self.ownership_id);
-        local.create_database();
+        local.create_database(if self.database.starts_with("passshare1163_attach_") {
+            "attach_"
+        } else {
+            ""
+        });
         local
     }
-    fn create_database(&mut self) {
-        let name = format!("passshare1163_{}", ConnectId::generate().unwrap());
+    fn create_database(&mut self, prefix: &str) {
+        assert!(matches!(prefix, "" | "attach_"));
+        let name = format!("passshare1163_{prefix}{}", ConnectId::generate().unwrap());
         let mut cmd = self.client();
         // Windows fixture creation can exceed the normal 10-second statement
         // limit during filesystem sync. Keep a separate finite creation budget.
@@ -202,7 +213,9 @@ impl LocalPostgres {
             }
         }
         c.env("PGPASSFILE", &self.passfile)
-            .env("PGSERVICEFILE", &self.passfile);
+            .env("PGSERVICEFILE", &self.passfile)
+            .env("LC_ALL", "C")
+            .env("LANG", "C");
         c.args([
             "-h",
             "127.0.0.1",

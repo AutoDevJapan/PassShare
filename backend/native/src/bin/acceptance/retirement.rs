@@ -20,6 +20,8 @@ fn business_state() -> String {
         "mutation_operations",
         "encrypted_box_state",
         "encrypted_items",
+        "encrypted_attachments",
+        "encrypted_attachment_tombstones",
         "encrypted_item_tombstones",
         "encrypted_owner_keys",
         "encrypted_account_identities",
@@ -27,6 +29,7 @@ fn business_state() -> String {
         "encrypted_rotations",
         "encrypted_rotation_items",
         "encrypted_rotation_grants",
+        "encrypted_rotation_attachments",
     ];
     let parts: Vec<_> = tables.iter().map(|table| format!(
         "SELECT '{table}' AS name, COALESCE(string_agg(md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text),',' ORDER BY md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text)),'') AS digest FROM {table} r"

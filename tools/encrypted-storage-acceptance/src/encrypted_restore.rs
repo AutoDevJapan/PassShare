@@ -67,6 +67,9 @@ fn security_state(db: &Database) -> String {
         "encrypted_rotation_items",
         "encrypted_rotation_grants",
         "encrypted_item_tombstones",
+        "encrypted_attachments",
+        "encrypted_attachment_tombstones",
+        "encrypted_rotation_attachments",
     ];
     let parts = tables.iter().map(|t| format!("SELECT '{t}' AS name, count(*)::text || ':' || COALESCE(string_agg(md5(to_jsonb(r)::text),',' ORDER BY md5(to_jsonb(r)::text)),'') AS hash FROM {t} r")).collect::<Vec<_>>();
     db.sql(&format!(
@@ -462,6 +465,26 @@ fn restore_search_path(mut script: Vec<u8>) -> Vec<u8> {
     let offset = found.expect("pg_restore initialization search path required");
     script.splice(offset..offset + FROM.len(), TO.iter().copied());
     script
+}
+
+pub(super) fn attachment_roundtrip(source: &Database, network: &Network) -> Database {
+    let owner = source
+        .local
+        .as_ref()
+        .map(|l| l.ownership_id.clone())
+        .unwrap_or_else(|| source.sql("SELECT md5(gen_random_uuid()::text)"));
+    bind(source, &owner, "source");
+    let before = inventory(source, true);
+    let backup = dump(source, &owner);
+    let restored = target(source, network, &owner);
+    restore(&restored, &owner, &backup);
+    assert!(may_resume(source,&restored,&owner),"restored attachments require current source authorization/key/security equality before starting the isolated API");
+    assert!(
+        inventory(source, true) == before,
+        "attachment archive leaves all source rows and xmin unchanged"
+    );
+    println!("attachment dump/restore: every public table, live attachment envelopes, reserved IDs and pending stages match");
+    restored
 }
 
 fn may_resume(source: &Database, restored: &Database, owner: &str) -> bool {

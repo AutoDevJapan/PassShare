@@ -398,6 +398,23 @@ fn fixture_sql(
                     || diagnostic.contains("connection refused")
                 {
                     failure = "failed category=connection_unavailable";
+                } else if diagnostic.contains("server closed the connection unexpectedly") {
+                    failure = "failed category=server_closed_connection";
+                } else if diagnostic.contains("could not receive data from server") {
+                    failure = "failed category=receive_connection_lost";
+                } else if diagnostic.contains("could not send data to server") {
+                    failure = "failed category=send_connection_lost";
+                } else if diagnostic.contains("terminating connection due to administrator command")
+                {
+                    failure = "failed category=administrator_termination";
+                } else if diagnostic.contains("could not create shared memory segment") {
+                    failure = "failed category=shared_memory_creation";
+                } else if diagnostic.contains("could not fork new process") {
+                    failure = "failed category=server_process_creation";
+                } else if diagnostic.contains("too many clients")
+                    || diagnostic.contains("remaining connection slots")
+                {
+                    failure = "failed category=connections_exhausted";
                 } else {
                     for (code, category) in [
                         ("55P03", "failed category=lock_timeout"),
@@ -412,11 +429,33 @@ fn fixture_sql(
                         ("42501", "failed category=permission_denied"),
                         ("XX000", "failed category=internal_error"),
                     ] {
-                        if diagnostic.contains(&format!("ERROR:  {code}:")) {
+                        if diagnostic.contains(&format!("ERROR:  {code}:"))
+                            || diagnostic.contains(&format!("FATAL:  {code}:"))
+                        {
                             failure = category;
                             break;
                         }
                     }
+                }
+                if failure == "failed category=other" && !diagnostic.is_empty() {
+                    // Diagnostic values may be secret. Emit only its byte count
+                    // and canonical SQLSTATE tokens immediately after severity.
+                    let fields = diagnostic.split_ascii_whitespace().collect::<Vec<_>>();
+                    let codes = fields
+                        .windows(2)
+                        .filter(|w| matches!(w[0], "ERROR:" | "FATAL:"))
+                        .filter_map(|w| w[1].strip_suffix(':'))
+                        .filter(|code| {
+                            code.len() == 5
+                                && code
+                                    .bytes()
+                                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+                        })
+                        .collect::<Vec<_>>();
+                    eprintln!(
+                        "fixture SQL diagnostic bytes={} SQLSTATE={codes:?}",
+                        bytes.len()
+                    );
                 }
             }
         }
@@ -431,6 +470,13 @@ fn fixture_sql(
         worker.join().map_err(|_| "I/O worker failed")?;
     }
     if !status.unwrap().success() {
+        // Preserve safe process metadata for fixture startup/OS failures that
+        // do not produce PostgreSQL SQLSTATE diagnostics. Never print stderr.
+        if failure == "control rejected or exceeded output bound"
+            || failure == "failed category=other"
+        {
+            eprintln!("fixture SQL nonzero exit={:?}", status.unwrap().code());
+        }
         return Err(failure);
     }
     let output = String::from_utf8(output)
@@ -862,11 +908,14 @@ fn acceptance_state_hash(db: &Database) -> String {
         "encrypted_owner_keys",
         "encrypted_key_grants",
         "encrypted_items",
+        "encrypted_attachments",
+        "encrypted_attachment_tombstones",
         "encrypted_item_tombstones",
         "encrypted_account_identities",
         "encrypted_rotations",
         "encrypted_rotation_items",
         "encrypted_rotation_grants",
+        "encrypted_rotation_attachments",
     ];
     let parts: Vec<_> = tables.iter().map(|t| format!("SELECT '{t}' AS name, COALESCE(string_agg(md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text),',' ORDER BY md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text)),'') AS digest FROM {t} r")).collect();
     db.sql(&format!(
@@ -1008,6 +1057,8 @@ fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     let (local_manifest, args) =
         local_postgres::prefix(&args).expect("explicit local fixture prefix");
+    let attachment_fixture = args.first().is_some_and(|a| a == "--encrypted-attachments");
+    let args = if attachment_fixture { &args[1..] } else { args };
     let (restore_fixture, args) = sharing_rotation::encrypted_restore::prefix(args)
         .expect("explicit encrypted restore fixture prefix");
     let legacy_expiry = args.first().is_some_and(|a| a == "--legacy-expiry");
@@ -1036,7 +1087,7 @@ fn main() {
         fixture_prefix(args).unwrap_or_else(|reason| panic!("{reason}"));
     local_postgres::validate_mode(
         local_manifest.is_some(),
-        sharing_fixture || legacy_expiry || restore_fixture,
+        sharing_fixture || legacy_expiry || restore_fixture || attachment_fixture,
         mode_args,
     )
     .expect("local PostgreSQL requires an explicit supported Node fixture");
@@ -1049,7 +1100,7 @@ fn main() {
     let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
     assert!(
         local_manifest.is_none()
-            || ((sharing_fixture || legacy_expiry || restore_fixture)
+            || ((sharing_fixture || legacy_expiry || restore_fixture || attachment_fixture)
                 && matches!(mode, Mode::Node(_))),
         "local PostgreSQL is explicitly supported only for Node sharing, expiry or restore acceptance"
     );
@@ -1070,7 +1121,11 @@ fn main() {
         }
     };
     let (network, db) = if let Some(manifest) = local_manifest {
-        let local = local_postgres::LocalPostgres::start(&manifest);
+        let local = if attachment_fixture {
+            local_postgres::LocalPostgres::start_attachments(&manifest)
+        } else {
+            local_postgres::LocalPostgres::start(&manifest)
+        };
         let db = Database {
             name: local.database.clone(),
             port: local.port,
@@ -1091,7 +1146,18 @@ fn main() {
         let db = Database::start(&network);
         (network, db)
     };
-    if restore_fixture {
+    assert!(
+        !attachment_fixture
+            || !(restore_fixture
+                || sharing_fixture
+                || identity_fixture
+                || legacy_expiry
+                || go_executable.is_some()),
+        "fixture modes are mutually exclusive"
+    );
+    if attachment_fixture {
+        sharing_rotation::encrypted_attachments::run(&db, &network, &mode);
+    } else if restore_fixture {
         sharing_rotation::encrypted_restore::run(&db, &network, &mode);
     } else if legacy_expiry {
         sharing_rotation::run_legacy_expiry(&db, &network, &mode);
@@ -3646,6 +3712,24 @@ mod contract_tests {
             let mut changed = envelope.clone();
             *changed.pointer_mut(pointer).unwrap() = value;
             assert_eq!(native_plan(&context, &changed)["status"], 400);
+        }
+    }
+    #[test]
+    #[ignore = "requires PASSSHARE_SQL_FIXTURE_MANIFEST naming the owned PostgreSQL 16 fixture"]
+    fn sql_transport_repeated_owned_reads_diagnose_connection_failures() {
+        let manifest = PathBuf::from(
+            std::env::var_os("PASSSHARE_SQL_FIXTURE_MANIFEST").expect("owned manifest required"),
+        );
+        let local = local_postgres::LocalPostgres::start_attachments(&manifest);
+        let db = Database {
+            name: local.database.clone(),
+            port: local.port,
+            local: Some(local),
+        };
+        // Finite probes of THIS invocation's DB. No retry of a write whose
+        // commit might be unknown; no other connection/resource is terminated.
+        for probe in 0..100 {
+            assert!(db.sql("SELECT 1") == "1", "owned connection probe {probe}");
         }
     }
 }

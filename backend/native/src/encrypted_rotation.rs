@@ -24,8 +24,9 @@ pub fn plan(input: &Value) -> Value {
             Value::Null,
         );
     }
-    if ["members", "items", "item"].contains(&op) {
-        let fields: &[&str] = if op == "item" {
+    if ["members", "items", "item", "attachments", "attachment"].contains(&op) {
+        let single = op == "item" || op == "attachment";
+        let fields: &[&str] = if single {
             &["revision"]
         } else {
             &["revision", "after"]
@@ -33,15 +34,24 @@ pub fn plan(input: &Value) -> Value {
         if !exact_fields(r, fields) || number(&r["revision"], false).is_none() {
             return failure();
         }
-        let target = if op == "item" {
+        let target = if single {
             let Some(item) = id(&input["itemId"]) else {
                 return failure();
             };
-            json!(item)
+            if op == "attachment" {
+                let Some(attachment) = id(&input["attachmentId"]) else {
+                    return failure();
+                };
+                json!(format!("{item}:{attachment}"))
+            } else {
+                json!(item)
+            }
         } else {
             if !r["after"].is_null()
                 && !(if op == "members" {
                     r["after"].as_str().is_some_and(canonical_uuid)
+                } else if op == "attachments" {
+                    r["after"].as_str().is_some_and(attachment_cursor)
                 } else {
                     id(&r["after"]).is_some()
                 })
@@ -101,6 +111,28 @@ pub fn plan(input: &Value) -> Value {
             }
             json!(item)
         }
+        "stage-attachment" if exact_fields(r, &["expectedVersion", "envelope"]) => {
+            let (Some(item), Some(attachment), Some(previous)) = (
+                id(&input["itemId"]),
+                id(&input["attachmentId"]),
+                number(&r["expectedVersion"], false),
+            ) else {
+                return failure();
+            };
+            if previous == MAX_INTEGER {
+                return conflict();
+            }
+            if !crate::encrypted_attachment::valid_attachment(
+                &r["envelope"],
+                box_id,
+                item,
+                attachment,
+                previous,
+            ) {
+                return failure();
+            }
+            json!(format!("{item}:{attachment}"))
+        }
         "stage-grant" if exact_fields(r, &["envelope"]) => {
             let Some(recipient) = input["recipientId"].as_str().filter(|s| canonical_uuid(s))
             else {
@@ -124,6 +156,11 @@ pub fn plan(input: &Value) -> Value {
         target,
         r.clone(),
     )
+}
+
+fn attachment_cursor(s: &str) -> bool {
+    s.split_once(':')
+        .is_some_and(|(i, a)| id(&json!(i)).is_some() && id(&json!(a)).is_some())
 }
 
 #[cfg(test)]

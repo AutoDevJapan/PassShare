@@ -8,6 +8,9 @@ use passshare_core::cloud_crypto::{
 };
 use std::collections::BTreeMap;
 
+#[path = "encrypted_attachments.rs"]
+pub(super) mod encrypted_attachments;
+
 #[path = "encrypted_restore.rs"]
 pub(super) mod encrypted_restore;
 
@@ -199,6 +202,8 @@ fn state_hash_sql(include_staging: bool) -> String {
         "encrypted_owner_keys",
         "encrypted_key_grants",
         "encrypted_items",
+        "encrypted_attachments",
+        "encrypted_attachment_tombstones",
         "encrypted_item_tombstones",
         "encrypted_account_identities",
     ];
@@ -207,6 +212,7 @@ fn state_hash_sql(include_staging: bool) -> String {
             "encrypted_rotations",
             "encrypted_rotation_items",
             "encrypted_rotation_grants",
+            "encrypted_rotation_attachments",
         ]);
     }
     let parts: Vec<_> = tables.iter().map(|t| format!("SELECT '{t}' AS name, COALESCE(string_agg(md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text),',' ORDER BY md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text)),'') AS digest FROM {t} r")).collect();
