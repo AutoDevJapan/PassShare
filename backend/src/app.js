@@ -68,13 +68,13 @@ export async function createApp(options = {}) {
   app.set("trust proxy", resolveTrustProxyHops(appEnv));
   const databaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL);
   const pool =
-    options.pool ??
+    (options.pool !== undefined ? options.pool :
     (databaseUrl
       ? new Pool({
           connectionString: databaseUrl,
           ssl: resolveDbSslConfig(databaseUrl),
         })
-      : null);
+      : null));
 
   // Warm the connection early so the first post-cold-start request is served by
   // an already-established connection rather than a cold one.

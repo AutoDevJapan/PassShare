@@ -639,9 +639,36 @@ fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     let (local_manifest, args) =
         local_postgres::prefix(&args).expect("explicit local fixture prefix");
+    let legacy_expiry = args.first().is_some_and(|a| a == "--legacy-expiry");
+    let args = if legacy_expiry {
+        assert!(
+            !args[1..].iter().any(|a| [
+                "--legacy-expiry",
+                "--sharing-rotation",
+                "--account-identity",
+                "--go-session"
+            ]
+            .iter()
+            .any(|flag| a == flag)),
+            "fixture modes are mutually exclusive"
+        );
+        &args[1..]
+    } else {
+        assert!(
+            !args.iter().any(|a| a == "--legacy-expiry"),
+            "legacy expiry flag must be first"
+        );
+        args
+    };
     // Consume a valueless fixture prefix before the unchanged Node/image parser.
     let (identity_fixture, sharing_fixture, mode_args) =
         fixture_prefix(args).unwrap_or_else(|reason| panic!("{reason}"));
+    local_postgres::validate_mode(
+        local_manifest.is_some(),
+        sharing_fixture || legacy_expiry,
+        mode_args,
+    )
+    .expect("local PostgreSQL requires an explicit supported Node fixture");
     let (go_executable, host_args) =
         go_session::cli(mode_args).unwrap_or_else(|reason| panic!("{reason}"));
     assert!(
@@ -650,8 +677,9 @@ fn main() {
     );
     let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
     assert!(
-        local_manifest.is_none() || (sharing_fixture && matches!(mode, Mode::Node(_))),
-        "local PostgreSQL is explicitly supported only for Node sharing acceptance"
+        local_manifest.is_none()
+            || ((sharing_fixture || legacy_expiry) && matches!(mode, Mode::Node(_))),
+        "local PostgreSQL is explicitly supported only for Node sharing or expiry acceptance"
     );
     let mode = match mode {
         Mode::Node(binary) => {
@@ -691,7 +719,9 @@ fn main() {
         let db = Database::start(&network);
         (network, db)
     };
-    if let Some(executable) = go_executable {
+    if legacy_expiry {
+        sharing_rotation::run_legacy_expiry(&db, &network, &mode);
+    } else if let Some(executable) = go_executable {
         go_session::run(&db, &network, &mode, &executable);
     } else if identity_fixture {
         account_identity::run(&db, &network, &mode);

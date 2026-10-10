@@ -22,6 +22,18 @@ pub fn prefix(args: &[OsString]) -> Result<(Option<PathBuf>, &[OsString]), &'sta
     }
 }
 
+pub fn validate_mode(
+    local: bool,
+    supported_fixture: bool,
+    args: &[OsString],
+) -> Result<(), &'static str> {
+    if local && (!supported_fixture || args.iter().any(|a| a == "--go-session" || a == "--image")) {
+        Err("local PostgreSQL supports only the explicit Node sharing/expiry fixtures")
+    } else {
+        Ok(())
+    }
+}
+
 pub struct LocalPostgres {
     pub psql: PathBuf,
     pub port: u16,
@@ -128,6 +140,7 @@ impl LocalPostgres {
             "-p",
             &self.port.to_string(),
             "-X",
+            "-w",
             "-qAt",
             "-v",
             "ON_ERROR_STOP=1",
@@ -143,17 +156,7 @@ impl LocalPostgres {
         c
     }
     fn query(&self, sql: &str) -> String {
-        let output = self
-            .client()
-            .args(["-c", sql])
-            .output()
-            .expect("owned fixture SQL launch");
-        assert!(output.status.success(), "owned fixture SQL failed");
-        assert!(
-            output.stdout.len() <= 16 * 1024,
-            "fixture control reply exceeds bound"
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        control(self.client(), sql).expect("bounded owned fixture SQL failed")
     }
 }
 impl Drop for LocalPostgres {
@@ -162,17 +165,103 @@ impl Drop for LocalPostgres {
             return;
         }
         let name = std::mem::replace(&mut self.database, "passshare".to_owned());
-        let status = self
-            .client()
-            .args(["-c", &format!("DROP DATABASE {name} WITH (FORCE)")])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if !status.is_ok_and(|s| s.success()) {
+        if control(self.client(), &format!("DROP DATABASE {name} WITH (FORCE)")).is_err() {
             CLEANUP_FAILED.store(true, Ordering::SeqCst);
             eprintln!("owned local PostgreSQL database cleanup failed");
         }
     }
+}
+
+fn control(mut cmd: Command, sql: &str) -> Result<String, &'static str> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut child = cmd
+        .args(["-c", sql])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| "control launch failed")?;
+    let out = child.stdout.take().unwrap();
+    let err = child.stderr.take().unwrap();
+    let (send, receive) = std::sync::mpsc::channel();
+    let mut readers = Vec::new();
+    for (stdout, pipe) in [
+        (true, Box::new(out) as Box<dyn Read + Send>),
+        (false, Box::new(err) as Box<dyn Read + Send>),
+    ] {
+        let send = send.clone();
+        readers.push(thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = pipe.take(16 * 1024 + 1).read_to_end(&mut bytes);
+            let _ = send.send((stdout, result, bytes));
+        }));
+    }
+    drop(send);
+    let mut timed_out = false;
+    let mut wait_failed = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(_) => wait_failed = true,
+        }
+        if wait_failed || std::time::Instant::now() >= deadline {
+            timed_out = !wait_failed;
+            let _ = child.kill();
+            if !reap_before(
+                &mut child,
+                std::time::Instant::now() + Duration::from_secs(2),
+            ) {
+                CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                break None;
+            }
+            match child.wait() {
+                Ok(status) => break Some(status),
+                Err(_) => {
+                    CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                    break None;
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let drain = std::time::Instant::now() + Duration::from_secs(2);
+    let mut stdout = Vec::new();
+    let mut invalid = false;
+    for _ in 0..2 {
+        let (is_stdout, result, bytes) = match receive
+            .recv_timeout(drain.saturating_duration_since(std::time::Instant::now()))
+        {
+            Ok(reply) => reply,
+            Err(_) => {
+                CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                return Err("control drain deadline exceeded");
+            }
+        };
+        invalid |= result.is_err() || bytes.len() > 16 * 1024;
+        if is_stdout {
+            stdout = bytes;
+        }
+    }
+    for reader in readers {
+        if reader.join().is_err() {
+            CLEANUP_FAILED.store(true, Ordering::SeqCst);
+            invalid = true;
+        }
+    }
+    if wait_failed || status.is_none() {
+        return Err("control child wait or reap failed");
+    }
+    if timed_out {
+        return Err("control deadline exceeded");
+    }
+    if invalid || !status.is_some_and(|status| status.success()) {
+        return Err("control rejected or exceeded output bound");
+    }
+    Ok(String::from_utf8(stdout)
+        .map_err(|_| "control reply encoding")?
+        .trim()
+        .to_owned())
 }
 
 #[cfg(test)]
@@ -199,5 +288,18 @@ mod tests {
             assert!(prefix(&invalid.into_iter().map(OsString::from).collect::<Vec<_>>()).is_err());
         }
         assert!(prefix(&["native".into()]).unwrap().0.is_none());
+        assert!(validate_mode(true, true, &["native".into()]).is_ok());
+        for args in [
+            vec!["--go-session", "unused.exe", "native"],
+            vec!["--image", "image"],
+        ] {
+            assert!(validate_mode(
+                true,
+                true,
+                &args.into_iter().map(OsString::from).collect::<Vec<_>>()
+            )
+            .is_err());
+        }
+        assert!(validate_mode(true, false, &["native".into()]).is_err());
     }
 }

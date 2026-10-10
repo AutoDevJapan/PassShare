@@ -585,46 +585,74 @@ mod tests {
         values["title"] = json!("Changed");
         let mut next: Value = serde_json::from_str(&context()).unwrap();
         next["itemVersion"] = json!(2);
-        let edited = h.send(json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),
-            "item":full_item().to_string(),"values":values.to_string()}));
-        assert_eq!((edited["ok"].clone(),edited["generation"].clone(),edited["locked"].clone()),
-            (json!(true),json!(g),json!(false)));
+        let edited = h.send(
+            json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),
+            "item":full_item().to_string(),"values":values.to_string()}),
+        );
+        assert_eq!(
+            (
+                edited["ok"].clone(),
+                edited["generation"].clone(),
+                edited["locked"].clone()
+            ),
+            (json!(true), json!(g), json!(false))
+        );
         let decrypted = h.send(json!({"command":"decrypt","expectedGeneration":g,"context":next.to_string(),"envelope":edited["envelope"]}));
         let mut expected = full_item();
         expected["title"] = json!("Changed");
         expected["version"] = json!(2);
-        assert_eq!(serde_json::from_str::<Value>(decrypted["item"].as_str().unwrap()).unwrap(),expected);
+        assert_eq!(
+            serde_json::from_str::<Value>(decrypted["item"].as_str().unwrap()).unwrap(),
+            expected
+        );
         let mut ids = Vec::new();
         for _ in 0..2 {
-            let reply = h.send(json!({"command":"create","expectedGeneration":g,"values":form().to_string()}));
-            assert_eq!(reply["generation"],g);
-            assert_eq!(reply["locked"],false);
-            let envelope: Value = serde_json::from_str(reply["envelope"].as_str().unwrap()).unwrap();
+            let reply = h.send(
+                json!({"command":"create","expectedGeneration":g,"values":form().to_string()}),
+            );
+            assert_eq!(reply["generation"], g);
+            assert_eq!(reply["locked"], false);
+            let envelope: Value =
+                serde_json::from_str(reply["envelope"].as_str().unwrap()).unwrap();
             let ctx = &envelope["context"];
             passshare_core::ConnectId::validate(ctx["itemId"].as_str().unwrap()).unwrap();
-            assert_eq!(ctx["passwordBoxId"],"aaaaaaaaaaaaaaaaaaaaaaaaaa");
-            assert_eq!(ctx["keyEpoch"],1);
-            assert_eq!(ctx["itemVersion"],1);
+            assert_eq!(ctx["passwordBoxId"], "aaaaaaaaaaaaaaaaaaaaaaaaaa");
+            assert_eq!(ctx["keyEpoch"], 1);
+            assert_eq!(ctx["itemVersion"], 1);
             ids.push(ctx["itemId"].clone());
             let plain = h.send(json!({"command":"decrypt","expectedGeneration":g,"context":ctx.to_string(),"envelope":reply["envelope"]}));
             let body: Value = serde_json::from_str(plain["item"].as_str().unwrap()).unwrap();
-            assert_eq!(body["version"],1);
-            assert_eq!(body["fields"][1]["value"],"private");
-            assert_eq!(body["urls"][0]["href"],form()["url"]);
+            assert_eq!(body["version"], 1);
+            assert_eq!(body["fields"][1]["value"], "private");
+            assert_eq!(body["urls"][0]["href"], form()["url"]);
         }
-        assert_ne!(ids[0],ids[1]);
+        assert_ne!(ids[0], ids[1]);
         // The final safe integer is allowed as a next version, never an old one.
         let mut original = full_item();
-        original["version"] = json!(MAX_SAFE-1);
+        original["version"] = json!(MAX_SAFE - 1);
         next["itemVersion"] = json!(MAX_SAFE);
-        assert_eq!(h.send(json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),
-            "item":original.to_string(),"values":form().to_string()}))["ok"],true);
-        for category in ["PASSWORD","SECURE_NOTE","CREDIT_CARD","IDENTITY","SSH_KEY","CUSTOM"] {
+        assert_eq!(
+            h.send(
+                json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),
+            "item":original.to_string(),"values":form().to_string()})
+            )["ok"],
+            true
+        );
+        for category in [
+            "PASSWORD",
+            "SECURE_NOTE",
+            "CREDIT_CARD",
+            "IDENTITY",
+            "SSH_KEY",
+            "CUSTOM",
+        ] {
             let mut values = form();
             values["category"] = json!(category);
             values["body"] = json!("Synthetic body");
-            let reply = h.send(json!({"command":"create","expectedGeneration":g,"values":values.to_string()}));
-            assert_eq!(reply["ok"],true);
+            let reply = h.send(
+                json!({"command":"create","expectedGeneration":g,"values":values.to_string()}),
+            );
+            assert_eq!(reply["ok"], true);
         }
     }
 
@@ -636,67 +664,110 @@ mod tests {
         next["itemVersion"] = json!(2);
         let mut bad_forms = vec![Value::Null, json!({}), form()];
         bad_forms[2]["password"] = Value::Null;
-        for key in ["title","category","username","password","url","body","notes","tags","favorite"] {
+        for key in [
+            "title", "category", "username", "password", "url", "body", "notes", "tags", "favorite",
+        ] {
             let mut values = form();
             values.as_object_mut().unwrap().remove(key);
             bad_forms.push(values);
         }
-        for (key,value) in [("title",json!(" ")), ("category",json!("bad")), ("favorite",Value::Null),
-            ("id",json!("do-not-echo")), ("version",json!(3)), ("vault",json!({"id":"do-not-echo"}))] {
-            let mut values = form(); values[key] = value; bad_forms.push(values);
+        for (key, value) in [
+            ("title", json!(" ")),
+            ("category", json!("bad")),
+            ("favorite", Value::Null),
+            ("id", json!("do-not-echo")),
+            ("version", json!(3)),
+            ("vault", json!({"id":"do-not-echo"})),
+        ] {
+            let mut values = form();
+            values[key] = value;
+            bad_forms.push(values);
         }
         for values in bad_forms {
-            for command in ["create","edit"] {
-                let mut message = json!({"command":command,"expectedGeneration":g,"values":values.to_string()});
-                if command == "edit" { message["item"] = json!(full_item().to_string()); message["context"] = json!(next.to_string()); }
+            for command in ["create", "edit"] {
+                let mut message =
+                    json!({"command":command,"expectedGeneration":g,"values":values.to_string()});
+                if command == "edit" {
+                    message["item"] = json!(full_item().to_string());
+                    message["context"] = json!(next.to_string());
+                }
                 let reply = h.send(message);
-                assert_eq!(reply["error"],INVALID);
-                assert_eq!(reply["generation"],g);
-                assert_eq!(reply["locked"],false);
+                assert_eq!(reply["error"], INVALID);
+                assert_eq!(reply["generation"], g);
+                assert_eq!(reply["locked"], false);
                 assert!(!reply.to_string().contains("do-not-echo"));
                 assert!(reply.get("envelope").is_none());
             }
         }
-        for (key,value) in [("id",json!("cccccccccccccccccccccccccc")), ("version",json!(0)),
-            ("version",json!(1.5)), ("version",json!(MAX_SAFE)), ("version",json!(MAX_SAFE+1)),
-            ("vault",json!({"id":"cccccccccccccccccccccccccc"}))] {
-            let mut item = full_item(); item[key] = value;
+        for (key, value) in [
+            ("id", json!("cccccccccccccccccccccccccc")),
+            ("version", json!(0)),
+            ("version", json!(1.5)),
+            ("version", json!(MAX_SAFE)),
+            ("version", json!(MAX_SAFE + 1)),
+            ("vault", json!({"id":"cccccccccccccccccccccccccc"})),
+        ] {
+            let mut item = full_item();
+            item[key] = value;
             assert_eq!(h.send(json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),"item":item.to_string(),"values":form().to_string()}))["error"],INVALID);
         }
-        for (key,value) in [("itemVersion",json!(1)), ("itemVersion",json!(3)), ("keyEpoch",json!(2)),
-            ("passwordBoxId",json!("cccccccccccccccccccccccccc"))] {
-            let mut ctx = next.clone(); ctx[key] = value;
+        for (key, value) in [
+            ("itemVersion", json!(1)),
+            ("itemVersion", json!(3)),
+            ("keyEpoch", json!(2)),
+            ("passwordBoxId", json!("cccccccccccccccccccccccccc")),
+        ] {
+            let mut ctx = next.clone();
+            ctx[key] = value;
             assert_eq!(h.send(json!({"command":"edit","expectedGeneration":g,"context":ctx.to_string(),"item":full_item().to_string(),"values":form().to_string()}))["error"],INVALID);
         }
-        for command in ["create","edit"] {
-            let mut base = json!({"command":command,"expectedGeneration":g,"values":form().to_string()});
-            if command == "edit" { base["context"] = json!(next.to_string()); base["item"] = json!(full_item().to_string()); }
-            for key in ["owner","bundle","envelope","password","unknown"] {
-                for value in [json!("do-not-echo"),Value::Null] {
-                    let mut message = base.clone(); message[key] = value;
+        for command in ["create", "edit"] {
+            let mut base =
+                json!({"command":command,"expectedGeneration":g,"values":form().to_string()});
+            if command == "edit" {
+                base["context"] = json!(next.to_string());
+                base["item"] = json!(full_item().to_string());
+            }
+            for key in ["owner", "bundle", "envelope", "password", "unknown"] {
+                for value in [json!("do-not-echo"), Value::Null] {
+                    let mut message = base.clone();
+                    message[key] = value;
                     let reply = h.send(message);
-                    assert_eq!(reply["error"],INVALID);
+                    assert_eq!(reply["error"], INVALID);
                     assert!(!reply.to_string().contains("do-not-echo"));
                 }
             }
-            for key in if command == "create" { vec!["context","item"] } else { vec![] } {
-                let mut message = base.clone(); message[key] = json!("do-not-echo");
-                assert_eq!(h.send(message)["error"],INVALID);
+            for key in if command == "create" {
+                vec!["context", "item"]
+            } else {
+                vec![]
+            } {
+                let mut message = base.clone();
+                message[key] = json!("do-not-echo");
+                assert_eq!(h.send(message)["error"], INVALID);
             }
-            let mut missing = base.clone(); missing.as_object_mut().unwrap().remove("values");
-            assert_eq!(h.send(missing)["error"],INVALID);
-            let mut null = base.clone(); null["values"] = Value::Null;
-            assert_eq!(h.send(null)["error"],INVALID);
-            let mut stale = base.clone(); stale["expectedGeneration"] = json!(g-1);
-            assert_eq!(h.send(stale)["error"],STALE);
-            let mut oversized = base; oversized["values"] = json!("x".repeat(MAX_BODY+1));
-            assert_eq!(h.send(oversized)["error"],INVALID);
+            let mut missing = base.clone();
+            missing.as_object_mut().unwrap().remove("values");
+            assert_eq!(h.send(missing)["error"], INVALID);
+            let mut null = base.clone();
+            null["values"] = Value::Null;
+            assert_eq!(h.send(null)["error"], INVALID);
+            let mut stale = base.clone();
+            stale["expectedGeneration"] = json!(g - 1);
+            assert_eq!(h.send(stale)["error"], STALE);
+            let mut oversized = base;
+            oversized["values"] = json!("x".repeat(MAX_BODY + 1));
+            assert_eq!(h.send(oversized)["error"], INVALID);
         }
         h.send(json!({"command":"lock"}));
-        for command in ["create","edit"] {
-            let mut message = json!({"command":command,"expectedGeneration":g+1,"values":form().to_string()});
-            if command == "edit" { message["context"] = json!(next.to_string()); message["item"] = json!(full_item().to_string()); }
-            assert_eq!(h.send(message)["error"],LOCKED);
+        for command in ["create", "edit"] {
+            let mut message =
+                json!({"command":command,"expectedGeneration":g+1,"values":form().to_string()});
+            if command == "edit" {
+                message["context"] = json!(next.to_string());
+                message["item"] = json!(full_item().to_string());
+            }
+            assert_eq!(h.send(message)["error"], LOCKED);
         }
     }
 }

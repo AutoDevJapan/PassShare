@@ -229,10 +229,7 @@ fn map_error(err: PassShareError) -> String {
     err.to_string()
 }
 
-fn build_item_from_fields(
-    id: ConnectId,
-    vault_id: ConnectId,
-    category: ItemCategory,
+struct ItemFields {
     title: String,
     password: Option<String>,
     url: Option<String>,
@@ -241,7 +238,24 @@ fn build_item_from_fields(
     body: Option<String>,
     tags: Option<Vec<String>>,
     favorite: Option<bool>,
+}
+
+fn build_item_from_fields(
+    id: ConnectId,
+    vault_id: ConnectId,
+    category: ItemCategory,
+    fields: ItemFields,
 ) -> Result<Item, PassShareError> {
+    let ItemFields {
+        title,
+        password,
+        url,
+        username,
+        notes,
+        body,
+        tags,
+        favorite,
+    } = fields;
     let mut item = match category {
         ItemCategory::Login => {
             let password = password.ok_or(PassShareError::PasswordRequired)?;
@@ -346,6 +360,10 @@ fn search_items(query: String, state: State<'_, AppState>) -> Result<Vec<ItemDto
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Preserve the existing flat named Tauri IPC payload"
+)]
 fn add_item(
     category: String,
     title: String,
@@ -408,6 +426,10 @@ fn add_item(
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Preserve the existing flat named Tauri IPC payload"
+)]
 fn update_item(
     id: String,
     title: String,
@@ -547,6 +569,10 @@ fn export_onepassword_csv(state: State<'_, AppState>) -> Result<String, String> 
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Preserve the existing flat named Tauri IPC payload"
+)]
 fn upsert_sync_item(
     id: String,
     category: String,
@@ -569,7 +595,19 @@ fn upsert_sync_item(
     let connect_id = ConnectId::from_str(&id).map_err(map_error)?;
     let parsed = parse_category(&category).map_err(map_error)?;
     let item = build_item_from_fields(
-        connect_id, vault_id, parsed, title, password, url, username, notes, body, tags, favorite,
+        connect_id,
+        vault_id,
+        parsed,
+        ItemFields {
+            title,
+            password,
+            url,
+            username,
+            notes,
+            body,
+            tags,
+            favorite,
+        },
     )
     .map_err(map_error)?;
 
@@ -1108,14 +1146,16 @@ mod smoke_tests {
                 ConnectId::generate().expect("id"),
                 vault_id.clone(),
                 category,
-                format!("{name} item"),
-                needs_password.then(|| format!("{name}-pass")),
-                None,
-                None,
-                None,
-                (!needs_password).then(|| format!("{name} body")),
-                Some(vec![name.to_ascii_lowercase()]),
-                Some(false),
+                ItemFields {
+                    title: format!("{name} item"),
+                    password: needs_password.then(|| format!("{name}-pass")),
+                    url: None,
+                    username: None,
+                    notes: None,
+                    body: (!needs_password).then(|| format!("{name} body")),
+                    tags: Some(vec![name.to_ascii_lowercase()]),
+                    favorite: Some(false),
+                },
             )
             .expect(name);
             pb.add_item(item).expect(name);

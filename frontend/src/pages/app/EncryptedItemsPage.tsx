@@ -96,7 +96,11 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
         }
       }
       const rejected = error instanceof CloudApiError && error.status >= 400 && error.status < 500;
-      session.outcome = session.prepared ? (rejected ? "rejected" : "unknown") : "none";
+      // A rejection of this replay (including 429) says nothing about a prior
+      // request whose reply was lost. Retain that uncertainty and the exact
+      // prepared payload until success, a real conflict, or a scope lock.
+      const uncertain = session.outcome === "unknown" || !rejected;
+      session.outcome = session.prepared ? (uncertain ? "unknown" : "rejected") : "none";
       session.error = session.outcome === "unknown" ? "encryptedItems.unknown" : "encryptedItems.failed";
     }
     changed();
@@ -269,6 +273,10 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
     {session.busy && <p role="status">{t("cloud.working")}</p>}
     {session.outcome === "unknown" && <button type="button" className="ps-button ps-button--secondary" disabled={session.busy}
       onClick={() => void oneFlight(sendPrepared)}>{t("encryptedItems.retrySame")}</button>}
+    {session.prepared && !session.draft && !session.deleting &&
+      (session.outcome === "conflict" || session.outcome === "rejected") &&
+      <button type="button" className="ps-button ps-button--secondary" disabled={session.busy}
+        onClick={cancel}>{labels.cancelEdit} / {t("app.item.reload")}</button>}
     {session.deleting && <section className="ps-card" aria-label={labels.delete}>
       <h3>{session.deleting.display.title}</h3><p>{labels.confirmDelete}</p>
       <div className="ps-actions"><button type="button" className="ps-button ps-button--secondary"

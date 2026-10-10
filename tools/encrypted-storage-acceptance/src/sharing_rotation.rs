@@ -5,9 +5,14 @@ use super::*;
 use passshare_connect::{AccountIdentityBundle, EncryptedSessionClient, EncryptedSessionError};
 use passshare_core::cloud_crypto::{
     AccountIdentity, EncryptedItem, PublicAccountIdentity, SharedKeyContext,
-    WrappedSharedPasswordBoxKey,
 };
 use std::collections::BTreeMap;
+
+#[path = "legacy_expiry.rs"]
+mod legacy_expiry;
+
+#[path = "sharing_sdk.rs"]
+mod sharing_sdk;
 
 fn request_slot() {
     // Honor the REAL formal router quota; never increase its limit or rewrite
@@ -285,30 +290,14 @@ fn grant(key: &PasswordBoxKey, a: &Account, recipient: &Account, epoch: u64) -> 
         "Core HPKE Auth wrap"
     ))
 }
-fn own_grant(p: u16, a: &Account, recipient: &Account, epoch: u64) -> PasswordBoxKey {
-    let fetched = call(
-        p,
-        recipient,
-        "GET",
-        &format!("{}/grants/me", root(a)),
-        &Value::Null,
-        200,
-    );
-    assert_eq!(number(&fetched, "keyEpoch"), epoch);
-    assert_eq!(number(&fetched, "grantVersion"), 1);
-    let sealed: WrappedSharedPasswordBoxKey = checked(
-        serde_json::from_value(fetched["envelope"].clone()),
-        "shared envelope",
-    );
-    checked(
-        PasswordBoxKey::unwrap_for_recipient(
-            &sealed,
-            &recipient.identity,
-            &a.pin,
-            &shared_context(a, recipient, epoch),
-        ),
-        "Core trusted sender/recipient/epoch unwrap",
-    )
+fn own_grant(
+    rt: &tokio::runtime::Runtime,
+    sdk: &EncryptedSessionClient,
+    a: &Account,
+    recipient: &Account,
+    epoch: u64,
+) -> PasswordBoxKey {
+    sharing_sdk::self_grant(rt, sdk, a, recipient, epoch)
 }
 fn snapshot(p: u16, a: &Account) -> Value {
     let result = call(
@@ -354,6 +343,7 @@ struct Rotation {
     header: Value,
     snapshot: Value,
     candidates: BTreeMap<String, Candidate>,
+    sdk_expectation: passshare_connect::RotationExpectation,
 }
 fn operation_id(db: &Database) -> String {
     // PostgreSQL OS-backed UUID generator; no new UUID dependency.
@@ -504,11 +494,25 @@ impl Rotation {
             );
         }
         let header = json!({"expectedStateRevision":revision,"expectedKeyEpoch":1,"expectedOwnerBundleVersion":snapshot["ownerBundleVersion"],"removeAccountId":b.id,"bundle":bundle});
+        let operation_id = operation_id(db);
+        // Persist the original caller-held expectation BEFORE any start reply.
+        let sdk_expectation = passshare_connect::RotationExpectation {
+            operation_id: operation_id.clone(),
+            password_box_id: checked(a.box_id.parse(), "SDK rotation box ID"),
+            owner_account_id: a.id.clone(),
+            expected_state_revision: number(&header, "expectedStateRevision"),
+            expected_key_epoch: number(&header, "expectedKeyEpoch"),
+            expected_owner_bundle_version: number(&header, "expectedOwnerBundleVersion"),
+            remove_account_id: b.id.clone(),
+            item_count: Some(items.len() as u64),
+            grant_count: Some(number(&snapshot, "grantCount") - 1),
+        };
         Self {
-            path: format!("{}/rotations/{}", root(a), operation_id(db)),
+            path: format!("{}/rotations/{}", root(a), operation_id),
             header,
             snapshot,
             candidates,
+            sdk_expectation,
         }
     }
     fn start(&self, p: u16, a: &Account) {
@@ -889,6 +893,26 @@ fn waiting_reauthentication(db: &Database, p: u16, a: &Account, rotation: &Rotat
     }
 }
 
+pub(super) fn run_legacy_expiry(db: &Database, network: &Network, mode: &Mode) {
+    let host = Host::start(db, network, mode);
+    let (b, d) = (Account::signup(host.port), Account::signup(host.port));
+    assert_eq!(db.sql("SELECT count(*) FROM users"), "2");
+    legacy_expiry::run(db, host.port, &b, &d);
+    call(
+        host.port,
+        &b,
+        "DELETE",
+        "/api/auth/account",
+        &json!({"currentPassword":b.login_password,"confirmationEmail":b.email}),
+        204,
+    );
+    assert_eq!(
+        db.sql(&format!("SELECT count(*) FROM users WHERE id='{}'", b.id)),
+        "0"
+    );
+    println!("legacy expiry isolated acceptance passed: real token/failure-row waits, expired 401 with complete rollback, live removal/transfer controls, ownership restoration and final retirement");
+}
+
 pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     let mut host = Host::start(db, network, mode);
     let mut p = host.port;
@@ -1018,7 +1042,7 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         let path = format!("{}/grants/{}", root(&a), recipient.id);
         auth_matrix(db, p, &a, &path, &body);
         call(p, &a, "PUT", &path, &body, 200);
-        exact_replay(db, p, &a, "PUT", &path, &body);
+        sharing_sdk::initial_replay(db, &rt, &sdk_a, &a, recipient, &body);
         let mut changed = body.clone();
         changed["envelope"] = grant(&key, &a, recipient, 1);
         rejected(db, p, &a, "PUT", &path, &changed, 409);
@@ -1055,8 +1079,8 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         "nonmember grant rejected as authorization/not-found"
     );
     assert_eq!(state_hash(db, true), before);
-    let b_key = own_grant(p, &a, &b, 1);
-    let c_key = own_grant(p, &a, &c, 1);
+    let b_key = own_grant(&rt, &sdk_b, &a, &b, 1);
+    let c_key = own_grant(&rt, &sdk_c, &a, &c, 1);
     rejected(
         db,
         p,
@@ -1303,10 +1327,11 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     let rotation = Rotation::prepare(db, p, &a, &b, &key, &new_key, &new_bundle, &items);
     assert_eq!(number(&rotation.snapshot, "memberCount"), 4);
     assert_eq!(number(&rotation.snapshot, "grantCount"), 2);
+    sharing_sdk::snapshot_reads(db, &rt, &sdk_a, &a, [&b, &c, &d], &rotation, &key, &items);
     let live_before = state_hash(db, false);
     auth_matrix(db, p, &a, &rotation.path, &rotation.header);
     rotation.start(p, &a);
-    exact_replay(db, p, &a, "PUT", &rotation.path, &rotation.header);
+    sharing_sdk::start_replay(db, &rt, &sdk_a, &rotation);
     let mut changed_header = rotation.header.clone();
     changed_header["bundle"] = owner_bundle(
         &new_key,
@@ -1330,7 +1355,7 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     let item_path = format!("{}/items/{last_id}", rotation.path);
     let item_body = json!({"expectedVersion":last.previous,"envelope":last.envelope});
     call(p, &a, "PUT", &item_path, &item_body, 200);
-    exact_replay(db, p, &a, "PUT", &item_path, &item_body);
+    sharing_sdk::item_replay(db, &rt, &sdk_a, &rotation, last);
     let mut changed_item = item_body.clone();
     changed_item["envelope"] = json!(checked(
         new_key.encrypt_item(&last.expected, &context(&a, last_id, last.previous + 1, 2)),
@@ -1371,14 +1396,8 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         );
     }
     let grant_path = format!("{}/grants/{}", rotation.path, c.id);
-    exact_replay(
-        db,
-        p,
-        &a,
-        "PUT",
-        &grant_path,
-        &json!({"envelope":new_c_grant}),
-    );
+    sharing_sdk::grant_replay(db, &rt, &sdk_a, &a, &c, &rotation, &new_c_grant);
+    sharing_sdk::pending_status(db, &rt, &sdk_a, &rotation);
     rejected(
         db,
         p,
@@ -1395,7 +1414,7 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     );
     // Omit-C separately on a fully populated new operation; do not hide its
     // rejection behind a missing item or a stale revision.
-    rotation.abort(p, &a);
+    sharing_sdk::abort_pending(db, &rt, &sdk_a, &rotation);
     let without_c = Rotation::prepare(db, p, &a, &b, &key, &new_key, &new_bundle, &items);
     without_c.start(p, &a);
     without_c.stage_items(p, &a, false);
@@ -1564,6 +1583,8 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     assert_eq!(result["status"], "committed");
     assert_eq!(number(&result, "keyEpoch"), 2);
     assert_eq!(result["removedAccountId"], b.id);
+    let sdk_a = a.sdk(p);
+    sharing_sdk::committed_status(db, &rt, &sdk_a, &rotation, &result);
     assert_eq!(db.sql(&format!("SELECT (SELECT count(*) FROM encrypted_rotation_items WHERE box_id='{}')+(SELECT count(*) FROM encrypted_rotation_grants WHERE box_id='{}')",a.box_id,a.box_id)),"0","committed staging ciphertext removed");
     assert_eq!(db.sql(&format!("SELECT bool_and(header IS NULL AND staged_bytes=0 AND result IS NOT NULL) FROM encrypted_rotations WHERE box_id='{}' AND status='committed'",a.box_id)),"t","committed header bundle removed; only history remains");
     let new_snapshot = snapshot(p, &a);
@@ -1602,14 +1623,8 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         .iter()
         .any(|m| m["accountId"] == d.id && m["keyGranted"] == false));
     let committed_hash = state_hash(db, true);
-    let historical = exact_replay(
-        db,
-        p,
-        &a,
-        "POST",
-        &commit_path,
-        &json!({"currentPassword":a.login_password}),
-    );
+    // Reuse the post-restart transport, original session and persistent reactor.
+    let historical = sharing_sdk::committed_replay(db, &rt, &sdk_a, &a, &rotation, &result);
     assert!(
         historical == result,
         "recorded historical result returned without writes"
@@ -1619,7 +1634,6 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         committed_hash,
         "immediate whole DB historical replay hash"
     );
-    let sdk_a = a.sdk(p);
     let sdk_c = c.sdk(p);
     let fetched_owner = checked(
         rt.block_on(sdk_a.get_owner_key(&a.box_id, &owner_context(&a.box_id, &a.id, 2))),
@@ -1634,7 +1648,7 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         ),
         "fresh A owner key unwrap",
     );
-    let restored_c = own_grant(p, &a, &c, 2);
+    let restored_c = own_grant(&rt, &sdk_c, &a, &c, 2);
     for (id, candidate) in &rotation.candidates {
         let fetched = checked(
             rt.block_on(sdk_c.get_item(&a.box_id, id)),
@@ -1795,6 +1809,10 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
             &json!({"currentPassword":a.login_password})
         ) == result,
         "historical result after later edit does not claim current state"
+    );
+    assert!(
+        sharing_sdk::committed_replay(db, &rt, &sdk_a, &a, &rotation, &result) == result,
+        "SDK historical replay after later edit preserves the original result"
     );
     let disabled = Host::with_storage(db, network, mode, false);
     for path in [

@@ -1,8 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 use passshare_cloud_wasm::CloudPasswordBox;
 use serde_json::{json, Value};
-use wasm_bindgen_test::wasm_bindgen_test;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_test::wasm_bindgen_test;
 
 // Node has no DedicatedWorkerGlobalScope. This transport fixture supplies only
 // its message surface; start_worker and all dispatch/crypto run in exported WASM.
@@ -38,7 +38,7 @@ fn exported_worker_create_edit_node_boundary() {
     install_worker_surface();
     passshare_cloud_wasm::start_worker().unwrap();
     let ready: Value = serde_json::from_str(&worker_ready()).unwrap();
-    assert_eq!(ready["locked"],true);
+    assert_eq!(ready["locked"], true);
     let mut id = 0;
     let mut send = |mut message: Value| -> Value {
         id += 1;
@@ -47,41 +47,63 @@ fn exported_worker_create_edit_node_boundary() {
         serde_json::from_str(&worker_exchange(&message.to_string())).unwrap()
     };
     let owner = json!({"passwordBoxId":"aaaaaaaaaaaaaaaaaaaaaaaaaa","ownerAccountId":"11111111-1111-4111-8111-111111111111","keyEpoch":1});
-    assert_eq!(send(json!({"command":"generate","expectedGeneration":0,"owner":owner.to_string()}))["ok"],true);
+    assert_eq!(
+        send(json!({"command":"generate","expectedGeneration":0,"owner":owner.to_string()}))["ok"],
+        true
+    );
     let values = json!({"title":"Node item","category":"LOGIN","username":"user","password":"node-private",
         "url":"https://example.test/", "body":"","notes":"","tags":"","favorite":false});
-    let reply = send(json!({"command":"create","expectedGeneration":1,"values":values.to_string()}));
-    assert_eq!(reply["ok"],true);
+    let reply =
+        send(json!({"command":"create","expectedGeneration":1,"values":values.to_string()}));
+    assert_eq!(reply["ok"], true);
     assert!(!reply.to_string().contains("node-private"));
     let envelope: Value = serde_json::from_str(reply["envelope"].as_str().unwrap()).unwrap();
     let mut context = envelope["context"].clone();
-    let body = send(json!({"command":"decrypt","expectedGeneration":1,"context":context.to_string(),"envelope":reply["envelope"]}));
+    let body = send(
+        json!({"command":"decrypt","expectedGeneration":1,"context":context.to_string(),"envelope":reply["envelope"]}),
+    );
     let mut original: Value = serde_json::from_str(body["item"].as_str().unwrap()).unwrap();
     original["attachments"] = json!([{"id":"z"},{"id":"a"}]);
     original["custom"] = json!({"optional":null,"order":[3,1,2]});
     let mut values = values;
     values["title"] = json!("Node changed");
     context["itemVersion"] = json!(2);
-    let edited = send(json!({"command":"edit","expectedGeneration":1,"context":context.to_string(),
-        "item":original.to_string(),"values":values.to_string()}));
-    assert_eq!(edited["generation"],1);
-    assert_eq!(edited["locked"],false);
-    let body = send(json!({"command":"decrypt","expectedGeneration":1,"context":context.to_string(),"envelope":edited["envelope"]}));
+    let edited = send(
+        json!({"command":"edit","expectedGeneration":1,"context":context.to_string(),
+        "item":original.to_string(),"values":values.to_string()}),
+    );
+    assert_eq!(edited["generation"], 1);
+    assert_eq!(edited["locked"], false);
+    let body = send(
+        json!({"command":"decrypt","expectedGeneration":1,"context":context.to_string(),"envelope":edited["envelope"]}),
+    );
     original["title"] = json!("Node changed");
     original["version"] = json!(2);
-    assert_eq!(serde_json::from_str::<Value>(body["item"].as_str().unwrap()).unwrap(),original);
+    assert_eq!(
+        serde_json::from_str::<Value>(body["item"].as_str().unwrap()).unwrap(),
+        original
+    );
     values["id"] = json!("node-no-echo");
-    let rejected = send(json!({"command":"create","expectedGeneration":1,"values":values.to_string()}));
-    assert_eq!(rejected["error"],"PS051: Invalid encrypted data");
+    let rejected =
+        send(json!({"command":"create","expectedGeneration":1,"values":values.to_string()}));
+    assert_eq!(rejected["error"], "PS051: Invalid encrypted data");
     assert!(!rejected.to_string().contains("node-no-echo"));
-    let bundle = send(json!({"command":"wrap","expectedGeneration":1,"password":"Synthetic Node password!"}));
+    let bundle = send(
+        json!({"command":"wrap","expectedGeneration":1,"password":"Synthetic Node password!"}),
+    );
     send(json!({"command":"lock"}));
-    let wrong = send(json!({"command":"unlock","expectedGeneration":2,"owner":owner.to_string(),
-        "bundle":bundle["bundle"],"password":"Wrong Node password!"}));
-    assert_eq!(wrong["ok"],false);
-    assert_eq!(wrong["locked"],true);
+    let wrong = send(
+        json!({"command":"unlock","expectedGeneration":2,"owner":owner.to_string(),
+        "bundle":bundle["bundle"],"password":"Wrong Node password!"}),
+    );
+    assert_eq!(wrong["ok"], false);
+    assert_eq!(wrong["locked"], true);
     assert!(!wrong.to_string().contains("Wrong Node password!"));
-    assert_eq!(send(json!({"command":"create","expectedGeneration":2,"values":values.to_string()}))["error"],"PS057: Password box is locked");
+    assert_eq!(
+        send(json!({"command":"create","expectedGeneration":2,"values":values.to_string()}))
+            ["error"],
+        "PS057: Password box is locked"
+    );
     remove_worker_surface();
 }
 
