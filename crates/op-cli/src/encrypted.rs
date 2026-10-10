@@ -252,10 +252,66 @@ fn secret(input: &Plaintext, key: &str) -> Result<Zeroizing<String>> {
     Ok(Zeroizing::new(value.to_owned()))
 }
 
+// /api/auth/me returns toPublicUser(user). Its user.id is the public users.id
+// UUID, not a bearer, password, or financial account number. Deserialize only
+// that subject: ignored profile fields are never copied into a private JSON DTO.
+struct SubjectReply {
+    user: SubjectIdentity,
+}
+impl<'de> serde::Deserialize<'de> for SubjectReply {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Fields {
+            #[serde(deserialize_with = "deserialize_object")]
+            user: SubjectIdentity,
+        }
+        let fields: Fields = deserialize_object(d)?;
+        Ok(Self { user: fields.user })
+    }
+}
+// JSON structs must be objects: serde's default struct visitor also accepts
+// positional arrays, which are not the /auth/me wire contract.
+fn deserialize_object<'de, D, T>(d: D) -> std::result::Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    struct Object<T>(std::marker::PhantomData<T>);
+    impl<'de, T: serde::Deserialize<'de>> serde::de::Visitor<'de> for Object<T> {
+        type Value = T;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an object")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            map: A,
+        ) -> std::result::Result<T, A::Error> {
+            T::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+        }
+    }
+    d.deserialize_map(Object(std::marker::PhantomData))
+}
+#[derive(serde::Deserialize)]
+struct SubjectIdentity {
+    #[serde(deserialize_with = "deserialize_subject_id")]
+    id: Uuid,
+}
+fn deserialize_subject_id<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Uuid, D::Error> {
+    let id = Zeroizing::new(<String as serde::Deserialize>::deserialize(d)?);
+    let subject_id =
+        Uuid::parse_str(&id).map_err(|_| serde::de::Error::custom("invalid public subject ID"))?;
+    if subject_id.is_nil() || subject_id.to_string() != *id {
+        return Err(serde::de::Error::custom("invalid public subject ID"));
+    }
+    Ok(subject_id)
+}
+
 /// The SDK currently exposes only encrypted endpoints. This bounded GET is
 /// solely for /api/auth/me, with the same deadlines and redirect/proxy policy.
 /// Construct the SDK first so its complete origin and token validation applies.
-async fn live_account(host: &str, token: &str) -> Result<Uuid> {
+async fn live_subject(host: &str, token: &str) -> Result<Uuid> {
     let mut url = Url::parse(host).map_err(|_| INPUT)?;
     let path = format!("{}/api/auth/me", url.path().trim_end_matches('/'));
     url.set_path(&path);
@@ -294,24 +350,16 @@ async fn live_account(host: &str, token: &str) -> Result<Uuid> {
         }
         bytes.extend_from_slice(&chunk);
     }
-    let account = Plaintext(serde_json::from_slice(&bytes).map_err(|_| INPUT)?);
-    let id = account
-        .0
-        .pointer("/user/id")
-        .and_then(Value::as_str)
-        .ok_or(CONTEXT)?;
-    // This is a public account identifier, not a session credential.
-    let account_id = Uuid::parse_str(id).map_err(|_| CONTEXT)?;
-    if account_id.is_nil() || account_id.to_string() != id {
-        return Err(CONTEXT);
-    }
-    Ok(account_id)
+    let reply: SubjectReply = serde_json::from_slice(&bytes).map_err(|_| CONTEXT)?;
+    Ok(reply.user.id)
 }
 
 struct Session {
     sdk: EncryptedSessionClient,
     sharing: SharingRotationClient,
     snapshot: SharingSnapshot,
+    // Public route from the validated CLI input, independent of key material.
+    box_route: ConnectId,
     owner: OwnerKeyContext,
     key: PasswordBoxKey,
     // Binding replay to the same origin and path prefix is independent of bundles.
@@ -319,11 +367,11 @@ struct Session {
 }
 impl Session {
     async fn open(host: &str, token: &str, password: &str, box_id: &str) -> Result<Self> {
-        let id: ConnectId = box_id
+        let box_route: ConnectId = box_id
             .parse()
             .map_err(|_| Error::Invalid("encrypted mode requires a password box ID, not a name"))?;
         let sdk = EncryptedSessionClient::new(host, token)?;
-        let account = live_account(host, token).await?;
+        let subject_id = live_subject(host, token).await?;
         let epoch =
             match sdk.state(box_id).await? {
                 BoxState::Encrypted { key_epoch } => key_epoch,
@@ -333,14 +381,14 @@ impl Session {
             };
         let sharing = SharingRotationClient::new(&sdk);
         let snapshot = sharing
-            .sharing_snapshot(box_id, &account.to_string())
+            .sharing_snapshot(box_id, &subject_id.to_string())
             .await?;
         if snapshot.key_epoch != epoch {
             return Err(CONTEXT);
         }
         let owner = OwnerKeyContext {
-            password_box_id: id,
-            owner_account_id: account,
+            password_box_id: box_route.clone(),
+            owner_account_id: subject_id,
             key_epoch: epoch,
         };
         let record = sdk.get_owner_key(box_id, &owner).await?;
@@ -367,6 +415,7 @@ impl Session {
             sdk,
             sharing,
             snapshot,
+            box_route,
             owner,
             key,
             host: Url::parse(host).map_err(|_| INPUT)?.to_string(),
@@ -398,7 +447,7 @@ impl Session {
         Ok(items)
     }
     fn box_id(&self) -> &str {
-        self.owner.password_box_id.as_str()
+        self.box_route.as_str()
     }
     async fn get(&self, id: &str) -> Result<Plaintext> {
         ConnectId::validate(id)
@@ -848,6 +897,32 @@ mod tests {
         assert!(edit_selected(&mut edited, &json!({"missing":"x"})).is_err());
         assert!(edit_selected(&mut edited, &json!({"password":"x","p":"y"})).is_err());
         assert!(edited.0 == expected);
+    }
+
+    #[test]
+    fn subject_reply_extracts_only_public_uuid_and_rejects_ambiguous_shapes() {
+        let reply: SubjectReply = serde_json::from_str(
+            r#"{"user":{"id":"11111111-1111-4111-8111-111111111111","email":"ignored","profile":{"id":"not-a-uuid"}},"id":"not-a-uuid","extra":[null,{"id":42}]}"#,
+        )
+        .unwrap();
+        assert!(reply.user.id == Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap());
+        for raw in [
+            r#"{}"#,
+            r#"{"user":null}"#,
+            r#"{"user":[]}"#,
+            r#"{"user":["11111111-1111-4111-8111-111111111111"]}"#,
+            r#"[["11111111-1111-4111-8111-111111111111"]]"#,
+            r#"{"user":{}}"#,
+            r#"{"user":{"id":null}}"#,
+            r#"{"user":{"id":42}}"#,
+            r#"{"user":{"id":{}}}"#,
+            r#"{"user":{"id":[]}}"#,
+            r#"{"user":{"id":"11111111-1111-4111-8111-111111111111","id":"22222222-2222-4222-8222-222222222222"}}"#,
+            r#"{"user":{"id":"11111111-1111-4111-8111-111111111111"},"user":{"id":"22222222-2222-4222-8222-222222222222"}}"#,
+            r#"{"user":{"id":"11111111-1111-4111-8111-111111111111"}} trailing"#,
+        ] {
+            assert!(serde_json::from_str::<SubjectReply>(raw).is_err());
+        }
     }
 
     #[test]

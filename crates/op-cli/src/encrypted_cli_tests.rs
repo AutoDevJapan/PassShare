@@ -763,7 +763,7 @@ fn executable_auth_transport_rejects_redirects_and_oversized_body() {
 }
 
 #[test]
-fn executable_live_account_requires_canonical_nonnil_uuid() {
+fn executable_live_subject_requires_canonical_nonnil_uuid() {
     let server = Server::new();
     for (index, id) in [
         "not-a-uuid",
