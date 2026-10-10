@@ -5,7 +5,33 @@ RUN apt-get update \
   && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
   && apt-get install -y nodejs \
   && corepack enable \
-  && corepack prepare pnpm@10.11.0 --activate \
   && rm -rf /var/lib/apt/lists/*
+
+# Corepack's prepare CLI hides Error.cause. The explicit-version execution
+# path uses the same installVersion signature/hash checks and exposes Node's
+# nested network causes. Activate the verified cached version only afterwards.
+# See nodejs/corepack sources/{main,Engine,httpUtils,corepackUtils}.ts and
+# docs.npmjs.com/cli/v11/using-npm/config/#fetch-retries.
+RUN set -eu; \
+  log=$(mktemp); trap 'rm -f "$log"' EXIT; \
+  attempt=1; \
+  while :; do \
+    echo "Fetching verified pnpm@10.11.0 (attempt $attempt/3)"; \
+    if timeout 90s corepack pnpm@10.11.0 --version >"$log" 2>&1; then \
+      cat "$log"; \
+      grep -qx '10.11.0' "$log"; \
+      break; \
+    else status=$?; fi; \
+    cat "$log" >&2; \
+    if [ "$attempt" -ge 3 ] \
+      || grep -Eq 'HTTP (401|403|407)|CERT_|CERTIFICATE|certificate|SELF_SIGNED|TLS_|SSL_|Cannot find matching keyid|Signature does not match|No compatible signature|Mismatch hashes|integrity check failed' "$log" \
+      || ! grep -Eq 'Server answered with HTTP (408|429|500|502|503|504) when performing the request|code: .(EAI_AGAIN|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET).' "$log"; then \
+      exit "$status"; \
+    fi; \
+    sleep "$((attempt * 2))"; \
+    attempt=$((attempt + 1)); \
+  done; \
+  corepack prepare pnpm@10.11.0 --activate; \
+  test "$(pnpm --version)" = '10.11.0'
 
 WORKDIR /app

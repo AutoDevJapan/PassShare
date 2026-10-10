@@ -76,7 +76,7 @@ export const docsEn: LocaleDocs = {
         paragraphs: [
           "From 1Password: import 1PUX or 1Password CSV export into PassShare.",
           "See the landing page migration section for more detail.",
-          "CSV is plaintext and does not preserve every custom field, attachment, or URL. Verify imported contents before removing the source data. Keep a .pbox backup and your master password safe; the current recovery kit cannot open the box on its own.",
+          "CSV is plaintext and does not preserve every custom field, attachment, or URL. Verify imported contents before removing the source data. Keep your .pbox backup and its recovery code separately. Recovery requires a compatible Desktop app and a recovery-enabled file; older copies made before enabling recovery still require their master password.",
         ],
       },
     ],
@@ -260,8 +260,8 @@ export const docsEn: LocaleDocs = {
         id: "forgot-master",
         title: "I forgot my master password",
         paragraphs: [
-          "Master passwords are not stored on PassShare servers. Without it, box data cannot be decrypted.",
-          "The current recovery kit cannot open a box without the master password. Keep a backup of your .pbox file and store your master password safely.",
+          "Master passwords are not stored on PassShare servers. A compatible Desktop app can recover a recovery-enabled .pbox file using its emergency-kit code and save it with a new master password.",
+          "Keep the recovery code separately from its file. Copies made before recovery was enabled still require their original master password. If neither a working master password nor the matching recovery code is available, the file cannot be decrypted. This procedure changes the file password; it does not change your cloud sign-in password.",
         ],
       },
       {
