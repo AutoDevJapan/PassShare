@@ -178,6 +178,13 @@ impl AccountIdentityContext {
 }
 
 impl PublicAccountIdentity {
+    /// Checks the public descriptor's context, canonical X25519 coordinate and
+    /// SHA-256 fingerprint. This does not establish trust in its source, prove
+    /// possession of a private key, or perform HPKE's low-order DH check.
+    pub fn validate_public(&self) -> Result<()> {
+        self.validate().map(|_| ())
+    }
+
     /// Structural check of a trusted descriptor; returns the HPKE public key.
     fn validate(&self) -> Result<PublicKey> {
         AccountIdentityContext {
@@ -423,6 +430,46 @@ mod tests {
         p[0] = 0xed;
         p[31] = 0x7f;
         p
+    }
+
+    #[test]
+    fn public_validator_reuses_descriptor_checks_without_establishing_trust() {
+        let valid = identity().public_identity();
+        assert!(valid.validate_public().is_ok());
+        let mut bad = valid.clone();
+        bad.account_id = Uuid::nil();
+        assert!(bad.validate_public().is_err());
+        for version in [0, MAX_JSON_INTEGER + 1] {
+            let mut bad = valid.clone();
+            bad.identity_version = version;
+            assert!(bad.validate_public().is_err());
+        }
+        // The transport limits its protocol to 1; do not change Core's semantics.
+        let mut future = valid.clone();
+        future.identity_version = 2;
+        assert!(future.validate_public().is_ok());
+        let mut bad = valid.clone();
+        bad.key_id = "0".repeat(64);
+        assert!(bad.validate_public().is_err());
+        let mut bad = valid.clone();
+        bad.key_id = bad.key_id.to_uppercase();
+        assert!(bad.validate_public().is_err());
+        let mut bad = valid.clone();
+        bad.public_key.pop();
+        assert!(bad.validate_public().is_err());
+        let mut bad = valid.clone();
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut chars = bad.public_key.into_bytes();
+        let index = ALPHABET.iter().position(|&c| c == chars[42]).unwrap();
+        chars[42] = ALPHABET[index ^ 1];
+        bad.public_key = String::from_utf8(chars).unwrap();
+        assert!(bad.validate_public().is_err());
+        // Matching SHA-256 and otherwise valid context: isolate coordinate checks.
+        for point in [[0xff; 32], p_bytes()] {
+            assert!(descriptor_for(point).validate_public().is_err());
+        }
+        // Low-order DH rejection stays in HPKE, rather than this public check.
+        assert!(descriptor_for([0; 32]).validate_public().is_ok());
     }
 
     #[test]

@@ -3,6 +3,13 @@
 //! real Express host. No production configuration, model API or secret files.
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 mod account_identity;
+mod local_postgres;
+mod sharing_rotation;
+use passshare_connect::{
+    AccountIdentityBundle, EncryptedSessionClient, InitialGrantRequest, SharedKeyExpectation,
+    SharingRotationClient,
+};
+use passshare_core::cloud_crypto::{AccountIdentity, AccountIdentityContext, SharedKeyContext};
 use passshare_core::{
     cloud_crypto::{ItemContext, OwnerKeyContext, PasswordBoxKey, WrappedPasswordBoxKey},
     crypto::{derive_master_key_with_params, generate_salt, MasterKey},
@@ -112,7 +119,9 @@ impl Network {
 }
 impl Drop for Network {
     fn drop(&mut self) {
-        cleanup(&["network", "rm", &self.name]);
+        if !self.name.is_empty() {
+            cleanup(&["network", "rm", &self.name]);
+        }
     }
 }
 
@@ -138,12 +147,14 @@ fn port() -> u16 {
 struct Database {
     name: String,
     port: u16,
+    local: Option<local_postgres::LocalPostgres>,
 }
 impl Database {
     fn start(network: &Network) -> Self {
         let db = Self {
             name: format!("passshare1163-encrypted-{}", ConnectId::generate().unwrap()),
             port: port(),
+            local: None,
         };
         let status = command("docker")
             .args([
@@ -202,24 +213,9 @@ impl Database {
         self.sql_before(sql, std::time::Instant::now() + Duration::from_secs(15))
     }
     fn sql_before(&self, sql: &str, deadline: std::time::Instant) -> String {
-        let mut child = command("docker")
-            .args([
-                "exec",
-                &self.name,
-                "psql",
-                "-X",
-                "-q",
-                "-A",
-                "-t",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-U",
-                "passshare",
-                "-d",
-                "passshare",
-                "-c",
-                sql,
-            ])
+        let mut child = self
+            .psql(false, None)
+            .args(["-c", sql])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -279,10 +275,53 @@ impl Database {
             .trim()
             .to_owned()
     }
+    fn psql(&self, interactive: bool, label: Option<&str>) -> Command {
+        let mut c = if let Some(local) = &self.local {
+            local.client()
+        } else {
+            let mut c = command("docker");
+            c.arg("exec");
+            if interactive {
+                c.arg("-i");
+            }
+            if let Some(label) = label {
+                c.args(["--env", &format!("PGAPPNAME={label}")]);
+            }
+            c.args([
+                &self.name,
+                "psql",
+                "-X",
+                "-qAt",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                "passshare",
+                "-d",
+                "passshare",
+            ]);
+            c
+        };
+        if let Some(label) = label {
+            c.env("PGAPPNAME", label);
+        }
+        c
+    }
+    fn url(&self) -> String {
+        let name = self
+            .local
+            .as_ref()
+            .map_or("passshare", |p| p.database.as_str());
+        format!(
+            "postgresql://passshare:passshare@127.0.0.1:{}/{name}",
+            self.port
+        )
+    }
 }
 impl Drop for Database {
     fn drop(&mut self) {
-        cleanup(&["rm", "--force", "--volumes", &self.name]);
+        if self.local.is_none() {
+            cleanup(&["rm", "--force", "--volumes", &self.name]);
+        }
     }
 }
 enum HostProcess {
@@ -329,7 +368,7 @@ impl Host {
                         "--publish",
                         &format!("127.0.0.1:{port}:8080"),
                         "--env",
-                        "APP_ENV=local",
+                        "APP_ENV=test",
                         "--env",
                         "DEV_SEED=false",
                         "--env",
@@ -386,20 +425,14 @@ impl Host {
             .arg("src/index.js")
             .current_dir(backend)
             .env("PORT", port.to_string())
-            .env("APP_ENV", "local")
+            .env("APP_ENV", "test")
             .env("DEV_SEED", "false")
             .env("PASSSHARE_MUTATIONS_BIN", binary)
             .env(
                 "PASSSHARE_ENCRYPTED_STORAGE",
                 if enabled { "true" } else { "false" },
             )
-            .env(
-                "DATABASE_URL",
-                format!(
-                    "postgresql://passshare:passshare@127.0.0.1:{}/passshare",
-                    db.port
-                ),
-            )
+            .env("DATABASE_URL", db.url())
             .stdout(Stdio::null())
             .spawn()
             .unwrap();
@@ -569,15 +602,316 @@ fn unwrap_bundle(
         .map_err(|_| PassShareError::CorruptFile)
 }
 
+fn acceptance_result<T, E>(result: Result<T, E>, step: &str) -> T {
+    result.unwrap_or_else(|_| {
+        panic!("encrypted storage acceptance: {step} failed (details suppressed)")
+    })
+}
+
+// Reuse existing registrations and session transports. Pins originate in Core,
+// before any identity response; neither invitation proof nor HTTP establishes them.
+struct AcceptanceIdentity {
+    id: String,
+    email: String,
+    identity: AccountIdentity,
+    sdk: EncryptedSessionClient,
+}
+impl AcceptanceIdentity {
+    fn register(
+        p: u16,
+        rt: &tokio::runtime::Runtime,
+        session: &str,
+        sdk: &EncryptedSessionClient,
+        login_password: &str,
+    ) -> Self {
+        let (status, me) = http(
+            p,
+            "GET",
+            "/api/auth/me",
+            &format!("Authorization: Bearer {session}\r\n"),
+            &Value::Null,
+        );
+        assert_eq!(status, 200);
+        let id = me["user"]["id"].as_str().unwrap().to_owned();
+        let email = me["user"]["email"].as_str().unwrap().to_owned();
+        let context: AccountIdentityContext = acceptance_result(
+            serde_json::from_value(json!({"accountId":id,"identityVersion":1})),
+            "identity context",
+        );
+        let identity = acceptance_result(
+            AccountIdentity::generate(context),
+            "Core identity generation",
+        );
+        let pin = identity.public_identity();
+        let password = BASE64.encode(acceptance_result(generate_salt(), "identity password"));
+        assert!(password != login_password);
+        let salt = acceptance_result(generate_salt(), "identity salt");
+        let master = acceptance_result(owner_master(&password, &salt), "identity KDF");
+        let bundle = acceptance_result(
+            AccountIdentityBundle::new(
+                BASE64.encode(salt),
+                acceptance_result(identity.wrap(&master), "Core identity wrap"),
+            ),
+            "identity bundle",
+        );
+        let stored = acceptance_result(
+            rt.block_on(sdk.put_account_identity(0, &pin, &bundle, None)),
+            "identity PUT",
+        );
+        // AccountIdentityRecord is Deserialize-only: compare its exact wire fields.
+        assert!(
+            json!({"bundleVersion":stored.bundle_version,"identity":stored.identity,"bundle":stored.bundle})
+                == json!({"bundleVersion":1,"identity":pin,"bundle":bundle})
+        );
+        let fetched = acceptance_result(
+            rt.block_on(sdk.get_account_identity(identity.context(), &pin.key_id)),
+            "pinned identity GET",
+        );
+        assert!(fetched == stored);
+        let restored = acceptance_result(
+            AccountIdentity::unwrap(
+                &fetched.bundle.wrapped,
+                &master,
+                identity.context(),
+                &pin.key_id,
+            ),
+            "pinned Core identity unwrap",
+        );
+        assert!(restored.public_identity() == pin);
+        Self {
+            id,
+            email,
+            identity,
+            sdk: sdk.clone(),
+        }
+    }
+}
+
+fn confirm_acceptance_member(
+    p: u16,
+    box_id: &str,
+    owner_headers: &str,
+    member_headers: &str,
+    email: &str,
+) {
+    let (status, invitation) = http(
+        p,
+        "POST",
+        &format!("/api/auth/vaults/{box_id}/invitations"),
+        owner_headers,
+        &json!({"email":email,"role":"member"}),
+    );
+    assert_eq!(status, 201, "formal invitation creation");
+    // Deliver the owner-obtained proof inside the client fixture, without logging it.
+    assert_eq!(
+        http(
+            p,
+            "POST",
+            &format!(
+                "/api/auth/invitations/{}/accept",
+                invitation["id"].as_str().unwrap()
+            ),
+            member_headers,
+            &json!({"confirmationCode":invitation["confirmationCode"]})
+        )
+        .0,
+        200,
+        "formal proof-confirmed membership"
+    );
+}
+
+fn acceptance_state_hash(db: &Database) -> String {
+    // Every full account/box row and xmin, across ALL boxes, including stages.
+    // Request-throttle bookkeeping is not stored account/box state.
+    let tables = [
+        "users",
+        "sessions",
+        "connect_vaults",
+        "connect_items",
+        "connect_item_files",
+        "vault_memberships",
+        "vault_invitations",
+        "connect_tokens",
+        "encrypted_box_state",
+        "encrypted_owner_keys",
+        "encrypted_key_grants",
+        "encrypted_items",
+        "encrypted_item_tombstones",
+        "encrypted_account_identities",
+        "encrypted_rotations",
+        "encrypted_rotation_items",
+        "encrypted_rotation_grants",
+    ];
+    let parts: Vec<_> = tables.iter().map(|t| format!("SELECT '{t}' AS name, COALESCE(string_agg(md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text),',' ORDER BY md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text)),'') AS digest FROM {t} r")).collect();
+    db.sql(&format!(
+        "SELECT md5(string_agg(name||':'||digest,'|' ORDER BY name)) FROM ({}) fixture_rows",
+        parts.join(" UNION ALL ")
+    ))
+}
+
+fn grant_acceptance_member(
+    db: &Database,
+    rt: &tokio::runtime::Runtime,
+    box_id: &str,
+    key: &PasswordBoxKey,
+    owner: &AcceptanceIdentity,
+    member: &AcceptanceIdentity,
+) -> PasswordBoxKey {
+    let sender = owner.identity.public_identity();
+    let recipient = member.identity.public_identity();
+    assert!(
+        acceptance_result(
+            rt.block_on(owner.sdk.get_member_identity(box_id, &recipient)),
+            "pinned recipient GET"
+        ) == recipient
+    );
+    assert!(
+        acceptance_result(
+            rt.block_on(member.sdk.get_member_identity(box_id, &sender)),
+            "pinned sender GET"
+        ) == sender
+    );
+    let sharing = SharingRotationClient::new(&owner.sdk);
+    let snapshot = acceptance_result(
+        rt.block_on(sharing.sharing_snapshot(box_id, &owner.id)),
+        "sharing snapshot",
+    );
+    assert_eq!(snapshot.key_epoch, 1);
+    let context = SharedKeyContext {
+        password_box_id: box_id.parse().unwrap(),
+        sender_account_id: sender.account_id,
+        recipient_account_id: recipient.account_id,
+        key_epoch: 1,
+        sender_identity_version: sender.identity_version,
+        recipient_identity_version: recipient.identity_version,
+        sender_key_id: sender.key_id.clone(),
+        recipient_key_id: recipient.key_id.clone(),
+    };
+    let envelope = acceptance_result(
+        key.wrap_for_recipient(&owner.identity, &recipient, &context),
+        "Core HPKE grant",
+    );
+    let expected = SharedKeyExpectation {
+        context,
+        sender,
+        recipient,
+    };
+    let request = InitialGrantRequest {
+        expected_state_revision: snapshot.state_revision,
+        key_epoch: 1,
+        expected_version: 0,
+        envelope,
+    };
+    let stored = acceptance_result(
+        rt.block_on(sharing.put_initial_grant(box_id, &member.id, &request, &expected)),
+        "initial grant PUT",
+    );
+    assert!(
+        stored.envelope == request.envelope && stored.grant_version == 1 && stored.key_epoch == 1
+    );
+    let before = acceptance_state_hash(db);
+    let replay = acceptance_result(
+        rt.block_on(sharing.put_initial_grant(box_id, &member.id, &request, &expected)),
+        "initial grant replay",
+    );
+    assert!(replay == stored);
+    let fetched = acceptance_result(
+        rt.block_on(SharingRotationClient::new(&member.sdk).get_self_grant(box_id, &expected)),
+        "pinned self grant GET",
+    );
+    assert!(
+        fetched.envelope == request.envelope
+            && fetched.grant_version == 1
+            && fetched.key_epoch == 1
+    );
+    assert_eq!(
+        acceptance_state_hash(db),
+        before,
+        "grant replay and reads preserve all rows/xmin"
+    );
+    acceptance_result(
+        PasswordBoxKey::unwrap_for_recipient(
+            &fetched.envelope,
+            &member.identity,
+            &expected.sender,
+            &expected.context,
+        ),
+        "Core HPKE grant unwrap",
+    )
+}
+
+// Validate fixture exclusivity before any filesystem inspection or Docker call.
+fn fixture_prefix(
+    args: &[std::ffi::OsString],
+) -> Result<(bool, bool, &[std::ffi::OsString]), &'static str> {
+    let flags = ["--account-identity", "--sharing-rotation", "--go-session"];
+    let count = args
+        .iter()
+        .filter(|arg| {
+            flags
+                .iter()
+                .any(|flag| arg.as_os_str() == std::ffi::OsStr::new(flag))
+        })
+        .count();
+    if count > 1 {
+        return Err("fixture modes are mutually exclusive");
+    }
+    let identity = args.first().is_some_and(|arg| arg == "--account-identity");
+    let sharing = args.first().is_some_and(|arg| arg == "--sharing-rotation");
+    if count == 1
+        && !args.first().is_some_and(|arg| {
+            flags
+                .iter()
+                .any(|flag| arg.as_os_str() == std::ffi::OsStr::new(flag))
+        })
+    {
+        return Err("fixture flag must be first");
+    }
+    Ok((
+        identity,
+        sharing,
+        if identity || sharing {
+            &args[1..]
+        } else {
+            args
+        },
+    ))
+}
+
 fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    // Consume a valueless fixture prefix before the unchanged Node/image parser.
-    let identity_fixture = args.first().is_some_and(|arg| arg == "--account-identity");
-    let mode_args = if identity_fixture {
+    let (local_manifest, args) =
+        local_postgres::prefix(&args).expect("explicit local fixture prefix");
+    let legacy_expiry = args.first().is_some_and(|a| a == "--legacy-expiry");
+    let args = if legacy_expiry {
+        assert!(
+            !args[1..].iter().any(|a| [
+                "--legacy-expiry",
+                "--sharing-rotation",
+                "--account-identity",
+                "--go-session"
+            ]
+            .iter()
+            .any(|flag| a == flag)),
+            "fixture modes are mutually exclusive"
+        );
         &args[1..]
     } else {
-        &args[..]
+        assert!(
+            !args.iter().any(|a| a == "--legacy-expiry"),
+            "legacy expiry flag must be first"
+        );
+        args
     };
+    // Consume a valueless fixture prefix before the unchanged Node/image parser.
+    let (identity_fixture, sharing_fixture, mode_args) =
+        fixture_prefix(args).unwrap_or_else(|reason| panic!("{reason}"));
+    local_postgres::validate_mode(
+        local_manifest.is_some(),
+        sharing_fixture || legacy_expiry,
+        mode_args,
+    )
+    .expect("local PostgreSQL requires an explicit supported Node fixture");
     let (go_executable, host_args) =
         go_session::cli(mode_args).unwrap_or_else(|reason| panic!("{reason}"));
     assert!(
@@ -585,6 +919,11 @@ fn main() {
         "fixture modes are mutually exclusive"
     );
     let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
+    assert!(
+        local_manifest.is_none()
+            || ((sharing_fixture || legacy_expiry) && matches!(mode, Mode::Node(_))),
+        "local PostgreSQL is explicitly supported only for Node sharing or expiry acceptance"
+    );
     let mode = match mode {
         Mode::Node(binary) => {
             let binary = binary
@@ -601,16 +940,36 @@ fn main() {
             Mode::Image(image)
         }
     };
-    docker_ok(
-        &["image", "inspect", POSTGRES_IMAGE],
-        "inspect preloaded PostgreSQL base image",
-    );
-    let network = Network::start();
-    let db = Database::start(&network);
-    if let Some(executable) = go_executable {
+    let (network, db) = if let Some(manifest) = local_manifest {
+        let local = local_postgres::LocalPostgres::start(&manifest);
+        let db = Database {
+            name: local.database.clone(),
+            port: local.port,
+            local: Some(local),
+        };
+        (
+            Network {
+                name: String::new(),
+            },
+            db,
+        )
+    } else {
+        docker_ok(
+            &["image", "inspect", POSTGRES_IMAGE],
+            "inspect preloaded PostgreSQL base image",
+        );
+        let network = Network::start();
+        let db = Database::start(&network);
+        (network, db)
+    };
+    if legacy_expiry {
+        sharing_rotation::run_legacy_expiry(&db, &network, &mode);
+    } else if let Some(executable) = go_executable {
         go_session::run(&db, &network, &mode, &executable);
     } else if identity_fixture {
         account_identity::run(&db, &network, &mode);
+    } else if sharing_fixture {
+        sharing_rotation::run(&db, &network, &mode);
     } else {
         run_acceptance(&db, &network, &mode);
     }
@@ -633,7 +992,7 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     let (stranger, _, stranger_box, stranger_auth_password) = signup_with_password(p);
     let headers = format!("Authorization: Bearer {refresh}\r\n");
     let stranger_headers = format!("Authorization: Bearer {stranger}\r\n");
-    let mut connect_headers = format!("Authorization: Bearer {connect}\r\n");
+    let connect_headers = format!("Authorization: Bearer {connect}\r\n");
     let root = format!("/api/encrypted/boxes/{box_id}");
     // Keep the pooled HTTP connection reactor alive between synchronous Core/HTTP steps.
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -773,22 +1132,6 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         .unwrap_err();
     assert_eq!(sdk_conflict.status(), Some(409));
     assert_eq!(sdk_conflict.code(), Some("PS015"));
-    accept_encrypted_put_replay(
-        db,
-        p,
-        (&refresh, &connect, &stranger, &stranger_box),
-        &context,
-        &item,
-        &key,
-    );
-    accept_encrypted_delete(
-        db,
-        p,
-        (&refresh, &connect, &stranger, &stranger_box),
-        &context,
-        &item,
-        &key,
-    );
     let (status, stored) = http(p, "GET", &path, &headers, &Value::Null);
     assert_eq!(status, 200);
     assert_eq!(stored, serde_json::to_value(&envelope).unwrap());
@@ -1015,18 +1358,68 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         )),
         "0"
     );
-    // Unconfirmed membership cannot read; confirmed membership can read but
-    // cannot enable. This fixture never sends or stores a box key on the host.
+    let member_sdk =
+        EncryptedSessionClient::new(&format!("http://127.0.0.1:{p}"), &stranger).unwrap();
+    let owner_identity = AcceptanceIdentity::register(p, &runtime, &refresh, &sdk, &auth_password);
+    let member_identity =
+        AcceptanceIdentity::register(p, &runtime, &stranger, &member_sdk, &stranger_auth_password);
+    assert!(owner_identity.id == owner_id && member_identity.id == claimant);
+    accept_encrypted_put_replay(
+        db,
+        p,
+        (&refresh, &connect, &stranger),
+        &context,
+        &item,
+        &key,
+        (&owner_identity, &member_identity),
+    );
+    accept_encrypted_delete(
+        db,
+        p,
+        (&refresh, &connect, &stranger),
+        &context,
+        &item,
+        &key,
+        (&owner_identity, &member_identity),
+    );
+    // Synthetic unconfirmed membership is a denial fixture only. Confirmation
+    // and HPKE key distribution below use the formal APIs and real Core.
     db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES('{claimant}','{box_id}','member')"));
     assert_eq!(
         http(p, "GET", &path, &stranger_headers, &Value::Null).0,
         403
     );
-    db.sql(&format!("UPDATE vault_memberships SET confirmed_at=NOW() WHERE user_id='{claimant}' AND vault_id='{box_id}'"));
-    assert_eq!(
-        http(p, "GET", &path, &stranger_headers, &Value::Null).0,
-        200
+    confirm_acceptance_member(
+        p,
+        &box_id,
+        &headers,
+        &stranger_headers,
+        &member_identity.email,
     );
+    let before = acceptance_state_hash(db);
+    let missing_grant = http(p, "GET", &path, &stranger_headers, &Value::Null);
+    assert_eq!(
+        (missing_grant.0, missing_grant.1["error"].as_str()),
+        (403, Some("PS016"))
+    );
+    assert_eq!(
+        acceptance_state_hash(db),
+        before,
+        "confirmed membership alone grants no item access"
+    );
+    let shared_key = grant_acceptance_member(
+        db,
+        &runtime,
+        &box_id,
+        &key,
+        &owner_identity,
+        &member_identity,
+    );
+    assert_eq!(
+        http(p, "GET", &path, &stranger_headers, &Value::Null),
+        (200, stored.clone())
+    );
+    assert!(shared_key.decrypt_item(&envelope, &context).unwrap() == item);
     assert_eq!(
         http(
             p,
@@ -1040,6 +1433,38 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     );
     // A confirmed non-owner member can neither read nor write an owner bundle.
     let member_put = json!({"expectedVersion":0,"bundle":owner_bundle(&key,&master,salt,&owner_context(&box_id,&claimant,1))});
+    let before_member_owner_denial = acceptance_state_hash(db);
+    assert_eq!(
+        http(p, "GET", &owner_path, &stranger_headers, &Value::Null).0,
+        403
+    );
+    assert_eq!(acceptance_state_hash(db), before_member_owner_denial);
+    assert_eq!(
+        http(p, "PUT", &owner_path, &stranger_headers, &member_put).0,
+        403
+    );
+    assert_eq!(acceptance_state_hash(db), before_member_owner_denial);
+    // Encrypted ownership requires its own complete transfer protocol. Legacy
+    // reassignment is fenced BEFORE changing any account/box/token/key row.
+    let before = acceptance_state_hash(db);
+    let denied = http(
+        p,
+        "POST",
+        &format!("/api/auth/vaults/{box_id}/ownership"),
+        &headers,
+        &json!({"currentPassword":auth_password,"targetUserId":claimant}),
+    );
+    assert_eq!((denied.0, denied.1["error"].as_str()), (409, Some("PS015")));
+    assert_eq!(
+        acceptance_state_hash(db),
+        before,
+        "encrypted legacy transfer preserves all full rows/xmin"
+    );
+    assert_eq!(
+        http(p, "GET", &owner_path, &headers, &Value::Null).1,
+        current_bundle,
+        "current owner retains the exact bundle after refused transfer"
+    );
     assert_eq!(
         http(p, "GET", &owner_path, &stranger_headers, &Value::Null).0,
         403
@@ -1048,98 +1473,8 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         http(p, "PUT", &owner_path, &stranger_headers, &member_put).0,
         403
     );
-    // Ownership transfer: the previous owner loses access and the new owner never
-    // sees the previous bundle. The new owner must wrap a key it already holds.
-    let swap = |new: &str, authorization: &str, password: &str| {
-        assert_eq!(
-            http(
-                p,
-                "POST",
-                &format!("/api/auth/vaults/{box_id}/ownership"),
-                authorization,
-                &json!({"currentPassword":password,"targetUserId":new})
-            )
-            .0,
-            204,
-            "formal ownership transfer must succeed before testing key access"
-        );
-    };
-    swap(&claimant, &headers, &auth_password);
-    assert_eq!(http(p, "GET", &owner_path, &headers, &Value::Null).0, 403);
-    let old_put = json!({"expectedVersion":3,"bundle":owner_bundle(&key,&master,salt,&owner_ctx),"currentPassword":auth_password});
-    assert_eq!(http(p, "PUT", &owner_path, &headers, &old_put).0, 403);
-    assert_eq!(
-        http(p, "GET", &owner_path, &stranger_headers, &Value::Null).0,
-        404
-    );
-    assert_eq!(
-        http(
-            p,
-            "PUT",
-            &owner_path,
-            &stranger_headers,
-            &json!({"expectedVersion":0,"bundle":bundle1})
-        )
-        .0,
-        400,
-        "another owner's context is refused"
-    );
-    let new_password = format!(
-        "synthetic-owner-password-{}",
-        ConnectId::generate().unwrap()
-    );
-    let new_salt = generate_salt().unwrap();
-    let new_ctx = owner_context(&box_id, &claimant, 1);
-    let new_bundle = owner_bundle(
-        &key,
-        &owner_master(&new_password, &new_salt).unwrap(),
-        new_salt,
-        &new_ctx,
-    );
-    let (status, new_created) = http(
-        p,
-        "PUT",
-        &owner_path,
-        &stranger_headers,
-        &json!({"expectedVersion":0,"bundle":new_bundle}),
-    );
-    assert_eq!(
-        (status, &new_created),
-        (200, &json!({"bundleVersion":1,"bundle":new_bundle}))
-    );
-    assert_eq!(
-        http(p, "GET", &owner_path, &stranger_headers, &Value::Null).1,
-        new_created
-    );
-    assert!(
-        unwrap_bundle(&new_created["bundle"], &new_password, &new_ctx)
-            .unwrap()
-            .decrypt_item(&serde_json::from_value(stored.clone()).unwrap(), &context)
-            .is_ok()
-    );
-    swap(&owner_id, &stranger_headers, &stranger_auth_password);
-    // Formal ownership transfer revokes old Connect tokens. Refresh through
-    // the real auth API before asserting the legacy ciphertext boundary.
-    let (status, refreshed) = http(
-        p,
-        "POST",
-        "/api/auth/token/refresh",
-        "",
-        &json!({"refreshToken":refresh}),
-    );
-    assert_eq!(
-        status, 200,
-        "new live Connect token after ownership transfer"
-    );
-    connect_headers = format!(
-        "Authorization: Bearer {}\r\n",
-        refreshed["connectAccessToken"].as_str().unwrap()
-    );
-    assert_eq!(
-        http(p, "GET", &owner_path, &headers, &Value::Null).1,
-        current_bundle,
-        "owner bundle survives transfer and return untouched"
-    );
+    // Synthetic removal tests live authorization and grant FK cascade; it is
+    // not the production participant-removal/rotation protocol.
     db.sql(&format!(
         "DELETE FROM vault_memberships WHERE user_id='{claimant}' AND vault_id='{box_id}'"
     ));
@@ -1461,8 +1796,8 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         db.sql(&format!(
             "SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{box_id}'"
         )),
-        "2",
-        "another box's owner bundles are retained"
+        "1",
+        "another box's current owner bundle is retained"
     );
     // Restart proves persistence; client decrypts the unchanged opaque body.
     drop(host);
@@ -1492,6 +1827,7 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
     host = Host::start(db, network, mode);
     let restored = http(host.port, "GET", &path, &headers, &Value::Null);
     assert_eq!(restored.0, 200);
+    assert_eq!(restored.1, serde_json::to_value(&next_envelope).unwrap());
     assert_eq!(
         key.decrypt_item(&serde_json::from_value(restored.1).unwrap(), &next)
             .unwrap(),
@@ -1510,8 +1846,52 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
             .unwrap(),
         next_item
     );
-    // Deleting an account removes only its own bundles.
+    // Give the other account a bundle for its OWN box through formal setup.
+    // No synthetic owner reassignment is needed for account-FK cascade coverage.
+    let stranger_key = PasswordBoxKey::generate().unwrap();
+    let stranger_bundle = owner_bundle(
+        &stranger_key,
+        &master,
+        salt,
+        &owner_context(&stranger_box, &claimant, 1),
+    );
+    assert_eq!(
+        http(
+            host.port,
+            "POST",
+            &format!("/api/encrypted/boxes/{stranger_box}/setup"),
+            &stranger_headers,
+            &json!({"bundle":stranger_bundle})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_owner_keys WHERE owner_id='{claimant}'"
+        )),
+        "1"
+    );
+    // Synthetic account deletion removes only its own identity and bundles.
     db.sql(&format!("DELETE FROM users WHERE id='{claimant}'"));
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_account_identities WHERE account_id='{claimant}'"
+        )),
+        "0"
+    );
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_account_identities WHERE account_id='{owner_id}'"
+        )),
+        "1"
+    );
+    assert_eq!(
+        db.sql(&format!(
+            "SELECT count(*) FROM encrypted_owner_keys WHERE owner_id='{claimant}'"
+        )),
+        "0"
+    );
     assert_eq!(
         db.sql(&format!(
             "SELECT count(*) FROM encrypted_owner_keys WHERE box_id='{box_id}'"
@@ -1536,34 +1916,40 @@ fn run_acceptance(db: &Database, network: &Network, mode: &Mode) {
         ))
     };
     let committed_row = committed_snapshot();
+    let before_revoked_membership = acceptance_state_hash(db);
     assert_eq!(
         http(host.port, "PUT", &path, &headers, &committed_payload).0,
         403
     );
     assert_eq!(committed_snapshot(), committed_row);
+    assert_eq!(acceptance_state_hash(db), before_revoked_membership);
     db.sql("DELETE FROM sessions");
+    let before_revoked_session = acceptance_state_hash(db);
     assert_eq!(http(host.port, "GET", &path, &headers, &Value::Null).0, 401);
     assert_eq!(
         http(host.port, "PUT", &path, &headers, &committed_payload).0,
         401
     );
     assert_eq!(committed_snapshot(), committed_row);
+    assert_eq!(acceptance_state_hash(db), before_revoked_session);
     assert_eq!(
         http(host.port, "GET", &owner_path, &headers, &Value::Null).0,
         401
     );
-    println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation, private-box cascade, and owner key bundle unwrap/CAS/transfer/restart/cascade passed");
+    println!("encrypted storage acceptance: Core roundtrip, rejection preservation, CAS 1/4, epoch, scope, confirmed membership with formal HPKE grant, CSRF, host/DB plaintext boundary, compatibility/activation race, restart, revocation, private-box cascade, and owner key bundle unwrap/CAS/legacy transfer denial/restart/cascade passed");
 }
 
 fn accept_encrypted_put_replay(
     db: &Database,
     p: u16,
-    credentials: (&str, &str, &str, &str),
+    credentials: (&str, &str, &str),
     original_context: &ItemContext,
     original_item: &Value,
     key: &PasswordBoxKey,
+    identities: (&AcceptanceIdentity, &AcceptanceIdentity),
 ) {
-    let (session, connect, member_session, member_box) = credentials;
+    let (session, connect, member_session) = credentials;
+    let (owner_identity, member_identity) = identities;
     let box_id = original_context.password_box_id.as_str();
     let headers = format!("Authorization: Bearer {session}\r\n");
     let member_headers = format!("Authorization: Bearer {member_session}\r\n");
@@ -1572,9 +1958,8 @@ fn accept_encrypted_put_replay(
         .enable_all()
         .build()
         .unwrap();
-    let base = format!("http://127.0.0.1:{p}");
-    let sdk = passshare_connect::EncryptedSessionClient::new(&base, session).unwrap();
-    let member_sdk = passshare_connect::EncryptedSessionClient::new(&base, member_session).unwrap();
+    let sdk = &owner_identity.sdk;
+    let member_sdk = &member_identity.sdk;
     let mut context = ItemContext {
         item_id: ConnectId::generate().unwrap(),
         ..original_context.clone()
@@ -1593,9 +1978,7 @@ fn accept_encrypted_put_replay(
     let session_id = db.sql(&format!(
         "SELECT id::text FROM sessions WHERE user_id='{actor}' ORDER BY created_at LIMIT 1"
     ));
-    let member = db.sql(&format!(
-        "SELECT user_id::text FROM vault_memberships WHERE vault_id='{member_box}' AND role='owner'"
-    ));
+    let member = &member_identity.id;
     let csrf = ConnectId::generate().unwrap();
     let cookie = format!(
         "Cookie: passshare_session={session}; passshare_csrf={csrf}\r\nx-csrf-token: {csrf}\r\n"
@@ -1616,16 +1999,22 @@ fn accept_encrypted_put_replay(
     db.sql(&format!("CREATE FUNCTION passshare_put_replay_write_fault() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic redundant replay update'; END $$; CREATE TRIGGER passshare_put_replay_write_fault BEFORE UPDATE ON encrypted_items FOR EACH ROW WHEN (OLD.box_id='{box_id}' AND OLD.item_id IN ('{item_id}','{race_id}') AND OLD.revision=NEW.revision) EXECUTE FUNCTION passshare_put_replay_write_fault();"));
     let mut first_payload = Value::Null;
     let mut last_payload = Value::Null;
+    let mut member_key: Option<PasswordBoxKey> = None;
     for version in [1, 2] {
         context.item_version = version;
         item["version"] = json!(version);
         item["title"] = json!(format!("Full DTO replay version {version}"));
-        let envelope = key.encrypt_item(&item, &context).unwrap();
+        let writer_key = if version == 1 {
+            key
+        } else {
+            member_key.as_ref().unwrap()
+        };
+        let envelope = writer_key.encrypt_item(&item, &context).unwrap();
         let public = serde_json::to_value(&envelope).unwrap();
         let payload = json!({"expectedVersion":version-1,"envelope":public});
         // A different confirmed writer commits version 2. The original actor
         // may replay the identical stored public envelope regardless of author.
-        let writer = if version == 1 { &sdk } else { &member_sdk };
+        let writer = if version == 1 { sdk } else { member_sdk };
         assert_eq!(
             runtime
                 .block_on(writer.put_item(box_id, &item_id, version - 1, &envelope))
@@ -1685,8 +2074,10 @@ fn accept_encrypted_put_replay(
         );
 
         let reject = |body: &Value, status, code| {
+            let all_before = acceptance_state_hash(db);
             let reply = http(p, "PUT", &path, &headers, body);
             assert_eq!((reply.0, reply.1["error"].as_str()), (status, Some(code)));
+            assert_eq!(acceptance_state_hash(db), all_before);
             assert_eq!(
                 snapshot(&item_id),
                 before,
@@ -1813,23 +2204,64 @@ fn accept_encrypted_put_replay(
         }
         if version == 1 {
             assert_eq!(http(p, "PUT", &path, &member_headers, &payload).0, 403);
+            // Synthetic unconfirmed membership only supplies a negative control.
             db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES('{member}','{box_id}','member')"));
             assert_eq!(http(p, "PUT", &path, &member_headers, &payload).0, 403);
-            db.sql(&format!("UPDATE vault_memberships SET confirmed_at=NOW(),role='viewer' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+            confirm_acceptance_member(p, box_id, &headers, &member_headers, &member_identity.email);
+            let before_grant = acceptance_state_hash(db);
+            let reply = http(p, "PUT", &path, &member_headers, &payload);
+            assert_eq!(
+                (reply.0, reply.1["error"].as_str()),
+                (403, Some("PS016")),
+                "confirmed writer still requires a current grant"
+            );
+            assert_eq!(acceptance_state_hash(db), before_grant);
+            let recovered =
+                grant_acceptance_member(db, &runtime, box_id, key, owner_identity, member_identity);
+            let fetched = acceptance_result(
+                runtime.block_on(member_sdk.get_item(box_id, &item_id)),
+                "granted member item GET",
+            );
+            assert!(
+                fetched == envelope && recovered.decrypt_item(&fetched, &context).unwrap() == item
+            );
+            // Synthetic readonly role isolates the write boundary AFTER grant
+            // distribution. This is not a role-change API acceptance claim.
+            db.sql(&format!("UPDATE vault_memberships SET role='readonly' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+            let before_role_denial = acceptance_state_hash(db);
             let reply = http(p, "PUT", &path, &member_headers, &payload);
             assert_eq!((reply.0, reply.1["error"].as_str()), (403, Some("PS032")));
+            assert_eq!(acceptance_state_hash(db), before_role_denial);
+            assert!(
+                acceptance_result(
+                    runtime.block_on(member_sdk.get_item(box_id, &item_id)),
+                    "readonly member item GET"
+                ) == envelope
+            );
             db.sql(&format!("UPDATE vault_memberships SET role='member' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+            let before_member_replay = acceptance_state_hash(db);
+            assert!(
+                acceptance_result(
+                    runtime.block_on(member_sdk.put_item(box_id, &item_id, 0, &envelope)),
+                    "granted member exact replay"
+                ) == envelope
+            );
             assert_eq!(
                 http(p, "PUT", &path, &member_headers, &payload),
                 (200, public.clone())
             );
+            assert_eq!(acceptance_state_hash(db), before_member_replay);
             assert_eq!(snapshot(&item_id), before);
+            member_key = Some(recovered);
             first_payload = payload.clone();
         } else {
+            // Synthetic removal rechecks the author of the stored ciphertext.
             db.sql(&format!(
                 "DELETE FROM vault_memberships WHERE user_id='{member}' AND vault_id='{box_id}'"
             ));
+            let before_removed = acceptance_state_hash(db);
             assert_eq!(http(p, "PUT", &path, &member_headers, &payload).0, 403);
+            assert_eq!(acceptance_state_hash(db), before_removed);
             assert_eq!(
                 snapshot(&item_id),
                 before,
@@ -1924,12 +2356,14 @@ fn accept_encrypted_put_replay(
 fn accept_encrypted_delete(
     db: &Database,
     p: u16,
-    credentials: (&str, &str, &str, &str),
+    credentials: (&str, &str, &str),
     original_context: &ItemContext,
     original_item: &Value,
     key: &PasswordBoxKey,
+    identities: (&AcceptanceIdentity, &AcceptanceIdentity),
 ) {
-    let (session, connect, stranger, stranger_box) = credentials;
+    let (session, connect, stranger) = credentials;
+    let (owner_identity, member_identity) = identities;
     let box_id = original_context.password_box_id.as_str();
     let root = format!("/api/encrypted/boxes/{box_id}");
     let headers = format!("Authorization: Bearer {session}\r\n");
@@ -1938,9 +2372,7 @@ fn accept_encrypted_delete(
         .enable_all()
         .build()
         .unwrap();
-    let sdk =
-        passshare_connect::EncryptedSessionClient::new(&format!("http://127.0.0.1:{p}"), session)
-            .unwrap();
+    let sdk = &owner_identity.sdk;
     // Retain the complete original DTO and arbitrary nested values. Every new
     // nonce/key is generated by real Core, never reused static ciphertext.
     let context = ItemContext {
@@ -1971,9 +2403,11 @@ fn accept_encrypted_delete(
     };
     let before = live_snapshot();
     let reject = |body: &Value, status, code| {
+        let all_before = acceptance_state_hash(db);
         let reply = http(p, "DELETE", &path, &headers, body);
         assert_eq!(reply.0, status);
         assert_eq!(reply.1["error"], code);
+        assert_eq!(acceptance_state_hash(db), all_before);
         assert_eq!(
             live_snapshot(),
             before,
@@ -2038,17 +2472,33 @@ fn accept_encrypted_delete(
         (Some(403), Some("PS016"))
     );
     assert_eq!(live_snapshot(), before);
-    let member = db.sql(&format!("SELECT user_id::text FROM vault_memberships WHERE vault_id='{stranger_box}' AND role='owner'"));
+    let member = &member_identity.id;
     let member_headers = format!("Authorization: Bearer {stranger}\r\n");
+    // Synthetic unconfirmed membership remains a distinct denial case.
     db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES('{member}','{box_id}','member')"));
     assert_eq!(http(p, "DELETE", &path, &member_headers, &deletion).0, 403);
-    db.sql(&format!("UPDATE vault_memberships SET confirmed_at=NOW(),role='viewer' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+    confirm_acceptance_member(p, box_id, &headers, &member_headers, &member_identity.email);
+    let before_grant = acceptance_state_hash(db);
+    let reply = http(p, "DELETE", &path, &member_headers, &deletion);
+    assert_eq!((reply.0, reply.1["error"].as_str()), (403, Some("PS016")));
+    assert_eq!(acceptance_state_hash(db), before_grant);
+    let shared_key =
+        grant_acceptance_member(db, &runtime, box_id, key, owner_identity, member_identity);
+    // Synthetic readonly role isolates role denial with a genuine current grant.
+    db.sql(&format!("UPDATE vault_memberships SET role='readonly' WHERE user_id='{member}' AND vault_id='{box_id}'"));
+    let before_role_denial = acceptance_state_hash(db);
     let reply = http(p, "DELETE", &path, &member_headers, &deletion);
     assert_eq!((reply.0, reply.1["error"].as_str()), (403, Some("PS032")));
+    assert_eq!(acceptance_state_hash(db), before_role_denial);
+    assert!(
+        acceptance_result(
+            runtime.block_on(member_identity.sdk.get_item(box_id, item_id)),
+            "readonly member item GET"
+        ) == envelope
+    );
     assert_eq!(live_snapshot(), before);
-    db.sql(&format!(
-        "DELETE FROM vault_memberships WHERE user_id='{member}' AND vault_id='{box_id}'"
-    ));
+    // Keep the granted member for the later delete/replay positive control.
+    db.sql(&format!("UPDATE vault_memberships SET role='member' WHERE user_id='{member}' AND vault_id='{box_id}'"));
 
     // Direct SQL fault injection is SYNTHETIC fixture setup only. A tombstone
     // insert trigger fails after the function has executed the live-row DELETE.
@@ -2259,19 +2709,32 @@ fn accept_encrypted_delete(
         statuses => panic!("delete/update CAS must have one winner: {statuses:?}"),
     }
     assert_eq!(db.sql(&format!("SELECT count(*) FROM encrypted_items WHERE box_id='{box_id}' AND item_id IN ('{item_id}','{race_id}')")), "0");
-    // A currently confirmed member can delete, including an exact replay. Role
-    // removal then denies the same replay despite the matching tombstone.
-    db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role,confirmed_at) VALUES('{member}','{box_id}','member',NOW())"));
+    // A confirmed member with the formal current grant can delete/replay.
+    // Synthetic removal then denies replay despite the matching tombstone.
     let member_context = ItemContext {
         item_id: ConnectId::generate().unwrap(),
         ..context.clone()
     };
     let mut member_item = item.clone();
     member_item["id"] = json!(member_context.item_id);
-    let member_envelope = key.encrypt_item(&member_item, &member_context).unwrap();
+    let member_envelope = shared_key
+        .encrypt_item(&member_item, &member_context)
+        .unwrap();
     runtime
         .block_on(sdk.put_item(box_id, member_context.item_id.as_str(), 0, &member_envelope))
         .unwrap();
+    let fetched = acceptance_result(
+        runtime.block_on(
+            member_identity
+                .sdk
+                .get_item(box_id, member_context.item_id.as_str()),
+        ),
+        "granted member item GET before delete",
+    );
+    assert!(
+        fetched == member_envelope
+            && shared_key.decrypt_item(&fetched, &member_context).unwrap() == member_item
+    );
     let member_path = format!("{root}/items/{}", member_context.item_id);
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
     let concurrent = (0..2)
@@ -2291,13 +2754,30 @@ fn accept_encrypted_delete(
         assert_eq!(response.join().unwrap(), (204, Vec::new()));
     }
     assert_eq!(db.sql(&format!("SELECT count(*) FROM encrypted_item_tombstones WHERE box_id='{box_id}' AND item_id='{}'",member_context.item_id)),"1");
+    let before_replay = acceptance_state_hash(db);
+    acceptance_result(
+        runtime.block_on(member_identity.sdk.delete_item(
+            box_id,
+            member_context.item_id.as_str(),
+            1,
+            1,
+        )),
+        "granted member DELETE replay",
+    );
+    assert_eq!(
+        acceptance_state_hash(db),
+        before_replay,
+        "member DELETE replay preserves all rows/xmin"
+    );
     db.sql(&format!(
         "DELETE FROM vault_memberships WHERE user_id='{member}' AND vault_id='{box_id}'"
     ));
+    let before_removed = acceptance_state_hash(db);
     assert_eq!(
         http(p, "DELETE", &member_path, &member_headers, &deletion).0,
         403
     );
+    assert_eq!(acceptance_state_hash(db), before_removed);
     accept_waiting_delete_revocation(db, p, key, original_item);
     println!("encrypted delete: SDK 204, empty wire reply, full DTO preservation, strict metadata, auth/CSRF, synthetic rollback/epoch/DB constraints, GET/list absence, replay, reserved ID, encrypted boundary and synchronized delete/update CAS passed");
 }
@@ -2307,23 +2787,8 @@ struct HeldBox {
 }
 impl HeldBox {
     fn start(db: &Database, box_id: &str, label: &str) -> Self {
-        let mut child = command("docker")
-            .args([
-                "exec",
-                "-i",
-                "--env",
-                &format!("PGAPPNAME={label}"),
-                &db.name,
-                "psql",
-                "-X",
-                "-qAt",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-U",
-                "passshare",
-                "-d",
-                "passshare",
-            ])
+        let mut child = db
+            .psql(true, Some(label))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -2592,7 +3057,7 @@ fn accept_atomic_setup(db: &Database, p: u16) {
 
     // Different initial keys race from the same barrier; the losing key must
     // never replace the winner or produce an orphaned activation.
-    let (race_session, _, race_box) = signup(p);
+    let (race_session, _, race_box, race_password) = signup_with_password(p);
     let race_actor = db.sql(&format!(
         "SELECT user_id::text FROM vault_memberships WHERE vault_id='{race_box}' AND role='owner'"
     ));
@@ -2649,6 +3114,7 @@ fn accept_atomic_setup(db: &Database, p: u16) {
     let nonempty = json!({"bundle":owner_bundle(&key,&master,salt,&owner_context(&stranger_box,&stranger_actor,1))});
     assert_setup_rejected_intact(db, p, &stranger_box, &stranger_headers, &nonempty, "PS055");
 
+    // Synthetic epoch/state inconsistency isolates setup's generation boundary.
     db.sql(&format!(
         "UPDATE encrypted_box_state SET key_epoch=2 WHERE box_id='{box_id}'"
     ));
@@ -2656,11 +3122,56 @@ fn accept_atomic_setup(db: &Database, p: u16) {
     db.sql(&format!("UPDATE encrypted_box_state SET key_epoch=1 WHERE box_id='{box_id}'; DELETE FROM encrypted_owner_keys WHERE box_id='{box_id}'"));
     assert_setup_rejected_intact(db, p, &box_id, &headers, &body, "PS015");
 
-    // Fixture for a transferred owner with the prior owner's bundle retained.
-    // Role changes are direct synthetic DB setup, not a transfer API claim.
-    db.sql(&format!("UPDATE vault_memberships SET role='member',confirmed_at=NOW() WHERE vault_id='{race_box}' AND user_id='{race_actor}'; INSERT INTO vault_memberships(vault_id,user_id,role) VALUES('{race_box}','{stranger_actor}','owner')"));
+    // The old synthetic owner reassignment is not a successful encrypted
+    // transfer. Confirm a real member, then require the formal legacy fence.
+    let (status, me) = http(p, "GET", "/api/auth/me", &stranger_headers, &Value::Null);
+    assert_eq!(status, 200);
+    let race_headers = format!("Authorization: Bearer {race_session}\r\n");
+    confirm_acceptance_member(
+        p,
+        &race_box,
+        &race_headers,
+        &stranger_headers,
+        me["user"]["email"].as_str().unwrap(),
+    );
+    let before_transfer = acceptance_state_hash(db);
+    let denied = http(
+        p,
+        "POST",
+        &format!("/api/auth/vaults/{race_box}/ownership"),
+        &race_headers,
+        &json!({"currentPassword":race_password,"targetUserId":stranger_actor}),
+    );
+    assert_eq!((denied.0, denied.1["error"].as_str()), (409, Some("PS015")));
+    assert_eq!(
+        acceptance_state_hash(db),
+        before_transfer,
+        "refused setup-box transfer preserves all full rows/xmin"
+    );
     let replacement = json!({"bundle":owner_bundle(&key,&master,salt,&owner_context(&race_box,&stranger_actor,1))});
-    assert_setup_rejected_intact(db, p, &race_box, &stranger_headers, &replacement, "PS015");
+    assert_eq!(
+        http(
+            p,
+            "POST",
+            &format!("/api/encrypted/boxes/{race_box}/setup"),
+            &stranger_headers,
+            &replacement
+        )
+        .0,
+        403,
+        "confirmed target cannot replace the retained owner's setup"
+    );
+    assert_eq!(acceptance_state_hash(db), before_transfer);
+    assert_eq!(
+        http(
+            p,
+            "GET",
+            &format!("/api/encrypted/boxes/{race_box}/owner-key"),
+            &race_headers,
+            &Value::Null
+        ),
+        persisted
+    );
     println!("atomic setup: authorization/CSRF, strict public headers, post-activation failure rollback, exact replay, different-key rejection, full item decrypt and synchronized concurrent initialization passed");
 }
 
@@ -2672,10 +3183,7 @@ fn assert_setup_rejected_intact(
     body: &Value,
     code: &str,
 ) {
-    let snapshot = || {
-        db.sql(&format!("SELECT md5(jsonb_build_object('state',(SELECT to_jsonb(s) FROM encrypted_box_state s WHERE box_id='{box_id}'),'keys',(SELECT jsonb_agg(to_jsonb(k) ORDER BY owner_id) FROM encrypted_owner_keys k WHERE box_id='{box_id}'),'encrypted',(SELECT jsonb_agg(to_jsonb(i) ORDER BY item_id) FROM encrypted_items i WHERE box_id='{box_id}'),'plain',(SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM connect_items i WHERE vault_id='{box_id}'))::text)"))
-    };
-    let before = snapshot();
+    let before = acceptance_state_hash(db);
     let (status, error) = http(
         p,
         "POST",
@@ -2685,9 +3193,9 @@ fn assert_setup_rejected_intact(
     );
     assert_eq!((status, error["error"].as_str()), (409, Some(code)));
     assert_eq!(
-        snapshot(),
+        acceptance_state_hash(db),
         before,
-        "rejected setup must preserve every stored row"
+        "rejected setup must preserve every full account/box row and xmin"
     );
 }
 

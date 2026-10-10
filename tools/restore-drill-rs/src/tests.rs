@@ -113,16 +113,114 @@ fn fixture_and_comparison_detect_added_field_url_and_attachment_loss() {
 }
 
 #[test]
+fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate_tables() {
+    // Independent expected catalog, including every current encrypted DDL table.
+    let expected = json!([
+        "connect_item_files",
+        "connect_items",
+        "connect_tokens",
+        "connect_vaults",
+        "encrypted_account_identities",
+        "encrypted_box_state",
+        "encrypted_item_tombstones",
+        "encrypted_items",
+        "encrypted_key_grants",
+        "encrypted_owner_keys",
+        "encrypted_rotation_grants",
+        "encrypted_rotation_items",
+        "encrypted_rotations",
+        "login_failures",
+        "login_ip_requests",
+        "mutation_operations",
+        "sessions",
+        "users",
+        "vault_invitations",
+        "vault_memberships"
+    ]);
+    assert!(schema_inventory_matches(&expected));
+    for index in 0..expected.as_array().unwrap().len() {
+        let mut missing = expected.clone();
+        missing.as_array_mut().unwrap().remove(index);
+        assert!(!schema_inventory_matches(&missing));
+        // Same count, different names must never pass (including encrypted_*).
+        for unexpected in ["unexpected_table", "encrypted_unknown", "users"] {
+            let mut replaced = missing.clone();
+            replaced.as_array_mut().unwrap().push(json!(unexpected));
+            replaced
+                .as_array_mut()
+                .unwrap()
+                .sort_by(|a, b| a.as_str().unwrap().cmp(b.as_str().unwrap()));
+            if replaced != expected {
+                assert!(!schema_inventory_matches(&replaced));
+            }
+        }
+    }
+    let mut added = expected.clone();
+    added
+        .as_array_mut()
+        .unwrap()
+        .push(json!("encrypted_unknown"));
+    added
+        .as_array_mut()
+        .unwrap()
+        .sort_by(|a, b| a.as_str().unwrap().cmp(b.as_str().unwrap()));
+    assert!(!schema_inventory_matches(&added));
+    for malformed in [Value::Null, json!({"tables": expected}), json!([20])] {
+        assert!(!schema_inventory_matches(&malformed));
+    }
+}
+
+#[test]
+fn snapshot_reads_each_known_table_explicitly_in_one_read_only_transaction() {
+    let statement = snapshot_sql();
+    for table in known_tables() {
+        let read = format!("FROM public.{table} t)");
+        assert_eq!(statement.matches(read.as_str()).count(), 1);
+    }
+    assert_eq!(
+        statement.matches("FROM public.").count(),
+        known_tables().count()
+    );
+    assert!(statement.starts_with("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;"));
+}
+
+#[test]
 fn snapshot_cannot_succeed_with_missing_or_empty_required_tables() {
     let mut snapshot = serde_json::Map::new();
     for table in TABLES {
         snapshot.insert((*table).into(), json!([{"synthetic": true}]));
     }
+    for table in ENCRYPTED_TABLES {
+        snapshot.insert((*table).into(), json!([]));
+    }
     let value = Value::Object(snapshot.clone());
     assert!(snapshot_populated(&value));
-    snapshot.remove("sessions");
-    assert!(!snapshot_populated(&Value::Object(snapshot.clone())));
-    snapshot.insert("sessions".into(), json!([]));
+    assert!(encrypted_tables_empty(&value));
+    for table in known_tables() {
+        let mut missing = snapshot.clone();
+        missing.remove(table);
+        assert!(!snapshot_populated(&Value::Object(missing)));
+        let mut malformed = value.clone();
+        malformed[table] = Value::Null;
+        assert!(!snapshot_populated(&malformed));
+    }
+    for table in TABLES {
+        let mut empty = value.clone();
+        empty[*table] = json!([]);
+        assert!(!snapshot_populated(&empty));
+    }
+    for table in ENCRYPTED_TABLES {
+        let mut populated = value.clone();
+        populated[*table] = json!([{"synthetic": true}]);
+        assert!(!snapshot_populated(&populated));
+        assert!(!encrypted_tables_empty(&populated));
+        assert!(!exact_json(&value, &populated));
+        let mut lost = value.clone();
+        lost.as_object_mut().unwrap().remove(*table);
+        assert!(!encrypted_tables_empty(&lost));
+        assert!(!exact_json(&value, &lost));
+    }
+    snapshot.insert("encrypted_unknown".into(), json!([]));
     assert!(!snapshot_populated(&Value::Object(snapshot)));
 }
 
@@ -137,6 +235,29 @@ fn report_records_actual_checks_and_only_static_failure_categories() {
     assert_eq!(decoded["passed_count"], 1);
     assert_eq!(decoded["failure_class"], "http_transport");
     assert_eq!(decoded["checks"][1]["passed"], false);
+    assert_eq!(decoded["completed"], false);
+    assert_eq!(decoded["synthetic_only"], true);
+    assert_eq!(
+        decoded["limits"]["timing"],
+        "synthetic_service_only_not_production_RTO_or_RPO"
+    );
+    assert_eq!(
+        decoded["limits"]["account_reconciliation"],
+        "synthetic_SQL_only_no_identity_verification"
+    );
+    assert_eq!(
+        decoded["limits"]["owner_reapproval"],
+        "synthetic_SQL_only_API_checks_authorization_after_insert"
+    );
+    assert_eq!(
+        decoded["limits"]["client"],
+        "HTTP_mobile_token_protocol_not_UI_SDK_or_all_clients"
+    );
+    assert_eq!(
+        decoded["limits"]["encrypted_storage"],
+        "empty_tables_only_no_encrypted_recovery_or_rotation_verification"
+    );
+    assert!(decoded["measurements"].get("rto").is_none());
     assert!(!encoded.contains("refreshToken"));
 }
 

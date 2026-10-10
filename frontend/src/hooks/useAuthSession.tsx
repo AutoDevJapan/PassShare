@@ -11,7 +11,7 @@ import {
 import { ConnectClient } from "@passshare/connect";
 import { lockCloudUi } from "../lib/cloud-worker";
 import {
-  fetchConnectToken,
+  authFetch,
   fetchCurrentUser,
   getApiBaseUrl,
   login as loginRequest,
@@ -19,6 +19,7 @@ import {
   primeCsrfToken,
   signup as signupRequest,
   type AuthUser,
+  type ConnectTokenResponse,
 } from "../lib/auth-api";
 
 type AuthSessionContextValue = {
@@ -46,10 +47,10 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const mounted = useRef(true);
   const currentAccount = useRef<string | null>(null);
 
-  const invalidate = useCallback((dropClient = true) => {
+  const invalidate = useCallback(() => {
     const token = ++generation.current;
     lockCloudUi();
-    if (dropClient) setConnectClient(null);
+    setConnectClient(null);
     return token;
   }, []);
 
@@ -57,13 +58,29 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     const active = () => mounted.current && generation.current === token;
     const currentUser = await fetchCurrentUser();
     if (!active()) return null;
-    // Drop the previous account before acquiring credentials for the current one.
-    if (currentAccount.current !== (currentUser?.id ?? null)) setConnectClient(null);
+    // Compare identity before publishing any state or acquiring new credentials.
+    // A valid same-account refresh keeps the opened worker and its draft alive.
+    if (!currentUser || currentAccount.current !== currentUser.id) {
+      lockCloudUi();
+      setConnectClient(null);
+    }
     currentAccount.current = currentUser?.id ?? null;
     setLogoutLocationKey(null);
     setUser(currentUser);
     if (!currentUser) return null;
-    const credentials = await fetchConnectToken();
+    // fetchConnectToken's error does not expose HTTP status. Inspect the real
+    // response here so a confirmed unauthorized result cannot retain secrets.
+    const response = await authFetch("/api/auth/connect-token");
+    if (!active()) return null;
+    if (response.status === 401 || response.status === 403) {
+      lockCloudUi();
+      currentAccount.current = null;
+      setConnectClient(null);
+      setUser(null);
+      return null;
+    }
+    if (!response.ok) throw new Error("Connect credential refresh failed");
+    const credentials = await response.json() as ConnectTokenResponse;
     if (!active()) return null;
     const client = new ConnectClient({ host: getApiBaseUrl(), token: credentials.accessToken });
     setConnectClient(client);
@@ -71,35 +88,40 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshConnect = useCallback(async () => {
-    const token = invalidate(false);
-    setLoading(false);
+    const token = ++generation.current;
+    setLoading(currentAccount.current === null);
     setConnectLoading(true);
     try {
       return await syncSession(token);
     } catch {
       return null;
     } finally {
-      if (mounted.current && generation.current === token) setConnectLoading(false);
+      if (mounted.current && generation.current === token) {
+        setLoading(false);
+        setConnectLoading(false);
+      }
     }
-  }, [invalidate, syncSession]);
+  }, [syncSession]);
 
   const refresh = useCallback(async () => {
-    const token = invalidate(false);
-    setLoading(true);
+    const token = ++generation.current;
+    // ProtectedRoute replaces its outlet while loading. Keep the current
+    // account mounted until the identity check confirms a boundary change.
+    setLoading(currentAccount.current === null);
     setConnectLoading(true);
     try {
-      await primeCsrfToken();
-      if (mounted.current && generation.current === token) await syncSession(token);
+      await syncSession(token);
+      if (mounted.current && generation.current === token) await primeCsrfToken();
     } catch {
-      // Only fetchCurrentUser's confirmed 401 clears the session. A temporary
-      // Connect credential failure keeps the user available for retry.
+      // Temporary failures retain only the currently confirmed account. Both
+      // identity and credential responses clear it on confirmed unauthorized.
     } finally {
       if (mounted.current && generation.current === token) {
         setLoading(false);
         setConnectLoading(false);
       }
     }
-  }, [invalidate, syncSession]);
+  }, [syncSession]);
 
   useEffect(() => {
     mounted.current = true;
@@ -110,12 +132,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       const token = invalidate();
+      currentAccount.current = null;
       setUser(null);
       setLoading(true);
       setConnectLoading(true);
       try {
         const currentUser = await loginRequest(email, password);
         if (!mounted.current || generation.current !== token) return;
+        currentAccount.current = currentUser.id;
         setUser(currentUser);
         await syncSession(token).catch(() => null);
       } finally {
@@ -128,12 +152,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const signup = useCallback(
     async (email: string, password: string) => {
       const token = invalidate();
+      currentAccount.current = null;
       setUser(null);
       setLoading(true);
       setConnectLoading(true);
       try {
         const currentUser = await signupRequest(email, password);
         if (!mounted.current || generation.current !== token) return;
+        currentAccount.current = currentUser.id;
         setUser(currentUser);
         await syncSession(token).catch(() => null);
       } finally {

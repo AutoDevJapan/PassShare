@@ -54,7 +54,7 @@ export function createShareRouter({ authStore, connectStore }) {
       await requireVaultOwner(authStore, req.auth.userId, vaultId);
 
       const role = parseMemberRole(req.body?.role);
-      await authStore.updateVaultMemberRole(vaultId, targetUserId, role);
+      await authStore.updateVaultMemberRole(vaultId, targetUserId, role, req.auth.userId, req.auth.sessionId);
       res.json({ userId: targetUserId, role });
     } catch (error) {
       sendAuthError(res, error);
@@ -68,7 +68,7 @@ export function createShareRouter({ authStore, connectStore }) {
       await assertVaultExists(connectStore, vaultId);
       await requireVaultOwner(authStore, req.auth.userId, vaultId);
 
-      await authStore.removeVaultMember(vaultId, targetUserId, req.auth.userId);
+      await authStore.removeVaultMember(vaultId, targetUserId, req.auth.userId, req.auth.sessionId);
       res.status(204).end();
     } catch (error) {
       sendAuthError(res, error);
@@ -115,6 +115,7 @@ export function createShareRouter({ authStore, connectStore }) {
       const invitation = await authStore.createVaultInvitation({
         vaultId,
         inviterId: req.auth.userId,
+        sessionId: req.auth.sessionId,
         inviteeEmail,
         role,
       });
@@ -137,7 +138,7 @@ export function createShareRouter({ authStore, connectStore }) {
       await assertVaultExists(connectStore, vaultId);
       await requireVaultOwner(authStore, req.auth.userId, vaultId);
 
-      await authStore.revokeVaultInvitation(vaultId, req.params.invitationId);
+      await authStore.revokeVaultInvitation(vaultId, req.params.invitationId, req.auth.userId, req.auth.sessionId);
       res.status(204).end();
     } catch (error) {
       sendAuthError(res, error);
@@ -189,7 +190,7 @@ export function createInvitationsRouter({ authStore, connectStore }) {
 
   router.post("/:invitationId/accept", sessionGuard, requireCsrf, async (req, res) => {
     try {
-      const result = await authStore.acceptVaultInvitation(req.params.invitationId, req.auth.userId, req.body?.confirmationCode);
+      const result = await authStore.acceptVaultInvitation(req.params.invitationId, req.auth.userId, req.body?.confirmationCode, req.auth.sessionId);
       res.json(result);
     } catch (error) {
       sendAuthError(res, error);
@@ -198,7 +199,7 @@ export function createInvitationsRouter({ authStore, connectStore }) {
 
   router.post("/:invitationId/decline", sessionGuard, requireCsrf, async (req, res) => {
     try {
-      await authStore.declineVaultInvitation(req.params.invitationId, req.auth.userId);
+      await authStore.declineVaultInvitation(req.params.invitationId, req.auth.userId, req.auth.sessionId);
       res.status(204).end();
     } catch (error) {
       sendAuthError(res, error);

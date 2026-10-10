@@ -4,12 +4,14 @@ pub mod account_page;
 pub mod create;
 pub mod edit;
 pub mod encrypted;
+pub mod encrypted_rotation;
 pub mod encrypted_setup;
 pub mod lifecycle_page;
 pub mod owner_key;
 pub mod recovery;
 pub mod retirement;
 pub mod share;
+pub mod shared_grant;
 
 use serde_json::{json, Value};
 
@@ -19,6 +21,8 @@ pub fn dispatch(input: &Value) -> Value {
         Some("account-lifecycle-form") => lifecycle_page::validate_form(input),
         Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),
         Some("encrypted-plan") => encrypted::plan(input),
+        Some("shared-grant-plan") => shared_grant::plan(input),
+        Some("encrypted-rotation-plan") => encrypted_rotation::plan(input),
         Some("encrypted-setup-plan") => encrypted_setup::plan(input),
         Some("owner-key-plan") => owner_key::plan(input),
         Some("account-identity-plan") => account_identity::plan(input),
