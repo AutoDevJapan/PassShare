@@ -595,6 +595,21 @@ impl EncryptedSessionClient {
         body: Option<&Value>,
         expected_status: u16,
     ) -> EncryptedSessionResult<Vec<u8>> {
+        self.send_limited(method, url, body, expected_status, MAX_RESPONSE_BYTES)
+            .await
+    }
+    pub(crate) async fn send_attachment(&self, url: Url) -> EncryptedSessionResult<Vec<u8>> {
+        self.send_limited(Method::GET, url, None, 200, 1_404_000)
+            .await
+    }
+    async fn send_limited(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<&Value>,
+        expected_status: u16,
+        response_limit: usize,
+    ) -> EncryptedSessionResult<Vec<u8>> {
         let mut request = self
             .http
             .request(method, url)
@@ -638,7 +653,7 @@ impl EncryptedSessionClient {
                 }
             });
         }
-        read_limited(&mut response, MAX_RESPONSE_BYTES).await
+        read_limited(&mut response, response_limit).await
     }
 }
 
@@ -689,7 +704,11 @@ fn check_expected_context(box_id: &str, expected: &OwnerKeyContext) -> Encrypted
 }
 
 /// Public-shape check of an envelope bound for / returned from `box_id`/`item_id`.
-fn envelope_problem(e: &EncryptedItem, box_id: &str, item_id: &str) -> Option<&'static str> {
+pub(crate) fn envelope_problem(
+    e: &EncryptedItem,
+    box_id: &str,
+    item_id: &str,
+) -> Option<&'static str> {
     let c = &e.context;
     if e.format != 1 {
         Some("unsupported envelope format")

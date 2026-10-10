@@ -45,7 +45,11 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
         const plan = await nativeMutation({ command, operation: name,
           actor: req.auth.userId, session: req.auth.sessionId,
           boxId: req.params.boxId, itemId: req.params.itemId,
-          request: name === "list" ? { after: req.query.after ?? null } : ["enable", "put", "setup", "delete"].includes(name) ? publicRequest : null });
+          attachmentId: req.params.attachmentId,
+          requestJson: command === "encrypted-attachment-plan" ? req.encryptedAttachmentJson : undefined,
+          request: command === "encrypted-attachment-plan" && name === "get" ? { revision: Number(req.query.revision) }
+            : command === "encrypted-attachment-plan" && req.encryptedAttachmentJson !== undefined ? undefined
+            : name === "list" ? { after: req.query.after ?? null } : ["enable", "put", "setup", "delete"].includes(name) ? publicRequest : null });
         if (ownerPut && !plan.requiresReauthentication && Object.hasOwn(req.body,"currentPassword")) {
           throw authHttpError(400,"PS051","Unexpected authentication field on initial key creation");
         }
@@ -85,6 +89,16 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
   router.get("/boxes/:boxId/items/:itemId", operation("get"));
   router.put("/boxes/:boxId/items/:itemId", csrf, operation("put"));
   router.delete("/boxes/:boxId/items/:itemId", csrf, operation("delete"));
+  router.get("/boxes/:boxId/items/:itemId/attachments/:attachmentId", (req,res,next) => {
+    if (Object.keys(req.query).length !== 1 || typeof req.query.revision !== "string"
+        || !/^[1-9][0-9]*$/.test(req.query.revision) || !Number.isSafeInteger(Number(req.query.revision))
+        || Number(req.headers["content-length"] ?? 0) !== 0 || req.headers["transfer-encoding"] !== undefined) {
+      sendAuthError(res, authHttpError(400,"PS051","Invalid attachment snapshot selector")); return;
+    }
+    next();
+  }, operation("get", "encrypted-attachment-plan"));
+  router.put("/boxes/:boxId/items/:itemId/attachments/:attachmentId", csrf, operation("put", "encrypted-attachment-plan"));
+  router.delete("/boxes/:boxId/items/:itemId/attachments/:attachmentId", csrf, operation("delete", "encrypted-attachment-plan"));
   router.get("/boxes/:boxId/owner-key", operation("get", "owner-key-plan"));
   router.put("/boxes/:boxId/owner-key", csrf, proofBudget, operation("put", "owner-key-plan"));
   router.use((error, _req, res, _next) => sendAuthError(res, error));

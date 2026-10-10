@@ -12,6 +12,7 @@ use unicode_normalization::UnicodeNormalization;
 use wasm_bindgen::prelude::*;
 use zeroize::{Zeroize, Zeroizing};
 
+mod attachment;
 mod item_edit;
 mod recovery;
 mod shared;
@@ -272,6 +273,12 @@ extern "C" {
     fn set_onmessage(this: &DedicatedWorkerGlobalScope, handler: &JsValue);
     #[wasm_bindgen(method, js_name = postMessage)]
     fn post_message(this: &DedicatedWorkerGlobalScope, message: &JsValue);
+    #[wasm_bindgen(method, js_name = postMessage)]
+    fn post_message_transfer(
+        this: &DedicatedWorkerGlobalScope,
+        message: &JsValue,
+        transfer: &JsValue,
+    );
     #[wasm_bindgen(method, getter)]
     fn data(this: &MessageEvent) -> JsValue;
 }
@@ -298,8 +305,8 @@ pub fn start_worker() -> Result<(), JsValue> {
             .clone()
             .unchecked_into();
     let handler = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
-        let reply = worker.handle(event.data().as_string().unwrap_or_default());
-        replies.post_message(&JsValue::from_str(&reply));
+        let (reply, transfers) = attachment::exchange(&mut worker, event.data());
+        replies.post_message_transfer(&reply, &transfers);
     });
     scope.set_onmessage(handler.as_ref());
     handler.forget();

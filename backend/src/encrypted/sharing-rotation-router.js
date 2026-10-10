@@ -35,12 +35,13 @@ export function createSharingRotationRouter({ pool, authStore, loginGuardStore }
   function handle(operation) {
     return async (req, res) => {
       try {
-        const page = ["members", "items", "item"].includes(operation);
-        const allowed = page ? operation === "item" ? ["revision"] : ["revision", "after"] : [];
+        const page = ["members", "items", "item", "attachments", "attachment"].includes(operation);
+        const single = operation === "item" || operation === "attachment";
+        const allowed = page ? single ? ["revision"] : ["revision", "after"] : [];
         if (Object.keys(req.query).some(key => !allowed.includes(key))) {
           throw authHttpError(400, "PS051", "Unexpected sharing selector");
         }
-        const noBody = ["grant-get", "snapshot", "members", "items", "item", "status", "abort", "grant-delete"].includes(operation);
+        const noBody = ["grant-get", "snapshot", "members", "items", "item", "attachments", "attachment", "status", "abort", "grant-delete"].includes(operation);
         if (noBody && (Number(req.headers["content-length"] ?? 0) !== 0 || req.headers["transfer-encoding"] !== undefined)) {
           throw authHttpError(400, "PS051", "Unexpected body on sharing lookup or cancellation");
         }
@@ -51,7 +52,7 @@ export function createSharingRotationRouter({ pool, authStore, loginGuardStore }
               || (req.query.after !== undefined && typeof req.query.after !== "string")) {
             throw authHttpError(400, "PS051", "Invalid sharing snapshot selector");
           }
-          request = operation === "item" ? { revision: Number(revision) } : { revision: Number(revision), after: req.query.after ?? null };
+          request = single ? { revision: Number(revision) } : { revision: Number(revision), after: req.query.after ?? null };
         }
         // Only commit accepts a login password. All other operations pass the
         // entire body to strict Rust validation, including unexpected fields.
@@ -62,7 +63,9 @@ export function createSharingRotationRouter({ pool, authStore, loginGuardStore }
         const command = operation.startsWith("grant-") ? "shared-grant-plan" : "encrypted-rotation-plan";
         const plan = await nativeMutation({ command, operation, actor: req.auth.userId, session: req.auth.sessionId,
           boxId: req.params.boxId, operationId: req.params.operationId, recipientId: req.params.recipientId,
-          itemId: req.params.itemId, request });
+          itemId: req.params.itemId, attachmentId: req.params.attachmentId,
+          requestJson: req.encryptedAttachmentJson,
+          request: req.encryptedAttachmentJson !== undefined ? undefined : request });
         let proofEmail;
         if (plan.requiresReauthentication) {
           const ip = resolveClientIp(req);
@@ -105,8 +108,11 @@ export function createSharingRotationRouter({ pool, authStore, loginGuardStore }
   router.get("/sharing-snapshot/members", handle("members"));
   router.get("/sharing-snapshot/items", handle("items"));
   router.get("/sharing-snapshot/items/:itemId", handle("item"));
+  router.get("/sharing-snapshot/attachments", handle("attachments"));
+  router.get("/sharing-snapshot/items/:itemId/attachments/:attachmentId", handle("attachment"));
   router.put("/rotations/:operationId", csrf, handle("start"));
   router.put("/rotations/:operationId/items/:itemId", csrf, handle("stage-item"));
+  router.put("/rotations/:operationId/items/:itemId/attachments/:attachmentId", csrf, handle("stage-attachment"));
   router.put("/rotations/:operationId/grants/:recipientId", csrf, handle("stage-grant"));
   router.post("/rotations/:operationId/commit", csrf, proofThrottle, handle("commit"));
   router.get("/rotations/:operationId", handle("status"));

@@ -19,6 +19,7 @@ zeroize = "1"
 argon2 = { version = "0.5", features = ["zeroize"] }
 unicode-normalization = "0.1"
 wasm-bindgen = "=0.2.122"
+js-sys = "=0.3.99"
 
 [dev-dependencies]
 wasm-bindgen-test = "=0.3.72"

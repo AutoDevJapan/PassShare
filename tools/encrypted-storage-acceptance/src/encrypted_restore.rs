@@ -67,6 +67,9 @@ fn security_state(db: &Database) -> String {
         "encrypted_rotation_items",
         "encrypted_rotation_grants",
         "encrypted_item_tombstones",
+        "encrypted_attachments",
+        "encrypted_attachment_tombstones",
+        "encrypted_rotation_attachments",
     ];
     let parts = tables.iter().map(|t| format!("SELECT '{t}' AS name, count(*)::text || ':' || COALESCE(string_agg(md5(to_jsonb(r)::text),',' ORDER BY md5(to_jsonb(r)::text)),'') AS hash FROM {t} r")).collect::<Vec<_>>();
     db.sql(&format!(
@@ -464,6 +467,22 @@ fn restore_search_path(mut script: Vec<u8>) -> Vec<u8> {
     script
 }
 
+pub(super) fn attachment_roundtrip(source: &Database, network: &Network) -> Database {
+    let owner = fixture_owner(source);
+    bind(source, &owner, "source");
+    let before = inventory(source, true);
+    let backup = dump(source, &owner);
+    let restored = target(source, network, &owner);
+    restore(&restored, &owner, &backup);
+    assert!(may_resume(source,&restored,&owner),"restored attachments require current source authorization/key/security equality before starting the isolated API");
+    assert!(
+        inventory(source, true) == before,
+        "attachment archive leaves all source rows and xmin unchanged"
+    );
+    println!("attachment dump/restore: every public table, live attachment envelopes, reserved IDs and pending stages match");
+    restored
+}
+
 fn may_resume(source: &Database, restored: &Database, owner: &str) -> bool {
     bound(source, owner, "source")
         && bound(restored, owner, "restore")
@@ -473,7 +492,10 @@ fn may_resume(source: &Database, restored: &Database, owner: &str) -> bool {
         && security_state(source) == security_state(restored)
 }
 
-pub fn run(db: &Database, network: &Network, mode: &Mode) {
+// Both entrypoints must initialize the same archived ownership marker. The
+// Windows fixture already has it; a fresh Docker DB does not. Keep the current
+// binding outside public and validate the marker as well before resuming APIs.
+fn fixture_owner(db: &Database) -> String {
     let owner = db.local.as_ref().map_or_else(
         // Create the fixture owner client-side before any backend migration.
         // A fresh image's database must not require an optional SQL UUID function.
@@ -490,6 +512,11 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
         db.sql(&format!("CREATE TABLE passshare_fixture_owner(owner_id text PRIMARY KEY); INSERT INTO passshare_fixture_owner VALUES('{owner}')"));
     }
     assert!(db.sql("SELECT owner_id FROM passshare_fixture_owner") == owner);
+    owner
+}
+
+pub fn run(db: &Database, network: &Network, mode: &Mode) {
+    let owner = fixture_owner(db);
     bind(db, &owner, "source");
     let host = Host::start(db, network, mode);
     let p = host.port;
@@ -783,6 +810,28 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires the pinned Docker PostgreSQL image and formal native binary"]
+    fn attachment_docker_ownership_marker_survives_restore() {
+        let native = std::env::var_os("PASSSHARE_ACCEPTANCE_NATIVE")
+            .map(PathBuf::from)
+            .expect("explicit formal native fixture binary");
+        let mode = Mode::Node(native);
+        let network = Network::start();
+        let source = Database::start(&network);
+        let host = Host::start(&source, &network, &mode);
+        drop(host);
+        assert_eq!(source.sql("SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='passshare_fixture_owner'"), "0");
+        let restored = attachment_roundtrip(&source, &network);
+        assert_eq!(
+            source.sql("SELECT owner_id FROM passshare_fixture_owner"),
+            restored.sql("SELECT owner_id FROM passshare_fixture_owner")
+        );
+        drop(restored);
+        drop(source);
+        drop(network);
+        assert!(!CLEANUP_FAILED.load(Ordering::SeqCst));
+    }
     #[test]
     fn restore_initialization_changes_only_header_never_copy_or_function_payload() {
         let header = "SELECT pg_catalog.set_config('search_path', '', false);";

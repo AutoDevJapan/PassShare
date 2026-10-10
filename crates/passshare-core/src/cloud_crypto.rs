@@ -14,6 +14,11 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::{crypto::MasterKey, ConnectId};
 
+mod attachments;
+pub use attachments::{
+    AttachmentContext, AttachmentPlaintext, EncryptedAttachment, MAX_ATTACHMENT_BYTES,
+    MAX_ATTACHMENT_NAME_BYTES,
+};
 mod shared_keys;
 pub use shared_keys::{
     AccountIdentity, AccountIdentityContext, PublicAccountIdentity, SharedKeyContext,
