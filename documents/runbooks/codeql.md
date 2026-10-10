@@ -24,6 +24,11 @@ Kotlinは `autobuild` または `manual`、Goもこの2方式、Rustは `none` �
 
 ## Androidの実行順序
 
+SDKの設定アクションには `packages: platform-tools` を明示します。
+アクションの標準値にある旧 `tools` は配布されておらず、実CIで取得が終了コード1となりました。
+command-line toolsはアクション自身が導入し、後続で固定platform/build-tools/NDKを導入します。
+SDK利用条件は通常どおり確認しますが、その長い本文をCIログへ複製しません。
+
 1. Ubuntu24.04でJDK21、SDK36、build-tools36.0.0、NDK30.0.14904198を導入します。
    Rustの `x86_64-linux-android` target、Cargo版Tauri CLI2.11.4を導入します。
    Connect JS SDKとモバイルの依存を `pnpm --frozen-lockfile` で導入し、両方をビルドします。
