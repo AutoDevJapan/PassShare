@@ -1,10 +1,10 @@
 {
-  "sourceCommit": "2cef3beae409f8d08d752754daa098807fc2ef0e",
-  "run": 38058867258,
+  "sourceCommit": "b8352c8624e7838fa06fe08e3b89852d58e9d53b",
+  "run": 38063059355,
   "buildKind": "github-actions-tested",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
-    "Cargo.lock": "f16b9ce99e3fdea2bf3239453b39c57c54d3de1e5a00d2858c185cc96cec6683",
+    "Cargo.lock": "651611a09b514f322fb422dd5d4d3ec49278e1a1074c25745221b6c84fe9a8e0",
     "crates/passshare-core/Cargo.toml": "bb07748d5f01016a45e10850418cc6ba75ecf55161e7759390e1f7ca3e81c8d2",
     "packages/cloud-wasm/Cargo.toml": "c1b7d7f6cb922727783756ecd546ef6df544d9995ed416ea5cfcdc3046a8fc1f",
     "packages/cloud-wasm/Cargo.lock": "a4ef6b54a697ade66b5bb842b620de2ee1fb89843c01d219b6b9147770939d48",
@@ -13,7 +13,7 @@
     "crates/passshare-core/src/error.rs": "5df9b408190b4ca2ea8efb74f844e35c4cfe9d1b27aff9f13525cc60236448f8",
     "crates/passshare-core/src/migration.rs": "5b8aa4736edda87a8ba78f243af9a18a1a5a2cfa82f38dedf53bd5f65fd81a83",
     "crates/passshare-core/src/lib.rs": "c18ff9e5539495cdcee8eb3f8e49a89edb21961e7dd07e210feeada60082e115",
-    "crates/passshare-core/src/password_box.rs": "0ba68b61884fbb0d2919fea453c53a227638f1dad8adb8a4de49f190e9845c44",
+    "crates/passshare-core/src/password_box.rs": "96b2560f3d1b1eac694d6dca92e5d5cb35ca648f949bdc7805f00bbec958f2ad",
     "crates/passshare-core/src/crypto.rs": "012e085319f5bb7d9e64e97c8f9c718f0039b2ba4972244b42c846c654d67260",
     "crates/passshare-core/src/storage/mod.rs": "5e73deea4e8723038ad5f1850260bb6b7671820c77b891456467a277453a2727",
     "crates/passshare-core/src/storage/file_format.rs": "490213271a666adbb2d9bb1476651905a804d8f4bdb5b55752dc974bbc687bfe",
