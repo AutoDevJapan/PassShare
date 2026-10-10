@@ -1040,7 +1040,7 @@ mod smoke_tests {
         let mut item = Item::new_login(
             payload.vault.id.clone(),
             "Synthetic login",
-            "synthetic-only",
+            fresh_master_password(),
         )
         .unwrap();
         item = item
@@ -1067,27 +1067,41 @@ mod smoke_tests {
         value["items"][0]["files"] = serde_json::json!([{"id": "synthetic-file", "contentPath": "attachments/ref", "size": 42}]);
         value["items"][0]["vault"]["extraReference"] = serde_json::json!("synthetic-reference");
         value["futureRoot"] = serde_json::json!({"nested": ["synthetic-future"]});
-        let salt = [1; 16];
+        let salt = passshare_core::crypto::generate_salt().unwrap();
         let key = derive_master_key(password, &salt).unwrap();
         let bytes = Zeroizing::new(serde_json::to_vec(&value).unwrap());
         let (ciphertext, nonce) = encrypt(&bytes, &key).unwrap();
         let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let nonce: String = nonce
-            .chunks_exact(3)
-            .flat_map(|chunk| {
-                [
-                    alphabet[(chunk[0] >> 2) as usize] as char,
-                    alphabet[(((chunk[0] & 3) << 4) | (chunk[1] >> 4)) as usize] as char,
-                    alphabet[(((chunk[1] & 15) << 2) | (chunk[2] >> 6)) as usize] as char,
-                    alphabet[(chunk[2] & 63) as usize] as char,
-                ]
-            })
-            .collect();
+        let encode = |bytes: &[u8]| -> String {
+            bytes
+                .chunks(3)
+                .flat_map(|chunk| {
+                    let a = chunk[0];
+                    let b = chunk.get(1).copied().unwrap_or(0);
+                    let c = chunk.get(2).copied().unwrap_or(0);
+                    [
+                        alphabet[(a >> 2) as usize] as char,
+                        alphabet[(((a & 3) << 4) | (b >> 4)) as usize] as char,
+                        if chunk.len() > 1 {
+                            alphabet[(((b & 15) << 2) | (c >> 6)) as usize] as char
+                        } else {
+                            '='
+                        },
+                        if chunk.len() > 2 {
+                            alphabet[(c & 63) as usize] as char
+                        } else {
+                            '='
+                        },
+                    ]
+                })
+                .collect()
+        };
+        let nonce = encode(&nonce);
         PasswordBoxFile {
             version: 1,
             kdf: KdfParams {
                 algorithm: "argon2id".into(),
-                salt: "AQEBAQEBAQEBAQEBAQEBAQ==".into(),
+                salt: encode(&salt),
                 memory_kib: KDF_MEMORY_KIB,
                 time_cost: KDF_TIME_COST,
                 parallelism: KDF_PARALLELISM,
@@ -1125,14 +1139,14 @@ mod smoke_tests {
     #[test]
     fn smoke_native_recovery_enable_lost_password_rekey_full_dto_roundtrip() {
         let (dir, path) = temp_box("native-recovery-roundtrip");
-        let old_password = "synthetic-old-only";
-        let new_password = "synthetic-new-only";
-        let original = legacy_recovery_fixture(&path, old_password);
+        let old_password = fresh_master_password();
+        let new_password = fresh_master_password();
+        let original = legacy_recovery_fixture(&path, &old_password);
         let state = recovery_state();
         state
             .finish_unlock(
                 0,
-                PasswordBox::open(&path, old_password).unwrap(),
+                PasswordBox::open(&path, &old_password).unwrap(),
                 path.clone(),
             )
             .unwrap();
@@ -1167,19 +1181,16 @@ mod smoke_tests {
             .unwrap();
         assert!(state.status().unwrap().unlocked);
         assert_eq!(state.status().unwrap().epoch, epoch + 1);
-        let reopened = PasswordBox::open(&path, new_password).unwrap();
-        assert_eq!(
-            serde_json::to_value(reopened.list_connect_items().unwrap()).unwrap(),
-            before
-        );
-        assert!(PasswordBox::open(&path, old_password).is_err());
-        let mut after = full_recovery_payload(&path, new_password);
+        let reopened = PasswordBox::open(&path, &new_password).unwrap();
+        assert!(serde_json::to_value(reopened.list_connect_items().unwrap()).unwrap() == before);
+        assert!(PasswordBox::open(&path, &old_password).is_err());
+        let mut after = full_recovery_payload(&path, &new_password);
         after
             .as_object_mut()
             .unwrap()
             .remove("localKeyRecoveryVersion");
         after.as_object_mut().unwrap().remove("recoverySecret");
-        assert_eq!(after, original);
+        assert!(after == original);
         state.lock().unwrap();
         assert!(state.access().is_err());
         drop(reopened);
@@ -1189,13 +1200,21 @@ mod smoke_tests {
 
     #[test]
     fn smoke_native_recovery_invalid_inputs_preserve_original_and_current_state() {
+        let old_password = fresh_master_password();
+        let new_password = fresh_master_password();
+        let wrong_password = fresh_master_password();
+        let other_password = fresh_master_password();
+        let wrong_code =
+            Zeroizing::new(passshare_core::crypto::generate_recovery_secret().unwrap());
+        let invalid_code = fresh_master_password();
+
         let (dir, path) = temp_box("native-recovery-invalid");
-        legacy_recovery_fixture(&path, "synthetic-original-only");
+        legacy_recovery_fixture(&path, &old_password);
         let state = recovery_state();
         state
             .finish_unlock(
                 0,
-                PasswordBox::open(&path, "synthetic-original-only").unwrap(),
+                PasswordBox::open(&path, &old_password).unwrap(),
                 path.clone(),
             )
             .unwrap();
@@ -1209,35 +1228,41 @@ mod smoke_tests {
             .list_connect_items()
             .unwrap();
         assert!(state
-            .enable_local_recovery(epoch, 0, "synthetic-wrong-only".to_string().into())
+            .enable_local_recovery(epoch, 0, wrong_password.clone().into())
             .is_err());
         assert!(state
             .recover_and_save(
                 epoch,
                 0,
                 path.clone(),
-                "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
-                    .to_string()
-                    .into(),
-                "synthetic-new".to_string().into(),
-                "synthetic-new".to_string().into()
+                wrong_code.as_str().to_string().into(),
+                new_password.clone().into(),
+                new_password.clone().into()
             )
             .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), original); // v1 not enabled
         let code = Zeroizing::new(
             state
-                .enable_local_recovery(epoch, 0, "synthetic-original-only".to_string().into())
+                .enable_local_recovery(epoch, 0, old_password.clone().into())
                 .unwrap(),
         );
         let original = std::fs::read(&path).unwrap();
         for (test_code, password, confirmation) in [
             (
-                "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
-                "synthetic-new",
-                "synthetic-new",
+                wrong_code.as_str(),
+                new_password.as_str(),
+                new_password.as_str(),
             ),
-            ("invalid-code-format", "synthetic-new", "synthetic-new"),
-            (code.as_str(), "synthetic-new", "synthetic-mismatch"),
+            (
+                invalid_code.as_str(),
+                new_password.as_str(),
+                new_password.as_str(),
+            ),
+            (
+                code.as_str(),
+                new_password.as_str(),
+                other_password.as_str(),
+            ),
             (code.as_str(), "", ""),
         ] {
             assert!(state
@@ -1253,15 +1278,15 @@ mod smoke_tests {
             assert_eq!(std::fs::read(&path).unwrap(), original);
             assert_eq!(state.status().unwrap().epoch, epoch);
             assert!(state.status().unwrap().unlocked);
-            assert_eq!(
+            assert!(
                 state
                     .access()
                     .unwrap()
                     .as_ref()
                     .unwrap()
                     .list_connect_items()
-                    .unwrap(),
-                items
+                    .unwrap()
+                    == items
             );
         }
         drop(state);
@@ -1270,8 +1295,11 @@ mod smoke_tests {
 
     #[test]
     fn smoke_native_recovery_stale_manual_background_and_cancel_never_publish() {
+        let old_password = fresh_master_password();
+        let new_password = fresh_master_password();
+
         let (dir, path) = temp_box("native-recovery-stale");
-        let pb = PasswordBox::create(&path, "synthetic-old-only").unwrap();
+        let pb = PasswordBox::create(&path, &old_password).unwrap();
         let code = Zeroizing::new(pb.recovery_secret().unwrap().unwrap().to_string());
         let original = std::fs::read(&path).unwrap();
         drop(pb);
@@ -1285,7 +1313,7 @@ mod smoke_tests {
                 state.lock().unwrap();
             }
             assert!(state
-                .commit_recovery(epoch, 0, path.clone(), recovered, "synthetic-new-only")
+                .commit_recovery(epoch, 0, path.clone(), recovered, &new_password)
                 .is_err());
             assert!(state.access().is_err());
             assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -1299,8 +1327,8 @@ mod smoke_tests {
                 0,
                 path.clone(),
                 code,
-                "synthetic-new-only".to_string().into(),
-                "synthetic-new-only".to_string().into()
+                new_password.clone().into(),
+                new_password.clone().into()
             )
             .is_err());
         assert!(state.access().is_err());
@@ -1312,9 +1340,12 @@ mod smoke_tests {
     #[cfg(windows)]
     #[test]
     fn smoke_native_recovery_save_failure_preserves_bytes_epoch_and_open_box() {
+        let old_password = fresh_master_password();
+        let new_password = fresh_master_password();
+
         use std::os::windows::fs::OpenOptionsExt;
         let (dir, path) = temp_box("native-recovery-save-failure");
-        let pb = PasswordBox::create(&path, "synthetic-old-only").unwrap();
+        let pb = PasswordBox::create(&path, &old_password).unwrap();
         let code = Zeroizing::new(pb.recovery_secret().unwrap().unwrap().to_string());
         let state = recovery_state();
         state.finish_unlock(0, pb, path.clone()).unwrap();
@@ -1332,12 +1363,12 @@ mod smoke_tests {
                 0,
                 path.clone(),
                 code,
-                "synthetic-new-only".to_string().into(),
-                "synthetic-new-only".to_string().into()
+                new_password.clone().into(),
+                new_password.clone().into()
             )
             .is_err());
         assert!(state
-            .enable_local_recovery(epoch, 0, "synthetic-old-only".to_string().into())
+            .enable_local_recovery(epoch, 0, old_password.clone().into())
             .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), original);
         assert_eq!(state.status().unwrap().epoch, epoch);
@@ -1350,21 +1381,23 @@ mod smoke_tests {
             .list_connect_items()
             .is_ok());
         drop(pin);
-        assert!(PasswordBox::open(&path, "synthetic-old-only").is_ok());
-        assert!(PasswordBox::open(&path, "synthetic-new-only").is_err());
+        assert!(PasswordBox::open(&path, &old_password).is_ok());
+        assert!(PasswordBox::open(&path, &new_password).is_err());
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn smoke_native_enable_stale_source_preserves_current_app_and_external_file() {
+        let old_password = fresh_master_password();
+
         let (dir, path) = temp_box("native-enable-stale-source");
-        legacy_recovery_fixture(&path, "synthetic-old-only");
+        legacy_recovery_fixture(&path, &old_password);
         let state = recovery_state();
         state
             .finish_unlock(
                 0,
-                PasswordBox::open(&path, "synthetic-old-only").unwrap(),
+                PasswordBox::open(&path, &old_password).unwrap(),
                 path.clone(),
             )
             .unwrap();
@@ -1376,31 +1409,31 @@ mod smoke_tests {
             .unwrap()
             .list_connect_items()
             .unwrap();
-        let mut external = PasswordBox::open(&path, "synthetic-old-only").unwrap();
+        let mut external = PasswordBox::open(&path, &old_password).unwrap();
         add_login(
             &mut external,
             "Synthetic external change",
-            "synthetic-only",
+            &fresh_master_password(),
             None,
             None,
             &[],
         );
-        external.save("synthetic-old-only").unwrap();
+        external.save(&old_password).unwrap();
         let current_bytes = std::fs::read(&path).unwrap();
         assert!(state
-            .enable_local_recovery(epoch, 0, "synthetic-old-only".to_string().into())
+            .enable_local_recovery(epoch, 0, old_password.clone().into())
             .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), current_bytes);
         assert_eq!(state.status().unwrap().epoch, epoch);
-        assert_eq!(
+        assert!(
             state
                 .access()
                 .unwrap()
                 .as_ref()
                 .unwrap()
                 .list_connect_items()
-                .unwrap(),
-            before
+                .unwrap()
+                == before
         );
         drop(external);
         drop(state);
@@ -1409,17 +1442,23 @@ mod smoke_tests {
 
     #[test]
     fn smoke_readonly_recovery_never_saves_and_lock_rejects_secret_reads() {
+        let old_password = fresh_master_password();
+        let new_password = fresh_master_password();
+
         let (dir, path) = temp_box("native-readonly-recovery");
-        let pb = PasswordBox::create(&path, "synthetic-old-only").unwrap();
+        let pb = PasswordBox::create(&path, &old_password).unwrap();
         let code = Zeroizing::new(pb.recovery_secret().unwrap().unwrap().to_string());
         let original = std::fs::read(&path).unwrap();
         let mut recovered = PasswordBox::recover(&path, &code).unwrap();
         assert!(recovered.list_connect_items().is_ok());
-        assert!(recovered.save("synthetic-new-only").is_err());
+        assert!(recovered.save(&new_password).is_err());
         assert!(recovered
             .apply_and_save(
-                SavedChange::ImportCsv("Title,Password\nsynthetic,synthetic-only"),
-                "synthetic-new-only"
+                SavedChange::ImportCsv(&format!(
+                    "Title,Password\nsynthetic,{}",
+                    fresh_master_password()
+                )),
+                &new_password
             )
             .is_err());
         recovered.lock();
@@ -1452,24 +1491,22 @@ mod smoke_tests {
 
     #[test]
     fn smoke_native_enable_saved_code_can_be_reobtained_after_background() {
+        let old_password = fresh_master_password();
+
         let (dir, path) = temp_box("native-enable-code-retry");
-        legacy_recovery_fixture(&path, "synthetic-old-only");
+        legacy_recovery_fixture(&path, &old_password);
         let state = recovery_state();
         state
             .finish_unlock(
                 0,
-                PasswordBox::open(&path, "synthetic-old-only").unwrap(),
+                PasswordBox::open(&path, &old_password).unwrap(),
                 path.clone(),
             )
             .unwrap();
         let first = state.begin_recovery_session().unwrap();
         let code = Zeroizing::new(
             state
-                .enable_local_recovery(
-                    first.epoch,
-                    first.ticket,
-                    "synthetic-old-only".to_string().into(),
-                )
+                .enable_local_recovery(first.epoch, first.ticket, old_password.clone().into())
                 .unwrap(),
         );
         // The save completed, but the first code never reaches a visible UI.
@@ -1482,21 +1519,17 @@ mod smoke_tests {
         state
             .finish_unlock(
                 state.begin_unlock().unwrap(),
-                PasswordBox::open(&path, "synthetic-old-only").unwrap(),
+                PasswordBox::open(&path, &old_password).unwrap(),
                 path.clone(),
             )
             .unwrap();
         let retry = state.begin_recovery_session().unwrap();
         let same_code = Zeroizing::new(
             state
-                .enable_local_recovery(
-                    retry.epoch,
-                    retry.ticket,
-                    "synthetic-old-only".to_string().into(),
-                )
+                .enable_local_recovery(retry.epoch, retry.ticket, old_password.clone().into())
                 .unwrap(),
         );
-        assert_eq!(*same_code, *code);
+        assert!(*same_code == *code);
         assert!(PasswordBox::recover(&path, &same_code).is_ok());
         state
             .end_recovery_session(Some(retry.ticket), false)
