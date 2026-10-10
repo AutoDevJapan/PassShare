@@ -3,6 +3,40 @@ use super::{http, http_raw};
 use serde_json::{json, Value};
 use std::{thread, time::Duration};
 
+fn business_state() -> String {
+    // Only the guarded, isolated CI PostgreSQL fixture is accessible through
+    // sql(). Compare all business rows/xmin without returning any credential.
+    // Login IP quota accounting is intentionally outside the retirement txn.
+    let tables = [
+        "connect_vaults",
+        "connect_items",
+        "connect_item_files",
+        "users",
+        "sessions",
+        "connect_tokens",
+        "vault_memberships",
+        "vault_invitations",
+        "login_failures",
+        "mutation_operations",
+        "encrypted_box_state",
+        "encrypted_items",
+        "encrypted_item_tombstones",
+        "encrypted_owner_keys",
+        "encrypted_account_identities",
+        "encrypted_key_grants",
+        "encrypted_rotations",
+        "encrypted_rotation_items",
+        "encrypted_rotation_grants",
+    ];
+    let parts: Vec<_> = tables.iter().map(|table| format!(
+        "SELECT '{table}' AS name, COALESCE(string_agg(md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text),',' ORDER BY md5(jsonb_build_object('row',to_jsonb(r),'xmin',r.xmin::text)::text)),'') AS digest FROM {table} r"
+    )).collect();
+    sql(&format!(
+        "SELECT md5(string_agg(name||':'||digest,'|' ORDER BY name)) FROM ({}) fixture_rows",
+        parts.join(" UNION ALL ")
+    ))
+}
+
 fn token(port: u16, session: &str) -> String {
     let (status, response) = http(
         port,
@@ -247,18 +281,27 @@ pub fn run(port: u16, nonce: u128) {
         let id = uuid(&actor["user"]["id"]);
         let name = format!("retire_failure_{nonce}");
         sql(&format!("CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic retirement commit failure'; END $$; CREATE TRIGGER {name} BEFORE DELETE ON users FOR EACH ROW WHEN(OLD.id='{id}') EXECUTE FUNCTION {name}();"));
+        let before_fault = business_state();
+        let (status, error) = http(
+            port,
+            "DELETE",
+            "/api/auth/account",
+            actor_session,
+            "",
+            &deletion,
+        );
         assert_eq!(
-            http(
-                port,
-                "DELETE",
-                "/api/auth/account",
-                actor_session,
-                "",
-                &deletion
-            )
-            .0,
-            500,
+            status, 503,
             "commit failure rolls back all private deletion"
+        );
+        assert_eq!(
+            error,
+            json!({"error":"PS019","message":"Encrypted membership service unavailable"}),
+            "DB faults expose only the fixed public response"
+        );
+        assert!(
+            business_state() == before_fault,
+            "retirement fault rolls back every business row and xmin"
         );
         sql(&format!(
             "DROP TRIGGER {name} ON users; DROP FUNCTION {name}();"
