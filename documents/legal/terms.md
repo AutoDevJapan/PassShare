@@ -50,3 +50,9 @@
 
 - [privacy.md](./privacy.md)
 - [production-v2.md](../spec/production-v2.md)
+
+## 事業者情報の開示請求
+
+販売・運営事業者は AutoDevJapan、問い合わせ先は contact@autodevjapan.com を維持する。既存の事業者・問い合わせ表示から、共通の [事業者情報の開示請求](https://autodevjapan.com/api/disclosure) へ案内する。氏名・所在地・電話番号の正式データはこのリポジトリで保持・常時表示せず、メールでの請求も受け付ける。
+
+この変更は導線の準備であり、本番の正式原本設定と請求時の即時応答を確認するまでは draft PR にとどめる。本番への請求、購入、課金、販売開始は検査に含めない。
