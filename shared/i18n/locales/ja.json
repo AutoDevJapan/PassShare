@@ -1,4 +1,13 @@
 {
+  "encryptedItems.conflict": "他の人が更新しています。下書きは保持されています。",
+  "encryptedItems.unknown": "保存結果を確認できません。同じ保存内容を再送して確認してください。確認が終わるまで、別の内容は保存できません。",
+  "encryptedItems.failed": "暗号化した項目を確認できませんでした。接続を確認して再試行してください。",
+  "encryptedItems.retrySame": "同じ操作を再送して確認",
+  "encryptedItems.deviceOnly": "項目の内容は、この端末で復号しています。",
+  "encryptedItems.categories": "項目の種類",
+  "encryptedItems.actions": "操作",
+  "encryptedItems.showPassword": "パスワードを表示",
+  "encryptedItems.hidePassword": "パスワードを隠す",
   "app.item.conflictError": "ほかの人がこの項目を更新しました。入力は残しています。一覧を更新して最新の内容を確認し、編集をキャンセルして開き直してください。",
   "app.item.createConflictError": "前の作成結果と入力が一致しません。入力は残しています。一覧を更新して保存済みの内容を確認してください。",
   "app.item.createResultUnknown": "保存結果を確認できません。入力は残しています。同じ内容で再試行すると、この作成操作の結果を確認します。",

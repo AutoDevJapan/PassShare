@@ -7,6 +7,7 @@ import { listVaultMembers } from "../../lib/auth-api";
 import { CloudWorker, lockCloudUi, type OwnerContext } from "../../lib/cloud-worker";
 import { CloudApiError, bundleText, clearPendingBundle, getBoxState, getOwnerBundle,
   readPendingBundle, sameBundle, savePendingBundle, setupBox, type BoxState } from "../../lib/cloud-api";
+import { EncryptedItemsPage } from "./EncryptedItemsPage";
 
 function errorKey(error: unknown): MessageKey {
   if (error instanceof CloudApiError) {
@@ -29,6 +30,7 @@ export function CloudBoxGate({ compatibility, setup = false }: {
   const scope = `${user?.id}:${vaultId}:${setup}:${location.key}`;
   const [result, setResult] = useState<{ scope: string; state?: BoxState; error?: MessageKey }>({ scope: "" });
   const [retry, setRetry] = useState(0);
+  const observedEncrypted = useRef<{ scope: string; keyEpoch: number } | null>(null);
   const gateRequest = useRef<{ controller: AbortController; scope: string; retry: number; encrypted: boolean; checking: Promise<BoxState> | null } | null>(null);
   const readState = useCallback(async (signal: AbortSignal): Promise<BoxState> => {
     try { return await getBoxState(vaultId, signal); }
@@ -36,28 +38,39 @@ export function CloudBoxGate({ compatibility, setup = false }: {
       // With the feature disabled, the existing metadata endpoint still checks
       // the authoritative DB boundary and rejects encrypted boxes with 409.
       // A 404 alone never proves compatibility. No legacy item is requested.
-      if (!(error instanceof CloudApiError) || error.status !== 404 || setup || !compatibility || !connectClient) throw error;
+      if (!(error instanceof CloudApiError) || error.status !== 404 || setup || !compatibility || !connectClient ||
+        observedEncrypted.current?.scope === scope) throw error;
       signal.throwIfAborted();
       await connectClient.getVault(vaultId);
       signal.throwIfAborted();
       return { mode: "compatibility", keyEpoch: null };
     }
-  }, [vaultId, setup, !!compatibility, connectClient]);
+  }, [scope, vaultId, setup, !!compatibility, connectClient]);
   useLayoutEffect(() => {
     const controller = new AbortController();
-    const request: NonNullable<typeof gateRequest.current> = { controller, scope, retry, encrypted: false, checking: null };
+    const request: NonNullable<typeof gateRequest.current> = { controller, scope, retry,
+      encrypted: observedEncrypted.current?.scope === scope, checking: null };
     gateRequest.current = request;
     if (user && vaultId) {
       request.checking = readState(controller.signal).finally(() => { request.checking = null; });
       void request.checking.then(
       (state) => {
         if (!controller.signal.aborted) {
-          if (state.mode === "encrypted") request.encrypted = true;
+          if (state.mode === "encrypted") {
+            request.encrypted = true;
+            observedEncrypted.current = { scope, keyEpoch: state.keyEpoch };
+          } else if (request.encrypted) {
+            lockCloudUi();
+            setResult({ scope, error: "cloud.unavailable" });
+            return;
+          }
           if (state.mode === "encrypted" || !request.encrypted) setResult({ scope, state });
         }
       },
-      (error: unknown) => { if (!controller.signal.aborted) setResult({ scope,
-        error: compatibility && !setup ? "app.item.loadError" : errorKey(error) }); },
+      (error: unknown) => { if (!controller.signal.aborted) {
+        if (request.encrypted) lockCloudUi();
+        setResult({ scope, error: compatibility && !setup ? "app.item.loadError" : errorKey(error) });
+      } },
       );
     }
     return () => { controller.abort(); gateRequest.current = null; };
@@ -72,6 +85,7 @@ export function CloudBoxGate({ compatibility, setup = false }: {
     controller.signal.throwIfAborted();
     if (state.mode !== "compatibility") {
       request.encrypted = true;
+      observedEncrypted.current = { scope, keyEpoch: state.keyEpoch };
       setResult({ scope, state });
       throw new CloudApiError(409);
     }
@@ -107,6 +121,7 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
   const [hasPending, setHasPending] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const worker = useRef<CloudWorker | null>(null);
+  const heldOwnerContext = useRef<OwnerContext | null>(null);
   const operation = useRef<{ controller: AbortController; password: string } | null>(null);
   const generation = useRef(0);
   const mounted = useRef(false);
@@ -119,14 +134,16 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
     if (passwordInput.current) passwordInput.current.value = "";
     if (confirmInput.current) confirmInput.current.value = "";
   }
-  function lock() {
+  function lock(recheck = true) {
     ++generation.current;
     if (operation.current) { operation.current.password = ""; operation.current.controller.abort(); }
     operation.current = null;
     worker.current?.dispose(); worker.current = null;
+    heldOwnerContext.current = null;
     clearInputs(); setOpened(false); setBusy(false); setVerifying(false); setError(null);
     setLoggingOut(false);
-    setAuthorized(false); setCheckRevision((value) => value + 1);
+    setAuthorized(false);
+    if (recheck) setCheckRevision((value) => value + 1);
   }
   useLayoutEffect(() => {
     mounted.current = true;
@@ -150,12 +167,20 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
     };
   }, [boxId, ownerId]);
 
+  useLayoutEffect(() => {
+    if (initialState.mode !== state.mode || initialState.keyEpoch !== state.keyEpoch) {
+      lock(); setState(initialState);
+    }
+  }, [initialState.mode, initialState.keyEpoch]);
+
   useEffect(() => {
     let cancelled = false;
     const token = generation.current;
     const active = () => !cancelled && mounted.current && token === generation.current &&
       !logoutPending.current && document.visibilityState !== "hidden";
-    setAuthorized(false);
+    // Same-account metadata refresh must keep the mounted decrypted draft.
+    // Failed authorization still disposes the worker and hides all content.
+    if (!opened) setAuthorized(false);
     if (!connectClient || !ownerId || document.visibilityState === "hidden") return;
     const controller = new AbortController();
     void (async () => {
@@ -163,17 +188,17 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
         const members = await listVaultMembers(boxId, controller.signal);
         if (!active()) return;
         if (!members.some((m) => m.userId === ownerId && m.role === "owner")) {
-          setError("cloud.ownerOnly"); return;
+          lock(false); setError("cloud.ownerOnly"); return;
         }
         // Metadata only; never request legacy items for an encrypted box.
         const box = isSetup ? await connectClient.getVault(boxId)
-          : (await connectClient.listVaults().catch(() => [])).find((candidate) => candidate.id === boxId);
+          : (await connectClient.listVaults()).find((candidate) => candidate.id === boxId);
         if (!active()) return;
         if (isSetup && (!box || box.items !== 0)) { setError("cloud.notEmpty"); return; }
         setName(box?.name ?? boxId);
         setHasPending(!!readPendingBundle(ownerId, boxId));
         setAuthorized(true);
-      } catch (error) { if (active()) setError(errorKey(error)); }
+      } catch (error) { if (active()) { lock(false); setError(errorKey(error)); } }
     })();
     return () => { cancelled = true; controller.abort(); };
   }, [boxId, ownerId, connectClient, isSetup, checkRevision]);
@@ -248,10 +273,12 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
       // Read-back unlock, not a successful HTTP mutation, is the success boundary.
       if (expected) clearPendingBundle(ownerId, boxId, expected);
       setHasPending(false);
+      heldOwnerContext.current = { ...context, keyEpoch: current.keyEpoch };
       setState(current); setOpened(true); setVerifying(false);
     } catch (error) {
       if (!active()) return;
       worker.current?.dispose(); worker.current = null;
+      heldOwnerContext.current = null;
       setOpened(false); setError(errorKey(error));
     } finally {
       task.password = "";
@@ -274,16 +301,20 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
     }
   }
 
+  const unlocked = opened && authorized && worker.current && heldOwnerContext.current &&
+    heldOwnerContext.current.ownerAccountId === ownerId && heldOwnerContext.current.passwordBoxId === boxId &&
+    heldOwnerContext.current.keyEpoch === state.keyEpoch ? { worker: worker.current, scope: heldOwnerContext.current } : null;
   return <section className="app-page cloud-page">
     <Link className="app-back-link" to="/app/vaults">{t("app.vault.back")}</Link>
     <h1 className="cloud-page__heading">{t(isSetup ? "cloud.setupTitle" : "cloud.openTitle")}</h1>
     <div className="cloud-card">
-      <h2 className="ps-heading-3">{name || t("app.nav.vaults")}</h2>
-      <p>{t(isSetup ? "cloud.setupLead" : "cloud.openLead")}</p>
-      <p className="cloud-note">{t("cloud.crudPending")}</p>
-      {opened ? <div className="cloud-opened">
-        <p className="app-success" role="status">{t("cloud.opened")}</p>
-        <button type="button" className="ps-button cloud-submit" onClick={lock}>{t("cloud.lock")}</button>
+      <div className="encrypted-items-header">
+        <h2 className="ps-heading-3">{name || t("app.nav.vaults")}</h2>
+        {unlocked && <button type="button" className="ps-button cloud-submit" onClick={lockCloudUi}>{t("cloud.lock")}</button>}
+      </div>
+      {!unlocked && <p>{t(isSetup ? "cloud.setupLead" : "cloud.openLead")}</p>}
+      {unlocked ? <div className="cloud-opened">
+        <EncryptedItemsPage worker={unlocked.worker} scope={unlocked.scope} onLock={lock} />
       </div> : <form onSubmit={(event) => void submit(event)} aria-busy={busy}>
         <label className="ps-label" htmlFor="cloud-password">{t("cloud.password")}</label>
         <input id="cloud-password" ref={passwordInput} className="ps-input" type="password" autoComplete="off"
@@ -298,7 +329,7 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
         {hasPending && <p className="cloud-note" role="status">{t("cloud.pending")}</p>}
         <button className="ps-button cloud-submit" type="submit" disabled={busy || !authorized}>
           {t(busy ? (verifying ? "cloud.verifying" : "cloud.working") : isSetup ? "cloud.setupSubmit" : "cloud.openSubmit")}</button>
-        {busy && <button className="ps-button ps-button--secondary" type="button" onClick={lock}>{t("cloud.lock")}</button>}
+        {busy && <button className="ps-button ps-button--secondary" type="button" onClick={lockCloudUi}>{t("cloud.lock")}</button>}
       </form>}
       <p className="cloud-note">{t("cloud.neverSent")}</p>
       <p id="cloud-recovery" className="cloud-note">{t("cloud.recovery")}</p>
