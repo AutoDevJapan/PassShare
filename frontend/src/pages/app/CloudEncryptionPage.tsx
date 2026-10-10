@@ -323,7 +323,7 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
         <h2 className="ps-heading-3">{name || t("app.nav.vaults")}</h2>
         {unlocked && <button type="button" className="ps-button cloud-submit" onClick={lockCloudUi}>{t("cloud.lock")}</button>}
       </div>
-      {!unlocked && !recovering && <p>{t(isSetup ? "cloud.setupLead" : "cloud.openLead")}</p>}
+      {!unlocked && !recovering && <p>{t(isSetup ? "cloud.setupLead" : recipient ? "sharing.lead" : "cloud.openLead")}</p>}
       {recipient && authorized && sharingStarted && worker.current && <div hidden={!!unlocked}>
         <CloudSharingPanel worker={worker.current}
           scope={{ passwordBoxId: boxId, ownerAccountId: ownerId, keyEpoch: state.keyEpoch! }} recipient

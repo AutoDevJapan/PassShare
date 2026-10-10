@@ -71,10 +71,45 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --legacy-expiry --image passshare-todo1163-encrypted-api
       - name: Verify encrypted backup and isolated restore with the distribution image
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-restore --image passshare-todo1163-encrypted-api
+      - name: Leave disposable fixtures to exercise interrupted cleanup ownership
+        if: always()
+        run: |
+          image=mirror.gcr.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+          if docker image inspect "$image" >/dev/null 2>&1; then
+            owned=passshare1163-encrypted-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+            sentinel=passshare1163-cleanup-sentinel-${{ github.run_id }}-${{ github.run_attempt }}
+            printf '%s\n' "$sentinel" > "$RUNNER_TEMP/passshare1163-cleanup-sentinel"
+            : > "$RUNNER_TEMP/passshare1163-cleanup-volumes"
+            docker create --name "$owned" --label passshare.todo=1163 --label passshare.fixture=encrypted-storage "$image"
+            docker network create --label passshare.todo=1163 --label passshare.fixture=encrypted-storage "$owned-net"
+            docker create --name "$sentinel" --label passshare.todo=1163 --label passshare.fixture=cleanup-sentinel "$image"
+            docker network create --label passshare.todo=1163 --label passshare.fixture=cleanup-sentinel "$sentinel-net"
+            docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{println}}{{end}}{{end}}' "$owned" "$sentinel" > "$RUNNER_TEMP/passshare1163-cleanup-volumes"
+          fi
       - name: Remove the owned API image and verify fixture cleanup
         if: always()
         run: |
-          docker ps -a --filter label=passshare.fixture=encrypted-storage --format '{{.Names}}'
-          test -z "$(docker ps -aq --filter label=passshare.fixture=encrypted-storage)"
-          test -z "$(docker network ls -q --filter label=passshare.fixture=encrypted-storage)"
+          # This hosted runner's daemon belongs to this job. Cancellation may
+          # interrupt Rust Drop, so reclaim only this tool's two ownership labels.
+          containers="$(docker ps -aq --filter label=passshare.todo=1163 --filter label=passshare.fixture=encrypted-storage)"
+          if [ -n "$containers" ]; then docker rm -fv $containers; fi
+          networks="$(docker network ls -q --filter label=passshare.todo=1163 --filter label=passshare.fixture=encrypted-storage)"
+          if [ -n "$networks" ]; then docker network rm $networks; fi
+          test -z "$(docker ps -aq --filter label=passshare.todo=1163 --filter label=passshare.fixture=encrypted-storage)"
+          test -z "$(docker network ls -q --filter label=passshare.todo=1163 --filter label=passshare.fixture=encrypted-storage)"
           if docker image inspect passshare-todo1163-encrypted-api >/dev/null 2>&1; then docker rmi passshare-todo1163-encrypted-api; fi
+      - name: Verify that the other fixture label survived and reclaim the sentinel
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/passshare1163-cleanup-sentinel" ]; then
+            sentinel="$(cat "$RUNNER_TEMP/passshare1163-cleanup-sentinel")"
+            survived=true
+            docker container inspect "$sentinel" >/dev/null 2>&1 || survived=false
+            docker network inspect "$sentinel-net" >/dev/null 2>&1 || survived=false
+            if docker container inspect "$sentinel" >/dev/null 2>&1; then docker rm -v "$sentinel"; fi
+            if docker network inspect "$sentinel-net" >/dev/null 2>&1; then docker network rm "$sentinel-net"; fi
+            test "$survived" = true
+            while IFS= read -r volume; do
+              if [ -n "$volume" ] && docker volume inspect "$volume" >/dev/null 2>&1; then exit 1; fi
+            done < "$RUNNER_TEMP/passshare1163-cleanup-volumes"
+          fi
