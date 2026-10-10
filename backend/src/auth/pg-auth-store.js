@@ -362,7 +362,14 @@ export function createPgAuthStore(pool) {
         [userId,sessionId,vaultId,"revoke",invitationId]);
     },
     async acceptVaultInvitation(invitationId, userId, confirmationCode, sessionId) {
-      const {confirmationHash} = await nativeMutation({command:"invitation-proof",confirmationCode});
+      let confirmationHash = null;
+      try {
+        ({confirmationHash} = await nativeMutation({command:"invitation-proof",confirmationCode}));
+      } catch (error) {
+        // An unusable proof still follows the invitation/session checks. The
+        // SQL acceptance operation denies it with the public PS045/403 result.
+        if (error.status !== 400 || error.code !== "PS045") throw error;
+      }
       return executeReply("SELECT passshare_legacy_invite_accept($1::uuid,$2::uuid,$3::uuid,$4::text) AS reply",
         [userId,sessionId,invitationId,confirmationHash]);
     },

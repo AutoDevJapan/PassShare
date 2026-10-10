@@ -96,14 +96,9 @@ impl Runner {
         sql("postgres", "CREATE DATABASE drill_source;")?;
         self.source_created = true;
         self.start_api("drill_source", report, "source_official_api_ready")?;
-        let table_names: Value = serde_json::from_str(&sql("drill_source",
-            "SELECT COALESCE(json_agg(tablename ORDER BY tablename),'[]'::json) FROM pg_tables WHERE schemaname='public';")?)
-            .map_err(|_| Failure::Json)?;
-        let mut expected_tables = TABLES.to_vec();
-        expected_tables.sort_unstable();
         report.check(
-            "ten_required_plus_native_schema_tables_only",
-            table_names == json!(expected_tables),
+            "exact_known_product_schema_tables_only",
+            schema_inventory_matches(&schema_inventory("drill_source")?),
         )?;
 
         let owner = self
@@ -273,6 +268,10 @@ impl Runner {
             "snapshot_all_ten_and_native_tables_populated",
             snapshot_populated(&baseline),
         )?;
+        report.check(
+            "plaintext_fixture_encrypted_tables_empty",
+            encrypted_tables_empty(&baseline),
+        )?;
         report.measurement(
             "baseline_sha256",
             json!(sha256(
@@ -426,6 +425,10 @@ impl Runner {
             json!(restore_start.elapsed().as_millis() as u64),
         );
         let compare_start = Instant::now();
+        report.check(
+            "restored_exact_known_product_schema_tables_only",
+            schema_inventory_matches(&schema_inventory("drill_restored")?),
+        )?;
         let restored = snapshot("drill_restored")?;
         // Individually count the original ten comparisons plus the native extra table.
         let names = [
@@ -447,6 +450,10 @@ impl Runner {
         report.check(
             "restore_all_tables_exact_before_API",
             exact_json(&baseline, &restored),
+        )?;
+        report.check(
+            "restored_plaintext_encrypted_tables_empty_before_API",
+            encrypted_tables_empty(&restored),
         )?;
         report.check(
             "restore_excludes_post_backup_item",
@@ -536,6 +543,10 @@ impl Runner {
             reopen_state_clean(&state),
         )?;
         let after_reconcile = snapshot("drill_restored")?;
+        report.check(
+            "reconciliation_keeps_encrypted_tables_empty",
+            encrypted_tables_empty(&after_reconcile),
+        )?;
         report.check(
             "reconciliation_keeps_all_items_boxes_and_attachments",
             [
@@ -857,6 +868,10 @@ impl Runner {
             members["members"].as_array().is_some_and(|rows| {
                 rows.len() == 1 && rows[0]["userId"] == owner.id && rows[0]["role"] == "owner"
             }),
+        )?;
+        report.check(
+            "plaintext_API_keeps_encrypted_tables_empty",
+            encrypted_tables_empty(&snapshot("drill_restored")?),
         )?;
         report.check(
             "source_full_snapshot_unchanged_by_restore_and_API",

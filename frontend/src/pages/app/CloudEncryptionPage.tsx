@@ -107,7 +107,7 @@ export function CloudEncryptionPage() { return <CloudBoxGate setup />; }
 
 function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initialState: BoxState }) {
   const location = useLocation();
-  const { user, connectClient, logout } = useAuthSession();
+  const { user, connectClient, logout, refreshConnect } = useAuthSession();
   const { t } = useI18n();
   const ownerId = user?.id ?? "";
   const [name, setName] = useState("");
@@ -334,6 +334,12 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
       <p className="cloud-note">{t("cloud.neverSent")}</p>
       <p id="cloud-recovery" className="cloud-note">{t("cloud.recovery")}</p>
       {error && <p className="ps-error" role="alert">{t(error)}</p>}
+      {error && !authorized && <button type="button" className="ps-button ps-button--secondary"
+        disabled={busy || loggingOut} onClick={() => {
+          void refreshConnect().then((client) => {
+            if (client && mounted.current) setCheckRevision((value) => value + 1);
+          });
+        }}>{t("cloud.retry")}</button>}
       <button type="button" className="cloud-logout" disabled={loggingOut} onClick={() => void handleLogout()}>{t("session.logout")}</button>
     </div>
   </section>;

@@ -47,13 +47,6 @@ fn canonical_uuid(s: &str) -> bool {
             }
         })
 }
-fn uuid(s: &str) -> Result<()> {
-    if canonical_uuid(s) {
-        Ok(())
-    } else {
-        Err(Error::InvalidArgument("UUID must be canonical and nonnil"))
-    }
-}
 fn number<'de, D: Deserializer<'de>>(d: D, min: u64) -> std::result::Result<u64, D::Error> {
     let n = u64::deserialize(d)?;
     if safe(n, min) {
@@ -285,7 +278,9 @@ pub struct SharingSnapshot {
 }
 impl SharingSnapshot {
     pub fn validate(&self) -> Result<()> {
-        uuid(&self.owner_account_id)?;
+        if !canonical_uuid(&self.owner_account_id) {
+            return Err(Error::InvalidArgument("UUID must be canonical and nonnil"));
+        }
         argument_check(
             safe(self.state_revision, 1)
                 && safe(self.key_epoch, 1)
@@ -399,9 +394,12 @@ pub struct RotationExpectation {
 impl RotationExpectation {
     pub fn validate(&self) -> Result<()> {
         id(self.password_box_id.as_str())?;
-        uuid(&self.operation_id)?;
-        uuid(&self.owner_account_id)?;
-        uuid(&self.remove_account_id)?;
+        if !canonical_uuid(&self.operation_id)
+            || !canonical_uuid(&self.owner_account_id)
+            || !canonical_uuid(&self.remove_account_id)
+        {
+            return Err(Error::InvalidArgument("UUID must be canonical and nonnil"));
+        }
         successor(self.expected_key_epoch)?;
         successor(self.expected_owner_bundle_version)?;
         argument_check(
@@ -590,7 +588,9 @@ impl SharingRotationClient {
         request: &InitialGrantRequest,
         expected: &SharedKeyExpectation,
     ) -> Result<InitialGrantReply> {
-        uuid(recipient_id)?;
+        if !canonical_uuid(recipient_id) {
+            return Err(Error::InvalidArgument("UUID must be canonical and nonnil"));
+        }
         expected.validate_envelope(box_id, &request.envelope)?;
         argument_check(
             request.expected_version == 0
@@ -633,7 +633,9 @@ impl SharingRotationClient {
         box_id: &str,
         expected_owner_id: &str,
     ) -> Result<SharingSnapshot> {
-        uuid(expected_owner_id)?;
+        if !canonical_uuid(expected_owner_id) {
+            return Err(Error::InvalidArgument("UUID must be canonical and nonnil"));
+        }
         let (reply, _): (SharingSnapshot, _) = self
             .request(
                 Method::GET,
@@ -672,7 +674,9 @@ impl SharingRotationClient {
         after: Option<&str>,
     ) -> Result<SharingMembersPage> {
         if let Some(after) = after {
-            uuid(after)?;
+            if !canonical_uuid(after) {
+                return Err(Error::InvalidArgument("UUID must be canonical and nonnil"));
+            }
         }
         let (reply, _): (SharingMembersPage, _) = self
             .request(

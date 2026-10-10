@@ -31,6 +31,37 @@ const TABLES: &[&str] = &[
     "login_ip_requests",
     "mutation_operations",
 ];
+// Exact additive tables from backend/native/src/encrypted-schema.sql. This
+// legacy plaintext exercise never activates encrypted storage or stages rotation.
+const ENCRYPTED_TABLES: &[&str] = &[
+    "encrypted_box_state",
+    "encrypted_items",
+    "encrypted_item_tombstones",
+    "encrypted_owner_keys",
+    "encrypted_account_identities",
+    "encrypted_key_grants",
+    "encrypted_rotations",
+    "encrypted_rotation_items",
+    "encrypted_rotation_grants",
+];
+
+fn known_tables() -> impl Iterator<Item = &'static str> {
+    TABLES.iter().chain(ENCRYPTED_TABLES).copied()
+}
+
+fn schema_inventory_matches(value: &Value) -> bool {
+    let mut expected = known_tables().collect::<Vec<_>>();
+    expected.sort_unstable();
+    // The catalog query orders names; equality rejects unknown, missing and
+    // duplicate names, even when an unexpected inventory has the same count.
+    *value == json!(expected)
+}
+
+fn schema_inventory(database: &str) -> Result<Value> {
+    serde_json::from_str(&sql(database,
+        "SELECT COALESCE(json_agg(tablename ORDER BY tablename),'[]'::json) FROM pg_tables WHERE schemaname='public';")?)
+        .map_err(|_| Failure::Json)
+}
 
 // Only static categories may reach the report. Never format library/child errors.
 #[derive(Clone, Copy, Debug)]
@@ -216,6 +247,7 @@ impl Report {
                 "owner_reapproval": "synthetic_SQL_only_API_checks_authorization_after_insert",
                 "closure": "local_Node_stopped_parent_must_supply_internal_unpublished_network",
                 "client": "HTTP_mobile_token_protocol_not_UI_SDK_or_all_clients",
+                "encrypted_storage": "empty_tables_only_no_encrypted_recovery_or_rotation_verification",
             }
         })
     }
@@ -238,7 +270,7 @@ impl OwnedChild {
             reaped: false,
         })
     }
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     fn pid(&self) -> u32 {
         self.child.id()
     }
@@ -429,7 +461,7 @@ fn sql(database: &str, statement: &str) -> Result<String> {
 }
 
 fn snapshot_sql() -> String {
-    let entries = TABLES.iter().map(|table| format!(
+    let entries = known_tables().map(|table| format!(
         "'{table}', (SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM public.{table} t)"
     )).collect::<Vec<_>>().join(",");
     format!("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; SELECT jsonb_build_object({entries}); COMMIT;")
@@ -440,12 +472,18 @@ fn snapshot(database: &str) -> Result<Value> {
 fn snapshot_populated(value: &Value) -> bool {
     value
         .as_object()
-        .is_some_and(|object| object.len() == TABLES.len())
+        .is_some_and(|object| object.len() == TABLES.len() + ENCRYPTED_TABLES.len())
         && TABLES.iter().all(|table| {
             value[*table]
                 .as_array()
                 .is_some_and(|rows| !rows.is_empty())
         })
+        && encrypted_tables_empty(value)
+}
+fn encrypted_tables_empty(value: &Value) -> bool {
+    ENCRYPTED_TABLES
+        .iter()
+        .all(|table| value[*table].as_array().is_some_and(|rows| rows.is_empty()))
 }
 fn exact_json(expected: &Value, actual: &Value) -> bool {
     expected == actual
@@ -546,6 +584,9 @@ impl Api {
         }
         Ok((status, bytes))
     }
+    // Acceptance calls deliberately keep transport, expected status, and report
+    // label together so every scenario states its full independent assertion.
+    #[allow(clippy::too_many_arguments)]
     fn json(
         &self,
         report: &mut Report,

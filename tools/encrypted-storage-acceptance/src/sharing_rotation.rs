@@ -176,7 +176,9 @@ fn root(a: &Account) -> String {
 fn call(p: u16, a: &Account, method: &str, path: &str, body: &Value, status: u16) -> Value {
     request_slot();
     let (actual, reply) = http(p, method, path, &a.headers(), body);
-    assert_eq!(actual, status, "formal sharing API status: {method} {path}");
+    // Keep identifiers and all caller-controlled/credential-derived strings
+    // out of failure logs; only the two numeric HTTP statuses may be printed.
+    assert_eq!(actual, status, "formal sharing API status");
     reply
 }
 fn sql_json(v: &Value) -> String {
