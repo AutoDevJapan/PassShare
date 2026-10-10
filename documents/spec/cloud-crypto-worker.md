@@ -1,7 +1,7 @@
 # クライアント暗号化Workerの境界
 
 共有ToDo #1163 / #1175 のM4の一部です。`cloud-wasm.md` のWASM境界を、専用Workerの中で
-動かすためのメッセージ境界を定めます。画面・拡張・共有・鍵の更新・サーバー保存は含みません。
+動かすためのメッセージ境界を定めます。共有鍵の暗号操作を含みますが、画面・拡張・鍵の更新・サーバー保存への接続は含みません。
 これだけで全クライアントの暗号化が完成したとは扱いません。
 
 ## 責務
@@ -34,7 +34,7 @@
 
 - `requestId`: 1〜2^53−1の整数。`lock` 以外は前回の最大値より大きい値だけ受け付け、重複・再送を拒否します。
   形式が正しい `lock` は古い番号・再送でも受け付け、要求番号の最大値を下げません。
-  任意フィールドの `null` は未指定と同じ扱いです。
+  全フィールドの明示的 `null` は拒否します。コマンドの必須フィールドの欠落も拒否します。
 - `owner`, `context`, `bundle`, `envelope`, `item`: 既存のWASM境界と同じJSON文字列です。
   `password` は暗号化パスワードで、NFC正規化・Argon2id（bundle形式1固定）も同じです。
 - 返信: `version`, `requestId`, `generation`, `locked`, `ok`、失敗時は `error`、成功時の結果は
@@ -46,11 +46,11 @@
 
 ## 世代
 
-世代は0から始まり、`generate` / `unlock` の成功と `lock` ごとに1ずつ増えます。
+世代は0から始まり、ボックスまたはアカウント鍵を開く操作の成功と `lock` ごとに1ずつ増えます。
 
 1. `wrap` / `encrypt` / `decrypt` / `generate` / `unlock` は `expectedGeneration` が現在の世代と
    違えば `PS058` で拒否します。施錠前の世代の操作・遅れて届いた要求は、施錠後に必ず拒否されます。
-2. 形式が正しい `lock` は世代や要求番号の順序に関係なく成功し、鍵を消去して世代を進めます。
+2. 形式が正しい `lock` は世代や要求番号の順序に関係なく成功し、ボックス鍵とアカウント鍵を両方消去して世代を進めます。
    すでに施錠中でも進めます。不正な形式への拒否を施錠の成功と扱わず、呼出元はWorkerを終了します。
 3. 開いている間の `generate` / `unlock` は `PS059` です。別のボックスやアカウントへ切り替えるときは
    `lock` のあと、新しい期待所有者を渡して開き直します。失敗した `unlock` が開いている
@@ -120,3 +120,65 @@ new Worker(new URL('./boot.mjs', import.meta.url), { type: 'module' })
 
 画面・拡張からの接続、Worker終了と施錠の実画面での検証、端末の鍵保管、サーバー保存、共有・
 鍵の更新・復旧・移行を含むM4全体は未完了です。暗号化済みとして販売しません。
+
+## ToDo 1163: Worker内の共有鍵操作
+
+`WorkerSession` の私有状態に既存 `Session` と不透明な `CloudAccountIdentity` を各1つ保持する。
+`shared.rs` のRust内部ヘルパーを直接使い、Coreと既存のWASMハンドルの形式・暗号を共用する。
+秘密のgetter/export、独自暗号、サーバー認可は追加しない。
+
+以下の要求はすべて `version:1`, `requestId`, `command`, `expectedGeneration` が必須。
+表の追加フィールドもすべて必須で、JSONは文字列として渡す。未知フィールド・重複・null・
+型違い・余分な既存フィールドも拒否する。非lockの失敗要求も、解析・version・番号順の
+検査を通った時点で要求番号を消費する。全メッセージと項目返値の上限は従来のまま。
+
+| command | 追加フィールド | 成功時の結果 |
+|---|---|---|
+| `identityGenerate` | `accountContext` | `publicIdentity` |
+| `identityPublic` | なし | `publicIdentity` |
+| `identityWrap` | `identitySecret` | `bundle` |
+| `identityUnlock` | `accountContext`, `expectedKeyId`, `bundle`, `identitySecret` | `publicIdentity` |
+| `sharedRecipientWrap` | `trustedRecipientPublic`, `sharedContext` | `envelope` |
+| `sharedReceiveUnlock` | `trustedSenderPublic`, `sharedContext`, `envelope` | 結果フィールドなし |
+
+`accountContext` は `{accountId, identityVersion}`、`publicIdentity` は
+`{accountId, identityVersion, publicKey, keyId}`。生成時の公開指紋を最初に別保管する。
+復元する文脈と `expectedKeyId` はその独立値を必ず渡す。同一account/versionの別鍵も拒否する。
+`sharedContext` は [共有WASM仕様](shared-key-wasm.md) の8フィールドすべてが必須。
+送信先・送信元の公開記述子は独立に信頼済みのものを渡し、期待文脈をbundle/envelopeから作らない。
+サーバーが返した公開記述子の自己整合は信頼の証明ではない。
+入力上限はアカウント文脈256、公開記述子512、共有文脈1024、identity bundle/共有envelope
+2048、`identitySecret` 1024 UTF-8バイト。パスワード正規化・形式1のKDFは既存APIと同じ。
+
+全返信に `identityLocked` を追加する。`locked` は従来どおりボックスが閉じていることを表す。
+状態は両方閉じている、identityのみ、boxのみ、同一アカウントの両方、の4通り。
+既存owner-first経路では、開いたボックスと同じaccountのidentityを後から追加できる。
+identityが開いている場合のowner生成/復元/復旧は、期待所有者のaccountを照合する。
+受信者として開くにはidentityが必要で、Coreが宛先account・版・指紋を照合する。
+既存boxまたはidentityの置換は `PS059`。owner/recipient・account・boxを切り替えるには
+`lock` 後に開き直す。すべての失敗は元の鍵と世代を保持し、鍵を自動復元しない。
+受信者の `wrap` と `recoveryMaterial` は引き続き拒否する。共有操作は権限を付与しない。
+
+identity生成/復元と受信box復元の成功も世代を1増やす。公開・封印・共有送信では増やさない。
+非status/lockはすべて世代一致が必須。古い世代の生成/復元も施錠後に鍵を復活させない。
+古い番号・再送の正しい `lock` も両方の鍵を破棄し、要求番号の最大値は下げない。
+世代は2^53−1で飽和し、その値では全オープン操作を拒否する。上限のlockも消去に成功する。
+要求番号を使い切った場合も、新Workerへ切り替える。lock後はstatus/lockを許すが、
+最新世代の暗号操作・公開・封印はそれぞれ施錠エラー、古い世代は `PS058`。
+明示的に最新世代でidentity/ownerを再オープンすることだけは上限未満なら許す。
+
+新しい返信結果は公開記述子・封印bundle・共有暗号文だけ。従来の項目・復旧経路は同じ契約。
+受信文字列、解析した `identitySecret`、KDFの文字列、返信bufferは処理後にzeroizeする。
+鍵の破棄は既存不透明型/CoreのDropに委ねる。診断に入力・秘密・下位エラーを出さない。
+JSの文字列・強制終了時の全メモリ消去は保証しない。背景移行の即時terminate契約も変わらない。
+
+検査は `src/worker.rs` のNative状態・上限検査と、既存 `tests/wasm.rs` の
+`exported_worker_create_edit_node_boundary` 内で実export `start_worker` を呼ぶNode検査へ追加する。
+Node側はmessage surfaceだけのfixtureであり、実ブラウザ受入の証拠には数えない。
+UI、正式API、配布WASM/assets/inputの全照合と全workspace検査は親担当が実施する。
+
+2026-10-11: 独立manifest/lock/target・共有Cargoゲート・sccacheでNative 36件、doc（0例）、
+Native全targetとwasm32 testsのClippyが成功。Nodeは既存WASM 4件（共有dispatcher検査を含む）、
+共有API 5件、Core共有鍵 1件の計10件が成功。読み取り専用の別モデル確認は指摘0件。
+世代上限は私有状態へ設定するNative検査で確認し、実WASMでは上限までの反復は省略した。
+この子では全workspace、ブラウザ/画面、正式API、配布生成物更新、CI、pushは実施していない。

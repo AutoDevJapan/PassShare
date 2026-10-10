@@ -1,7 +1,9 @@
-//! Worker-side dispatcher: exact version 1 JSON messages over one `Session` per worker.
+//! Worker-side dispatcher: exact version 1 JSON messages over one private box and identity.
 //! No HTTP, filesystem, logging or raw-key message exists. The caller owns UI and Worker
 //! lifetime; this module enforces generation, owner/item context and message bounds.
-use super::{parse, Session, INVALID, LOCKED, MAX_BODY};
+use super::{
+    parse, shared::IDENTITY_LOCKED, CloudAccountIdentity, Session, INVALID, LOCKED, MAX_BODY,
+};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -25,6 +27,12 @@ enum Command {
     Create,
     Edit,
     Lock,
+    IdentityGenerate,
+    IdentityPublic,
+    IdentityWrap,
+    IdentityUnlock,
+    SharedRecipientWrap,
+    SharedReceiveUnlock,
 }
 
 // Parsed secret text is wiped on drop. serde_json may leave transient copies while
@@ -60,6 +68,18 @@ struct Request {
     password: Option<Secret>,
     #[serde(default, deserialize_with = "present")]
     values: Option<Secret>,
+    #[serde(default, deserialize_with = "present")]
+    account_context: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    expected_key_id: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    identity_secret: Option<Secret>,
+    #[serde(default, deserialize_with = "present")]
+    trusted_recipient_public: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    trusted_sender_public: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    shared_context: Option<String>,
 }
 
 fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -76,6 +96,7 @@ enum Out {
     Envelope(String),
     Item(Zeroizing<String>),
     Recovery(Zeroizing<String>),
+    PublicIdentity(String),
 }
 
 #[derive(Serialize)]
@@ -85,6 +106,7 @@ struct Reply<'a> {
     request_id: Option<u64>,
     generation: u64,
     locked: bool,
+    identity_locked: bool,
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<&'static str>,
@@ -96,10 +118,13 @@ struct Reply<'a> {
     item: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     recovery: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_identity: Option<&'a str>,
 }
 
 pub(crate) struct WorkerSession {
     session: Option<Session>,
+    identity: Option<CloudAccountIdentity>,
     generation: u64,
     last_request: u64,
 }
@@ -108,6 +133,7 @@ impl WorkerSession {
     pub(crate) fn new() -> Self {
         Self {
             session: None,
+            identity: None,
             generation: 0,
             last_request: 0,
         }
@@ -139,7 +165,7 @@ impl WorkerSession {
             return Err(INVALID);
         }
         self.last_request = self.last_request.max(r.request_id);
-        // Exactly the fields of the command: generation, owner, context, bundle, envelope, item, password, values.
+        // Exactly the box and identity/sharing fields of each command.
         let have = [
             r.expected_generation.is_some(),
             r.owner.is_some(),
@@ -150,7 +176,7 @@ impl WorkerSession {
             r.password.is_some(),
             r.values.is_some(),
         ];
-        let want = match r.command {
+        let box_fields = match r.command {
             Command::Status | Command::Lock => [false; 8],
             Command::Generate => [true, true, false, false, false, false, false, false],
             Command::Unlock | Command::Recover => {
@@ -162,8 +188,32 @@ impl WorkerSession {
             Command::Create => [true, false, false, false, false, false, false, true],
             Command::Edit => [true, false, true, false, false, true, false, true],
             Command::Decrypt => [true, false, true, false, true, false, false, false],
+            Command::IdentityGenerate
+            | Command::IdentityPublic
+            | Command::IdentityWrap
+            | Command::SharedRecipientWrap => {
+                [true, false, false, false, false, false, false, false]
+            }
+            Command::IdentityUnlock => [true, false, false, true, false, false, false, false],
+            Command::SharedReceiveUnlock => [true, false, false, false, true, false, false, false],
         };
-        if have != want {
+        let shared_have = [
+            r.account_context.is_some(),
+            r.expected_key_id.is_some(),
+            r.identity_secret.is_some(),
+            r.trusted_recipient_public.is_some(),
+            r.trusted_sender_public.is_some(),
+            r.shared_context.is_some(),
+        ];
+        let shared_want = match r.command {
+            Command::IdentityGenerate => [true, false, false, false, false, false],
+            Command::IdentityWrap => [false, false, true, false, false, false],
+            Command::IdentityUnlock => [true, true, true, false, false, false],
+            Command::SharedRecipientWrap => [false, false, false, true, false, true],
+            Command::SharedReceiveUnlock => [false, false, false, false, true, true],
+            _ => [false; 6],
+        };
+        if have != box_fields || shared_have != shared_want {
             return Err(INVALID);
         }
         match r.command {
@@ -172,6 +222,9 @@ impl WorkerSession {
                 // Valid locks bypass generation and request ordering, invalidating pending work.
                 if let Some(mut session) = self.session.take() {
                     session.lock();
+                }
+                if let Some(mut identity) = self.identity.take() {
+                    identity.lock();
                 }
                 self.generation = (self.generation + 1).min(MAX_SAFE);
                 return Ok(Out::Empty);
@@ -192,6 +245,13 @@ impl WorkerSession {
                     return Err(INVALID);
                 }
                 let owner = r.owner.as_deref().unwrap_or_default();
+                // If an account identity is present, box scope must bind to that
+                // account. Validate before generating keys or running the KDF.
+                if let Some(identity) = &self.identity {
+                    if !identity.matches_account(&super::owner(owner)?) {
+                        return Err(INVALID);
+                    }
+                }
                 let session = if r.command == Command::Generate {
                     Session::generate(owner)?
                 } else {
@@ -202,6 +262,68 @@ impl WorkerSession {
                         Session::unlock(r.bundle.as_deref().unwrap_or_default(), password, owner)?
                     }
                 };
+                self.session = Some(session);
+                self.generation += 1;
+                Ok(Out::Empty)
+            }
+            Command::IdentityGenerate | Command::IdentityUnlock => {
+                // Identity may be added to a matching owner box, but never
+                // replaced while either account's existing identity is open.
+                if self.identity.is_some() {
+                    return Err(OPEN);
+                }
+                if self.generation >= MAX_SAFE {
+                    return Err(INVALID);
+                }
+                let account = r.account_context.as_deref().unwrap_or_default();
+                let identity = if r.command == Command::IdentityGenerate {
+                    CloudAccountIdentity::generate(account)?
+                } else {
+                    CloudAccountIdentity::restore(
+                        r.bundle.as_deref().unwrap_or_default(),
+                        std::mem::take(&mut r.identity_secret.as_mut().unwrap().0),
+                        account,
+                        r.expected_key_id.as_deref().unwrap_or_default(),
+                    )?
+                };
+                if self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| !identity.matches_account(&session.owner))
+                {
+                    return Err(INVALID);
+                }
+                let public = identity.public()?;
+                self.identity = Some(identity);
+                self.generation += 1;
+                Ok(Out::PublicIdentity(public))
+            }
+            Command::IdentityPublic => self.identity()?.public().map(Out::PublicIdentity),
+            Command::IdentityWrap => self
+                .identity()?
+                .seal(std::mem::take(&mut r.identity_secret.as_mut().unwrap().0))
+                .map(Out::Bundle),
+            Command::SharedRecipientWrap => self
+                .open()?
+                .share(
+                    self.identity()?,
+                    r.trusted_recipient_public.as_deref().unwrap_or_default(),
+                    r.shared_context.as_deref().unwrap_or_default(),
+                )
+                .map(Out::Envelope),
+            Command::SharedReceiveUnlock => {
+                if self.session.is_some() {
+                    return Err(OPEN);
+                }
+                if self.generation >= MAX_SAFE {
+                    return Err(INVALID);
+                }
+                let session = Session::receive(
+                    r.envelope.as_deref().unwrap_or_default(),
+                    self.identity()?,
+                    r.trusted_sender_public.as_deref().unwrap_or_default(),
+                    r.shared_context.as_deref().unwrap_or_default(),
+                )?;
                 self.session = Some(session);
                 self.generation += 1;
                 Ok(Out::Empty)
@@ -240,18 +362,24 @@ impl WorkerSession {
         self.session.as_ref().ok_or(LOCKED)
     }
 
+    fn identity(&self) -> Result<&CloudAccountIdentity, &'static str> {
+        self.identity.as_ref().ok_or(IDENTITY_LOCKED)
+    }
+
     fn reply(&self, id: Option<u64>, result: Result<Out, &'static str>) -> Zeroizing<String> {
         let mut reply = Reply {
             version: 1,
             request_id: id,
             generation: self.generation,
             locked: self.session.is_none(),
+            identity_locked: self.identity.is_none(),
             ok: result.is_ok(),
             error: None,
             bundle: None,
             envelope: None,
             item: None,
             recovery: None,
+            public_identity: None,
         };
         match &result {
             Err(error) => reply.error = Some(*error),
@@ -259,6 +387,7 @@ impl WorkerSession {
             Ok(Out::Envelope(text)) => reply.envelope = Some(text),
             Ok(Out::Item(text)) => reply.item = Some(text),
             Ok(Out::Recovery(text)) => reply.recovery = Some(text),
+            Ok(Out::PublicIdentity(text)) => reply.public_identity = Some(text),
             Ok(Out::Empty) => {}
         }
         // Exact capacity avoids leaving plaintext in reallocated buffers.
@@ -547,6 +676,7 @@ mod tests {
             [
                 "bundle",
                 "generation",
+                "identityLocked",
                 "locked",
                 "ok",
                 "requestId",
@@ -568,6 +698,125 @@ mod tests {
             let reply = h.worker.handle(raw);
             assert!(!reply.contains(secret) && reply.contains(r#""ok":false"#));
         }
+    }
+
+    #[test]
+    fn identity_and_box_lifetimes_account_switch_and_generation_ceiling() {
+        let mut h = Harness::new();
+        let account =
+            json!({"accountId":"11111111-1111-4111-8111-111111111111","identityVersion":1})
+                .to_string();
+        let g = h.open();
+        // Existing owner-first callers may add the matching identity, but a
+        // different account cannot replace or attach to the current box.
+        let wrong = h.send(json!({"command":"identityGenerate","expectedGeneration":g,
+            "accountContext":account.replace("11111111","22222222")}));
+        assert_eq!(wrong["error"], INVALID);
+        assert_eq!(wrong["generation"], g);
+        assert_eq!(wrong["identityLocked"], true);
+        let good = h.send(
+            json!({"command":"identityGenerate","expectedGeneration":g,"accountContext":account}),
+        );
+        assert_eq!(good["ok"], true);
+        assert_eq!(good["identityLocked"], false);
+        assert_eq!(good["locked"], false);
+        let mut keys: Vec<_> = good
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "generation",
+                "identityLocked",
+                "locked",
+                "ok",
+                "publicIdentity",
+                "requestId",
+                "version"
+            ]
+        );
+        let public: Value = serde_json::from_str(good["publicIdentity"].as_str().unwrap()).unwrap();
+        assert_eq!(public.as_object().unwrap().len(), 4);
+        h.worker.generation = MAX_SAFE - 1;
+        let lock = h.raw(r#"{"version":1,"requestId":1,"command":"lock"}"#.into());
+        assert_eq!(lock["generation"], MAX_SAFE);
+        assert!(h.worker.identity.is_none() && h.worker.session.is_none());
+        for request in [
+            json!({"command":"identityGenerate","expectedGeneration":MAX_SAFE,"accountContext":account}),
+            json!({"command":"generate","expectedGeneration":MAX_SAFE,"owner":owner()}),
+            json!({"command":"sharedReceiveUnlock","expectedGeneration":MAX_SAFE,"envelope":"{}","trustedSenderPublic":"{}","sharedContext":"{}"}),
+        ] {
+            assert_eq!(h.send(request)["error"], INVALID);
+        }
+        let again = h.raw(r#"{"version":1,"requestId":1,"command":"lock"}"#.into());
+        assert_eq!(again["generation"], MAX_SAFE);
+        assert_eq!(again["identityLocked"], true);
+        assert_eq!(again["locked"], true);
+    }
+
+    #[test]
+    fn identity_nested_bounds_duplicates_and_failed_restore_keep_closed_state() {
+        let mut h = Harness::new();
+        let account =
+            json!({"accountId":"11111111-1111-4111-8111-111111111111","identityVersion":1})
+                .to_string();
+        for bad in [
+            "x".repeat(257),
+            account.replace("\"identityVersion\":1", "\"identityVersion\":null"),
+            account.replace(
+                "\"identityVersion\":1",
+                "\"identityVersion\":1,\"identityVersion\":1",
+            ),
+            account.replace(
+                "\"identityVersion\":1",
+                "\"identityVersion\":9007199254740992",
+            ),
+            account.replace(
+                "11111111-1111-4111-8111-111111111111",
+                "00000000-0000-0000-0000-000000000000",
+            ),
+        ] {
+            let reply = h.send(
+                json!({"command":"identityGenerate","expectedGeneration":0,"accountContext":bad}),
+            );
+            assert_eq!(reply["error"], INVALID);
+            assert_eq!(reply["generation"], 0);
+            assert!(h.worker.identity.is_none());
+        }
+        let identity = CloudAccountIdentity::generate(&account).unwrap();
+        let public: Value = serde_json::from_str(&identity.public().unwrap()).unwrap();
+        let bundle = identity.seal(PASSWORD.into()).unwrap();
+        let restore = json!({"command":"identityUnlock","expectedGeneration":0,"accountContext":account,
+            "expectedKeyId":public["keyId"],"identitySecret":PASSWORD,"bundle":bundle});
+        for (field, value) in [
+            ("bundle", json!("x".repeat(2049))),
+            ("expectedKeyId", json!("X".repeat(64))),
+            ("identitySecret", json!("x".repeat(1025))),
+            ("identitySecret", json!("short")),
+        ] {
+            let mut bad = restore.clone();
+            bad[field] = value;
+            let reply = h.send(bad);
+            assert_eq!(reply["error"], INVALID);
+            assert_eq!(reply["generation"], 0);
+            assert_eq!(reply["identityLocked"], true);
+        }
+        assert_eq!(h.send(restore)["ok"], true);
+        let g = h.worker.generation;
+        let invalid_lock = h.send(json!({"command":"lock","identitySecret":null}));
+        assert_eq!(invalid_lock["error"], INVALID);
+        assert_eq!(invalid_lock["generation"], g);
+        assert_eq!(invalid_lock["identityLocked"], false);
+        h.send(json!({"command":"lock"}));
+        let stale = h.send(
+            json!({"command":"identityGenerate","expectedGeneration":g,"accountContext":account}),
+        );
+        assert_eq!(stale["error"], STALE);
+        assert!(h.worker.identity.is_none() && h.worker.session.is_none());
     }
 
     #[test]

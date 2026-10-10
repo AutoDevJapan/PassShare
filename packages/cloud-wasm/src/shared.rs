@@ -14,7 +14,7 @@ use wasm_bindgen::prelude::*;
 
 use super::{derive_root, parse, password, CloudPasswordBox, Session, INVALID};
 
-const IDENTITY_LOCKED: &str = "PS057: Account identity is locked";
+pub(crate) const IDENTITY_LOCKED: &str = "PS057: Account identity is locked";
 const MAX_CONTEXT: usize = 256;
 const MAX_PUBLIC: usize = 512;
 const MAX_SHARED_CONTEXT: usize = 1024;
@@ -71,11 +71,28 @@ pub struct CloudAccountIdentity {
 }
 
 impl CloudAccountIdentity {
+    pub(crate) fn generate(value: &str) -> Result<Self, &'static str> {
+        let context = account_context(value)?;
+        let identity = AccountIdentity::generate(context.clone()).map_err(|_| INVALID)?;
+        Ok(Self {
+            identity: Some(identity),
+            context,
+        })
+    }
+
+    pub(crate) fn public(&self) -> Result<String, &'static str> {
+        serde_json::to_string(&self.identity()?.public_identity()).map_err(|_| INVALID)
+    }
+
+    pub(crate) fn matches_account(&self, scope: &OwnerKeyContext) -> bool {
+        self.context.account_id == scope.owner_account_id
+    }
+
     fn identity(&self) -> Result<&AccountIdentity, &'static str> {
         self.identity.as_ref().ok_or(IDENTITY_LOCKED)
     }
 
-    fn seal(&self, secret: String) -> Result<String, &'static str> {
+    pub(crate) fn seal(&self, secret: String) -> Result<String, &'static str> {
         let secret = password(secret)?;
         let identity = self.identity()?;
         let salt = generate_salt().map_err(|_| INVALID)?;
@@ -89,7 +106,7 @@ impl CloudAccountIdentity {
         .map_err(|_| INVALID)
     }
 
-    fn restore(
+    pub(crate) fn restore(
         bundle: &str,
         secret: String,
         independently_held_context: &str,
@@ -119,21 +136,14 @@ impl CloudAccountIdentity {
 impl CloudAccountIdentity {
     #[wasm_bindgen(constructor)]
     pub fn new(account_context_json: &str) -> Result<CloudAccountIdentity, JsValue> {
-        let context = account_context(account_context_json).map_err(JsValue::from_str)?;
-        let identity =
-            AccountIdentity::generate(context.clone()).map_err(|_| JsValue::from_str(INVALID))?;
-        Ok(Self {
-            identity: Some(identity),
-            context,
-        })
+        Self::generate(account_context_json).map_err(JsValue::from_str)
     }
 
     #[wasm_bindgen(js_name = publicIdentity)]
     pub fn public_identity(&self) -> Result<String, JsValue> {
-        let identity = self.identity().map_err(JsValue::from_str)?;
         // Serialize Core's descriptor in its fixed field order, with no cached
         // descriptor surviving lock and no private material crossing the ABI.
-        serde_json::to_string(&identity.public_identity()).map_err(|_| JsValue::from_str(INVALID))
+        self.public().map_err(JsValue::from_str)
     }
 
     pub fn wrap(&self, encryption_password: String) -> Result<String, JsValue> {
@@ -169,12 +179,13 @@ impl CloudPasswordBox {
         trusted_recipient_public_json: &str,
         independently_held_shared_key_context_json: &str,
     ) -> Result<String, JsValue> {
-        self.share(
-            sender,
-            trusted_recipient_public_json,
-            independently_held_shared_key_context_json,
-        )
-        .map_err(JsValue::from_str)
+        self.session
+            .share(
+                sender,
+                trusted_recipient_public_json,
+                independently_held_shared_key_context_json,
+            )
+            .map_err(JsValue::from_str)
     }
 
     #[wasm_bindgen(js_name = unlockForRecipient)]
@@ -184,33 +195,34 @@ impl CloudPasswordBox {
         trusted_sender_public_json: &str,
         expected_shared_key_context_json: &str,
     ) -> Result<CloudPasswordBox, JsValue> {
-        Self::receive(
+        Session::receive(
             envelope_json,
             recipient,
             trusted_sender_public_json,
             expected_shared_key_context_json,
         )
+        .map(|session| Self { session })
         .map_err(JsValue::from_str)
     }
 }
 
-impl CloudPasswordBox {
-    fn share(
+impl Session {
+    pub(crate) fn share(
         &self,
         sender: &CloudAccountIdentity,
         trusted_recipient: &str,
         independently_held_context: &str,
     ) -> Result<String, &'static str> {
-        let key = self.session.key()?;
+        let key = self.key()?;
         let identity = sender.identity()?;
         let recipient: PublicAccountIdentity = parse(trusted_recipient, MAX_PUBLIC)?;
         let context: SharedKeyContext = parse(independently_held_context, MAX_SHARED_CONTEXT)?;
         // Session.owner is the current caller's operational scope, not proof
         // of server ownership. A recipient may only act as that recipient.
-        if sender.context.account_id != self.session.owner.owner_account_id
-            || context.sender_account_id != self.session.owner.owner_account_id
-            || context.password_box_id != self.session.owner.password_box_id
-            || context.key_epoch != self.session.owner.key_epoch
+        if sender.context.account_id != self.owner.owner_account_id
+            || context.sender_account_id != self.owner.owner_account_id
+            || context.password_box_id != self.owner.password_box_id
+            || context.key_epoch != self.owner.key_epoch
         {
             return Err(INVALID);
         }
@@ -220,7 +232,7 @@ impl CloudPasswordBox {
         serde_json::to_string(&envelope).map_err(|_| INVALID)
     }
 
-    fn receive(
+    pub(crate) fn receive(
         envelope_json: &str,
         recipient: &CloudAccountIdentity,
         trusted_sender: &str,
@@ -240,11 +252,9 @@ impl CloudPasswordBox {
             key_epoch: expected.key_epoch,
         };
         Ok(Self {
-            session: Session {
-                key: Some(key),
-                owner: scope,
-                can_wrap_owner: false,
-            },
+            key: Some(key),
+            owner: scope,
+            can_wrap_owner: false,
         })
     }
 }

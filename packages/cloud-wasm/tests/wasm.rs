@@ -158,7 +158,327 @@ fn exported_worker_create_edit_node_boundary() {
             ["error"],
         "PS057: Password box is locked"
     );
+    exported_worker_sharing_contract(&mut send);
     remove_worker_surface();
+}
+
+// Reuse the installed real start_worker boundary: STARTED intentionally permits
+// only one attachment per WASM instance. No host dispatcher substitute is used.
+fn exported_worker_sharing_contract(send: &mut impl FnMut(Value) -> Value) {
+    use passshare_cloud_wasm::CloudAccountIdentity;
+    const INVALID: &str = "PS051: Invalid encrypted data";
+    const OPEN: &str = "PS059: Password box is already open";
+    const STALE: &str = "PS058: Stale worker generation";
+    const SECRET: &str = "Synthetic identity worker password!";
+    let a = json!({"accountId":"11111111-1111-4111-8111-111111111111","identityVersion":1});
+    let b = json!({"accountId":"22222222-2222-4222-8222-222222222222","identityVersion":1});
+    let owner = json!({"passwordBoxId":"aaaaaaaaaaaaaaaaaaaaaaaaaa","ownerAccountId":a["accountId"],"keyEpoch":1});
+    let ctx = json!({"passwordBoxId":"aaaaaaaaaaaaaaaaaaaaaaaaaa","itemId":"bbbbbbbbbbbbbbbbbbbbbbbbbb","itemVersion":1,"keyEpoch":1});
+    let item = json!({"id":"bbbbbbbbbbbbbbbbbbbbbbbbbb","version":1,"vault":{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "fields":[{"value":"worker-sharing-private"}],"custom":{"keep":[3,1,2]},"attachments":[{"id":"z"},{"id":"a"}]});
+    let mut recipient = CloudAccountIdentity::new(&b.to_string()).unwrap();
+    let recipient_public: Value =
+        serde_json::from_str(&recipient.public_identity().unwrap()).unwrap();
+    // Pin the generated public descriptor before producing any sealed bundle.
+    let pin_b = recipient_public["keyId"].as_str().unwrap().to_owned();
+    let bundle_b = recipient.wrap(SECRET.into()).unwrap();
+    recipient.lock();
+    let mut g = send(json!({"command":"status"}))["generation"]
+        .as_u64()
+        .unwrap();
+    let generated = send(
+        json!({"command":"identityGenerate","expectedGeneration":g,"accountContext":a.to_string()}),
+    );
+    assert_eq!(generated["ok"], true);
+    assert_eq!(generated["locked"], true);
+    assert_eq!(generated["identityLocked"], false);
+    g += 1;
+    let sender_public: Value =
+        serde_json::from_str(generated["publicIdentity"].as_str().unwrap()).unwrap();
+    let pin_a = sender_public["keyId"].as_str().unwrap().to_owned();
+    assert_eq!(
+        send(json!({"command":"identityPublic","expectedGeneration":g}))["publicIdentity"],
+        generated["publicIdentity"]
+    );
+    let bundle_a =
+        send(json!({"command":"identityWrap","expectedGeneration":g,"identitySecret":SECRET}))
+            ["bundle"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+    assert!(!bundle_a.contains(SECRET));
+    assert_eq!(
+        send(
+            json!({"command":"encrypt","expectedGeneration":g,"context":ctx.to_string(),"item":item.to_string()})
+        )["error"],
+        "PS057: Password box is locked"
+    );
+    let mut wrong_owner = owner.clone();
+    wrong_owner["ownerAccountId"] = b["accountId"].clone();
+    let bad =
+        send(json!({"command":"generate","expectedGeneration":g,"owner":wrong_owner.to_string()}));
+    assert_eq!(bad["error"], INVALID);
+    assert_eq!(bad["generation"], g);
+    assert_eq!(
+        send(
+            json!({"command":"identityGenerate","expectedGeneration":g,"accountContext":b.to_string()})
+        )["error"],
+        OPEN
+    );
+    assert_eq!(
+        send(json!({"command":"generate","expectedGeneration":g,"owner":owner.to_string()}))["ok"],
+        true
+    );
+    g += 1;
+    let ciphertext = send(json!({"command":"encrypt","expectedGeneration":g,"context":ctx.to_string(),"item":item.to_string()}))["envelope"].as_str().unwrap().to_owned();
+    let owner_bundle = send(json!({"command":"wrap","expectedGeneration":g,"password":SECRET}))
+        ["bundle"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Every expected value is selected independently, not read from an envelope.
+    let shared = json!({"passwordBoxId":owner["passwordBoxId"],"senderAccountId":a["accountId"],
+        "recipientAccountId":b["accountId"],"keyEpoch":1,"senderIdentityVersion":1,"recipientIdentityVersion":1,
+        "senderKeyId":pin_a,"recipientKeyId":pin_b});
+    let wrap = json!({"command":"sharedRecipientWrap","expectedGeneration":g,
+        "trustedRecipientPublic":recipient_public.to_string(),"sharedContext":shared.to_string()});
+    let sealed = send(wrap.clone());
+    assert_eq!(sealed["ok"], true);
+    assert!(!sealed.to_string().contains("worker-sharing-private"));
+    let shared_envelope = sealed["envelope"].as_str().unwrap().to_owned();
+    let replacement = CloudAccountIdentity::new(&a.to_string()).unwrap();
+    let replacement_public = replacement.public_identity().unwrap();
+    let replacement_bundle = replacement.wrap(SECRET.into()).unwrap();
+    let replacement_recipient = CloudAccountIdentity::new(&b.to_string()).unwrap();
+    let mut bad_wrap = wrap.clone();
+    bad_wrap["trustedRecipientPublic"] = json!(replacement_recipient.public_identity().unwrap());
+    assert_eq!(send(bad_wrap)["error"], INVALID);
+    for (field, value) in [
+        ("passwordBoxId", json!("cccccccccccccccccccccccccc")),
+        ("senderAccountId", b["accountId"].clone()),
+        ("recipientAccountId", a["accountId"].clone()),
+        ("keyEpoch", json!(2)),
+        ("senderIdentityVersion", json!(2)),
+        ("recipientIdentityVersion", json!(2)),
+        ("senderKeyId", json!("0".repeat(64))),
+        ("recipientKeyId", json!("0".repeat(64))),
+    ] {
+        let mut changed = shared.clone();
+        changed[field] = value;
+        let mut request = wrap.clone();
+        request["sharedContext"] = json!(changed.to_string());
+        assert_eq!(send(request)["error"], INVALID);
+    }
+    let receive = json!({"command":"sharedReceiveUnlock","expectedGeneration":g,
+        "envelope":shared_envelope,"trustedSenderPublic":sender_public.to_string(),"sharedContext":shared.to_string()});
+    assert_eq!(send(receive.clone())["error"], OPEN);
+    worker_strict_shared_inputs(send, &wrap, g);
+    // Replayed/late lock is accepted even with requestId below the high-water mark.
+    let late_lock = r#"{"version":1,"requestId":1,"command":"lock"}"#;
+    let locked: Value = serde_json::from_str(&worker_exchange(late_lock)).unwrap();
+    g += 1;
+    assert_eq!(locked["generation"], g);
+    assert_eq!(locked["locked"], true);
+    assert_eq!(locked["identityLocked"], true);
+    assert_eq!(send(wrap.clone())["error"], STALE);
+    let replay: Value = serde_json::from_str(&worker_exchange(late_lock)).unwrap();
+    g += 1;
+    assert_eq!(replay["generation"], g);
+    assert_eq!(
+        send(json!({"command":"identityPublic","expectedGeneration":g}))["error"],
+        "PS057: Account identity is locked"
+    );
+    let mut restore = json!({"command":"identityUnlock","expectedGeneration":g,"accountContext":a.to_string(),
+        "expectedKeyId":pin_a,"bundle":bundle_a,"identitySecret":SECRET});
+    let mut bad = restore.clone();
+    bad["bundle"] = json!(replacement_bundle);
+    assert_eq!(send(bad)["error"], INVALID); // same account/version, different pinned key
+    for (field, value) in [
+        ("accountContext", json!(b.to_string())),
+        ("expectedKeyId", json!(pin_b)),
+        ("identitySecret", json!("Wrong worker identity password!")),
+    ] {
+        let mut bad = restore.clone();
+        bad[field] = value;
+        let reply = send(bad);
+        assert_eq!(reply["error"], INVALID);
+        assert_eq!(reply["generation"], g);
+        assert_eq!(reply["identityLocked"], true);
+        assert!(!reply.to_string().contains("password!"));
+    }
+    assert_eq!(send(restore.clone())["ok"], true);
+    g += 1;
+    restore["expectedGeneration"] = json!(g);
+    assert_eq!(send(restore)["error"], OPEN);
+    // Owner restoration binds to the open identity, even if the bundle itself is valid.
+    assert_eq!(
+        send(
+            json!({"command":"unlock","expectedGeneration":g,"owner":wrong_owner.to_string(),"bundle":owner_bundle,"password":SECRET})
+        )["error"],
+        INVALID
+    );
+    assert_eq!(
+        send(
+            json!({"command":"unlock","expectedGeneration":g,"owner":owner.to_string(),"bundle":owner_bundle,"password":SECRET})
+        )["ok"],
+        true
+    );
+    g += 1;
+    assert_eq!(
+        send(
+            json!({"command":"decrypt","expectedGeneration":g,"context":ctx.to_string(),"envelope":ciphertext})
+        )["ok"],
+        true
+    );
+    send(json!({"command":"lock"}));
+    g += 1;
+    assert_eq!(
+        send(
+            json!({"command":"identityUnlock","expectedGeneration":g,"accountContext":b.to_string(),
+        "expectedKeyId":pin_b,"bundle":bundle_b,"identitySecret":SECRET})
+        )["ok"],
+        true
+    );
+    g += 1;
+    let mut receive = receive;
+    receive["expectedGeneration"] = json!(g);
+    let mut bad = receive.clone();
+    bad["trustedSenderPublic"] = json!(replacement_public);
+    assert_eq!(send(bad)["error"], INVALID);
+    for (field, value) in [
+        ("passwordBoxId", json!("cccccccccccccccccccccccccc")),
+        ("keyEpoch", json!(2)),
+        ("recipientAccountId", a["accountId"].clone()),
+        ("senderKeyId", json!("0".repeat(64))),
+    ] {
+        let mut changed = shared.clone();
+        changed[field] = value;
+        let mut bad = receive.clone();
+        bad["sharedContext"] = json!(changed.to_string());
+        let reply = send(bad);
+        assert_eq!(reply["error"], INVALID);
+        assert_eq!(reply["generation"], g);
+        assert_eq!(reply["identityLocked"], false);
+        assert_eq!(reply["locked"], true);
+    }
+    let mut bad = receive.clone();
+    bad["envelope"] = json!(owner_bundle);
+    assert_eq!(send(bad)["error"], INVALID); // reject owner wrapping used as HPKE envelope
+    assert_eq!(send(receive.clone())["ok"], true);
+    g += 1;
+    let decrypted = send(
+        json!({"command":"decrypt","expectedGeneration":g,"context":ctx.to_string(),"envelope":ciphertext}),
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(decrypted["item"].as_str().unwrap()).unwrap(),
+        item
+    );
+    assert_eq!(
+        send(json!({"command":"wrap","expectedGeneration":g,"password":SECRET}))["error"],
+        INVALID
+    );
+    assert_eq!(
+        send(json!({"command":"recoveryMaterial","expectedGeneration":g}))["error"],
+        INVALID
+    );
+    receive["expectedGeneration"] = json!(g);
+    assert_eq!(send(receive.clone())["error"], OPEN);
+    assert_eq!(
+        send(json!({"command":"generate","expectedGeneration":g,"owner":owner.to_string()}))
+            ["error"],
+        OPEN
+    );
+    let lock = send(json!({"command":"lock"}));
+    g += 1;
+    assert_eq!(lock["identityLocked"], true);
+    assert_eq!(lock["locked"], true);
+    assert_eq!(send(receive.clone())["error"], STALE);
+    receive["expectedGeneration"] = json!(g);
+    assert_eq!(send(receive)["error"], "PS057: Account identity is locked");
+    assert_eq!(
+        send(
+            json!({"command":"decrypt","expectedGeneration":g,"context":ctx.to_string(),"envelope":ciphertext})
+        )["error"],
+        "PS057: Password box is locked"
+    );
+    let mut wrap = wrap;
+    wrap["expectedGeneration"] = json!(g);
+    assert_eq!(send(wrap)["error"], "PS057: Password box is locked");
+}
+
+fn worker_strict_shared_inputs(send: &mut impl FnMut(Value) -> Value, wrap: &Value, g: u64) {
+    const INVALID: &str = "PS051: Invalid encrypted data";
+    for command in [
+        "identityGenerate",
+        "identityPublic",
+        "identityWrap",
+        "identityUnlock",
+        "sharedRecipientWrap",
+        "sharedReceiveUnlock",
+    ] {
+        let request = match command {
+            "identityGenerate" => {
+                json!({"command":command,"expectedGeneration":g,"accountContext":"{}"})
+            }
+            "identityPublic" => json!({"command":command,"expectedGeneration":g}),
+            "identityWrap" => {
+                json!({"command":command,"expectedGeneration":g,"identitySecret":"Synthetic identity password!"})
+            }
+            "identityUnlock" => {
+                json!({"command":command,"expectedGeneration":g,"accountContext":"{}","bundle":"{}","expectedKeyId":"0".repeat(64),"identitySecret":"Synthetic identity password!"})
+            }
+            "sharedRecipientWrap" => wrap.clone(),
+            _ => {
+                json!({"command":command,"expectedGeneration":g,"envelope":"{}","trustedSenderPublic":"{}","sharedContext":"{}"})
+            }
+        };
+        for key in request
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|k| k.as_str() != "command")
+        {
+            let mut missing = request.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert_eq!(send(missing)["error"], INVALID);
+            for value in [Value::Null, json!(false)] {
+                let mut bad = request.clone();
+                bad[key] = value;
+                assert_eq!(send(bad)["error"], INVALID);
+            }
+        }
+        for key in ["unknown", "owner", "password", "item"] {
+            let mut bad = request.clone();
+            bad[key] = json!("worker-no-secret-echo");
+            let reply = send(bad);
+            assert_eq!(reply["error"], INVALID);
+            assert!(!reply.to_string().contains("worker-no-secret-echo"));
+        }
+        let mut duplicate = request.clone();
+        duplicate["version"] = json!(1);
+        duplicate["requestId"] = json!(9_007_199_254_740_000u64);
+        let text = duplicate.to_string();
+        let text = format!("{{\"command\":\"{command}\",{}", &text[1..]);
+        let reply: Value = serde_json::from_str(&worker_exchange(&text)).unwrap();
+        assert_eq!(reply["error"], INVALID);
+        assert_eq!(reply["requestId"], Value::Null);
+    }
+    for (key, limit) in [("sharedContext", 1024), ("trustedRecipientPublic", 512)] {
+        let mut bad = wrap.clone();
+        bad[key] = json!("x".repeat(limit + 1));
+        assert_eq!(send(bad)["error"], INVALID);
+    }
+    let oversized = format!("{{\"private\":\"{}\"}}", "x".repeat(6 * 1024 * 1024 + 4096));
+    let reply: Value = serde_json::from_str(&worker_exchange(&oversized)).unwrap();
+    assert_eq!(reply["error"], INVALID);
+    // Reuse the most recent id and otherwise valid request; dispatcher rejects replay.
+    let reply = send(wrap.clone());
+    assert_eq!(reply["ok"], true);
+    let mut replay = wrap.clone();
+    replay["version"] = json!(1);
+    replay["requestId"] = reply["requestId"].clone();
+    let replay: Value = serde_json::from_str(&worker_exchange(&replay.to_string())).unwrap();
+    assert_eq!(replay["error"], INVALID);
 }
 
 #[wasm_bindgen_test]
