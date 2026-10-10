@@ -23,11 +23,13 @@ fn add_complete_item(pb: &mut PasswordBox) {
     .unwrap();
     item.urls = vec![
         crate::domain::item::ItemUrl {
+            extensions: Default::default(),
             href: "https://example.test/a".into(),
             primary: true,
             label: "A".into(),
         },
         crate::domain::item::ItemUrl {
+            extensions: Default::default(),
             href: "https://example.test/b".into(),
             primary: false,
             label: "B".into(),
@@ -44,6 +46,9 @@ fn add_complete_item(pb: &mut PasswordBox) {
     original.0["items"][0]["extra"] = serde_json::json!({"nested":["synthetic-extra"]});
     original.0["items"][0]["fields"][0]["extraField"] = serde_json::json!("synthetic-field");
     original.0["items"][0]["urls"][0]["extraUrl"] = serde_json::json!("keep-url");
+    pb.payload.items[0].urls[0]
+        .extensions
+        .insert("extraUrl".into(), serde_json::json!("keep-url"));
     original.0["extraRoot"] = serde_json::json!("keep-root");
     pb.original_payload = Some(Zeroizing::new(serde_json::to_vec(&original.0).unwrap()));
 }
@@ -127,6 +132,28 @@ fn first_save_and_rekey_preserve_reference_extensions_and_duplicate_url_metadata
         original.0["items"][0]["vault"]
     );
     assert_eq!(saved.0["items"][0]["urls"], original.0["items"][0]["urls"]);
+    let mut reordered = PasswordBox::open(&path, OLD_PASSWORD).unwrap();
+    reordered.payload.items[0].urls.reverse();
+    reordered.save(OLD_PASSWORD).unwrap();
+    drop(reordered);
+    let ordered = raw_payload(&path, OLD_PASSWORD);
+    assert_eq!(
+        ordered.0["items"][0]["urls"][0],
+        original.0["items"][0]["urls"][1]
+    );
+    assert_eq!(
+        ordered.0["items"][0]["urls"][1],
+        original.0["items"][0]["urls"][0]
+    );
+    let mut removed = PasswordBox::open(&path, OLD_PASSWORD).unwrap();
+    removed.payload.items[0].urls.remove(1);
+    removed.save(OLD_PASSWORD).unwrap();
+    drop(removed);
+    let retained = raw_payload(&path, OLD_PASSWORD);
+    assert_eq!(
+        retained.0["items"][0]["urls"],
+        serde_json::json!([original.0["items"][0]["urls"][1]])
+    );
     let mut recovered = PasswordBox::recover(&path, &code).unwrap();
     recovered.rekey_recovered(NEW_PASSWORD).unwrap();
     drop(recovered);
@@ -137,7 +164,7 @@ fn first_save_and_rekey_preserve_reference_extensions_and_duplicate_url_metadata
     );
     assert_eq!(
         rekeyed.0["items"][0]["urls"],
-        original.0["items"][0]["urls"]
+        retained.0["items"][0]["urls"]
     );
 }
 

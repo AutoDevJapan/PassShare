@@ -47,11 +47,13 @@ fn failure_then_retry(operation: Operation) {
     original.tags = vec!["keep,comma".into(), "unchanged".into()];
     original.urls = vec![
         crate::domain::item::ItemUrl {
+            extensions: Default::default(),
             href: "https://example.test/first".into(),
             primary: true,
             label: "First".into(),
         },
         crate::domain::item::ItemUrl {
+            extensions: Default::default(),
             href: "https://example.test/second".into(),
             primary: false,
             label: "Second".into(),

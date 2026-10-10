@@ -622,6 +622,14 @@ fn scrub_item_fields(item: &mut Item) {
     for field in &mut item.fields {
         field.value.zeroize();
     }
+    for url in &mut item.urls {
+        url.href.zeroize();
+        url.label.zeroize();
+        for (mut key, mut value) in std::mem::take(&mut url.extensions) {
+            key.zeroize();
+            scrub_json(&mut value);
+        }
+    }
     #[cfg(test)]
     saved_change_tests::observe_scrubbed_item(item);
 }
@@ -656,12 +664,22 @@ fn scrub_json(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(s) => s.zeroize(),
         serde_json::Value::Array(values) => values.iter_mut().for_each(scrub_json),
-        serde_json::Value::Object(values) => values.values_mut().for_each(scrub_json),
+        serde_json::Value::Object(values) => {
+            for (mut key, mut value) in std::mem::take(values) {
+                key.zeroize();
+                scrub_json(&mut value);
+            }
+        }
         _ => {}
     }
 }
 
 fn merge_extensions(current: &mut serde_json::Value, original: &serde_json::Value, context: &str) {
+    // URLs now carry their own extensions. Never infer identity from href or
+    // reinsert properties that a caller explicitly removed from that value.
+    if context == "urls" {
+        return;
+    }
     use serde_json::Value;
     match (current, original) {
         (Value::Object(current), Value::Object(original)) => {
