@@ -17,6 +17,7 @@ use reqwest::{
     Client, Url,
 };
 use serde_json::{json, Value};
+use unicode_normalization::UnicodeNormalization;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{Cli, Commands, ItemCommands, VaultCommands};
@@ -71,7 +72,12 @@ fn erase(value: &mut Value) {
     match value {
         Value::String(s) => s.zeroize(),
         Value::Array(a) => a.iter_mut().for_each(erase),
-        Value::Object(o) => o.values_mut().for_each(erase),
+        Value::Object(o) => {
+            for (mut key, mut value) in std::mem::take(o) {
+                key.zeroize();
+                erase(&mut value);
+            }
+        }
         _ => {}
     }
 }
@@ -88,7 +94,8 @@ fn object_keys(value: &Value, allowed: &[&str]) -> bool {
 }
 
 fn parse_input(bytes: &[u8]) -> Result<Plaintext> {
-    let input = Plaintext(serde_json::from_slice(bytes).map_err(|_| INPUT)?);
+    let parsed: UniqueJson = serde_json::from_slice(bytes).map_err(|_| INPUT)?;
+    let input = Plaintext(parsed.take());
     if !object_keys(
         &input.0,
         &[
@@ -102,6 +109,90 @@ fn parse_input(bytes: &[u8]) -> Result<Plaintext> {
         return Err(INPUT);
     }
     Ok(input)
+}
+
+// Reject ambiguous raw JSON before Value's usual last-key-wins conversion.
+// Every partially built object/array is held by a scrub-on-error guard.
+struct UniqueJson(Value);
+impl UniqueJson {
+    fn take(mut self) -> Value {
+        std::mem::replace(&mut self.0, Value::Null)
+    }
+}
+impl Drop for UniqueJson {
+    fn drop(&mut self) {
+        erase(&mut self.0)
+    }
+}
+impl<'de> serde::Deserialize<'de> for UniqueJson {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = UniqueJson;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("unambiguous JSON")
+            }
+            fn visit_bool<E: serde::de::Error>(
+                self,
+                v: bool,
+            ) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::Bool(v)))
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(v.into()))
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(v.into()))
+            }
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<UniqueJson, E> {
+                serde_json::Number::from_f64(v)
+                    .map(|n| UniqueJson(Value::Number(n)))
+                    .ok_or_else(|| E::custom("invalid number"))
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::String(v.into())))
+            }
+            fn visit_string<E: serde::de::Error>(
+                self,
+                v: String,
+            ) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::String(v)))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::Null))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> std::result::Result<UniqueJson, A::Error> {
+                let mut guard = Plaintext(Value::Array(Vec::new()));
+                while let Some(child) = a.next_element::<UniqueJson>()? {
+                    guard.0.as_array_mut().unwrap().push(child.take())
+                }
+                Ok(UniqueJson(std::mem::replace(&mut guard.0, Value::Null)))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> std::result::Result<UniqueJson, A::Error> {
+                let mut guard = Plaintext(Value::Object(serde_json::Map::new()));
+                while let Some(key) = a.next_key::<String>()? {
+                    let mut key = Zeroizing::new(key);
+                    if guard.0.as_object().unwrap().contains_key(key.as_str()) {
+                        return Err(serde::de::Error::custom("duplicate object key"));
+                    }
+                    let child = a.next_value::<UniqueJson>()?;
+                    guard
+                        .0
+                        .as_object_mut()
+                        .unwrap()
+                        .insert(std::mem::take(&mut *key), child.take());
+                }
+                Ok(UniqueJson(std::mem::replace(&mut guard.0, Value::Null)))
+            }
+        }
+        d.deserialize_any(Visitor)
+    }
 }
 
 fn read_input(stdin: bool) -> Result<Plaintext> {
@@ -264,7 +355,9 @@ impl Session {
         }
         .salt_bytes()
         .map_err(|_| CRYPTO)?;
-        let root = crypto::derive_master_key(password, &salt).map_err(|_| CRYPTO)?;
+        let normalized = Zeroizing::new(password.nfc().collect::<String>());
+        let root = crypto::derive_master_key_with_params(&normalized, &salt, 65_536, 3, 4)
+            .map_err(|_| CRYPTO)?;
         let key = PasswordBoxKey::unwrap_for_owner(&record.bundle.wrapped, &root, &owner)
             .map_err(|_| CRYPTO)?;
         Ok(Self {
@@ -437,9 +530,11 @@ impl Session {
 /// projection. Labels follow the legacy CLI purpose/label lookup policy.
 fn field_index(item: &Value, name: &str) -> Result<usize> {
     let fields = item.get("fields").and_then(Value::as_array).ok_or(INPUT)?;
-    let purpose = match name.to_ascii_lowercase().as_str() {
-        "password" => Some("PASSWORD"),
-        "username" => Some("USERNAME"),
+    let explicit = name.strip_prefix("field:");
+    let name = explicit.unwrap_or(name);
+    let purpose = match (explicit, name.to_ascii_lowercase().as_str()) {
+        (None, "password") => Some("PASSWORD"),
+        (None, "username") => Some("USERNAME"),
         _ => None,
     };
     let matches: Vec<usize> = fields
@@ -447,6 +542,7 @@ fn field_index(item: &Value, name: &str) -> Result<usize> {
         .enumerate()
         .filter(|(_, field)| match purpose {
             Some(p) => field["purpose"].as_str() == Some(p),
+            None if explicit.is_some() => field["id"].as_str() == Some(name),
             None => {
                 field["label"]
                     .as_str()
@@ -461,6 +557,33 @@ fn field_index(item: &Value, name: &str) -> Result<usize> {
     }
     Ok(matches[0])
 }
+fn selected_target(item: &Value, name: &str) -> Result<Option<usize>> {
+    if name.eq_ignore_ascii_case("item.title") {
+        return Ok(None);
+    }
+    if name.eq_ignore_ascii_case("title") {
+        let collision = item["fields"].as_array().ok_or(INPUT)?.iter().any(|f| {
+            ["id", "label"].iter().any(|key| {
+                f[*key]
+                    .as_str()
+                    .is_some_and(|v| v.eq_ignore_ascii_case("title"))
+            })
+        });
+        if collision {
+            return Err(Error::Invalid(
+                "title selection is ambiguous; use item.title or field:ID",
+            ));
+        }
+        return Ok(None);
+    }
+    field_index(item, name).map(Some)
+}
+fn selected_value<'a>(item: &'a Value, name: &str) -> Result<&'a str> {
+    match selected_target(item, name)? {
+        None => item["title"].as_str().ok_or(INPUT),
+        Some(i) => item["fields"][i]["value"].as_str().ok_or(INPUT),
+    }
+}
 fn edit_selected(original: &mut Plaintext, selected: &Value) -> Result<()> {
     let fields = selected
         .as_object()
@@ -470,23 +593,21 @@ fn edit_selected(original: &mut Plaintext, selected: &Value) -> Result<()> {
     // Validate the whole selection before applying any mutation.
     for (name, value) in fields {
         let value = value.as_str().ok_or(INPUT)?;
-        let target = if name.eq_ignore_ascii_case("title") {
-            if value.trim().is_empty() {
-                return Err(INPUT);
-            }
-            None
-        } else {
-            Some(field_index(&original.0, name)?)
-        };
+        let target = selected_target(&original.0, name)?;
+        if target.is_none() && value.trim().is_empty() {
+            return Err(INPUT);
+        }
         if !targets.insert(target) {
             return Err(Error::Invalid("multiple selections address the same field"));
         }
     }
     for (name, value) in fields {
-        if name.eq_ignore_ascii_case("title") {
+        if selected_target(&original.0, name)?.is_none() {
+            erase(&mut original.0["title"]);
             original.0["title"] = value.clone();
         } else {
             let index = field_index(&original.0, name)?;
+            erase(&mut original.0["fields"][index]["value"]);
             original.0["fields"][index]["value"] = value.clone();
         }
     }
@@ -595,11 +716,7 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
                 }
                 let detail = session.get(&item).await?;
                 if let Some(name) = fields {
-                    let index = field_index(&detail.0, &name)?;
-                    println!(
-                        "{}",
-                        detail.0["fields"][index]["value"].as_str().ok_or(INPUT)?
-                    );
+                    println!("{}", selected_value(&detail.0, &name)?);
                 } else {
                     println!(
                         "{}",
@@ -656,11 +773,7 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             }
             let reference = passshare_connect::parse_op_reference(&reference).ok_or(INPUT)?;
             let detail = session.get(&reference.item).await?;
-            let index = field_index(&detail.0, &reference.field)?;
-            println!(
-                "{}",
-                detail.0["fields"][index]["value"].as_str().ok_or(INPUT)?
-            );
+            println!("{}", selected_value(&detail.0, &reference.field)?);
             return Ok(());
         }
     };
@@ -675,6 +788,48 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_duplicate_keys_and_escaped_aliases_are_rejected() {
+        for raw in [
+            br#"{"selectedFields":{"password":"a","password":"b"}}"#.as_slice(),
+            br#"{"selectedFields":{"password":"a","pass\u0077ord":"b"}}"#.as_slice(),
+            br#"{"sessionToken":"a","sessionToken":"b"}"#.as_slice(),
+            br#"{"item":{"unknown":{"field":"a","field":"b"}}}"#.as_slice(),
+            br#"{"sessionToken":"a"} trailing"#.as_slice(),
+        ] {
+            assert!(parse_input(raw).is_err());
+        }
+        assert!(parse_input(br#"{"selectedFields":{"password":"a","username":"b"}}"#).is_ok());
+    }
+
+    #[test]
+    fn title_and_secret_field_collisions_need_explicit_selectors() {
+        let original = json!({"title":"Visible title","fields":[{"id":"title","label":"private","value":"old"}]});
+        let mut item = Plaintext(original.clone());
+        assert!(edit_selected(&mut item, &json!({"title":"replacement"})).is_err());
+        assert!(item.0 == original);
+        assert!(selected_value(&item.0, "title").is_err());
+        assert_eq!(
+            selected_value(&item.0, "item.title").unwrap(),
+            "Visible title"
+        );
+        edit_selected(&mut item, &json!({"field:title":"replacement"})).unwrap();
+        assert_eq!(
+            selected_value(&item.0, "field:title").unwrap(),
+            "replacement"
+        );
+        assert_eq!(
+            selected_value(&item.0, "item.title").unwrap(),
+            "Visible title"
+        );
+        edit_selected(&mut item, &json!({"item.title":"Renamed"})).unwrap();
+        assert_eq!(selected_value(&item.0, "item.title").unwrap(), "Renamed");
+        assert_eq!(
+            selected_value(&item.0, "field:title").unwrap(),
+            "replacement"
+        );
+    }
 
     #[test]
     fn selected_fields_preserve_every_other_dto_property_and_reject_aliases() {

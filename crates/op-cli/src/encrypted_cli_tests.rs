@@ -426,6 +426,41 @@ fn safe_failure(output: &Output, status: u16) {
 }
 
 #[test]
+fn executable_normalizes_owner_password_like_the_wasm_client() {
+    use unicode_normalization::UnicodeNormalization;
+    let server = Server::new();
+    let typed = "fixture e\u{301} normalization password";
+    let normalized = typed.nfc().collect::<String>();
+    let salt: Vec<u8> = (0..16).collect();
+    let root = crypto::derive_master_key_with_params(&normalized, &salt, 65_536, 3, 4).unwrap();
+    let owner = server.state.lock().unwrap().bundle.wrapped.context.clone();
+    let mut full = item()["item"].clone();
+    full["id"] = json!(LEGACY_ITEM);
+    full["version"] = json!(1);
+    full["vault"] = json!({"id":BOX});
+    let context = serde_json::from_value(
+        json!({"passwordBoxId":BOX,"itemId":LEGACY_ITEM,"itemVersion":1,"keyEpoch":1}),
+    )
+    .unwrap();
+    {
+        let mut state = server.state.lock().unwrap();
+        state.bundle = OwnerKeyBundle::new(
+            "AAECAwQFBgcICQoLDA0ODw==".into(),
+            server.key.wrap_for_owner(&root, &owner).unwrap(),
+        )
+        .unwrap();
+        state.envelope = Some(server.key.encrypt_item(&full, &context).unwrap());
+    }
+    let output = server.run(
+        &["item", "get", LEGACY_ITEM, "--vault", BOX],
+        json!({"encryptionPassword":typed}),
+    );
+    assert!(output.status.success());
+    let got: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(got == full);
+}
+
+#[test]
 fn executable_create_read_edit_delete_and_explicit_replay_preserve_complete_dto() {
     let server = Server::new();
     let prepared = server.run(
