@@ -49,7 +49,8 @@ export const docsEn: LocaleDocs = {
         title: "2. Open a password box",
         paragraphs: [
           "On Desktop, select a .pbox file and unlock it with your master password.",
-          "On Web, sign in to access cloud password boxes. Item contents are handled by the server and database. Your account password is separate from the desktop master password.",
+          "On Web, sign in and check the password box storage mode. Owner-encrypted mode uses an encryption password separate from sign-in and a Rust/WASM Worker on your device. The server cannot read item contents. In Connect compatibility mode, the server can read them.",
+          "Owner-encrypted mode is implemented but requires the encrypted API to be enabled at your service. New setup requires an empty password box. Migration from compatibility boxes containing items and encryption across all clients remain incomplete. Desktop, Mobile and extension Connect access does not support owner-encrypted mode. The CLI's explicit encrypted mode is also separate from normal Connect access.",
         ],
       },
       {
@@ -59,14 +60,14 @@ export const docsEn: LocaleDocs = {
         list: [
           "Web: /app/vaults → select a password box → CRUD items",
           "Desktop: add, search, and copy (clipboard auto-clear)",
-          "Mobile / Extension: same items via Connect API",
+          "Mobile / Extension: access Connect compatibility items; owner-encrypted mode is not supported",
         ],
       },
       {
         id: "sync",
         title: "4. Cloud sync (Desktop)",
         paragraphs: [
-          "Use Settings → Cloud sync to push or pull.",
+          "Use Desktop Settings → Cloud sync to push or pull in Connect compatibility mode. Device file encryption does not hide contents from the server at this destination.",
           "On conflicts, choose local-wins or cloud-wins.",
         ],
       },
@@ -76,7 +77,9 @@ export const docsEn: LocaleDocs = {
         paragraphs: [
           "From 1Password: import 1PUX or 1Password CSV export into PassShare.",
           "See the landing page migration section for more detail.",
-          "CSV is plaintext and does not preserve every custom field, attachment, or URL. Verify imported contents before removing the source data. Keep your .pbox backup and its recovery code separately. Recovery requires a compatible Desktop app and a recovery-enabled file; older copies made before enabling recovery still require their master password.",
+          "CSV is plaintext and does not preserve every custom field, attachment, or URL. Verify imported contents before removing the source data.",
+          "In a recovery-capable version, a recovery-enabled .pbox file and its emergency kit code let you set a new master password. Enable recovery on older files with the current master password beforehand. Store a file backup and code safely and separately. The code cannot replace a lost file.",
+          "Device file recovery is implemented in Rust Core. Check your app version and the distributor's feature description for file format and recovery operation support. Older versions may not support them; the Desktop recovery screen has been integrated and verified in the Linux renderer, while installed distributor versions must be checked separately. Signatures, installation on supported operating systems and general distribution remain under verification. This guide does not provide a download location or prove installation.",
         ],
       },
     ],
@@ -260,8 +263,9 @@ export const docsEn: LocaleDocs = {
         id: "forgot-master",
         title: "I forgot my master password",
         paragraphs: [
-          "Master passwords are not stored on PassShare servers. A compatible Desktop app can recover a recovery-enabled .pbox file using its emergency-kit code and save it with a new master password.",
-          "Keep the recovery code separately from its file. Copies made before recovery was enabled still require their original master password. If neither a working master password nor the matching recovery code is available, the file cannot be decrypted. This procedure changes the file password; it does not change your cloud sign-in password.",
+          "Master passwords are not stored on PassShare servers. In a recovery-capable version, a recovery-enabled .pbox file and its emergency kit code let you set a new master password. Older files need recovery enabled with the current master password before you forget it.",
+          "Store a file backup and code separately. The code cannot replace a lost file. Check version support in the user guide. A file without recovery enabled cannot be opened with the code alone.",
+          "Web owner-encrypted mode has a separate recovery process. Sign in as the owner and provide a backup file and code for the current key epoch, a new encryption password and your current sign-in password. Resetting the sign-in password alone does not recover encrypted data. All-client recovery and checks before sale remain incomplete.",
         ],
       },
       {
