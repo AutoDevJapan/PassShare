@@ -134,13 +134,8 @@ impl PasswordBox {
         )?;
         let pb = Self::open_with_key(path, &file, &key, false)?;
         if file.version == RECOVERY_FILE_VERSION {
-            let code = pb
-                .payload
-                .recovery_secret
-                .as_deref()
-                .ok_or(PassShareError::CorruptFile)?;
-            let recovered = Self::unwrap_recovery_key(&file, code)?;
-            if recovered.as_bytes() != key.as_bytes() {
+            let aad = file.recovery_aad()?;
+            if !pb.recovery_binding_matches(&file, &key, &aad) {
                 return Err(PassShareError::CorruptFile);
             }
         }
@@ -165,14 +160,41 @@ impl PasswordBox {
         file: &PasswordBoxFile,
         code: &str,
     ) -> Result<MasterKey, PassShareError> {
+        let aad = file.recovery_aad()?;
+        Self::unwrap_recovery_key_with_aad(file, code, &aad)
+    }
+
+    fn unwrap_recovery_key_with_aad(
+        file: &PasswordBoxFile,
+        code: &str,
+        aad: &[u8],
+    ) -> Result<MasterKey, PassShareError> {
         let wrapper = file.recovery.as_ref().ok_or(PassShareError::CorruptFile)?;
         let recovery = recovery_key(code)?;
         decrypt_recovery_key(
             &wrapper.ciphertext,
             &recovery,
             &wrapper.cipher.nonce_bytes()?,
-            &file.recovery_aad()?,
+            aad,
         )
+    }
+
+    // Normal opening already authenticated the primary payload. This check
+    // reveals only whether its recovery wrapper binds the same master key;
+    // neither the code nor the unwrapped key leaves the verification boundary.
+    fn recovery_binding_matches(
+        &self,
+        file: &PasswordBoxFile,
+        expected: &MasterKey,
+        aad: &[u8],
+    ) -> bool {
+        let Some(code) = self.payload.recovery_secret.as_deref() else {
+            return false;
+        };
+        match Self::unwrap_recovery_key_with_aad(file, code, aad) {
+            Ok(recovered) => recovered.as_bytes() == expected.as_bytes(),
+            Err(_) => false,
+        }
     }
 
     fn open_with_key(

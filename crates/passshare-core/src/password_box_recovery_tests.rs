@@ -261,6 +261,39 @@ fn upgrade_without_legacy_code_generates_one() {
 }
 
 #[test]
+fn normal_open_recovery_binding_exposes_only_an_integrity_decision() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("binding.pbox");
+    let mut pb = PasswordBox::create(&path, old_password().as_str()).unwrap();
+    let mut file = PasswordBoxFile::load_from_path(&path).unwrap();
+    let salt = file.kdf.salt_bytes().unwrap();
+    let expected = derive_master_key_with_params(
+        old_password().as_str(),
+        &salt,
+        file.kdf.memory_kib,
+        file.kdf.time_cost,
+        file.kdf.parallelism,
+    )
+    .unwrap();
+    let aad = file.recovery_aad().unwrap();
+    assert!(pb.recovery_binding_matches(&file, &expected, &aad));
+    let other = MasterKey::generate().unwrap();
+    assert!(!pb.recovery_binding_matches(&file, &other, &aad));
+    let code = Zeroizing::new(pb.payload.recovery_secret.take().unwrap());
+    assert!(!pb.recovery_binding_matches(&file, &expected, &aad));
+    pb.payload.recovery_secret = Some("invalid".into());
+    assert!(!pb.recovery_binding_matches(&file, &expected, &aad));
+    pb.payload.recovery_secret = Some(code.to_string());
+    file.recovery.as_mut().unwrap().ciphertext[0] ^= 1;
+    assert!(!pb.recovery_binding_matches(&file, &expected, &aad));
+    file.save_to_path(&path).unwrap();
+    assert!(
+        PasswordBox::open(&path, old_password().as_str()).err()
+            == Some(PassShareError::CorruptFile)
+    );
+}
+
+#[test]
 fn wrong_code_cross_file_wrapper_and_primary_tampering_are_rejected() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("a.pbox");
