@@ -20,6 +20,8 @@ enum Command {
     Wrap,
     Encrypt,
     Decrypt,
+    Create,
+    Edit,
     Lock,
 }
 
@@ -40,13 +42,30 @@ struct Request {
     version: u32,
     request_id: u64,
     command: Command,
+    #[serde(default, deserialize_with = "present")]
     expected_generation: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
     owner: Option<String>,
+    #[serde(default, deserialize_with = "present")]
     context: Option<String>,
+    #[serde(default, deserialize_with = "present")]
     bundle: Option<String>,
+    #[serde(default, deserialize_with = "present")]
     envelope: Option<String>,
+    #[serde(default, deserialize_with = "present")]
     item: Option<Secret>,
+    #[serde(default, deserialize_with = "present")]
     password: Option<Secret>,
+    #[serde(default, deserialize_with = "present")]
+    values: Option<Secret>,
+}
+
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 enum Out {
@@ -115,7 +134,7 @@ impl WorkerSession {
             return Err(INVALID);
         }
         self.last_request = self.last_request.max(r.request_id);
-        // Exactly the fields of the command: generation, owner, context, bundle, envelope, item, password.
+        // Exactly the fields of the command: generation, owner, context, bundle, envelope, item, password, values.
         let have = [
             r.expected_generation.is_some(),
             r.owner.is_some(),
@@ -124,14 +143,17 @@ impl WorkerSession {
             r.envelope.is_some(),
             r.item.is_some(),
             r.password.is_some(),
+            r.values.is_some(),
         ];
         let want = match r.command {
-            Command::Status | Command::Lock => [false; 7],
-            Command::Generate => [true, true, false, false, false, false, false],
-            Command::Unlock => [true, true, false, true, false, false, true],
-            Command::Wrap => [true, false, false, false, false, false, true],
-            Command::Encrypt => [true, false, true, false, false, true, false],
-            Command::Decrypt => [true, false, true, false, true, false, false],
+            Command::Status | Command::Lock => [false; 8],
+            Command::Generate => [true, true, false, false, false, false, false, false],
+            Command::Unlock => [true, true, false, true, false, false, true, false],
+            Command::Wrap => [true, false, false, false, false, false, true, false],
+            Command::Encrypt => [true, false, true, false, false, true, false, false],
+            Command::Create => [true, false, false, false, false, false, false, true],
+            Command::Edit => [true, false, true, false, false, true, false, true],
+            Command::Decrypt => [true, false, true, false, true, false, false, false],
         };
         if have != want {
             return Err(INVALID);
@@ -173,12 +195,25 @@ impl WorkerSession {
                 Ok(Out::Empty)
             }
             Command::Wrap => {
+                let session = self.open()?;
                 let password = std::mem::take(&mut r.password.as_mut().unwrap().0);
-                self.open()?.wrap(password).map(Out::Bundle)
+                session.wrap(password).map(Out::Bundle)
             }
             Command::Encrypt => {
+                let session = self.open()?;
                 let item = std::mem::take(&mut r.item.as_mut().unwrap().0);
-                self.open()?.encrypt(item, context).map(Out::Envelope)
+                session.encrypt(item, context).map(Out::Envelope)
+            }
+            Command::Create => {
+                let session = self.open()?;
+                let values = std::mem::take(&mut r.values.as_mut().unwrap().0);
+                session.create_item(values).map(Out::Envelope)
+            }
+            Command::Edit => {
+                let session = self.open()?;
+                let item = std::mem::take(&mut r.item.as_mut().unwrap().0);
+                let values = std::mem::take(&mut r.values.as_mut().unwrap().0);
+                session.edit_item(item, values, context).map(Out::Envelope)
             }
             Command::Decrypt => self
                 .open()?
@@ -522,5 +557,146 @@ mod tests {
             serde_json::from_str::<Value>(reply["item"].as_str().unwrap()).unwrap(),
             fixture["item"]
         );
+    }
+
+    fn form() -> Value {
+        json!({"title":"Original", "category":"LOGIN", "username":"user", "password":"private",
+            "url":"https://example.test/primary", "body":"", "notes":"note", "tags":"b, a", "favorite":false})
+    }
+
+    fn full_item() -> Value {
+        json!({"id":"bbbbbbbbbbbbbbbbbbbbbbbbbb", "version":1,
+            "vault":{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaa","extra":null}, "title":"Original", "category":"LOGIN",
+            "fields":[{"label":"password","value":"hidden"},
+                {"purpose":"USERNAME","value":"user","custom":{"keep":null}},
+                {"purpose":"PASSWORD","value":"private"}, {"label":"notes","value":"note"},
+                {"label":"custom","value":null}],
+            "urls":[{"href":"https://example.test/secondary","primary":false,"extra":2},
+                {"href":"https://example.test/primary","primary":true,"extra":1}],
+            "tags":["b","a"], "favorite":null, "attachments":[{"id":"z"},{"id":"a"}],
+            "extra":{"custom":[3,null,1]}, "notesPlain":"hidden native body"})
+    }
+
+    #[test]
+    fn title_only_edit_is_lossless_and_create_owns_identity_scope_and_version() {
+        let mut h = Harness::new();
+        let g = h.open();
+        let mut values = form();
+        values["title"] = json!("Changed");
+        let mut next: Value = serde_json::from_str(&context()).unwrap();
+        next["itemVersion"] = json!(2);
+        let edited = h.send(json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),
+            "item":full_item().to_string(),"values":values.to_string()}));
+        assert_eq!((edited["ok"].clone(),edited["generation"].clone(),edited["locked"].clone()),
+            (json!(true),json!(g),json!(false)));
+        let decrypted = h.send(json!({"command":"decrypt","expectedGeneration":g,"context":next.to_string(),"envelope":edited["envelope"]}));
+        let mut expected = full_item();
+        expected["title"] = json!("Changed");
+        expected["version"] = json!(2);
+        assert_eq!(serde_json::from_str::<Value>(decrypted["item"].as_str().unwrap()).unwrap(),expected);
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let reply = h.send(json!({"command":"create","expectedGeneration":g,"values":form().to_string()}));
+            assert_eq!(reply["generation"],g);
+            assert_eq!(reply["locked"],false);
+            let envelope: Value = serde_json::from_str(reply["envelope"].as_str().unwrap()).unwrap();
+            let ctx = &envelope["context"];
+            passshare_core::ConnectId::validate(ctx["itemId"].as_str().unwrap()).unwrap();
+            assert_eq!(ctx["passwordBoxId"],"aaaaaaaaaaaaaaaaaaaaaaaaaa");
+            assert_eq!(ctx["keyEpoch"],1);
+            assert_eq!(ctx["itemVersion"],1);
+            ids.push(ctx["itemId"].clone());
+            let plain = h.send(json!({"command":"decrypt","expectedGeneration":g,"context":ctx.to_string(),"envelope":reply["envelope"]}));
+            let body: Value = serde_json::from_str(plain["item"].as_str().unwrap()).unwrap();
+            assert_eq!(body["version"],1);
+            assert_eq!(body["fields"][1]["value"],"private");
+            assert_eq!(body["urls"][0]["href"],form()["url"]);
+        }
+        assert_ne!(ids[0],ids[1]);
+        // The final safe integer is allowed as a next version, never an old one.
+        let mut original = full_item();
+        original["version"] = json!(MAX_SAFE-1);
+        next["itemVersion"] = json!(MAX_SAFE);
+        assert_eq!(h.send(json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),
+            "item":original.to_string(),"values":form().to_string()}))["ok"],true);
+        for category in ["PASSWORD","SECURE_NOTE","CREDIT_CARD","IDENTITY","SSH_KEY","CUSTOM"] {
+            let mut values = form();
+            values["category"] = json!(category);
+            values["body"] = json!("Synthetic body");
+            let reply = h.send(json!({"command":"create","expectedGeneration":g,"values":values.to_string()}));
+            assert_eq!(reply["ok"],true);
+        }
+    }
+
+    #[test]
+    fn create_edit_reject_invalid_forms_scope_versions_and_exact_fields_without_echo() {
+        let mut h = Harness::new();
+        let g = h.open();
+        let mut next: Value = serde_json::from_str(&context()).unwrap();
+        next["itemVersion"] = json!(2);
+        let mut bad_forms = vec![Value::Null, json!({}), form()];
+        bad_forms[2]["password"] = Value::Null;
+        for key in ["title","category","username","password","url","body","notes","tags","favorite"] {
+            let mut values = form();
+            values.as_object_mut().unwrap().remove(key);
+            bad_forms.push(values);
+        }
+        for (key,value) in [("title",json!(" ")), ("category",json!("bad")), ("favorite",Value::Null),
+            ("id",json!("do-not-echo")), ("version",json!(3)), ("vault",json!({"id":"do-not-echo"}))] {
+            let mut values = form(); values[key] = value; bad_forms.push(values);
+        }
+        for values in bad_forms {
+            for command in ["create","edit"] {
+                let mut message = json!({"command":command,"expectedGeneration":g,"values":values.to_string()});
+                if command == "edit" { message["item"] = json!(full_item().to_string()); message["context"] = json!(next.to_string()); }
+                let reply = h.send(message);
+                assert_eq!(reply["error"],INVALID);
+                assert_eq!(reply["generation"],g);
+                assert_eq!(reply["locked"],false);
+                assert!(!reply.to_string().contains("do-not-echo"));
+                assert!(reply.get("envelope").is_none());
+            }
+        }
+        for (key,value) in [("id",json!("cccccccccccccccccccccccccc")), ("version",json!(0)),
+            ("version",json!(1.5)), ("version",json!(MAX_SAFE)), ("version",json!(MAX_SAFE+1)),
+            ("vault",json!({"id":"cccccccccccccccccccccccccc"}))] {
+            let mut item = full_item(); item[key] = value;
+            assert_eq!(h.send(json!({"command":"edit","expectedGeneration":g,"context":next.to_string(),"item":item.to_string(),"values":form().to_string()}))["error"],INVALID);
+        }
+        for (key,value) in [("itemVersion",json!(1)), ("itemVersion",json!(3)), ("keyEpoch",json!(2)),
+            ("passwordBoxId",json!("cccccccccccccccccccccccccc"))] {
+            let mut ctx = next.clone(); ctx[key] = value;
+            assert_eq!(h.send(json!({"command":"edit","expectedGeneration":g,"context":ctx.to_string(),"item":full_item().to_string(),"values":form().to_string()}))["error"],INVALID);
+        }
+        for command in ["create","edit"] {
+            let mut base = json!({"command":command,"expectedGeneration":g,"values":form().to_string()});
+            if command == "edit" { base["context"] = json!(next.to_string()); base["item"] = json!(full_item().to_string()); }
+            for key in ["owner","bundle","envelope","password","unknown"] {
+                for value in [json!("do-not-echo"),Value::Null] {
+                    let mut message = base.clone(); message[key] = value;
+                    let reply = h.send(message);
+                    assert_eq!(reply["error"],INVALID);
+                    assert!(!reply.to_string().contains("do-not-echo"));
+                }
+            }
+            for key in if command == "create" { vec!["context","item"] } else { vec![] } {
+                let mut message = base.clone(); message[key] = json!("do-not-echo");
+                assert_eq!(h.send(message)["error"],INVALID);
+            }
+            let mut missing = base.clone(); missing.as_object_mut().unwrap().remove("values");
+            assert_eq!(h.send(missing)["error"],INVALID);
+            let mut null = base.clone(); null["values"] = Value::Null;
+            assert_eq!(h.send(null)["error"],INVALID);
+            let mut stale = base.clone(); stale["expectedGeneration"] = json!(g-1);
+            assert_eq!(h.send(stale)["error"],STALE);
+            let mut oversized = base; oversized["values"] = json!("x".repeat(MAX_BODY+1));
+            assert_eq!(h.send(oversized)["error"],INVALID);
+        }
+        h.send(json!({"command":"lock"}));
+        for command in ["create","edit"] {
+            let mut message = json!({"command":command,"expectedGeneration":g+1,"values":form().to_string()});
+            if command == "edit" { message["context"] = json!(next.to_string()); message["item"] = json!(full_item().to_string()); }
+            assert_eq!(h.send(message)["error"],LOCKED);
+        }
     }
 }

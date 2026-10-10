@@ -12,6 +12,7 @@ use unicode_normalization::UnicodeNormalization;
 use wasm_bindgen::prelude::*;
 use zeroize::{Zeroize, Zeroizing};
 
+mod item_edit;
 mod shared;
 pub use shared::CloudAccountIdentity;
 mod worker;
