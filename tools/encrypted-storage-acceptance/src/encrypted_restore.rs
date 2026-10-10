@@ -85,6 +85,16 @@ fn security_state(db: &Database) -> String {
 fn bind(db: &Database, owner: &str, purpose: &str) {
     assert!(owner.len() == 32 && owner.bytes().all(|c| c.is_ascii_hexdigit()));
     assert!(matches!(purpose, "source" | "restore"));
+    assert!(
+        db.owned() && db.fixture_purpose == purpose,
+        "caller-owned database purpose"
+    );
+    if purpose == "source" {
+        assert!(
+            owner == db.fixture_owner_id && db.fixture_marker_matches(owner),
+            "source archive ownership"
+        );
+    }
     if db.sql("SELECT to_regclass('passshare_acceptance_control.binding') IS NOT NULL") == "t" {
         assert!(
             bound(db, owner, purpose),
@@ -96,6 +106,15 @@ fn bind(db: &Database, owner: &str, purpose: &str) {
 }
 
 fn bound(db: &Database, owner: &str, purpose: &str) -> bool {
+    if !db.owned() || db.fixture_purpose != purpose {
+        return false;
+    }
+    if purpose == "source" && (owner != db.fixture_owner_id || !db.fixture_marker_matches(owner)) {
+        return false;
+    }
+    if db.sql("SELECT to_regclass('passshare_acceptance_control.binding') IS NOT NULL") != "t" {
+        return false;
+    }
     let expected_name = db
         .local
         .as_ref()
@@ -120,13 +139,9 @@ fn target(source: &Database, network: &Network, owner: &str) -> Database {
     );
     let target = if let Some(local) = &source.local {
         let local = local.restore_target();
-        Database {
-            name: local.database.clone(),
-            port: local.port,
-            local: Some(local),
-        }
+        Database::from_local(local, "restore")
     } else {
-        Database::start(network)
+        Database::start_owned(network, "restore")
     };
     assert!(
         target.name != source.name && target.url() != source.url(),
@@ -498,32 +513,24 @@ fn may_resume(source: &Database, restored: &Database, owner: &str) -> bool {
     bound(source, owner, "source")
         && bound(restored, owner, "restore")
         && source.url() != restored.url()
-        && source.sql("SELECT owner_id FROM passshare_fixture_owner") == owner
-        && restored.sql("SELECT owner_id FROM passshare_fixture_owner") == owner
+        && owner == source.fixture_owner_id
+        && source.fixture_marker_matches(owner)
+        && restored.fixture_marker_matches(owner)
         && security_state(source) == security_state(restored)
 }
 
-// Both entrypoints must initialize the same archived ownership marker. The
-// Windows fixture already has it; a fresh Docker DB does not. Keep the current
-// binding outside public and validate the marker as well before resuming APIs.
+// Creation establishes provenance exactly once. A repeated archive must only
+// verify it, never adopt a public row or create/replace ownership metadata.
 fn fixture_owner(db: &Database) -> String {
-    let owner = db.local.as_ref().map_or_else(
-        // Create the fixture owner client-side before any backend migration.
-        // A fresh image's database must not require an optional SQL UUID function.
-        || {
-            let random = checked(MasterKey::generate(), "fixture owner entropy");
-            random.as_bytes()[..16]
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect()
-        },
-        |l| l.ownership_id.clone(),
+    assert!(
+        db.owned() && db.fixture_purpose == "source",
+        "owned source database required"
     );
-    if db.local.is_none() {
-        db.sql(&format!("CREATE TABLE passshare_fixture_owner(owner_id text PRIMARY KEY); INSERT INTO passshare_fixture_owner VALUES('{owner}')"));
-    }
-    assert!(db.sql("SELECT owner_id FROM passshare_fixture_owner") == owner);
-    owner
+    assert!(
+        db.fixture_marker_matches(&db.fixture_owner_id),
+        "source archive ownership marker shape/count/id"
+    );
+    db.fixture_owner_id.clone()
 }
 
 pub fn run(db: &Database, network: &Network, mode: &Mode) {
@@ -832,13 +839,91 @@ mod tests {
         let source = Database::start(&network);
         let host = Host::start(&source, &network, &mode);
         drop(host);
-        assert_eq!(source.sql("SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='passshare_fixture_owner'"), "0");
-        let restored = attachment_roundtrip(&source, &network);
-        assert_eq!(
-            source.sql("SELECT owner_id FROM passshare_fixture_owner"),
-            restored.sql("SELECT owner_id FROM passshare_fixture_owner")
-        );
-        drop(restored);
+        let owner = fixture_owner(&source);
+        let before = inventory(&source, true);
+        for _ in 0..2 {
+            let restored = attachment_roundtrip(&source, &network);
+            assert!(fixture_owner(&source) == owner);
+            assert!(source.fixture_marker_matches(&owner));
+            assert!(restored.fixture_marker_matches(&owner));
+            assert!(may_resume(&source, &restored, &owner));
+            assert!(inventory(&source, true) == before);
+            drop(restored);
+        }
+        drop(source);
+        drop(network);
+        assert!(!CLEANUP_FAILED.load(Ordering::SeqCst));
+    }
+    #[test]
+    #[ignore = "requires the pinned Docker PostgreSQL image"]
+    fn docker_fixture_owner_reuse_and_refusals_preserve_rows_and_xmin() {
+        let network = Network::start();
+        let source = Database::start(&network);
+        let owner = fixture_owner(&source);
+        bind(&source, &owner, "source");
+        let before = inventory(&source, true);
+        for _ in 0..2 {
+            assert!(fixture_owner(&source) == owner);
+            let backup = dump(&source, &owner);
+            let restored = target(&source, &network, &owner);
+            assert!(restored.fixture_owner_id != owner);
+            restore(&restored, &owner, &backup);
+            assert!(restored.fixture_marker_matches(&owner));
+            assert!(restored.owned() && bound(&restored, &owner, "restore"));
+            assert!(inventory(&source, true) == before);
+
+            // A restored source marker does not confer target ownership.
+            // This borrowed test view never owns cleanup of either real DB.
+            let mut impostor = std::mem::ManuallyDrop::new(Database {
+                name: restored.name.clone(),
+                port: restored.port,
+                local: None,
+                fixture_owner_id: restored.fixture_owner_id.clone(),
+                fixture_purpose: "restore",
+            });
+            impostor.fixture_owner_id = owner.clone();
+            assert!(!bound(&impostor, &owner, "restore"));
+            impostor.fixture_owner_id = restored.fixture_owner_id.clone();
+            impostor.name = source.name.clone();
+            assert!(!bound(&impostor, &owner, "restore"));
+            impostor.name = restored.name.clone();
+            impostor.port = source.port;
+            assert!(!bound(&impostor, &owner, "restore"));
+            impostor.port = restored.port;
+            impostor.fixture_purpose = "source";
+            assert!(!bound(&impostor, &owner, "restore"));
+            assert!(bound(&restored, &owner, "restore"));
+            drop(restored);
+        }
+        for mutation in [
+            "UPDATE public.passshare_fixture_owner SET owner_id='00000000000000000000000000000000'",
+            "INSERT INTO public.passshare_fixture_owner VALUES('00000000000000000000000000000000')",
+            "DELETE FROM public.passshare_fixture_owner",
+            "ALTER TABLE public.passshare_fixture_owner ADD COLUMN unexpected text",
+            "ALTER TABLE public.passshare_fixture_owner ALTER COLUMN owner_id TYPE varchar(32)",
+            "ALTER TABLE public.passshare_fixture_owner DROP CONSTRAINT passshare_fixture_owner_pkey; ALTER TABLE public.passshare_fixture_owner ALTER COLUMN owner_id DROP NOT NULL",
+            "ALTER TABLE public.passshare_fixture_owner RENAME COLUMN owner_id TO unexpected",
+            "ALTER TABLE public.passshare_fixture_owner RENAME TO hidden_owner; CREATE VIEW public.passshare_fixture_owner AS SELECT * FROM public.hidden_owner",
+        ] {
+            source.sql(mutation);
+            let unchanged = inventory(&source, true);
+            assert!(!source.fixture_marker_matches(&owner));
+            assert!(!bound(&source, &owner, "source"));
+            assert!(std::panic::catch_unwind(|| fixture_owner(&source)).is_err());
+            assert!(inventory(&source, true) == unchanged, "refusal never changes rows/xmin");
+            // Recreate only this test-owned marker for the next adversarial case.
+            // Production verification never repairs or overwrites a marker.
+            if mutation.contains("CREATE VIEW") {
+                source.sql("DROP VIEW public.passshare_fixture_owner; ALTER TABLE public.hidden_owner RENAME TO passshare_fixture_owner");
+            }
+            source.sql("DROP TABLE public.passshare_fixture_owner");
+            source.sql(&format!("CREATE TABLE public.passshare_fixture_owner(owner_id text PRIMARY KEY); INSERT INTO public.passshare_fixture_owner VALUES('{owner}')"));
+            assert!(source.fixture_marker_matches(&owner));
+        }
+        source.sql("DROP TABLE public.passshare_fixture_owner");
+        assert!(!source.fixture_marker_matches(&owner));
+        assert!(std::panic::catch_unwind(|| fixture_owner(&source)).is_err());
+        assert!(source.sql("SELECT to_regclass('public.passshare_fixture_owner') IS NULL") == "t");
         drop(source);
         drop(network);
         assert!(!CLEANUP_FAILED.load(Ordering::SeqCst));

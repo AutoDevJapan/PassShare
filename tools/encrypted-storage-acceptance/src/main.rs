@@ -148,13 +148,27 @@ struct Database {
     name: String,
     port: u16,
     local: Option<local_postgres::LocalPostgres>,
+    // Caller-owned provenance, never inferred from a dumped public table.
+    fixture_owner_id: String,
+    fixture_purpose: &'static str,
 }
 impl Database {
     fn start(network: &Network) -> Self {
+        Self::start_owned(network, "source")
+    }
+    fn start_owned(network: &Network, purpose: &'static str) -> Self {
+        assert!(matches!(purpose, "source" | "restore"));
+        let random = checked(MasterKey::generate(), "fixture owner entropy");
+        let owner = random.as_bytes()[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         let db = Self {
             name: format!("passshare1163-encrypted-{}", ConnectId::generate().unwrap()),
             port: port(),
             local: None,
+            fixture_owner_id: owner,
+            fixture_purpose: purpose,
         };
         let status = command("docker")
             .args([
@@ -238,7 +252,89 @@ impl Database {
             ready
         });
         assert!(ready, "PostgreSQL readiness");
+        // Only this constructor may initialize a fresh Docker-owned database.
+        // The catalog marker is outside the whole-public archive.
+        assert!(db.sql("SELECT count(*) FROM pg_tables WHERE schemaname='public'") == "0");
+        db.sql(&format!(
+            "COMMENT ON DATABASE passshare IS '{}'",
+            db.catalog_marker()
+        ));
+        assert!(db.owned(), "created database ownership/purpose");
+        if purpose == "source" {
+            db.sql(&format!("CREATE TABLE public.passshare_fixture_owner(owner_id text PRIMARY KEY); INSERT INTO public.passshare_fixture_owner VALUES('{}')", db.fixture_owner_id));
+            assert!(db.fixture_marker_matches(&db.fixture_owner_id));
+        }
         db
+    }
+    fn from_local(local: local_postgres::LocalPostgres, purpose: &'static str) -> Self {
+        assert!(matches!(purpose, "source" | "restore"));
+        let db = Self {
+            name: local.database.clone(),
+            port: local.port,
+            fixture_owner_id: local.ownership_id.clone(),
+            fixture_purpose: purpose,
+            local: Some(local),
+        };
+        assert!(db.owned(), "local database ownership/purpose");
+        if purpose == "source" {
+            assert!(db.fixture_marker_matches(&db.fixture_owner_id));
+        }
+        db
+    }
+    fn catalog_marker(&self) -> String {
+        if self.local.is_some() {
+            format!(
+                "passshare-acceptance:{}:acceptance-{}:{}",
+                self.fixture_owner_id, self.fixture_purpose, self.name
+            )
+        } else {
+            format!(
+                "passshare-acceptance:{}:{}:{}:{}",
+                self.fixture_owner_id, self.fixture_purpose, self.name, self.port
+            )
+        }
+    }
+    fn owned(&self) -> bool {
+        if !(self.fixture_owner_id.len() == 32
+            && self.fixture_owner_id.bytes().all(|c| c.is_ascii_hexdigit())
+            && matches!(self.fixture_purpose, "source" | "restore")
+            && self
+                .name
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+            && if self.local.is_some() {
+                self.name.starts_with("passshare1163_")
+            } else {
+                self.name.starts_with("passshare1163-encrypted-")
+            })
+        {
+            return false;
+        }
+        if let Some(local) = &self.local {
+            if self.name != local.database
+                || self.port != local.port
+                || self.fixture_owner_id != local.ownership_id
+            {
+                return false;
+            }
+        }
+        let database = self
+            .local
+            .as_ref()
+            .map_or("passshare", |l| l.database.as_str());
+        let marker = self.catalog_marker();
+        self.sql(&format!("SELECT count(*)=1 FROM pg_database d WHERE datname=current_database() AND datname='{database}' AND datdba=(SELECT oid FROM pg_roles WHERE rolname='passshare') AND shobj_description(d.oid,'pg_database')='{marker}'")) == "t"
+    }
+    fn fixture_marker_matches(&self, expected: &str) -> bool {
+        if !(expected.len() == 32 && expected.bytes().all(|c| c.is_ascii_hexdigit())) {
+            return false;
+        }
+        // Validate the exact ordinary table/column/primary-key shape before
+        // selecting caller-untrusted rows. Missing/malformed markers fail closed.
+        if self.sql("SELECT count(*)=1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='passshare_fixture_owner' AND c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition AND NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid) AND (SELECT count(*) FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped)=1 AND EXISTS(SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum=1 AND a.attname='owner_id' AND a.atttypid='text'::regtype AND a.attnotnull AND NOT a.attisdropped) AND (SELECT count(*) FROM pg_constraint k WHERE k.conrelid=c.oid)=1 AND EXISTS(SELECT 1 FROM pg_constraint k WHERE k.conrelid=c.oid AND k.contype='p' AND k.conkey=ARRAY[1]::smallint[])") != "t" {
+            return false;
+        }
+        self.sql(&format!("SELECT count(*)=1 AND COALESCE(bool_and(owner_id='{expected}'),false) FROM public.passshare_fixture_owner")) == "t"
     }
     #[track_caller]
     fn sql(&self, sql: &str) -> String {
@@ -1194,11 +1290,7 @@ fn main() {
         } else {
             local_postgres::LocalPostgres::start(&manifest)
         };
-        let db = Database {
-            name: local.database.clone(),
-            port: local.port,
-            local: Some(local),
-        };
+        let db = Database::from_local(local, "source");
         (
             Network {
                 name: String::new(),
@@ -3587,11 +3679,7 @@ mod contract_tests {
         );
         assert!(manifest.is_absolute());
         let local = local_postgres::LocalPostgres::start(&manifest);
-        let db = Database {
-            name: local.database.clone(),
-            port: local.port,
-            local: Some(local),
-        };
+        let db = Database::from_local(local, "source");
         // The invocation owns this fresh DB. Bind its purpose outside public,
         // just as restore acceptance does, and retain the standard Drop cleanup.
         println!("SQL transport live owned_database={}", db.name);
@@ -3805,11 +3893,7 @@ mod contract_tests {
             std::env::var_os("PASSSHARE_SQL_FIXTURE_MANIFEST").expect("owned manifest required"),
         );
         let local = local_postgres::LocalPostgres::start_attachments(&manifest);
-        let db = Database {
-            name: local.database.clone(),
-            port: local.port,
-            local: Some(local),
-        };
+        let db = Database::from_local(local, "source");
         // Finite probes of THIS invocation's DB. No retry of a write whose
         // commit might be unknown; no other connection/resource is terminated.
         for probe in 0..100 {
