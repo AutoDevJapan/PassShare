@@ -157,7 +157,10 @@ fn response_races(
         });
         let mut first_pid = None;
         for _ in 0..30 {
-            let pid = sql(&format!("SELECT a.pid FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE l.locktype='advisory' AND l.objid={key} AND NOT l.granted AND a.query LIKE '%vault_invitations%'"));
+            // The trigger is scoped to this invitation ID/status and unique
+            // advisory key. SQL adapters now invoke stored functions, whose
+            // pg_stat_activity query text need not name the underlying table.
+            let pid = sql(&format!("SELECT a.pid FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE l.locktype='advisory' AND l.objid={key} AND NOT l.granted"));
             if let Ok(pid) = pid.parse::<u32>() {
                 first_pid = Some(pid);
                 break;
@@ -175,7 +178,7 @@ fn response_races(
         });
         let mut blocked = false;
         for _ in 0..30 {
-            if sql(&format!("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE {first_pid}=ANY(pg_blocking_pids(pid)) AND query LIKE '%vault_invitations%')")) == "t" {
+            if sql(&format!("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE {first_pid}=ANY(pg_blocking_pids(pid)))")) == "t" {
                 blocked = true; break;
             }
             thread::sleep(Duration::from_millis(20));
