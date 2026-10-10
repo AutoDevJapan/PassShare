@@ -217,7 +217,7 @@ export function SetupPanel({
       </label>
 
       <div className="ps-actions">
-        <button type="button" className="ps-button ps-button--secondary" disabled={busy} onClick={() => {
+        <button type="button" data-testid="recover-password-box" className="ps-button ps-button--secondary" disabled={busy} onClick={() => {
           onMasterPasswordChange("");
           setRecovering(true);
         }}>{labels.localRecovery.title}</button>
@@ -242,6 +242,7 @@ export function SetupPanel({
         <button
           type="button"
           className="ps-button ps-button--secondary"
+          data-testid="open-password-box"
           onClick={() => void handleOpen()}
           disabled={busy}
         >
