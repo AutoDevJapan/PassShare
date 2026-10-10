@@ -8,12 +8,12 @@ export class CloudApiError extends Error {
 }
 const path = (boxId: string) => `/api/encrypted/boxes/${encodeURIComponent(boxId)}`;
 async function request(url: string, init?: RequestInit) {
-  const response = await authFetch(url, { cache: "no-store", ...init });
+  const response = await authFetch(url, { cache: "no-store", redirect: "error", ...init });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     // Never reflect remote messages or input in errors.
     const remoteCode = body?.code ?? body?.error;
-    const code = ["PS015", "PS055"].find((known) =>
+    const code = ["PS015", "PS055", "PS056", "PS024", "PS026"].find((known) =>
       typeof remoteCode === "string" && (remoteCode === known || remoteCode.startsWith(`${known}:`)));
     throw new CloudApiError(response.status, code);
   }
@@ -31,9 +31,23 @@ export async function getBoxState(boxId: string, signal?: AbortSignal): Promise<
 }
 export async function getOwnerBundle(boxId: string, signal?: AbortSignal): Promise<{ bundleVersion: number; bundle: OwnerBundle }> {
   const reply = await request(`${path(boxId)}/owner-key`, { signal });
-  if (!Number.isSafeInteger(reply.bundleVersion) || reply.bundleVersion < 1) throw new CloudApiError(502);
-  bundleText(reply.bundle);
+  if (!fields(reply, ["bundleVersion", "bundle"]) || !Number.isSafeInteger(reply.bundleVersion) || reply.bundleVersion < 1) throw new CloudApiError(502);
+  publicOwnerBundle(reply.bundle);
   return reply;
+}
+export async function putOwnerBundle(boxId: string, expectedVersion: number, bundle: OwnerBundle,
+  currentPassword: string, signal: AbortSignal): Promise<void> {
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || expectedVersion >= Number.MAX_SAFE_INTEGER)
+    throw new CloudApiError(502);
+  publicOwnerBundle(bundle);
+  let body = JSON.stringify({ expectedVersion, bundle, currentPassword });
+  currentPassword = "";
+  try {
+    const reply = await request(`${path(boxId)}/owner-key`, { method: "PUT", body, signal });
+    if (!fields(reply, ["bundleVersion", "bundle"]) || reply.bundleVersion !== expectedVersion + 1 ||
+      !sameBundle(reply.bundle, bundle)) throw new CloudApiError(502);
+    publicOwnerBundle(reply.bundle);
+  } finally { body = ""; }
 }
 export async function setupBox(boxId: string, bundle: OwnerBundle, signal?: AbortSignal): Promise<void> {
   const reply = await request(`${path(boxId)}/setup`, { method: "POST", body: `{"bundle":${bundleText(bundle)}}`, signal });
@@ -108,6 +122,18 @@ function base64Size(value: unknown, min: number, max: number): boolean {
     !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return false;
   try { const bytes = atob(value); return bytes.length >= min && bytes.length <= max && btoa(bytes) === value; }
   catch { return false; }
+}
+// Public file/HTTP shape only; Rust authenticates the ciphertext and trusted scope.
+export function publicOwnerBundle(value: unknown): OwnerBundle {
+  const bundle = value as OwnerBundle;
+  bundleText(bundle);
+  const context = bundle.wrapped.context;
+  if (bundle.format !== 1 || bundle.wrapped.format !== 1 || !validId(context.passwordBoxId) ||
+    !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(context.ownerAccountId) ||
+    context.ownerAccountId === "00000000-0000-0000-0000-000000000000" || !positiveInteger(context.keyEpoch) ||
+    !base64Size(bundle.salt, 16, 16) || !base64Size(bundle.wrapped.nonce, 24, 24) ||
+    !base64Size(bundle.wrapped.ciphertext, 48, 48)) throw new CloudApiError(502);
+  return bundle;
 }
 export function readItemEnvelope(text: string, expected?: ItemContext): EncryptedEnvelope {
   let envelope: EncryptedEnvelope;

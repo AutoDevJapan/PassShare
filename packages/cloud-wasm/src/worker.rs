@@ -17,6 +17,8 @@ enum Command {
     Status,
     Generate,
     Unlock,
+    Recover,
+    RecoveryMaterial,
     Wrap,
     Encrypt,
     Decrypt,
@@ -73,6 +75,7 @@ enum Out {
     Bundle(String),
     Envelope(String),
     Item(Zeroizing<String>),
+    Recovery(Zeroizing<String>),
 }
 
 #[derive(Serialize)]
@@ -91,6 +94,8 @@ struct Reply<'a> {
     envelope: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     item: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery: Option<&'a str>,
 }
 
 pub(crate) struct WorkerSession {
@@ -148,7 +153,10 @@ impl WorkerSession {
         let want = match r.command {
             Command::Status | Command::Lock => [false; 8],
             Command::Generate => [true, true, false, false, false, false, false, false],
-            Command::Unlock => [true, true, false, true, false, false, true, false],
+            Command::Unlock | Command::Recover => {
+                [true, true, false, true, false, false, true, false]
+            }
+            Command::RecoveryMaterial => [true, false, false, false, false, false, false, false],
             Command::Wrap => [true, false, false, false, false, false, true, false],
             Command::Encrypt => [true, false, true, false, false, true, false, false],
             Command::Create => [true, false, false, false, false, false, false, true],
@@ -175,7 +183,7 @@ impl WorkerSession {
         }
         let context = r.context.as_deref().unwrap_or_default();
         match r.command {
-            Command::Generate | Command::Unlock => {
+            Command::Generate | Command::Unlock | Command::Recover => {
                 // Account/box switch needs an explicit lock first; an open session is never replaced.
                 if self.session.is_some() {
                     return Err(OPEN);
@@ -188,7 +196,11 @@ impl WorkerSession {
                     Session::generate(owner)?
                 } else {
                     let password = std::mem::take(&mut r.password.as_mut().unwrap().0);
-                    Session::unlock(r.bundle.as_deref().unwrap_or_default(), password, owner)?
+                    if r.command == Command::Recover {
+                        Session::recover(r.bundle.as_deref().unwrap_or_default(), password, owner)?
+                    } else {
+                        Session::unlock(r.bundle.as_deref().unwrap_or_default(), password, owner)?
+                    }
                 };
                 self.session = Some(session);
                 self.generation += 1;
@@ -199,6 +211,7 @@ impl WorkerSession {
                 let password = std::mem::take(&mut r.password.as_mut().unwrap().0);
                 session.wrap(password).map(Out::Bundle)
             }
+            Command::RecoveryMaterial => self.open()?.recovery_material().map(Out::Recovery),
             Command::Encrypt => {
                 let session = self.open()?;
                 let item = std::mem::take(&mut r.item.as_mut().unwrap().0);
@@ -238,12 +251,14 @@ impl WorkerSession {
             bundle: None,
             envelope: None,
             item: None,
+            recovery: None,
         };
         match &result {
             Err(error) => reply.error = Some(*error),
             Ok(Out::Bundle(text)) => reply.bundle = Some(text),
             Ok(Out::Envelope(text)) => reply.envelope = Some(text),
             Ok(Out::Item(text)) => reply.item = Some(text),
+            Ok(Out::Recovery(text)) => reply.recovery = Some(text),
             Ok(Out::Empty) => {}
         }
         // Exact capacity avoids leaving plaintext in reallocated buffers.
@@ -327,6 +342,57 @@ mod tests {
             assert_eq!(reply["ok"], true);
             reply["generation"].as_u64().unwrap()
         }
+    }
+
+    #[test]
+    fn recovery_messages_preserve_key_scope_generation_and_full_document() {
+        let mut h = Harness::new();
+        let g = h.open();
+        for bad in [
+            json!({"command":"recoveryMaterial"}),
+            json!({"command":"recoveryMaterial","expectedGeneration":g,"password":null}),
+            json!({"command":"recoveryMaterial","expectedGeneration":g,"owner":owner()}),
+        ] {
+            let rejected = h.send(bad);
+            assert_eq!(rejected["ok"], false);
+            assert_eq!(rejected["locked"], false);
+            assert!(rejected.get("recovery").is_none());
+        }
+        let encrypted = h.send(json!({"command":"encrypt","expectedGeneration":g,"context":context(),"item":item().to_string()}));
+        let envelope = encrypted["envelope"].as_str().unwrap().to_owned();
+        let generated = h.send(json!({"command":"recoveryMaterial","expectedGeneration":g}));
+        assert_eq!(generated["ok"], true);
+        let mut text = Zeroizing::new(generated["recovery"].as_str().unwrap().to_owned());
+        let mut material: Value = serde_json::from_str(&text).unwrap();
+        text.zeroize();
+        let mut code = Zeroizing::new(material["recoveryCode"].as_str().unwrap().to_owned());
+        super::super::erase(&mut material["recoveryCode"]);
+        let bundle = material["bundle"].to_string();
+        assert!(!bundle.contains(code.as_str()));
+        let replaced = h.send(json!({"command":"recover","expectedGeneration":g,"owner":owner(),"bundle":bundle,"password":code.as_str()}));
+        assert_eq!(replaced["ok"], false);
+        assert_eq!(replaced["generation"], g);
+        h.send(json!({"command":"lock"}));
+        let fresh = h.generation();
+        let old = h.send(json!({"command":"recover","expectedGeneration":g,"owner":owner(),"bundle":bundle,"password":code.as_str()}));
+        assert_eq!(old["ok"], false);
+        assert_eq!(old["locked"], true);
+        let recovered = h.send(json!({"command":"recover","expectedGeneration":fresh,"owner":owner(),"bundle":bundle,"password":code.as_str()}));
+        code.zeroize();
+        assert_eq!(recovered["ok"], true);
+        let new_g = recovered["generation"].as_u64().unwrap();
+        assert_eq!(new_g, fresh + 1);
+        let decrypted = h.send(json!({"command":"decrypt","expectedGeneration":new_g,"context":context(),"envelope":envelope}));
+        assert_eq!(decrypted["ok"], true);
+        assert_eq!(
+            serde_json::from_str::<Value>(decrypted["item"].as_str().unwrap()).unwrap(),
+            item()
+        );
+        h.send(json!({"command":"lock"}));
+        let locked =
+            h.send(json!({"command":"recoveryMaterial","expectedGeneration":h.worker.generation}));
+        assert_eq!(locked["ok"], false);
+        assert!(locked.get("recovery").is_none());
     }
 
     #[test]
