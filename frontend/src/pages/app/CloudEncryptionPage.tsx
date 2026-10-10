@@ -8,6 +8,7 @@ import { CloudWorker, lockCloudUi, type OwnerContext } from "../../lib/cloud-wor
 import { CloudApiError, bundleText, clearPendingBundle, getBoxState, getOwnerBundle,
   readPendingBundle, sameBundle, savePendingBundle, setupBox, type BoxState } from "../../lib/cloud-api";
 import { EncryptedItemsPage } from "./EncryptedItemsPage";
+import { CloudRecoveryBackup, CloudRecoveryPanel } from "./CloudRecoveryPanel";
 
 function errorKey(error: unknown): MessageKey {
   if (error instanceof CloudApiError) {
@@ -120,6 +121,8 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
   const [checkRevision, setCheckRevision] = useState(0);
   const [hasPending, setHasPending] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryComplete, setRecoveryComplete] = useState(false);
   const worker = useRef<CloudWorker | null>(null);
   const heldOwnerContext = useRef<OwnerContext | null>(null);
   const operation = useRef<{ controller: AbortController; password: string } | null>(null);
@@ -141,6 +144,7 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
     worker.current?.dispose(); worker.current = null;
     heldOwnerContext.current = null;
     clearInputs(); setOpened(false); setBusy(false); setVerifying(false); setError(null);
+    setRecovering(false); setRecoveryComplete(false);
     setLoggingOut(false);
     setAuthorized(false);
     if (recheck) setCheckRevision((value) => value + 1);
@@ -205,10 +209,10 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (operation.current || !authorized || !connectClient || logoutPending.current || opened || document.visibilityState === "hidden") { clearInputs(); return; }
+    if (operation.current || !authorized || !connectClient || logoutPending.current || opened || recovering || document.visibilityState === "hidden") { clearInputs(); return; }
     const mismatch = isSetup && passwordInput.current?.value !== confirmInput.current?.value;
     const task = { controller: new AbortController(), password: passwordInput.current?.value ?? "" };
-    clearInputs(); setError(null);
+    clearInputs(); setError(null); setRecoveryComplete(false);
     if (mismatch) { task.password = ""; setError("cloud.mismatch"); return; }
     const token = ++generation.current;
     const active = () => mounted.current && generation.current === token && !task.controller.signal.aborted &&
@@ -306,16 +310,18 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
     heldOwnerContext.current.keyEpoch === state.keyEpoch ? { worker: worker.current, scope: heldOwnerContext.current } : null;
   return <section className="app-page cloud-page">
     <Link className="app-back-link" to="/app/vaults">{t("app.vault.back")}</Link>
-    <h1 className="cloud-page__heading">{t(isSetup ? "cloud.setupTitle" : "cloud.openTitle")}</h1>
+    <h1 className="cloud-page__heading">{t(recovering ? "cloudRecovery.title" : isSetup ? "cloud.setupTitle" : "cloud.openTitle")}</h1>
     <div className="cloud-card">
       <div className="encrypted-items-header">
         <h2 className="ps-heading-3">{name || t("app.nav.vaults")}</h2>
         {unlocked && <button type="button" className="ps-button cloud-submit" onClick={lockCloudUi}>{t("cloud.lock")}</button>}
       </div>
-      {!unlocked && <p>{t(isSetup ? "cloud.setupLead" : "cloud.openLead")}</p>}
+      {!unlocked && !recovering && <p>{t(isSetup ? "cloud.setupLead" : "cloud.openLead")}</p>}
       {unlocked ? <div className="cloud-opened">
+        <CloudRecoveryBackup worker={unlocked.worker} scope={unlocked.scope} />
         <EncryptedItemsPage worker={unlocked.worker} scope={unlocked.scope} onLock={lock} />
-      </div> : <form onSubmit={(event) => void submit(event)} aria-busy={busy}>
+      </div> : <form hidden={recovering} style={recovering ? { display: "none" } : undefined}
+        onSubmit={(event) => void submit(event)} aria-busy={busy}>
         <label className="ps-label" htmlFor="cloud-password">{t("cloud.password")}</label>
         <input id="cloud-password" ref={passwordInput} className="ps-input" type="password" autoComplete="off"
           autoCapitalize="none" spellCheck={false}
@@ -331,6 +337,13 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
           {t(busy ? (verifying ? "cloud.verifying" : "cloud.working") : isSetup ? "cloud.setupSubmit" : "cloud.openSubmit")}</button>
         {busy && <button className="ps-button ps-button--secondary" type="button" onClick={lockCloudUi}>{t("cloud.lock")}</button>}
       </form>}
+      {!unlocked && !isSetup && authorized && !busy && !recovering && <button type="button"
+        className="ps-button ps-button--secondary" onClick={() => { clearInputs(); setError(null); setRecoveryComplete(false); setRecovering(true); }}>
+        {t("cloudRecovery.title")}</button>}
+      {!unlocked && !isSetup && authorized && <CloudRecoveryPanel
+        scope={{ passwordBoxId: boxId, ownerAccountId: ownerId, keyEpoch: state.keyEpoch! }} visible={recovering}
+        onCancel={() => setRecovering(false)} onComplete={() => { setRecovering(false); setRecoveryComplete(true); }} />}
+      {recoveryComplete && <p className="cloud-note" role="status">{t("cloudRecovery.complete")}</p>}
       <p className="cloud-note">{t("cloud.neverSent")}</p>
       <p id="cloud-recovery" className="cloud-note">{t("cloud.recovery")}</p>
       {error && <p className="ps-error" role="alert">{t(error)}</p>}

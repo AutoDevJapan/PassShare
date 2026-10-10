@@ -1,6 +1,6 @@
 {
-  "sourceCommit": "12e70e7e164a84972ce715bdd2334f3c1c1c5756",
-  "run": 38016781113,
+  "sourceCommit": "35faefccb3f3dee0a93b4bca7b03ea71e26c7147",
+  "run": 38043864667,
   "buildKind": "github-actions-tested",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
@@ -32,16 +32,17 @@
     "crates/passshare-core/src/domain/mod.rs": "e13146bdcd180e2adc9fc27c8fbf294502f6d19c3dd235b7c65d22e106353f7a",
     "crates/passshare-core/src/domain/vault.rs": "ee0a12702ae14b48ecb5cb07d9593b7f3a14c36ef3ec4f6582df09cc974b4e2a",
     "crates/passshare-core/src/domain/payload.rs": "2610d0a3591b8c72722bdba28acc4820de18699d20dbb2a77cbbf7320c9c52e2",
-    "packages/cloud-wasm/src/worker.rs": "7f8a05af57eb979e12f53f9d09435fc6b11040a04338db02313f5ef09eeec908",
-    "packages/cloud-wasm/src/lib.rs": "595ad783e8ebd9a51510a0ece1d8885f145bab0a1a3305919646ddcbad9f4b96",
+    "packages/cloud-wasm/src/worker.rs": "b37ec70635098d833067faad0eb2223328f2aea276997bbd48dc8a2dd9e9b390",
+    "packages/cloud-wasm/src/lib.rs": "826c1d1ca9dd84c0e4e036eae8d23b50f7f8f34339652a6534ba8eaa6ac987f7",
     "packages/cloud-wasm/src/shared.rs": "125e2d2865bf5ae292d335bdbfdd1a4840f509ed7ea9f3a6a13f842b615af404",
     "packages/cloud-wasm/src/item_edit.rs": "4373427b6397c1f2d2de8dd69df96419f67c7c7be03eaa3207e0a7bbaf3de97e",
-    "backend/native/src/edit.rs": "d8e39b54705e65aa82cab651ca6604e087b9b219bc7c290cce4b8e728e29f89e"
+    "backend/native/src/edit.rs": "d8e39b54705e65aa82cab651ca6604e087b9b219bc7c290cce4b8e728e29f89e",
+    "packages/cloud-wasm/src/recovery.rs": "50cc8af8b7663dc46cf5cdc667a871df569da9587043853dbd3665dfd4a1e997"
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
-    "passshare_cloud_wasm.js": "f1bb91883d78f9f96863b53cb39f36dc1bec717e2c8471d75d735e536235fb09",
-    "passshare_cloud_wasm_bg.wasm": "00be27cb29aa8f88615a57ca4c5cb50224fd2b62499a79961f05a8bbf148cc02"
+    "passshare_cloud_wasm.js": "c990db62845225f5051f1eb075fb1284167371c3fc42440fe753bf1ad0cb97c0",
+    "passshare_cloud_wasm_bg.wasm": "d0448d31bbc04e163e3f5f3a4774df32175477b94fef52f7ed9fa40ef1a55b46"
   },
   "artifact": "passshare-cloud-wasm"
 }
