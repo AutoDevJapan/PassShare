@@ -184,27 +184,58 @@ impl Database {
             .unwrap();
         assert!(status.success(), "start isolated PostgreSQL");
         let ready = (0..150).any(|_| {
-            if command("docker")
+            let mut probe = command("docker")
                 .args([
                     "exec",
+                    "--env",
+                    "PGPASSWORD=passshare",
+                    "--env",
+                    "PGCONNECT_TIMEOUT=2",
+                    "--env",
+                    "PGOPTIONS=-c statement_timeout=2000",
                     &db.name,
-                    "pg_isready",
+                    // The initialization server accepts socket connections
+                    // before the selected database exists. Require its final
+                    // TCP listener and a successful query in the actual DB.
+                    "psql",
+                    "-h",
+                    "127.0.0.1",
+                    "-X",
+                    "-w",
+                    "-v",
+                    "ON_ERROR_STOP=1",
                     "-U",
                     "passshare",
+                    "-c",
+                    "SELECT 1",
                     "-d",
                     "passshare",
                 ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status()
-                .unwrap()
-                .success()
-            {
-                true
-            } else {
+                .spawn()
+                .expect("PostgreSQL readiness probe launch");
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let ready = loop {
+                if let Some(status) = probe.try_wait().expect("PostgreSQL readiness probe wait") {
+                    break status.success();
+                }
+                if std::time::Instant::now() >= deadline {
+                    let _ = probe.kill();
+                    if !reap_before(
+                        &mut probe,
+                        std::time::Instant::now() + Duration::from_secs(2),
+                    ) {
+                        CLEANUP_FAILED.store(true, Ordering::SeqCst);
+                    }
+                    break false;
+                }
+                thread::sleep(Duration::from_millis(10));
+            };
+            if !ready {
                 thread::sleep(Duration::from_millis(100));
-                false
             }
+            ready
         });
         assert!(ready, "PostgreSQL readiness");
         db
@@ -236,6 +267,7 @@ impl Database {
             }));
         }
         drop(sender);
+        let mut failure_category = "other";
         let status = loop {
             if let Some(status) = child.try_wait().unwrap() {
                 break status;
@@ -264,12 +296,26 @@ impl Database {
             );
             if is_stdout {
                 output = Some(bytes);
+            } else {
+                let diagnostic = String::from_utf8_lossy(&bytes);
+                if diagnostic.contains("canceling statement due to statement timeout") {
+                    failure_category = "statement_timeout";
+                } else if diagnostic.contains("does not exist") {
+                    failure_category = "missing_dependency";
+                } else if diagnostic.contains("could not connect")
+                    || diagnostic.contains("connection refused")
+                {
+                    failure_category = "connection_unavailable";
+                }
             }
         }
         for reader in readers {
             reader.join().expect("fixture SQL reader failed");
         }
-        assert!(status.success(), "fixture SQL failed");
+        assert!(
+            status.success(),
+            "fixture SQL failed category={failure_category}"
+        );
         String::from_utf8(output.unwrap())
             .unwrap()
             .trim()
@@ -434,6 +480,7 @@ impl Host {
             )
             .env("DATABASE_URL", db.url())
             .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .unwrap();
         Self {
@@ -447,7 +494,7 @@ impl Drop for Host {
         match &mut self.process {
             HostProcess::Node(child) => {
                 let _ = child.kill();
-                if child.wait().is_err() {
+                if !reap_before(child, std::time::Instant::now() + Duration::from_secs(2)) {
                     CLEANUP_FAILED.store(true, Ordering::SeqCst);
                 }
             }
@@ -882,6 +929,8 @@ fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     let (local_manifest, args) =
         local_postgres::prefix(&args).expect("explicit local fixture prefix");
+    let (restore_fixture, args) = sharing_rotation::encrypted_restore::prefix(args)
+        .expect("explicit encrypted restore fixture prefix");
     let legacy_expiry = args.first().is_some_and(|a| a == "--legacy-expiry");
     let args = if legacy_expiry {
         assert!(
@@ -908,7 +957,7 @@ fn main() {
         fixture_prefix(args).unwrap_or_else(|reason| panic!("{reason}"));
     local_postgres::validate_mode(
         local_manifest.is_some(),
-        sharing_fixture || legacy_expiry,
+        sharing_fixture || legacy_expiry || restore_fixture,
         mode_args,
     )
     .expect("local PostgreSQL requires an explicit supported Node fixture");
@@ -921,8 +970,9 @@ fn main() {
     let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
     assert!(
         local_manifest.is_none()
-            || ((sharing_fixture || legacy_expiry) && matches!(mode, Mode::Node(_))),
-        "local PostgreSQL is explicitly supported only for Node sharing or expiry acceptance"
+            || ((sharing_fixture || legacy_expiry || restore_fixture)
+                && matches!(mode, Mode::Node(_))),
+        "local PostgreSQL is explicitly supported only for Node sharing, expiry or restore acceptance"
     );
     let mode = match mode {
         Mode::Node(binary) => {
@@ -962,7 +1012,9 @@ fn main() {
         let db = Database::start(&network);
         (network, db)
     };
-    if legacy_expiry {
+    if restore_fixture {
+        sharing_rotation::encrypted_restore::run(&db, &network, &mode);
+    } else if legacy_expiry {
         sharing_rotation::run_legacy_expiry(&db, &network, &mode);
     } else if let Some(executable) = go_executable {
         go_session::run(&db, &network, &mode, &executable);

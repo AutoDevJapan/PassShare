@@ -28,7 +28,7 @@ pub fn validate_mode(
     args: &[OsString],
 ) -> Result<(), &'static str> {
     if local && (!supported_fixture || args.iter().any(|a| a == "--go-session" || a == "--image")) {
-        Err("local PostgreSQL supports only the explicit Node sharing/expiry fixtures")
+        Err("local PostgreSQL supports only the explicit Node sharing/expiry/restore fixtures")
     } else {
         Ok(())
     }
@@ -39,6 +39,7 @@ pub struct LocalPostgres {
     pub port: u16,
     pub database: String,
     passfile: PathBuf,
+    pub ownership_id: String,
 }
 impl LocalPostgres {
     pub fn start(manifest: &PathBuf) -> Self {
@@ -106,6 +107,7 @@ impl LocalPostgres {
             port,
             database: "passshare".to_owned(),
             passfile,
+            ownership_id: owner.to_owned(),
         };
         // The nonce and server major version prevent accidentally selecting an
         // unrelated DB. No environment DATABASE_URL is read as a fallback.
@@ -118,11 +120,78 @@ impl LocalPostgres {
             (160000..170000).contains(&version),
             "PostgreSQL 16 fixture required"
         );
-        let name = format!("passshare1163_{}", ConnectId::generate().unwrap());
-        local.query(&format!("CREATE DATABASE {name}"));
-        local.database = name;
+        local.create_database();
         local.query(&format!("CREATE TABLE passshare_fixture_owner(owner_id text PRIMARY KEY); INSERT INTO passshare_fixture_owner VALUES('{owner}')"));
         local
+    }
+    // A new invocation-owned DB on the verified fixture server, never the
+    // parent's UI DB. Keep ownership outside public so restore cannot replace it.
+    pub fn restore_target(&self) -> Self {
+        let mut local = Self {
+            psql: self.psql.clone(),
+            port: self.port,
+            database: "passshare".to_owned(),
+            passfile: self.passfile.clone(),
+            ownership_id: self.ownership_id.clone(),
+        };
+        assert!(local.query("SELECT owner_id FROM passshare_fixture_owner") == self.ownership_id);
+        local.create_database();
+        local
+    }
+    fn create_database(&mut self) {
+        let name = format!("passshare1163_{}", ConnectId::generate().unwrap());
+        let mut cmd = self.client();
+        // Windows fixture creation can exceed the normal 10-second statement
+        // limit during filesystem sync. Keep a separate finite creation budget.
+        cmd.env(
+            "PGOPTIONS",
+            "-c statement_timeout=55000 -c lock_timeout=10000",
+        );
+        self.database = name.clone(); // Register ownership BEFORE launch/failure.
+        control_with_budget(
+            cmd,
+            &format!("CREATE DATABASE {name} TEMPLATE template0 STRATEGY WAL_LOG"),
+            Duration::from_secs(60),
+        )
+        .expect("bounded owned database creation failed");
+    }
+    pub fn archive_client(&self, program: &str) -> Command {
+        assert!(matches!(program, "pg_dump" | "pg_restore"));
+        let mut c = self.client();
+        // Preserve the vetted environment, but replace psql-only arguments.
+        let env = c
+            .get_envs()
+            .map(|(k, v)| (k.to_owned(), v.map(ToOwned::to_owned)))
+            .collect::<Vec<_>>();
+        c = command(
+            self.psql
+                .with_file_name(format!("{program}.exe"))
+                .to_str()
+                .unwrap(),
+        );
+        c.env_clear();
+        for (k, v) in env {
+            if let Some(v) = v {
+                c.env(k, v);
+            }
+        }
+        c.args([
+            "-h",
+            "127.0.0.1",
+            "-p",
+            &self.port.to_string(),
+            "-w",
+            "-U",
+            "passshare",
+        ]);
+        if program == "pg_dump" {
+            c.args(["-d", &self.database]);
+        }
+        c.env(
+            "PGOPTIONS",
+            "-c statement_timeout=50000 -c lock_timeout=5000",
+        );
+        c
     }
     pub fn client(&self) -> Command {
         let mut c = command(self.psql.to_str().unwrap());
@@ -156,7 +225,16 @@ impl LocalPostgres {
         c
     }
     fn query(&self, sql: &str) -> String {
-        control(self.client(), sql).expect("bounded owned fixture SQL failed")
+        let operation = if sql.starts_with("CREATE DATABASE") {
+            "create_database"
+        } else if sql.starts_with("SELECT owner_id") {
+            "verify_owner"
+        } else {
+            "fixture_control"
+        };
+        control(self.client(), sql).unwrap_or_else(|reason| {
+            panic!("bounded owned fixture operation={operation} failed: {reason}")
+        })
     }
 }
 impl Drop for LocalPostgres {
@@ -165,15 +243,28 @@ impl Drop for LocalPostgres {
             return;
         }
         let name = std::mem::replace(&mut self.database, "passshare".to_owned());
-        if control(self.client(), &format!("DROP DATABASE {name} WITH (FORCE)")).is_err() {
+        if control(
+            self.client(),
+            &format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"),
+        )
+        .is_err()
+        {
             CLEANUP_FAILED.store(true, Ordering::SeqCst);
             eprintln!("owned local PostgreSQL database cleanup failed");
         }
     }
 }
 
-fn control(mut cmd: Command, sql: &str) -> Result<String, &'static str> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+fn control(cmd: Command, sql: &str) -> Result<String, &'static str> {
+    control_with_budget(cmd, sql, Duration::from_secs(15))
+}
+
+fn control_with_budget(
+    mut cmd: Command,
+    sql: &str,
+    budget: Duration,
+) -> Result<String, &'static str> {
+    let deadline = std::time::Instant::now() + budget;
     let mut child = cmd
         .args(["-c", sql])
         .stdin(Stdio::null())
@@ -227,6 +318,7 @@ fn control(mut cmd: Command, sql: &str) -> Result<String, &'static str> {
     };
     let drain = std::time::Instant::now() + Duration::from_secs(2);
     let mut stdout = Vec::new();
+    let mut failure = "control rejected or exceeded output bound";
     let mut invalid = false;
     for _ in 0..2 {
         let (is_stdout, result, bytes) = match receive
@@ -241,6 +333,19 @@ fn control(mut cmd: Command, sql: &str) -> Result<String, &'static str> {
         invalid |= result.is_err() || bytes.len() > 16 * 1024;
         if is_stdout {
             stdout = bytes;
+        } else {
+            let diagnostic = String::from_utf8_lossy(&bytes);
+            if diagnostic.contains("canceling statement due to statement timeout") {
+                failure = "control statement timeout";
+            } else if diagnostic.contains("being accessed by other users") {
+                failure = "control template database in use";
+            } else if diagnostic.contains("already exists") {
+                failure = "control object already exists";
+            } else if diagnostic.contains("could not connect")
+                || diagnostic.contains("connection refused")
+            {
+                failure = "control connection unavailable";
+            }
         }
     }
     for reader in readers {
@@ -256,7 +361,7 @@ fn control(mut cmd: Command, sql: &str) -> Result<String, &'static str> {
         return Err("control deadline exceeded");
     }
     if invalid || !status.is_some_and(|status| status.success()) {
-        return Err("control rejected or exceeded output bound");
+        return Err(failure);
     }
     Ok(String::from_utf8(stdout)
         .map_err(|_| "control reply encoding")?
