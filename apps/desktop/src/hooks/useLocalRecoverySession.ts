@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-
-export type LocalRecoverySession = { epoch: number; ticket: number };
+import { startLocalRecoverySession } from "../lib/local-recovery-session";
+import type { LocalRecoverySession } from "../lib/local-recovery-session";
 
 // Only native Rust decides whether a recovery operation may publish. This
 // generation prevents a disposed form from displaying an older IPC response.
@@ -10,44 +10,31 @@ export function useLocalRecoverySession(erase: () => void, close: () => void, lo
   callbacks.current = { erase, close };
   const generation = useRef(0);
   const session = useRef<LocalRecoverySession | null>(null);
-  const completed = useRef(false);
+  const lifetime = useRef<ReturnType<typeof startLocalRecoverySession> | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    completed.current = false;
-    const current = ++generation.current;
-    const end = (ticket: number | undefined) => {
-      if (ticket === undefined) return;
-      void invoke("local_recovery_session", { active: false, ticket, lockOnCancel: lockOnCancel && !completed.current }).catch(() => {});
-    };
-    void invoke<LocalRecoverySession>("local_recovery_session", { active: true, ticket: null, lockOnCancel: false }).then((value) => {
-      if (current !== generation.current || document.hidden) { end(value.ticket); return; }
-      session.current = value;
-      setReady(true);
-    }).catch(() => {
-      if (current === generation.current) setFailed(true);
-    });
-    const cancel = () => {
-      generation.current++;
-      end(session.current?.ticket);
-      session.current = null;
-      callbacks.current.erase();
-      setReady(false);
-      callbacks.current.close();
-    };
+    const active = startLocalRecoverySession({ generation, session }, {
+      begin: () => invoke<LocalRecoverySession>("local_recovery_session", { active: true, ticket: null, lockOnCancel: false }),
+      end: (ticket, lockOnCancel) => invoke("local_recovery_session", { active: false, ticket, lockOnCancel }),
+      hidden: () => document.hidden,
+      erase: () => callbacks.current.erase(),
+      close: () => callbacks.current.close(),
+      ready: setReady,
+      failed: setFailed,
+    }, lockOnCancel);
+    lifetime.current = active;
+    const cancel = active.cancel;
     const visibility = () => { if (document.hidden) cancel(); };
     window.addEventListener("blur", cancel);
     document.addEventListener("visibilitychange", visibility);
     return () => {
-      generation.current++;
-      end(session.current?.ticket);
-      session.current = null;
-      callbacks.current.erase();
+      active.dispose();
       window.removeEventListener("blur", cancel);
       document.removeEventListener("visibilitychange", visibility);
     };
   }, [lockOnCancel]);
 
-  return { ready, failed, session, generation, complete: () => { completed.current = true; } };
+  return { ready, failed, session, generation, cancel: () => lifetime.current?.cancel(), complete: () => lifetime.current?.complete() };
 }

@@ -158,7 +158,7 @@ export function LocalRecoveryPanel({ mode, initialPath = "", onClose, onRecovere
         <label className="ps-label ps-label--checkbox"><input type="checkbox" checked={stored} onChange={(event) => setStored(event.target.checked)} />{labels.stored}</label>
       </div>
       <div className="ps-actions" style={{ marginTop: "1rem" }}>
-        <button type="button" className="ps-button ps-button--secondary" disabled={shown && !stored} onClick={() => { erase(); onClose(); }}>{mode === "recover" ? labels.back : labels.close}</button>
+        <button type="button" className="ps-button ps-button--secondary" disabled={shown && !stored} onClick={native.cancel}>{mode === "recover" ? labels.back : labels.close}</button>
       </div>
       <p className="ps-text-muted">{mode === "recover" ? labels.enabledRequired : labels.newVersion}</p>
       <p className="ps-text-muted">{mode === "recover" ? labels.failureExplanation : labels.backups}</p>

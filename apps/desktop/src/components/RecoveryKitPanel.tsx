@@ -18,7 +18,7 @@ export function RecoveryKitPanel({ secret, onConfirm, onDismiss }: RecoveryKitPa
   const copying = useRef(false);
   const native = useLocalRecoverySession(() => { if (output.current) output.current.textContent = ""; }, onDismiss);
   useEffect(() => {
-    if (output.current && native.ready) output.current.textContent = secret;
+    if (output.current && native.ready && native.session.current && !document.hidden) output.current.textContent = secret;
     return () => { if (output.current) output.current.textContent = ""; };
   }, [secret, native.ready]);
 
