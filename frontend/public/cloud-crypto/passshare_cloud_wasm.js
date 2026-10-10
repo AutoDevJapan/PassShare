@@ -104,6 +104,43 @@ export class CloudAccountIdentity {
 }
 if (Symbol.dispose) CloudAccountIdentity.prototype[Symbol.dispose] = CloudAccountIdentity.prototype.free;
 
+/**
+ * Owns an authenticated name and file body; drops erase both. No serde/Debug/key export.
+ */
+export class CloudAttachment {
+    static __wrap(ptr) {
+        const obj = Object.create(CloudAttachment.prototype);
+        obj.__wbg_ptr = ptr;
+        CloudAttachmentFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        CloudAttachmentFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_cloudattachment_free(ptr, 0);
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    content() {
+        const ret = wasm.cloudattachment_content(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {any}
+     */
+    name() {
+        const ret = wasm.cloudattachment_name(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) CloudAttachment.prototype[Symbol.dispose] = CloudAttachment.prototype.free;
+
 export class CloudPasswordBox {
     static __wrap(ptr) {
         const obj = Object.create(CloudPasswordBox.prototype);
@@ -135,6 +172,25 @@ export class CloudPasswordBox {
     }
     /**
      * @param {string} envelope
+     * @param {string} expected_attachment_context
+     * @param {string} attachment_source
+     * @returns {CloudAttachment}
+     */
+    decrypt_attachment(envelope, expected_attachment_context, attachment_source) {
+        const ptr0 = passStringToWasm0(envelope, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(expected_attachment_context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(attachment_source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.cloudpasswordbox_decrypt_attachment(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return CloudAttachment.__wrap(ret[0]);
+    }
+    /**
+     * @param {string} envelope
      * @param {string} expected_context
      * @returns {any}
      */
@@ -148,6 +204,36 @@ export class CloudPasswordBox {
             throw takeFromExternrefTable0(ret[1]);
         }
         return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {string} name
+     * @param {Uint8Array} bytes
+     * @param {string} expected_attachment_context
+     * @returns {string}
+     */
+    encrypt_attachment(name, bytes, expected_attachment_context) {
+        let deferred5_0;
+        let deferred5_1;
+        try {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(expected_attachment_context, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len2 = WASM_VECTOR_LEN;
+            const ret = wasm.cloudpasswordbox_encrypt_attachment(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+            var ptr4 = ret[0];
+            var len4 = ret[1];
+            if (ret[3]) {
+                ptr4 = 0; len4 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred5_0 = ptr4;
+            deferred5_1 = len4;
+            return getStringFromWasm0(ptr4, len4);
+        } finally {
+            wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+        }
     }
     /**
      * @param {string} item
@@ -329,6 +415,22 @@ export function start_worker() {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_debug_string_0accd80f45e5faa2: function(arg0, arg1) {
+            const ret = debugString(arg1);
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
+        __wbg___wbindgen_is_null_87c3bfe968c6a5ad: function(arg0) {
+            const ret = arg0 === null;
+            return ret;
+        },
+        __wbg___wbindgen_is_object_56732c2bc353f41d: function(arg0) {
+            const val = arg0;
+            const ret = typeof(val) === 'object' && val !== null;
+            return ret;
+        },
         __wbg___wbindgen_string_get_72bdf95d3ae505b1: function(arg0, arg1) {
             const obj = arg1;
             const ret = typeof(obj) === 'string' ? obj : undefined;
@@ -340,13 +442,39 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_1506f2235d1bdba0: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
+        __wbg_buffer_d370c8cae5692933: function(arg0) {
+            const ret = arg0.buffer;
+            return ret;
+        },
         __wbg_data_c127e192967020b3: function(arg0) {
             const ret = arg0.data;
+            return ret;
+        },
+        __wbg_fill_16161e62be6b8ccf: function(arg0, arg1, arg2, arg3) {
+            const ret = arg0.fill(arg1, arg2 >>> 0, arg3 >>> 0);
             return ret;
         },
         __wbg_getRandomValues_cc7f052a444bb2ce: function() { return handleError(function (arg0, arg1) {
             globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
         }, arguments); },
+        __wbg_get_2b48c7d0d006a781: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
+        __wbg_get_de6a0f7d4d18a304: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.get(arg0, arg1);
+            return ret;
+        }, arguments); },
+        __wbg_instanceof_ArrayBuffer_8f49811467741499: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof ArrayBuffer;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
         __wbg_instanceof_DedicatedWorkerGlobalScope_5b12e4007ab9cd4d: function(arg0) {
             let result;
             try {
@@ -357,9 +485,65 @@ function __wbg_get_imports() {
             const ret = result;
             return ret;
         },
+        __wbg_instanceof_Uint8Array_86f30649f63ef9c2: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof Uint8Array;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_isArray_67c2c9c4313f4448: function(arg0) {
+            const ret = Array.isArray(arg0);
+            return ret;
+        },
+        __wbg_length_4a591ecaa01354d9: function(arg0) {
+            const ret = arg0.length;
+            return ret;
+        },
+        __wbg_length_66f1a4b2e9026940: function(arg0) {
+            const ret = arg0.length;
+            return ret;
+        },
+        __wbg_new_578aeef4b6b94378: function(arg0) {
+            const ret = new Uint8Array(arg0);
+            return ret;
+        },
+        __wbg_new_ce1ab61c1c2b300d: function() {
+            const ret = new Object();
+            return ret;
+        },
+        __wbg_new_d90091b82fdf5b91: function() {
+            const ret = new Array();
+            return ret;
+        },
+        __wbg_new_from_slice_18fa1f71286d66b8: function(arg0, arg1) {
+            const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
+            return ret;
+        },
+        __wbg_ownKeys_0587b8fe286a40e6: function() { return handleError(function (arg0) {
+            const ret = Reflect.ownKeys(arg0);
+            return ret;
+        }, arguments); },
         __wbg_postMessage_7f35f46c7faf34e8: function(arg0, arg1) {
             arg0.postMessage(arg1);
         },
+        __wbg_postMessage_9850bd7f79c144b8: function(arg0, arg1, arg2) {
+            arg0.postMessage(arg1, arg2);
+        },
+        __wbg_prototypesetcall_3249fc62a0fafa30: function(arg0, arg1, arg2) {
+            Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
+        },
+        __wbg_push_a6822215aa43e71c: function(arg0, arg1) {
+            const ret = arg0.push(arg1);
+            return ret;
+        },
+        __wbg_set_6e30c9374c26414c: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = Reflect.set(arg0, arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_set_onmessage_951346394c13a36d: function(arg0, arg1) {
             arg0.onmessage = arg1;
         },
@@ -368,8 +552,8 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 22, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_43741dd63aeba6c4___MessageEvent______true_);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 38, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_befb22075f8b174___MessageEvent______true_);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
@@ -393,13 +577,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_43741dd63aeba6c4___MessageEvent______true_(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_43741dd63aeba6c4___MessageEvent______true_(arg0, arg1, arg2);
+function wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_befb22075f8b174___MessageEvent______true_(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_befb22075f8b174___MessageEvent______true_(arg0, arg1, arg2);
 }
 
 const CloudAccountIdentityFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_cloudaccountidentity_free(ptr, 1));
+const CloudAttachmentFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_cloudattachment_free(ptr, 1));
 const CloudPasswordBoxFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_cloudpasswordbox_free(ptr, 1));
@@ -419,6 +606,71 @@ function _assertClass(instance, klass) {
 const CLOSURE_DTORS = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(state => wasm.__wbindgen_destroy_closure(state.a, state.b));
+
+function debugString(val) {
+    // primitive types
+    const type = typeof val;
+    if (type == 'number' || type == 'boolean' || val == null) {
+        return  `${val}`;
+    }
+    if (type == 'string') {
+        return `"${val}"`;
+    }
+    if (type == 'symbol') {
+        const description = val.description;
+        if (description == null) {
+            return 'Symbol';
+        } else {
+            return `Symbol(${description})`;
+        }
+    }
+    if (type == 'function') {
+        const name = val.name;
+        if (typeof name == 'string' && name.length > 0) {
+            return `Function(${name})`;
+        } else {
+            return 'Function';
+        }
+    }
+    // objects
+    if (Array.isArray(val)) {
+        const length = val.length;
+        let debug = '[';
+        if (length > 0) {
+            debug += debugString(val[0]);
+        }
+        for(let i = 1; i < length; i++) {
+            debug += ', ' + debugString(val[i]);
+        }
+        debug += ']';
+        return debug;
+    }
+    // Test for built-in
+    const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+    let className;
+    if (builtInMatches && builtInMatches.length > 1) {
+        className = builtInMatches[1];
+    } else {
+        // Failed to match the standard '[object ClassName]'
+        return toString.call(val);
+    }
+    if (className == 'Object') {
+        // we're a user defined class or Object
+        // JSON.stringify avoids problems with cycles, and is generally much
+        // easier than looping through ownProperties of `val`.
+        try {
+            return 'Object(' + JSON.stringify(val) + ')';
+        } catch (_) {
+            return 'Object';
+        }
+    }
+    // errors
+    if (val instanceof Error) {
+        return `${val.name}: ${val.message}\n${val.stack}`;
+    }
+    // TODO we could test for more things here, like `Set`s and `Map`s.
+    return className;
+}
 
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -484,6 +736,13 @@ function makeMutClosure(arg0, arg1, f) {
     };
     CLOSURE_DTORS.register(real, state, state);
     return real;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {

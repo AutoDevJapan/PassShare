@@ -1,15 +1,15 @@
 {
-  "sourceCommit": "e4cee0066ff6b25f12052d1eeb267dd362d4a8ff",
-  "run": 38063768635,
+  "sourceCommit": "898e87c1355dafa87ffc9a267fa8828f64737327",
+  "run": 38076300619,
   "buildKind": "github-actions-tested",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
     "Cargo.lock": "e3ca83a3d9ed868d8e186668f20056ecb70eba77ec9016742d0317173534aa2f",
     "crates/passshare-core/Cargo.toml": "bb07748d5f01016a45e10850418cc6ba75ecf55161e7759390e1f7ca3e81c8d2",
-    "packages/cloud-wasm/Cargo.toml": "c1b7d7f6cb922727783756ecd546ef6df544d9995ed416ea5cfcdc3046a8fc1f",
-    "packages/cloud-wasm/Cargo.lock": "a4ef6b54a697ade66b5bb842b620de2ee1fb89843c01d219b6b9147770939d48",
+    "packages/cloud-wasm/Cargo.toml": "2b6e3d1e88d816db9cd98eb5cf560d17823909e9f1d94ec7a7286b8cb4e362c7",
+    "packages/cloud-wasm/Cargo.lock": "126e33fbfea3ceb4c80df837633f5762fc67d9f910335660dc88b256586cc727",
     "packages/cloud-wasm/worker/boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
-    "crates/passshare-core/src/cloud_crypto.rs": "a63a1eb20f8b5978295b6a0b56248a72cec8bb930164c680584427e179bcaa0d",
+    "crates/passshare-core/src/cloud_crypto.rs": "b2f44a97d5066d2ab776e85d55ec90cf158517bddbcc337db6ae261793213de8",
     "crates/passshare-core/src/error.rs": "5df9b408190b4ca2ea8efb74f844e35c4cfe9d1b27aff9f13525cc60236448f8",
     "crates/passshare-core/src/migration.rs": "5b8aa4736edda87a8ba78f243af9a18a1a5a2cfa82f38dedf53bd5f65fd81a83",
     "crates/passshare-core/src/lib.rs": "c18ff9e5539495cdcee8eb3f8e49a89edb21961e7dd07e210feeada60082e115",
@@ -32,9 +32,9 @@
     "crates/passshare-core/src/domain/mod.rs": "e13146bdcd180e2adc9fc27c8fbf294502f6d19c3dd235b7c65d22e106353f7a",
     "crates/passshare-core/src/domain/vault.rs": "ee0a12702ae14b48ecb5cb07d9593b7f3a14c36ef3ec4f6582df09cc974b4e2a",
     "crates/passshare-core/src/domain/payload.rs": "30904f6ed16dc1e1f73dcda8b899bc688934153d5516b5029ba64917239e9280",
-    "packages/cloud-wasm/src/worker.rs": "b37ec70635098d833067faad0eb2223328f2aea276997bbd48dc8a2dd9e9b390",
-    "packages/cloud-wasm/src/lib.rs": "826c1d1ca9dd84c0e4e036eae8d23b50f7f8f34339652a6534ba8eaa6ac987f7",
-    "packages/cloud-wasm/src/shared.rs": "125e2d2865bf5ae292d335bdbfdd1a4840f509ed7ea9f3a6a13f842b615af404",
+    "packages/cloud-wasm/src/worker.rs": "2d99227317437cbb53de7bfe706e3b5ee9e87707d9a48e7bbf41646ad8a5defd",
+    "packages/cloud-wasm/src/lib.rs": "6b1e45c0c5f1bd96b181b65bf993d7018c76c233702b4af7e0a9dac422176616",
+    "packages/cloud-wasm/src/shared.rs": "a27319208df22eea8c59be243fe2dbc5da58d3b105c0fcae2af7aa91e2eef484",
     "packages/cloud-wasm/src/item_edit.rs": "4373427b6397c1f2d2de8dd69df96419f67c7c7be03eaa3207e0a7bbaf3de97e",
     "backend/native/src/edit.rs": "d8e39b54705e65aa82cab651ca6604e087b9b219bc7c290cce4b8e728e29f89e",
     "packages/cloud-wasm/src/recovery.rs": "50cc8af8b7663dc46cf5cdc667a871df569da9587043853dbd3665dfd4a1e997",
@@ -44,8 +44,8 @@
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
-    "passshare_cloud_wasm.js": "c990db62845225f5051f1eb075fb1284167371c3fc42440fe753bf1ad0cb97c0",
-    "passshare_cloud_wasm_bg.wasm": "10f6edf3c668fc84550144001ec149a9f3f1a1af7f54d7efc2fe271a204fbe41"
+    "passshare_cloud_wasm.js": "c4b11425b8c5216ef9097ad1ac613c328e301244b31b82e6c0465eab16cd239a",
+    "passshare_cloud_wasm_bg.wasm": "be170c771d240fc993c1a6fa277e5d59c755efe0becfb003268aedef70632365"
   },
   "artifact": "passshare-cloud-wasm"
 }
