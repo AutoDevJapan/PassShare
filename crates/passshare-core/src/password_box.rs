@@ -787,13 +787,34 @@ mod tests {
     use super::*;
     use crate::domain::item::Item;
     use crate::domain::payload::deserialize_payload;
-    use tempfile::{NamedTempFile, TempPath};
+    use tempfile::TempDir;
 
-    /// A temp path whose backing file handle is already closed, so the atomic
-    /// rename used by the save path (#390) is not blocked by an open handle on
-    /// Windows. In production the `.pbox` is never held open across a save.
-    fn temp_box_path() -> TempPath {
-        NamedTempFile::new().unwrap().into_temp_path()
+    struct TestBoxPath {
+        _dir: TempDir,
+        path: PathBuf,
+    }
+
+    impl AsRef<Path> for TestBoxPath {
+        fn as_ref(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl std::ops::Deref for TestBoxPath {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    /// New boxes start at an absent destination, inside an independently owned
+    /// directory. Do not precreate an empty file that another Windows reader
+    /// can briefly hold open before the atomic first save.
+    fn temp_box_path() -> TestBoxPath {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("new.pbox");
+        TestBoxPath { _dir: dir, path }
     }
 
     #[test]

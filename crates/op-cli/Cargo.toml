@@ -16,3 +16,15 @@ passshare-core = { path = "../passshare-core" }
 clap.workspace = true
 tokio.workspace = true
 serde_json = { workspace = true }
+reqwest.workspace = true
+zeroize.workspace = true
+uuid.workspace = true
+serde.workspace = true
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+base64.workspace = true
+
+[[test]]
+name = "encrypted_cli"
+path = "src/encrypted_cli_tests.rs"

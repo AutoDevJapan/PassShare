@@ -5,7 +5,9 @@
 
 ## 目的
 
-開発者・運用者が **op 互換 CLI** をビルドし、Connect API に接続して vault / item 操作できるようにする。
+開発者・運用者が **op 互換 CLI** をビルドし、パスワードボックスと項目を操作できるようにする。
+暗号化したボックスは明示的な `--encrypted` モードを使う。
+[CLI の暗号化モード](../spec/encrypted-cli.md) に入力境界、所有者限定、再送と未対応範囲を記載する。
 
 ## 前提
 
@@ -57,7 +59,7 @@ op vault list
 ## 代表コマンド
 
 ```powershell
-# Vault 一覧
+# パスワードボックス一覧
 op vault list
 
 # Item 作成
@@ -65,13 +67,36 @@ op item create --vault "My Password Box" --category LOGIN --title "Example" user
 
 # Item 一覧 / 取得
 op item list --vault "My Password Box"
-op item get --vault "My Password Box" --item "<item-id>" --fields password
+op item get "<item-id>" --vault "My Password Box" --fields password
 
 # op:// 参照（スクリプト連携）
 op read "op://My Password Box/Example/password"
 ```
 
 ## 検証
+
+### 暗号化モード（所有者のみ）
+
+秘密管理ツールから `sessionToken` と `encryptionPassword` を含むJSONをパイプで渡す。
+秘密値をコマンド引数やシェル履歴へ書かない。
+接続先は `PASSSHARE_HOST`、ボックスは26文字のIDを指定する。
+
+```powershell
+# 左側のパイプ入力は利用者の秘密管理ツールから供給する。
+op --encrypted --secret-stdin item list --vault "<box-id>"
+op --encrypted --secret-stdin item get "<item-id>" --vault "<box-id>" --fields password
+op --encrypted --secret-stdin --prepare-only item create --vault "<box-id>"
+op --encrypted --secret-stdin item retry --vault "<box-id>"
+```
+
+作成のJSONに `item`、編集のJSONに `selectedFields`、再送のJSONに保持した `preparedWrite` を含める。
+一覧は秘密値を表示しない。取得は利用者が明示した秘密値を標準出力へ出すため、出力先を管理する。
+現在の利用者・所有者・鍵世代・バンドル版は毎回取得する。401・403・409や通信失敗を自動再送しない。
+共有受信者と認証情報の永続保管は未対応であり、M4全体の完成を示さない。
+
+```powershell
+cargo nextest run --locked -p op-cli -p passshare-connect
+```
 
 ### ローカル（backend dev server）
 

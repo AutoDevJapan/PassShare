@@ -5,16 +5,33 @@ use passshare_core::domain::field::FieldPurpose;
 use passshare_core::domain::item::Item;
 use serde_json::{json, Value};
 
+mod encrypted;
+
 #[derive(Parser)]
 #[command(name = "op", about = "PassShare 1Password Connect compatible CLI")]
 struct Cli {
+    /// Use the live PassShare session API for an owner-operated encrypted password box.
+    #[arg(long, global = true)]
+    encrypted: bool,
+    /// Read session credentials and secret operation input as JSON from a pipe.
+    #[arg(long, global = true)]
+    secret_stdin: bool,
+    /// PassShare origin; separate from OP_CONNECT_HOST.
+    #[arg(long, global = true)]
+    passshare_host: Option<String>,
+    /// Password box ID for encrypted `vault list` (no account-wide discovery).
+    #[arg(long, global = true)]
+    password_box: Option<String>,
+    /// Output a prepared opaque write without sending it; retain for explicit replay.
+    #[arg(long, global = true)]
+    prepare_only: bool,
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Vault operations
+    /// Password box operations (op-compatible command spelling)
     Vault {
         #[command(subcommand)]
         command: VaultCommands,
@@ -25,20 +42,23 @@ enum Commands {
         command: ItemCommands,
     },
     /// Read op:// secret reference
-    Read {
-        reference: String,
-    },
+    Read { reference: String },
 }
 
 #[derive(Subcommand)]
 enum VaultCommands {
-    /// List vaults
+    /// List password boxes
     List,
 }
 
 #[derive(Subcommand)]
 enum ItemCommands {
-    /// List items in a vault
+    /// Explicitly resend a previously prepared encrypted write, unchanged.
+    Retry {
+        #[arg(long)]
+        vault: String,
+    },
+    /// List items in a password box
     List {
         #[arg(long)]
         vault: String,
@@ -55,8 +75,8 @@ enum ItemCommands {
     Create {
         #[arg(long)]
         vault: String,
-        #[arg(long, default_value = "login")]
-        category: String,
+        #[arg(long)]
+        category: Option<String>,
         #[arg(long)]
         title: Option<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -79,8 +99,55 @@ enum ItemCommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+async fn main() -> std::process::ExitCode {
+    let encrypted_requested = std::env::args().any(|arg| arg.starts_with("--encrypted"));
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            if matches!(
+                error.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            ) {
+                let _ = error.print();
+                return std::process::ExitCode::SUCCESS;
+            }
+            if encrypted_requested || std::env::args().any(|arg| arg.starts_with("--secret-stdin"))
+            {
+                eprintln!("invalid encrypted command options; use --help (secret input is never an argument)");
+            } else {
+                let _ = error.print();
+            }
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    if encrypted_requested && !cli.encrypted {
+        eprintln!("place --encrypted before trailing assignments; encrypted commands never use Connect credentials");
+        return std::process::ExitCode::FAILURE;
+    }
+    let result = if cli.encrypted {
+        encrypted::run(cli)
+            .await
+            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })
+    } else {
+        run_connect(cli).await
+    };
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run_connect(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    if cli.secret_stdin
+        || cli.passshare_host.is_some()
+        || cli.password_box.is_some()
+        || cli.prepare_only
+    {
+        return Err("PassShare encrypted options require --encrypted".into());
+    }
     let client = ConnectClient::from_env()?;
 
     match cli.command {
@@ -93,6 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Commands::Item { command } => match command {
+            ItemCommands::Retry { .. } => return Err("retry requires --encrypted".into()),
             ItemCommands::List { vault } => {
                 let vault_id = resolve_vault_id(&client, &vault).await?;
                 let items = client.list_items(&vault_id).await?;
@@ -127,7 +195,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let vault_id = resolve_vault_id(&client, &vault).await?;
                 let fields = parse_assignments(&assignments)?;
-                let payload = build_create_payload(&category, title.as_deref(), &fields)?;
+                let payload = build_create_payload(
+                    category.as_deref().unwrap_or("login"),
+                    title.as_deref(),
+                    &fields,
+                )?;
                 let created = client.create_item(&vault_id, &payload).await?;
                 println!("{}", created.id);
             }
@@ -165,7 +237,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn resolve_vault_id(client: &ConnectClient, vault: &str) -> Result<String, Box<dyn std::error::Error>> {
+async fn resolve_vault_id(
+    client: &ConnectClient,
+    vault: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     // Only treat the argument as a raw ID when it matches the real ConnectId
     // charset (26 lowercase alphanumerics); otherwise resolve it as a name so a
     // 26-char or mixed-case vault name is not misrouted as an ID.
@@ -177,7 +252,7 @@ async fn resolve_vault_id(client: &ConnectClient, vault: &str) -> Result<String,
         .into_iter()
         .find(|v| v.name == vault)
         .map(|v| v.id.to_string())
-        .ok_or_else(|| format!("vault not found: {vault}").into())
+        .ok_or_else(|| format!("password box not found: {vault}").into())
 }
 
 async fn resolve_item_id(
@@ -196,7 +271,9 @@ async fn resolve_item_id(
         .ok_or_else(|| format!("item not found: {item}").into())
 }
 
-fn parse_assignments(assignments: &[String]) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+fn parse_assignments(
+    assignments: &[String],
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
     let mut fields = Vec::new();
     for assignment in assignments {
         let Some((key, value)) = assignment.split_once('=') else {
@@ -218,7 +295,12 @@ fn build_create_payload(
     let category = category.to_ascii_uppercase();
     let item_title = title
         .map(str::to_string)
-        .or_else(|| fields.iter().find(|(k, _)| k.eq_ignore_ascii_case("title")).map(|(_, v)| v.clone()))
+        .or_else(|| {
+            fields
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("title"))
+                .map(|(_, v)| v.clone())
+        })
         .ok_or("missing --title or title= assignment")?;
 
     let json_fields: Vec<Value> = fields
@@ -238,15 +320,17 @@ fn build_create_payload(
     }))
 }
 
-fn build_edit_patch(item: &Item, fields: &[(String, String)]) -> Result<Value, Box<dyn std::error::Error>> {
+fn build_edit_patch(
+    item: &Item,
+    fields: &[(String, String)],
+) -> Result<Value, Box<dyn std::error::Error>> {
     let mut patch = Vec::new();
     for (key, value) in fields {
         if key.eq_ignore_ascii_case("title") {
             patch.push(json!({ "op": "replace", "path": "/title", "value": value }));
             continue;
         }
-        let index = find_field_index(item, key)
-            .ok_or_else(|| format!("field not found: {key}"))?;
+        let index = find_field_index(item, key).ok_or_else(|| format!("field not found: {key}"))?;
         patch.push(json!({
             "op": "replace",
             "path": format!("/fields/{index}/value"),
