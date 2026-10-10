@@ -684,6 +684,7 @@ fn run_local_recovery(application: &Path, output: &Path) -> Result<(), String> {
     let old_password = random_secret()?;
     let new_password = random_secret()?;
     let item_password = random_secret()?;
+    let note_body = random_secret()?;
     let mismatch = random_secret()?;
     ensure(
         old_password != new_password && mismatch != new_password,
@@ -710,12 +711,39 @@ fn run_local_recovery(application: &Path, output: &Path) -> Result<(), String> {
         }),
     )?;
     let saved = successful_value(&driver, "list_items", json!({}))?;
+    let added_note = successful_value(
+        &driver,
+        "add_item",
+        json!({
+            "category":"SECURE_NOTE", "title":"Recovery body fixture", "body":note_body.as_str(),
+            "tags":["recovery","body"], "favorite":false, "masterPassword":old_password.as_str()
+        }),
+    )?;
+    let expected = SecretJson(json!([
+        {"id":added.0["id"], "title":"Lock fixture", "category":"LOGIN",
+         "tags":["synthetic","recovery"], "favorite":true, "url":"https://synthetic.invalid/recovery",
+         "username":"synthetic-user", "password":item_password.as_str(), "body":null,
+         "notes":"Synthetic recovery notes"},
+        {"id":added_note.0["id"], "title":"Recovery body fixture", "category":"SECURE_NOTE",
+         "tags":["recovery","body"], "favorite":false, "url":null, "username":null,
+         "password":null, "body":note_body.as_str(), "notes":null}
+    ]));
+    for item in [&added.0, &added_note.0] {
+        let id = item["id"]
+            .as_str()
+            .ok_or("recovery generated item ID missing")?;
+        id.parse::<passshare_core::ConnectId>()
+            .map_err(|_| "invalid recovery generated item ID")?;
+    }
     ensure(
-        saved.0.as_array().is_some_and(|items| items.len() == 1)
-            && saved.0[0] == added.0
-            && saved.0[0]["password"] == item_password.as_str(),
+        added.0["id"] != added_note.0["id"]
+            && added.0 == expected.0[0]
+            && added_note.0 == expected.0[1]
+            && saved.0 == json!([expected.0[0]]),
         "recovery full DTO precondition failed",
     )?;
+    let saved = successful_value(&driver, "list_items", json!({}))?;
+    ensure(saved.0 == expected.0, "recovery stored input DTO mismatch")?;
     let original_payload = full_payload(&path, &old_password)?;
     let original = std::fs::read(&path).map_err(|_| "recovery original bytes")?;
     successful_value(&driver, "lock_password_box", json!({}))?;
@@ -792,7 +820,7 @@ fn run_local_recovery(application: &Path, output: &Path) -> Result<(), String> {
             .list_connect_items()
             .map_err(|_| "recovery reopened items")?
             .len()
-            == 1,
+            == 2,
         "recovery reopened fixture missing",
     )?;
     ensure(
@@ -854,7 +882,7 @@ fn run_local_recovery(application: &Path, output: &Path) -> Result<(), String> {
     )?;
     std::fs::write(output.join("desktop-local-recovery.json"), serde_json::to_vec_pretty(&json!({
         "realLinuxRenderer":true, "desktopOnly":true, "syntheticOnly":true, "physicalAndroid":false,
-        "actualRecoveryForm":true, "fixtureItems":1, "mismatchRejected":true,
+        "actualRecoveryForm":true, "fixtureItems":2, "independentInputDto":true, "mismatchRejected":true,
         "mismatchBytesAndHashPreserved":true, "mismatchRemainedLocked":true,
         "cancelErasedDetachedRefs":true, "cancelSetupBlank":true, "cancelBytesAndHashPreserved":true,
         "cancelRemainedLocked":true, "successfulUnmountRemainedUnlocked":true,
