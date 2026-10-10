@@ -1,10 +1,14 @@
 //! Execute the actual TypeScript transport against exported WASM in Node.
 //! Node supplies message/timer surfaces only; Rust verifies all observations.
 //! Synthetic clock/event checks are not a real Chrome UI acceptance.
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use passshare_core::cloud_crypto::{ItemContext, OwnerKeyContext, PasswordBoxKey};
+use passshare_core::crypto::{derive_master_key_with_params, generate_salt, MasterKey};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use zeroize::{Zeroize, Zeroizing};
 
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -28,14 +32,14 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
   constructor() {
    this.dead = false; this.hold = false; this.queue = []; this.mutate = null; this.commands=[]; workers.push(this); constructing = this;
    delete require.cache[require.resolve(f.bindings)]; this.api = require(f.bindings);
-   globalThis.postMessage = raw => { const self = constructing; if (self) self.emit(raw); };
+   globalThis.postMessage = (raw,transfer=[]) => { const self = constructing; if (self) self.emit(structuredClone(raw,{transfer})); };
    this.api.start_worker(); this.handler = globalThis.onmessage;
   }
   emit(raw) { queueMicrotask(() => { if (this.hold) this.queue.push(raw); else this.onmessage?.({data:this.mutate ? this.mutate(raw) : raw}); }); }
-  postMessage(raw) { this.commands.push(JSON.parse(raw).command); constructing = this; this.handler({data:raw}); }
+  postMessage(raw,transfer=[]) { this.commands.push(JSON.parse(typeof raw==='string'?raw:raw.message).command); constructing = this; this.handler({data:structuredClone(raw,{transfer})}); }
   terminate() { this.dead = true; }
  }
- const sandbox = {exports:{},Worker,window,document,TextEncoder,Event:class {constructor(type){this.type=type;}},
+ const sandbox = {exports:{},Worker,window,document,TextEncoder,Uint8Array,ArrayBuffer,Event:class {constructor(type){this.type=type;}},
   performance:{now:()=>now},Date:{now:()=>now+wallOffset},setTimeout(fn, ms){const id=++nextTimer; timers.set(id,{fn,at:now+ms}); return id;},clearTimeout(id){timers.delete(id);}};
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(f.root,'frontend/src/lib/cloud-worker.ts'),'utf8'),
    {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
@@ -62,10 +66,44 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
  const sharedItem=await recipient.decrypt(JSON.stringify(f.fixture.envelope),f.fixture.context);
  const recipientWrapRefused=await rejected(recipient.wrap(secret)), recipientRecoveryRefused=await rejected(recipient.createRecoveryMaterial());
  const stableAfterRefusal=await recipient.decrypt(JSON.stringify(f.fixture.envelope),f.fixture.context);
- const cancelledHandler=rw.onmessage; rw.hold=true;
- const pending=recipient.decrypt(JSON.stringify(f.fixture.envelope),f.fixture.context); await Promise.resolve();
- recipient.dispose(); const cancelled=await rejected(pending); const delayed=rw.queue.pop(); cancelledHandler?.({data:delayed});
- const isolated=await owner.publicIdentity(); owner.dispose();
+ stage='attachment-transport';
+ const ac={passwordBoxId:f.fixture.owner.passwordBoxId,itemId:f.fixture.context.itemId,attachmentId:'cccccccccccccccccccccccccc',attachmentVersion:1,keyEpoch:f.fixture.owner.keyEpoch};
+ const bytes=new Uint8Array([0,255,128,0]);const file=await owner.encryptAttachment('添付🦀',bytes,ac);
+ const transferDetached=bytes.byteLength===0;
+ const ic={...f.fixture.context,itemVersion:3};
+ const full={id:ic.itemId,version:3,vault:{id:ic.passwordBoxId},attachments:[{attachmentId:ac.attachmentId,attachmentVersion:1,keyEpoch:ac.keyEpoch}]};
+ const itemEnvelope=await owner.encrypt(JSON.stringify(full),ic);
+ const attachmentSource={itemEnvelope,expectedItemContext:ic,itemSnapshotRevision:17,attachmentSnapshotRevision:17};
+ const plain=await recipient.decryptAttachment(file,ac,attachmentSource);
+ const attachmentExact=plain.name==='添付🦀'&&plain.bytes.length===4&&plain.bytes[0]===0&&plain.bytes[1]===255&&plain.bytes[2]===128;
+ recipient.releaseAttachment(plain);
+ const releasedWiped=plain.name===''&&plain.bytes.every(b=>b===0);
+ const maxInput=new Uint8Array(1048576).fill(255), maxFile=await owner.encryptAttachment('',maxInput,ac);
+ const maximum=await owner.decryptAttachment(maxFile,ac,attachmentSource);
+ const maximumExact=maxInput.byteLength===0&&maximum.name===''&&maximum.bytes.length===1048576&&maximum.bytes.every(b=>b===255);
+ owner.releaseAttachment(maximum);
+ const oversize=new Uint8Array(1048577).fill(255), oversizeRejected=await rejected(owner.encryptAttachment('',oversize,ac))&&oversize.every(b=>b===0)&&!ow.dead;
+ const revisionRejected=await rejected(owner.decryptAttachment(file,ac,{...attachmentSource,attachmentSnapshotRevision:18}))&&!ow.dead;
+ const malformedName=await rejected(owner.encryptAttachment(null,new Uint8Array([255]),ac))&&!ow.dead;
+ const circular={...ac};circular.unknown=circular;const circularInput=new Uint8Array([255]);
+ const circularContextRejected=await rejected(owner.encryptAttachment('',circularInput,circular))&&circularInput.every(b=>b===0)&&!ow.dead;
+ // Cancel a transferred plaintext reply and then deliver it through the saved handler.
+ const saved=rw.onmessage;rw.hold=true;
+ const filePending=recipient.decryptAttachment(file,ac,attachmentSource); await Promise.resolve(); await Promise.resolve();
+ recipient.dispose();const attachmentCancelled=await rejected(filePending);
+ const lateAttachment=rw.queue.find(raw=>typeof raw==='object');saved?.({data:lateAttachment});
+ const attachmentLateWiped=lateAttachment?.bytes.every(b=>b===0)===true;
+ const ownerPlain=await owner.decryptAttachment(file,ac,attachmentSource);
+ const movedPlain=await owner.decryptAttachment(file,ac,attachmentSource);
+ const movedBytes=structuredClone(movedPlain.bytes,{transfer:[movedPlain.bytes.buffer]});
+ // Owner's already-returned mutable buffer is wiped on scope invalidation.
+ const isolated=await owner.publicIdentity();owner.dispose();const attachmentLockWiped=ownerPlain.bytes.every(b=>b===0);
+ const detachedOutputLock=ow.dead&&movedPlain.bytes.byteLength===0;movedBytes.fill(0);
+ const [recipient2,rw2]=await make();await recipient2.unlockIdentity(b,peer.keyId,JSON.stringify(JSON.parse(rp.record).bundle),secret);
+ await recipient2.receiveShared(envelope,prepared.publicIdentity,context);
+ const cancelledHandler=rw2.onmessage; rw2.hold=true;
+ const pending=recipient2.decrypt(JSON.stringify(f.fixture.envelope),f.fixture.context); await Promise.resolve();
+ recipient2.dispose(); const cancelled=await rejected(pending); const delayed=rw2.queue.pop(); cancelledHandler?.({data:delayed});
  stage='idle'; const [idle,iw]=await make(); await idle.generateIdentity(a); tick(299999); await idle.publicIdentity(); tick(1);
  const identityOnlyExpired=iw.dead && await rejected(idle.publicIdentity());
  const [both,bw]=await make(); await both.generateIdentity(a); tick(299999); await both.generate(f.fixture.owner); tick(1);
@@ -212,6 +250,7 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
  await act(async()=>button(shareTree,'app.share.removeMember').props.onClick());const compatibilityRemoveWorked=legacyRemovals===1;
  await act(async()=>shareTree.unmount());console.error=originalConsoleError;
  process.stdout.write(JSON.stringify({oldItem,sharedItem,stableAfterRefusal,verified,isolated,cancelled,doubleOpenRefused,delayed:typeof delayed==='string',
+  transferDetached,attachmentExact,releasedWiped,maximumExact,oversizeRejected,revisionRejected,malformedName,circularContextRejected,detachedOutputLock,attachmentCancelled,attachmentLateWiped,attachmentLockWiped,
    ownerStillAlive:!ow.dead,recipientWrapRefused,recipientRecoveryRefused,identityOnlyExpired,secondHandleDidNotExtend,untrustedExpired,inputExtended,trustedExpired,
    expiredInputConsumed,backgroundClosed:bgw.dead,tokenClosed:tokenw.dead,pausedMonotonicExpired,backwardsClockExpired,invalid,pinIsolation,pendingExact,memberExtraRefused,wrongVersionRefused,removedRefused,switchedRefused,
    member,calls,unpinnedForm,secretClearedOnSubmit,cancelledUi,unmountUi,accountSwitchUi,missingPinRejected,separatePasswordOpened,peerMismatchDisabled,peerMatchEnabled,changedPeerDisabled,locks,
@@ -220,9 +259,19 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
    listeners:[...listeners.values()].reduce((n,s)=>n+s.size,0)}));
 })().catch(error=>{process.stderr.write('transport acceptance failed: '+stage+' '+(['TypeError','Error','ReferenceError'].includes(error.name)?error.name:'rejected'));process.exitCode=1;}); });
 "#;
-    let fixture: Value =
+    let mut fixture: Value =
         serde_json::from_str(include_str!("../tests/format1-vector.json")).unwrap();
-    let input = json!({"bindings":args[0],"ts":args[1],"root":args[2],"renderer":args[3],"fixture":fixture,"password":"Synthetic format1 e\u{301} password!","secret":"Synthetic transport identity password!"});
+    // Use the vector's public DTO shape only; all new crypto inputs use OS entropy.
+    let password = Zeroizing::new(STANDARD.encode(MasterKey::generate().unwrap().as_bytes()));
+    let secret = Zeroizing::new(STANDARD.encode(MasterKey::generate().unwrap().as_bytes()));
+    let salt = generate_salt().unwrap();
+    let root = derive_master_key_with_params(&password, &salt, 65536, 3, 4).unwrap();
+    let key = PasswordBoxKey::generate().unwrap();
+    let owner: OwnerKeyContext = serde_json::from_value(fixture["owner"].clone()).unwrap();
+    let context: ItemContext = serde_json::from_value(fixture["context"].clone()).unwrap();
+    fixture["bundle"] = json!({"format":1,"salt":STANDARD.encode(salt),"wrapped":key.wrap_for_owner(&root,&owner).unwrap()});
+    fixture["envelope"] = json!(key.encrypt_item(&fixture["item"], &context).unwrap());
+    let mut input = json!({"bindings":args[0],"ts":args[1],"root":args[2],"renderer":args[3],"fixture":fixture,"password":password.as_str(),"secret":secret.as_str()});
     let mut child = Command::new("node")
         .args(["-e", HOST])
         .stdin(Stdio::piped())
@@ -245,8 +294,13 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
         .stdin
         .take()
         .unwrap()
-        .write_all(input.to_string().as_bytes())
+        .write_all(Zeroizing::new(input.to_string()).as_bytes())
         .unwrap();
+    for field in ["password", "secret"] {
+        if let Value::String(s) = &mut input[field] {
+            s.zeroize();
+        }
+    }
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if child.try_wait().unwrap().is_some() {
@@ -264,9 +318,19 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
     let diagnostics = stderr.join().unwrap();
     if !diagnostics.is_empty() {
         let fixed = String::from_utf8_lossy(&diagnostics);
-        if fixed.starts_with("transport acceptance failed: ") && fixed.len() < 100 {
-            eprintln!("{fixed}");
+        for line in fixed.lines() {
+            if line.starts_with("transport acceptance failed: ") && line.len() < 100 {
+                eprintln!("{line}");
+            }
         }
+        if let Some(path) = std::env::var_os("PASSSHARE_TRANSPORT_DIAGNOSTICS") {
+            std::fs::write(path, &diagnostics).unwrap();
+        }
+        eprintln!(
+            "Node exit {:?}; bounded diagnostic bytes {}",
+            status.code(),
+            diagnostics.len()
+        );
     }
     assert!(
         status.success() && diagnostics.is_empty() && output.len() <= 65_536,
@@ -274,12 +338,24 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
     );
     let observed: Value = serde_json::from_slice(&output).expect("bounded transport observations");
     for field in ["oldItem", "sharedItem", "stableAfterRefusal"] {
-        assert_eq!(
-            serde_json::from_str::<Value>(observed[field].as_str().unwrap()).unwrap(),
-            fixture["item"]
+        assert!(
+            serde_json::from_str::<Value>(observed[field].as_str().unwrap()).unwrap()
+                == input["fixture"]["item"]
         );
     }
     for field in [
+        "transferDetached",
+        "attachmentExact",
+        "releasedWiped",
+        "maximumExact",
+        "oversizeRejected",
+        "revisionRejected",
+        "malformedName",
+        "circularContextRejected",
+        "detachedOutputLock",
+        "attachmentCancelled",
+        "attachmentLateWiped",
+        "attachmentLockWiped",
         "cancelled",
         "doubleOpenRefused",
         "delayed",
@@ -344,5 +420,5 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
         .is_none());
     assert_eq!(observed["calls"][4]["body"]["expectedStateRevision"], 7);
     assert_eq!(observed["calls"][5]["body"], Value::Null);
-    println!("WASM + Web transport: owner/shared full JSON, independent code, exact routes, pins, cancelled/late replies, strict fields, idle/input/background/credential boundaries passed");
+    println!("WASM + Web transport: binary attachments (transfer, maximum, context, release, cancel/late, detached lock), owner/shared full JSON, independent code, exact routes, pins, strict fields, idle/input/background/credential boundaries passed");
 }

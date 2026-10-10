@@ -1,5 +1,7 @@
 # 添付の実バイト暗号化（Coreの契約）
 
+WASM worker / Rust SDKへの有限接続は [encrypted-attachments-client.md](encrypted-attachments-client.md) を参照する。以下のCore単体結果と、その接続検査を混同しない。
+
 元ToDo1163のM4-A/M4-C/M8-Bに向けた部品。HTTP、WASM、各クライアント、移行・復旧の接続と受入は未完であり、元の22条件の達成を意味しない。既存の項目・鍵包み・互換保存モードは変更しない。
 
 ## 型と暗号化

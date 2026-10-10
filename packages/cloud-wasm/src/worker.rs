@@ -36,6 +36,8 @@ enum Command {
     SharingContext,
     SharedRecipientWrap,
     SharedReceiveUnlock,
+    EncryptAttachment,
+    DecryptAttachment,
 }
 
 // Parsed secret text is wiped on drop. serde_json may leave transient copies while
@@ -87,6 +89,12 @@ struct Request {
     public_identity: Option<String>,
     #[serde(default, deserialize_with = "present")]
     verification_code: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    expected_attachment_context: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    name: Option<Secret>,
+    #[serde(default, deserialize_with = "present")]
+    attachment_source: Option<String>,
 }
 
 fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -106,6 +114,7 @@ enum Out {
     PublicIdentity(String),
     SharedContext(String),
     IdentityPrepared(String),
+    Attachment(passshare_core::cloud_crypto::AttachmentPlaintext),
 }
 
 #[derive(Serialize)]
@@ -133,6 +142,8 @@ struct Reply<'a> {
     shared_context: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     identity_prepared: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<&'a str>,
 }
 
 pub(crate) struct WorkerSession {
@@ -157,20 +168,59 @@ impl WorkerSession {
     }
 
     /// Always returns a reply. Replies never echo input text; `requestId` is a number.
+    #[cfg(test)]
     pub(crate) fn handle(&mut self, message: String) -> Zeroizing<String> {
+        self.handle_output(message, None).0
+    }
+
+    pub(crate) fn invalid(&self) -> Zeroizing<String> {
+        self.reply(None, Err(INVALID))
+    }
+
+    pub(crate) fn handle_output(
+        &mut self,
+        message: String,
+        bytes: Option<Vec<u8>>,
+    ) -> (
+        Zeroizing<String>,
+        Option<passshare_core::cloud_crypto::AttachmentPlaintext>,
+    ) {
+        let bytes = bytes.map(Zeroizing::new);
         let message = Zeroizing::new(message);
         let request: Request = match parse(&message, MAX_MESSAGE) {
             Ok(request) => request,
-            Err(error) => return self.reply(None, Err(error)),
+            Err(error) => return (self.reply(None, Err(error)), None),
         };
         drop(message);
         let id = request.request_id;
-        let result = self.dispatch(request);
-        self.reply(Some(id), result)
+        let result = self.dispatch(request, bytes);
+        let header = self.reply_ref(Some(id), &result);
+        let plaintext = match result {
+            Ok(Out::Attachment(plaintext)) => Some(plaintext),
+            _ => None,
+        };
+        (header, plaintext)
     }
 
-    fn dispatch(&mut self, mut r: Request) -> Result<Out, &'static str> {
+    fn dispatch(
+        &mut self,
+        mut r: Request,
+        mut bytes: Option<Zeroizing<Vec<u8>>>,
+    ) -> Result<Out, &'static str> {
         if r.version != 1 || r.request_id == 0 || r.request_id > MAX_SAFE {
+            return Err(INVALID);
+        }
+        let attachment = matches!(
+            r.command,
+            Command::EncryptAttachment | Command::DecryptAttachment
+        );
+        if r.expected_attachment_context.is_some() != attachment
+            || r.name.is_some() != (r.command == Command::EncryptAttachment)
+            || bytes.is_some() != (r.command == Command::EncryptAttachment)
+        {
+            return Err(INVALID);
+        }
+        if r.attachment_source.is_some() != (r.command == Command::DecryptAttachment) {
             return Err(INVALID);
         }
         // A well-formed lock must also erase keys when replayed or delivered late.
@@ -203,6 +253,8 @@ impl WorkerSession {
             Command::IdentityPrepare => [true, false, false, false, false, false, false, true],
             Command::Edit => [true, false, true, false, false, true, false, true],
             Command::Decrypt => [true, false, true, false, true, false, false, false],
+            Command::EncryptAttachment => [true, false, false, false, false, false, false, false],
+            Command::DecryptAttachment => [true, false, false, false, true, false, false, false],
             Command::IdentityGenerate
             | Command::IdentityPublic
             | Command::IdentityWrap
@@ -406,6 +458,26 @@ impl WorkerSession {
                 .open()?
                 .decrypt(r.envelope.as_deref().unwrap_or_default(), context)
                 .map(Out::Item),
+            Command::EncryptAttachment => self
+                .open()?
+                .encrypt_attachment(
+                    std::mem::take(&mut r.name.as_mut().unwrap().0),
+                    std::mem::take(&mut **bytes.as_mut().unwrap()),
+                    r.expected_attachment_context.as_deref().unwrap_or_default(),
+                )
+                .map(Out::Envelope),
+            Command::DecryptAttachment => {
+                self.open()?.verify_attachment_source(
+                    r.expected_attachment_context.as_deref().unwrap_or_default(),
+                    r.attachment_source.as_deref().unwrap_or_default(),
+                )?;
+                self.open()?
+                    .decrypt_attachment(
+                        r.envelope.as_deref().unwrap_or_default(),
+                        r.expected_attachment_context.as_deref().unwrap_or_default(),
+                    )
+                    .map(Out::Attachment)
+            }
             Command::Status | Command::Lock => unreachable!(),
         }
     }
@@ -419,6 +491,9 @@ impl WorkerSession {
     }
 
     fn reply(&self, id: Option<u64>, result: Result<Out, &'static str>) -> Zeroizing<String> {
+        self.reply_ref(id, &result)
+    }
+    fn reply_ref(&self, id: Option<u64>, result: &Result<Out, &'static str>) -> Zeroizing<String> {
         let mut reply = Reply {
             version: 1,
             request_id: id,
@@ -434,8 +509,9 @@ impl WorkerSession {
             public_identity: None,
             shared_context: None,
             identity_prepared: None,
+            name: None,
         };
-        match &result {
+        match result {
             Err(error) => reply.error = Some(*error),
             Ok(Out::Bundle(text)) => reply.bundle = Some(text),
             Ok(Out::Envelope(text)) => reply.envelope = Some(text),
@@ -444,6 +520,7 @@ impl WorkerSession {
             Ok(Out::PublicIdentity(text)) => reply.public_identity = Some(text),
             Ok(Out::SharedContext(text)) => reply.shared_context = Some(text),
             Ok(Out::IdentityPrepared(text)) => reply.identity_prepared = Some(text),
+            Ok(Out::Attachment(plaintext)) => reply.name = Some(plaintext.name()),
             Ok(Out::Empty) => {}
         }
         // Exact capacity avoids leaving plaintext in reallocated buffers.

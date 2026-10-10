@@ -3,8 +3,8 @@
 //! key trust or authenticate ciphertext; use Core with independently pinned keys.
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use passshare_core::cloud_crypto::{
-    EncryptedItem, PublicAccountIdentity, SharedKeyContext, WrappedSharedPasswordBoxKey,
-    SHARED_KEY_SUITE,
+    AttachmentContext, EncryptedAttachment, EncryptedItem, PublicAccountIdentity, SharedKeyContext,
+    WrappedSharedPasswordBoxKey, SHARED_KEY_SUITE,
 };
 use passshare_core::ConnectId;
 use reqwest::{Method, Url};
@@ -60,6 +60,12 @@ fn positive<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Erro
 }
 fn count<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
     number(d, 0)
+}
+// Omission preserves legacy responses; explicit null is invalid.
+fn optional_positive<'de, D: Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<u64>, D::Error> {
+    positive(d).map(Some)
 }
 fn zero<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
     let n = u64::deserialize(d)?;
@@ -275,6 +281,18 @@ pub struct SharingSnapshot {
     pub live_item_count: u64,
     #[serde(deserialize_with = "count")]
     pub grant_count: u64,
+    #[serde(
+        default,
+        deserialize_with = "optional_positive",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub live_attachment_count: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "optional_positive",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub live_attachment_bytes: Option<u64>,
 }
 impl SharingSnapshot {
     pub fn validate(&self) -> Result<()> {
@@ -289,6 +307,15 @@ impl SharingSnapshot {
                 && safe(self.live_item_count, 0)
                 && safe(self.grant_count, 0)
                 && self.grant_count < self.member_count,
+        )?;
+        argument_check(
+            match (self.live_attachment_count, self.live_attachment_bytes) {
+                (None, None) => true,
+                (Some(n), Some(bytes)) => {
+                    (1..=1024).contains(&n) && (1..=1_073_741_824).contains(&bytes)
+                }
+                _ => false,
+            },
         )
     }
     /// Call after collecting all pages at this revision and before constructing
@@ -376,6 +403,58 @@ pub struct SharingItemSummary {
     pub key_epoch: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SharingAttachmentSummary {
+    pub item_id: ConnectId,
+    pub attachment_id: ConnectId,
+    #[serde(deserialize_with = "positive")]
+    pub attachment_version: u64,
+    #[serde(deserialize_with = "positive")]
+    pub key_epoch: u64,
+}
+impl SharingAttachmentSummary {
+    pub fn cursor(&self) -> String {
+        format!("{}:{}", self.item_id, self.attachment_id)
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SharingAttachmentsPage {
+    #[serde(deserialize_with = "positive")]
+    pub state_revision: u64,
+    #[serde(deserialize_with = "bounded_page")]
+    pub attachments: Vec<SharingAttachmentSummary>,
+    #[serde(deserialize_with = "nullable")]
+    pub next_cursor: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RotationAttachmentRequest {
+    #[serde(deserialize_with = "positive")]
+    pub expected_version: u64,
+    pub envelope: EncryptedAttachment,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RotationAttachmentReply {
+    #[serde(deserialize_with = "uuid_field")]
+    pub operation_id: String,
+    pub item_id: ConnectId,
+    pub attachment_id: ConnectId,
+    #[serde(deserialize_with = "positive")]
+    pub attachment_version: u64,
+    #[serde(deserialize_with = "positive")]
+    pub key_epoch: u64,
+}
+fn attachment_cursor(cursor: &str) -> Result<()> {
+    let (item, file) = cursor
+        .split_once(':')
+        .ok_or(Error::InvalidArgument("invalid attachment cursor"))?;
+    id(item)?;
+    id(file)
+}
+
 /// Persist this expectation alongside the immutable start payload. Reuse it
 /// after a lost reply; never replace its base revision with a later snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -418,7 +497,8 @@ impl RotationExpectation {
                 && r.removed_account_id == self.remove_account_id
                 && r.state_revision > self.expected_state_revision
                 && self.item_count.is_none_or(|n| n == r.item_count)
-                && self.grant_count.is_none_or(|n| n == r.grant_count),
+                && self.grant_count.is_none_or(|n| n == r.grant_count)
+                && r.attachment_count.is_none_or(|n| (1..=1024).contains(&n)),
         )
     }
 }
@@ -517,6 +597,12 @@ pub struct RotationCommitReply {
     pub item_count: u64,
     #[serde(deserialize_with = "count")]
     pub grant_count: u64,
+    #[serde(
+        default,
+        deserialize_with = "optional_positive",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachment_count: Option<u64>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -535,6 +621,12 @@ pub struct RotationStatusReply {
     pub item_count: u64,
     #[serde(deserialize_with = "count")]
     pub grant_count: u64,
+    #[serde(
+        default,
+        deserialize_with = "optional_positive",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attachment_count: Option<u64>,
     #[serde(deserialize_with = "count")]
     pub staged_bytes: u64,
     #[serde(deserialize_with = "timestamp_field")]
@@ -895,7 +987,10 @@ impl SharingRotationClient {
             reply.operation_id == expected.operation_id
                 && timestamp(&reply.expires_at)
                 && expected.item_count.is_none_or(|n| reply.item_count <= n)
-                && expected.grant_count.is_none_or(|n| reply.grant_count <= n),
+                && expected.grant_count.is_none_or(|n| reply.grant_count <= n)
+                && reply
+                    .attachment_count
+                    .is_none_or(|n| (1..=1024).contains(&n)),
         )?;
         match (reply.status, &reply.result) {
             (RotationStatus::Committed, Some(r)) => {
@@ -903,6 +998,7 @@ impl SharingRotationClient {
                 response_check(
                     reply.item_count == r.item_count
                         && reply.grant_count == r.grant_count
+                        && reply.attachment_count == r.attachment_count
                         && reply.staged_bytes == 0,
                 )?;
             }
@@ -912,6 +1008,154 @@ impl SharingRotationClient {
                     "inconsistent rotation status and result",
                 ))
             }
+        }
+        Ok(reply)
+    }
+    /// Public metadata pagination only. This does not prove the complete set or stored byte budget.
+    pub async fn snapshot_attachments(
+        &self,
+        box_id: &str,
+        snapshot: &SharingSnapshot,
+        after: Option<&str>,
+    ) -> Result<SharingAttachmentsPage> {
+        if let Some(cursor) = after {
+            attachment_cursor(cursor)?;
+        }
+        let (reply, _): (SharingAttachmentsPage, _) = self
+            .request(
+                Method::GET,
+                self.snapshot_url(box_id, snapshot, &["attachments"], after)?,
+                None,
+            )
+            .await?;
+        response_check(
+            reply.state_revision == snapshot.state_revision
+                && reply.attachments.len() as u64 <= snapshot.live_attachment_count.unwrap_or(0),
+        )?;
+        let cursors: Vec<_> = reply
+            .attachments
+            .iter()
+            .map(SharingAttachmentSummary::cursor)
+            .collect();
+        page(
+            cursors.iter().map(String::as_str),
+            after,
+            reply.next_cursor.as_deref(),
+        )?;
+        response_check(reply.attachments.iter().all(|a| {
+            id(a.item_id.as_str()).is_ok()
+                && id(a.attachment_id.as_str()).is_ok()
+                && a.key_epoch == snapshot.key_epoch
+        }))?;
+        if let Some(cursor) = &reply.next_cursor {
+            response_check(attachment_cursor(cursor).is_ok())?;
+        }
+        if after.is_none() {
+            response_check(
+                reply.attachments.len() as u64
+                    == snapshot.live_attachment_count.unwrap_or(0).min(100),
+            )?;
+        }
+        Ok(reply)
+    }
+    /// Mandatory independent context from the authenticated item reference at this revision.
+    pub async fn snapshot_attachment(
+        &self,
+        box_id: &str,
+        snapshot: &SharingSnapshot,
+        expected: &AttachmentContext,
+    ) -> Result<EncryptedAttachment> {
+        crate::attachment_client::expected(expected)?;
+        argument_check(
+            expected.password_box_id.as_str() == box_id && expected.key_epoch == snapshot.key_epoch,
+        )?;
+        let reply: EncryptedAttachment = decode(
+            &self
+                .session
+                .send_attachment(self.snapshot_url(
+                    box_id,
+                    snapshot,
+                    &[
+                        "items",
+                        expected.item_id.as_str(),
+                        "attachments",
+                        expected.attachment_id.as_str(),
+                    ],
+                    None,
+                )?)
+                .await?,
+        )?;
+        if reply.context != *expected {
+            return Err(Error::ContextMismatch);
+        }
+        Ok(reply)
+    }
+    pub async fn stage_attachment(
+        &self,
+        rotation: &RotationExpectation,
+        request: &RotationAttachmentRequest,
+        expected: &AttachmentContext,
+    ) -> Result<RotationAttachmentReply> {
+        rotation.validate()?;
+        crate::attachment_client::envelope(&request.envelope, expected)?;
+        argument_check(
+            expected.password_box_id == rotation.password_box_id
+                && expected.key_epoch == rotation.expected_key_epoch + 1
+                && expected.attachment_version == successor(request.expected_version)?,
+        )?;
+        let body = wire(request)?;
+        crate::attachment_client::bounded_request(&body)?;
+        let (reply, _): (RotationAttachmentReply, _) = self
+            .request(
+                Method::PUT,
+                self.rotation_url(
+                    rotation,
+                    &[
+                        "items",
+                        expected.item_id.as_str(),
+                        "attachments",
+                        expected.attachment_id.as_str(),
+                    ],
+                )?,
+                Some(&body),
+            )
+            .await?;
+        response_check(
+            reply.operation_id == rotation.operation_id
+                && reply.item_id == expected.item_id
+                && reply.attachment_id == expected.attachment_id
+                && reply.attachment_version == expected.attachment_version
+                && reply.key_epoch == expected.key_epoch,
+        )?;
+        Ok(reply)
+    }
+    /// Callers with attachments must retain an independently collected final count.
+    pub async fn commit_rotation_with_attachments(
+        &self,
+        expected: &RotationExpectation,
+        attachment_count: u64,
+        current_login_password: &str,
+    ) -> Result<RotationCommitReply> {
+        argument_check(attachment_count <= 1024)?;
+        let reply = self
+            .commit_rotation(expected, current_login_password)
+            .await?;
+        response_check(reply.attachment_count.unwrap_or(0) == attachment_count)?;
+        Ok(reply)
+    }
+    /// Omission on pending/expired means zero staged attachments, as emitted by
+    /// the API. It does not prove server support, capacity or completion. A
+    /// committed result must match the independently held final attachment count.
+    pub async fn rotation_status_with_attachments(
+        &self,
+        expected: &RotationExpectation,
+        attachment_count: u64,
+    ) -> Result<RotationStatusReply> {
+        argument_check(attachment_count <= 1024)?;
+        let reply = self.rotation_status(expected).await?;
+        response_check(reply.attachment_count.unwrap_or(0) <= attachment_count)?;
+        if let Some(result) = &reply.result {
+            response_check(result.attachment_count.unwrap_or(0) == attachment_count)?;
         }
         Ok(reply)
     }
@@ -1135,6 +1379,8 @@ mod tests {
             member_count: 2,
             live_item_count: 1,
             grant_count: 1,
+            live_attachment_count: None,
+            live_attachment_bytes: None,
         }
     }
     fn members() -> Value {

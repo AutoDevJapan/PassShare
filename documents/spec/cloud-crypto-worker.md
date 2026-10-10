@@ -1,5 +1,7 @@
 # クライアント暗号化Workerの境界
 
+添付の不透明binding、必須独立contextと認証済み項目参照、限定したtransfer surfaceは [encrypted-attachments-client.md](encrypted-attachments-client.md) に定義する。既存の4状態、全generation、identity-onlyの5分期限、信頼UI入力の契約を維持する。
+
 ## ToDo1163: 正式Webへの接続ソース（2026-10-11）
 
 `frontend/src/lib/cloud-worker.ts` は、すべての返信で必須の `identityLocked` と、

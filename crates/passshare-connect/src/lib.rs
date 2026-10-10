@@ -1,4 +1,6 @@
+mod attachment_client;
 mod client;
+pub use attachment_client::*;
 mod encrypted_client;
 mod error;
 mod op_ref;
@@ -13,9 +15,9 @@ pub use encrypted_client::{
 pub use error::{ConnectError, ConnectResult};
 pub use op_ref::{parse_op_reference, OpReference};
 pub use passshare_core::cloud_crypto::{
-    AccountIdentityContext, EncryptedItem, ItemContext, OwnerKeyContext, PublicAccountIdentity,
-    SharedKeyContext, WrappedAccountIdentity, WrappedPasswordBoxKey, WrappedSharedPasswordBoxKey,
-    SHARED_KEY_SUITE,
+    AccountIdentityContext, AttachmentContext, EncryptedAttachment, EncryptedItem, ItemContext,
+    OwnerKeyContext, PublicAccountIdentity, SharedKeyContext, WrappedAccountIdentity,
+    WrappedPasswordBoxKey, WrappedSharedPasswordBoxKey, SHARED_KEY_SUITE,
 };
 pub use sharing_client::*;
 

@@ -1,5 +1,7 @@
 # Rust SDK: 共有鍵の配布と一括鍵更新
 
+添付のatomic PUT/DELETE、snapshot/stage、旧応答を保つoptional属性の輸送は [encrypted-attachments-client.md](encrypted-attachments-client.md) を参照する。statusの添付件数は仮置き済みの件数で、0件では属性を省略する。SDKでのparse成功を全集合や容量の証明には使わない。
+
 ## 正式Webの接続範囲（ToDo1163、2026-10-11）
 
 Webの `CloudSharingPanel` / `sharing-api.ts` は、承認済みの配置で本人コードの表示・コピー、

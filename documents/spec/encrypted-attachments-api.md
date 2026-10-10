@@ -1,5 +1,7 @@
 # 添付暗号文の保存と鍵更新
 
+WASM worker / Rust SDKへの有限接続は [encrypted-attachments-client.md](encrypted-attachments-client.md) を参照する。GUI・全クライアント・旧形式移行と親の最終受入は引き続き未完である。
+
 元ToDo1163のM4-C/M8-Bに必要なAPI・PG接続の有限実装。Coreの契約は `encrypted-attachments-core.md`。旧形式の移行、全クライアント、GUI、Railway、製品の22条件全体は未完了。
 
 ## 保存契約
