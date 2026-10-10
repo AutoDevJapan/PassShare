@@ -51,6 +51,8 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --sharing-rotation backend/native/target/debug/passshare-mutations
       - name: Verify legacy deadline rollback with isolated Node and PostgreSQL
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --legacy-expiry backend/native/target/debug/passshare-mutations
+      - name: Verify encrypted backup and isolated restore with formal Node and Rust Core
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-restore backend/native/target/debug/passshare-mutations
       - name: Build the actual backend-only distribution image
         run: docker build -t passshare-todo1163-encrypted-api backend
       - name: Verify the distribution image with PostgreSQL and Core encryption
@@ -63,6 +65,8 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --sharing-rotation --image passshare-todo1163-encrypted-api
       - name: Verify legacy deadline rollback with the distribution image
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --legacy-expiry --image passshare-todo1163-encrypted-api
+      - name: Verify encrypted backup and isolated restore with the distribution image
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-restore --image passshare-todo1163-encrypted-api
       - name: Remove the owned API image and verify fixture cleanup
         if: always()
         run: |

@@ -8,6 +8,9 @@ use passshare_core::cloud_crypto::{
 };
 use std::collections::BTreeMap;
 
+#[path = "encrypted_restore.rs"]
+pub(super) mod encrypted_restore;
+
 #[path = "legacy_expiry.rs"]
 mod legacy_expiry;
 

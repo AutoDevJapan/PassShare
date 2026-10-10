@@ -226,7 +226,7 @@ fn v2_restart_recover_rekey_preserves_full_json_and_code() {
     let mut reopened = PasswordBox::open(&path, new_password().as_str()).unwrap();
     assert!(reopened.payload == expected);
     reopened.save(new_password().as_str()).unwrap();
-    assert_eq!(raw_payload(&path, new_password().as_str()).0, raw_before.0);
+    assert!(raw_payload(&path, new_password().as_str()).0 == raw_before.0);
     assert_eq!(
         PasswordBox::recover(&path, &code).unwrap().payload,
         expected
@@ -433,7 +433,7 @@ fn failure_preserves_original(upgrade: bool) {
     if upgrade {
         pb.enable_recovery(old_password().as_str()).unwrap();
     } else {
-        assert_eq!(PasswordBox::recover(&path, &code).unwrap().payload, payload);
+        assert!(PasswordBox::recover(&path, &code).unwrap().payload == payload);
         assert!(pb.recovery_only);
         pb.rekey_recovered(new_password().as_str()).unwrap();
     }
@@ -502,7 +502,7 @@ fn real_atomic_failures_leave_the_original_path_and_state_unchanged() {
     assert!(PasswordBox::recover(&path, &code).is_ok());
     assert!(PasswordBox::open(&path, new_password().as_str()).is_err());
     assert!(legacy.rotate_recovery(old_password().as_str()).is_err());
-    assert_eq!(legacy.recovery_secret().unwrap(), Some(code.as_str()));
+    assert!(legacy.recovery_secret().unwrap() == Some(code.as_str()));
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(legacy.save(old_password().as_str()).is_err());
     assert_eq!(fs::read(&path).unwrap(), before);
@@ -551,7 +551,7 @@ fn recovered_lock_and_drop_scrub_owned_buffers_and_return_no_secrets() {
     assert!(recovered.payload.recovery_secret.as_deref() == Some(""));
     assert!(recovered.original_payload.is_none());
     recovered.lock();
-    assert_eq!(recovered.recovery_secret(), Err(PassShareError::BoxLocked));
+    assert!(recovered.recovery_secret() == Err(PassShareError::BoxLocked));
     assert_eq!(
         recovered.list_connect_items(),
         Err(PassShareError::BoxLocked)
