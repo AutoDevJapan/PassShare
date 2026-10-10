@@ -475,7 +475,15 @@ fn may_resume(source: &Database, restored: &Database, owner: &str) -> bool {
 
 pub fn run(db: &Database, network: &Network, mode: &Mode) {
     let owner = db.local.as_ref().map_or_else(
-        || db.sql("SELECT replace(gen_random_uuid()::text,'-','')"),
+        // Create the fixture owner client-side before any backend migration.
+        // A fresh image's database must not require an optional SQL UUID function.
+        || {
+            let random = checked(MasterKey::generate(), "fixture owner entropy");
+            random.as_bytes()[..16]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        },
         |l| l.ownership_id.clone(),
     );
     if db.local.is_none() {
