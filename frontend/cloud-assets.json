@@ -1,10 +1,10 @@
 {
-  "sourceCommit": "865c0653f5f529bf0b4b2c253cf666d70dba3670",
-  "run": 38053698941,
+  "sourceCommit": "f1168063d8d996ca12034c9b46e327cdbe4eade9",
+  "run": 38056261702,
   "buildKind": "github-actions-tested",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
-    "Cargo.lock": "f16b9ce99e3fdea2bf3239453b39c57c54d3de1e5a00d2858c185cc96cec6683",
+    "Cargo.lock": "3c21a8fde4d5c3b0ad4d28e1bc8a1861e09f02a56de631c1f0567c6ad5bba59d",
     "crates/passshare-core/Cargo.toml": "bb07748d5f01016a45e10850418cc6ba75ecf55161e7759390e1f7ca3e81c8d2",
     "packages/cloud-wasm/Cargo.toml": "c1b7d7f6cb922727783756ecd546ef6df544d9995ed416ea5cfcdc3046a8fc1f",
     "packages/cloud-wasm/Cargo.lock": "a4ef6b54a697ade66b5bb842b620de2ee1fb89843c01d219b6b9147770939d48",
@@ -38,7 +38,7 @@
     "packages/cloud-wasm/src/item_edit.rs": "4373427b6397c1f2d2de8dd69df96419f67c7c7be03eaa3207e0a7bbaf3de97e",
     "backend/native/src/edit.rs": "d8e39b54705e65aa82cab651ca6604e087b9b219bc7c290cce4b8e728e29f89e",
     "packages/cloud-wasm/src/recovery.rs": "50cc8af8b7663dc46cf5cdc667a871df569da9587043853dbd3665dfd4a1e997",
-    "crates/passshare-core/src/password_box_recovery_tests.rs": "ed73edc5ff17988a875737b7b4c894e5e7a812eb285854a9d4e5bedee4403c56"
+    "crates/passshare-core/src/password_box_recovery_tests.rs": "11e9761c7801e5da4363e13e45cc5d13ff59f50d3da9887088579c66ea003776"
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
