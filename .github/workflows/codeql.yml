@@ -1,0 +1,136 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: go
+            build-mode: manual
+          - language: java-kotlin
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: rust
+            build-mode: none
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/codeql-${{ matrix.language }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Rust
+        if: matrix.language == 'rust' || matrix.language == 'java-kotlin'
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.language == 'java-kotlin' && 'x86_64-linux-android' || '' }}
+
+      - name: Install Linux dependencies
+        if: matrix.language == 'rust' || matrix.language == 'java-kotlin'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: packages/connect-go/go.mod
+          cache: false
+
+      - name: Set up pnpm
+        if: matrix.language == 'java-kotlin'
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.11.0
+
+      - name: Set up Node.js
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+
+      - name: Set up JDK
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        if: matrix.language == 'java-kotlin'
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+      - name: Install Android platform and NDK
+        if: matrix.language == 'java-kotlin'
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;30.0.14904198'
+          echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.14904198" >> "$GITHUB_ENV"
+
+      - name: Install Cargo Tauri CLI and frontend dependencies
+        if: matrix.language == 'java-kotlin'
+        run: |
+          cargo install tauri-cli --version 2.11.4 --locked --root "$RUNNER_TEMP/tauri-cli" --target-dir "$RUNNER_TEMP/tauri-cli-target"
+          echo "$RUNNER_TEMP/tauri-cli/bin" >> "$GITHUB_PATH"
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir apps/mobile install --frozen-lockfile
+          pnpm --dir apps/mobile run build
+
+      # Omit queries/config-file/threat-models to retain default queries, remote sources
+      # and full source scope.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Build Go SDK
+        if: matrix.language == 'go'
+        working-directory: packages/connect-go
+        run: go build ./...
+
+      - name: Initialize Android project for this runner
+        if: matrix.language == 'java-kotlin'
+        working-directory: apps/mobile
+        run: |
+          cargo tauri android init --ci --skip-targets-install
+          # Init rewrites BuildTask.kt with the Cargo CLI bridge. Keep that runner-specific
+          # bridge and ignored plugin settings; restore every other tracked Android file.
+          git -C "$GITHUB_WORKSPACE" restore --source=HEAD --worktree -- apps/mobile/src-tauri/gen/android ':(top,exclude)apps/mobile/src-tauri/gen/android/buildSrc/src/main/java/com/passshare/mobile/kotlin/BuildTask.kt'
+          test -x src-tauri/gen/android/gradlew
+
+      - name: Compile Android Kotlin and build debug APK
+        if: matrix.language == 'java-kotlin'
+        working-directory: apps/mobile
+        run: |
+          cargo tauri android build --debug --target x86_64 --apk --ci
+          find src-tauri/gen/android/app/build/outputs/apk -type f -name '*debug.apk' -size +0c -print -quit | grep -q .
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        with:
+          category: /language:${{ matrix.language }}

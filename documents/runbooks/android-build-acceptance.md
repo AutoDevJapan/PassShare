@@ -6,6 +6,7 @@ OSごとの実体を検査するための設定であり、署名配布や販売
 ## ビルド
 
 JDK、Android SDK、NDK、対象Rust targetを用意し、`JAVA_HOME`、`ANDROID_HOME`、`NDK_HOME` を設定します。
+確認済みのWindows環境はSDK36、build-tools36.0.0、NDK30.0.14904198です。CIはJDK21を使います。
 `apps/mobile` で固定依存を導入し、Connect JS SDKをビルドしてから実行します。
 
 ```text
@@ -22,6 +23,18 @@ Kotlinをビルド内で実行し、別compiler daemonの接続失敗に依存�
 実コンパイルエラーは引き続きビルドを失敗させます。
 一次資料は [Kotlinの互換表](https://kotlinlang.org/docs/gradle-configure-project.html) と
 [compiler実行方式](https://kotlinlang.org/docs/compiler-execution-strategy.html) です。
+
+新しい環境ではCargo版Tauri CLI2.11.4を `cargo install tauri-cli --version 2.11.4 --locked` で導入し、
+`apps/mobile` で `cargo tauri android init --ci --skip-targets-install` を先に実行します。
+Rust target `x86_64-linux-android` は初期化前に導入します。
+初期化は追跡済みの `BuildTask.kt` を、その環境のCargo呼出しに書き換えます。
+このファイルと追跡しない接続設定を保持し、ほかの追跡済みAndroid設定は初期化後にGitから戻します。
+これにより固定したKotlin・AGP・Gradleと、実際に導入したCargo CLIの接続を両立します。
+この初期化・復元はCIの作業コピーで行い、環境固有の差分をコミットしません。
+LinuxでGradle wrapperを起動できるよう、追跡する `gradlew` の実行属性は `100755` とします。
+
+CodeQLはこの実際のAPKビルドを初期化後に追跡します。
+解析方法、GitHub設定の切替手順、Linuxで残る確認は [CodeQLの運用手順](codeql.md) を参照してください。
 
 生成済みの設定・標準Activity・リソースとGradle wrapperを保存します。
 SDK絶対パス、機械固有のTauri接続情報、APK、Rustライブラリ、秘密の署名鍵、build/cacheは保存しません。
