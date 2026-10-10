@@ -10,18 +10,20 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use passshare_connect::{EncryptedItem, OwnerKeyBundle, OwnerKeyContext};
 use passshare_core::{cloud_crypto::PasswordBoxKey, crypto};
 use serde_json::{json, Value};
+use zeroize::Zeroizing;
 
 const BOX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OWNER: &str = "11111111-1111-4111-8111-111111111111";
 const TOKEN: &str = "fixture-session-only-marker";
-const PASSWORD: &str = "fixture-encryption-only-marker";
 const FIELD: &str = "fixture-item-only-marker";
 const LEGACY_ITEM: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 struct State {
+    password: Zeroizing<String>,
     bundle: OwnerKeyBundle,
     envelope: Option<EncryptedItem>,
     deleted_version: Option<u64>,
@@ -36,10 +38,12 @@ struct State {
     epoch: u64,
     wrong_owner: bool,
     auth_oversized: bool,
+    auth_id: String,
     redirects: usize,
     replayed: Option<Value>,
 }
 struct Server {
+    password: Zeroizing<String>,
     host: String,
     state: Arc<Mutex<State>>,
     stop: Arc<AtomicBool>,
@@ -48,19 +52,21 @@ struct Server {
 }
 impl Server {
     fn new() -> Self {
+        let password = random_password();
         let key = PasswordBoxKey::generate().unwrap();
         let owner: OwnerKeyContext = serde_json::from_value(
             json!({"passwordBoxId":BOX,"ownerAccountId":OWNER,"keyEpoch":1}),
         )
         .unwrap();
-        let salt: Vec<u8> = (0..16).collect();
-        let root = crypto::derive_master_key(PASSWORD, &salt).unwrap();
+        let salt = crypto::generate_salt().unwrap();
+        let root = crypto::derive_master_key(&password, &salt).unwrap();
         let bundle = OwnerKeyBundle::new(
-            "AAECAwQFBgcICQoLDA0ODw==".into(),
+            STANDARD.encode(salt),
             key.wrap_for_owner(&root, &owner).unwrap(),
         )
         .unwrap();
         let state = Arc::new(Mutex::new(State {
+            password: password.clone(),
             bundle,
             envelope: None,
             deleted_version: None,
@@ -75,6 +81,7 @@ impl Server {
             epoch: 1,
             wrong_owner: false,
             auth_oversized: false,
+            auth_id: OWNER.into(),
             redirects: 0,
             replayed: None,
         }));
@@ -97,6 +104,7 @@ impl Server {
             }
         });
         Self {
+            password,
             host,
             state,
             stop,
@@ -105,7 +113,7 @@ impl Server {
         }
     }
     fn run(&self, args: &[&str], extra: Value) -> Output {
-        let mut input = json!({"sessionToken":TOKEN,"encryptionPassword":PASSWORD});
+        let mut input = json!({"sessionToken":TOKEN,"encryptionPassword":self.password.as_str()});
         input
             .as_object_mut()
             .unwrap()
@@ -158,7 +166,15 @@ impl Server {
             stdout: out.join().unwrap(),
             stderr: err.join().unwrap(),
         };
-        for credential in [TOKEN, PASSWORD, "fixture-legacy-only-marker"] {
+        let fixture_password = self.state.lock().unwrap().password.clone();
+        for credential in [
+            TOKEN,
+            self.password.as_str(),
+            fixture_password.as_str(),
+            input["sessionToken"].as_str().unwrap(),
+            input["encryptionPassword"].as_str().unwrap(),
+            "fixture-legacy-only-marker",
+        ] {
             assert!(!String::from_utf8_lossy(&output.stdout).contains(credential));
             assert!(!String::from_utf8_lossy(&output.stderr).contains(credential));
         }
@@ -172,6 +188,9 @@ impl Server {
         let envelope = self.state.lock().unwrap().envelope.clone().unwrap();
         self.key.decrypt_item(&envelope, &envelope.context).unwrap()
     }
+}
+fn random_password() -> Zeroizing<String> {
+    Zeroizing::new(STANDARD.encode(crypto::generate_salt().unwrap()))
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -256,7 +275,7 @@ fn serve(stream: &mut TcpStream, state: &Mutex<State>) {
     let (status, reply) = if authenticated {
         route(method, path, &body, &mut state)
     } else {
-        failure(401)
+        failure(401, &state)
     };
     let wire = if status == 204 {
         Vec::new()
@@ -274,10 +293,10 @@ fn serve(stream: &mut TcpStream, state: &Mutex<State>) {
         let _ = stream.write_all(&wire);
     }
 }
-fn failure(status: u16) -> (u16, Value) {
+fn failure(status: u16, state: &State) -> (u16, Value) {
     (
         status,
-        json!({"error":"PS015","message":format!("{TOKEN} {PASSWORD} {FIELD}")}),
+        json!({"error":"PS015","message":format!("{TOKEN} {} {FIELD}", state.password.as_str())}),
     )
 }
 fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) {
@@ -286,7 +305,7 @@ fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) 
         return (200, json!({"user":{"id":OWNER}}));
     }
     if s.auth_failure != 0 {
-        return failure(s.auth_failure);
+        return failure(s.auth_failure, s);
     }
     // Independent legacy fixture, requiring a different credential and /v1
     // routes. This exercises actual executable compatibility after dispatch.
@@ -319,7 +338,7 @@ fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) 
         }
         return (
             200,
-            json!({"user":{"id":OWNER,"email":"fixture@example.invalid","createdAt":"2026-01-01T00:00:00Z"}}),
+            json!({"user":{"id":s.auth_id,"email":"fixture@example.invalid","createdAt":"2026-01-01T00:00:00Z"}}),
         );
     }
     let prefix = format!("/api/encrypted/boxes/{BOX}");
@@ -349,25 +368,25 @@ fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) 
     if path.starts_with(&format!("{prefix}/sharing-snapshot/items/")) {
         return match &s.envelope {
             Some(envelope) => (200, json!(envelope)),
-            None => failure(404),
+            None => failure(404, s),
         };
     }
     if path.starts_with(&format!("{prefix}/items/")) {
         if method == "PUT" {
             s.puts += 1;
             if s.write_failure != 0 {
-                return failure(s.write_failure);
+                return failure(s.write_failure, s);
             }
             // Writes contain only the opaque request, never credential plaintext.
             let wire = serde_json::to_string(body).unwrap();
-            assert!([TOKEN, PASSWORD, FIELD]
+            assert!([TOKEN, s.password.as_str(), FIELD]
                 .iter()
                 .all(|marker| !wire.contains(marker)));
             let e: EncryptedItem = serde_json::from_value(body["envelope"].clone()).unwrap();
             assert!(path.ends_with(e.context.item_id.as_str()));
             let expected = body["expectedVersion"].as_u64().unwrap();
             if s.deleted_version.is_some() {
-                return failure(409);
+                return failure(409, s);
             }
             if let Some(current) = &s.envelope {
                 if *current == e && e.context.item_version == expected + 1 {
@@ -375,14 +394,14 @@ fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) 
                     return (200, json!(current));
                 }
                 if current.context.item_version != expected {
-                    return failure(409);
+                    return failure(409, s);
                 }
             } else if expected != 0 {
-                return failure(409);
+                return failure(409, s);
             }
             assert!(e.context.item_version == expected + 1);
             if e.context.key_epoch != s.epoch {
-                return failure(409);
+                return failure(409, s);
             }
             s.writes += 1;
             s.envelope = Some(e.clone());
@@ -391,16 +410,16 @@ fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) 
         if method == "DELETE" {
             let expected = body["expectedVersion"].as_u64().unwrap();
             if s.write_failure != 0 {
-                return failure(s.write_failure);
+                return failure(s.write_failure, s);
             }
             if body["keyEpoch"].as_u64() != Some(s.epoch) {
-                return failure(409);
+                return failure(409, s);
             }
             if s.deleted_version == Some(expected) {
                 return (204, Value::Null);
             }
             if s.envelope.as_ref().map(|e| e.context.item_version) != Some(expected) {
-                return failure(409);
+                return failure(409, s);
             }
             s.deleted_version = Some(expected);
             s.envelope = None;
@@ -408,7 +427,7 @@ fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) 
             return (204, Value::Null);
         }
     }
-    failure(404)
+    failure(404, s)
 }
 fn item() -> Value {
     json!({"item":{"title":"fixture","category":"LOGIN","fields":[
@@ -429,9 +448,10 @@ fn safe_failure(output: &Output, status: u16) {
 fn executable_normalizes_owner_password_like_the_wasm_client() {
     use unicode_normalization::UnicodeNormalization;
     let server = Server::new();
-    let typed = "fixture e\u{301} normalization password";
-    let normalized = typed.nfc().collect::<String>();
-    let salt: Vec<u8> = (0..16).collect();
+    let typed = Zeroizing::new(format!("fixture e\u{301} {}", random_password().as_str()));
+    let normalized = Zeroizing::new(typed.nfc().collect::<String>());
+    assert!(typed.as_str() != normalized.as_str());
+    let salt = crypto::generate_salt().unwrap();
     let root = crypto::derive_master_key_with_params(&normalized, &salt, 65_536, 3, 4).unwrap();
     let owner = server.state.lock().unwrap().bundle.wrapped.context.clone();
     let mut full = item()["item"].clone();
@@ -445,19 +465,22 @@ fn executable_normalizes_owner_password_like_the_wasm_client() {
     {
         let mut state = server.state.lock().unwrap();
         state.bundle = OwnerKeyBundle::new(
-            "AAECAwQFBgcICQoLDA0ODw==".into(),
+            STANDARD.encode(salt),
             server.key.wrap_for_owner(&root, &owner).unwrap(),
         )
         .unwrap();
+        state.password = normalized.clone();
         state.envelope = Some(server.key.encrypt_item(&full, &context).unwrap());
     }
-    let output = server.run(
-        &["item", "get", LEGACY_ITEM, "--vault", BOX],
-        json!({"encryptionPassword":typed}),
-    );
-    assert!(output.status.success());
-    let got: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(got == full);
+    for password in [typed.as_str(), normalized.as_str()] {
+        let output = server.run(
+            &["item", "get", LEGACY_ITEM, "--vault", BOX],
+            json!({"encryptionPassword":password}),
+        );
+        assert!(output.status.success());
+        let got: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(got == full);
+    }
 }
 
 #[test]
@@ -470,6 +493,7 @@ fn executable_create_read_edit_delete_and_explicit_replay_preserve_complete_dto(
     assert!(prepared.status.success());
     assert!(!String::from_utf8_lossy(&prepared.stdout).contains(FIELD));
     let opaque: Value = serde_json::from_slice(&prepared.stdout).unwrap();
+    assert!(opaque["ownerAccountId"].as_str() == Some(OWNER));
     assert!(server.state.lock().unwrap().puts == 0);
     let id = opaque["itemId"].as_str().unwrap();
     for _ in 0..2 {
@@ -527,11 +551,11 @@ fn executable_create_read_edit_delete_and_explicit_replay_preserve_complete_dto(
     );
     let listed = server.run(&["item", "list", "--vault", BOX], json!({}));
     assert!(listed.status.success());
+    assert!(String::from_utf8_lossy(&listed.stdout).trim() == format!("{id}\t2"));
     assert!(!String::from_utf8_lossy(&listed.stdout).contains("changed-marker"));
-    assert!(server
-        .run(&["vault", "list", "--password-box", BOX], json!({}))
-        .status
-        .success());
+    let boxes = server.run(&["vault", "list", "--password-box", BOX], json!({}));
+    assert!(boxes.status.success());
+    assert!(String::from_utf8_lossy(&boxes.stdout).trim() == format!("{BOX}\t1"));
     let delete = server.run(
         &["--prepare-only", "item", "delete", id, "--vault", BOX],
         json!({}),
@@ -572,7 +596,7 @@ fn executable_redacts_401_403_409_and_does_not_retry_writes() {
     assert!(!server
         .run(
             &["item", "create", "--vault", BOX],
-            json!({"item":item()["item"],"encryptionPassword":"fixture-wrong-password"})
+            json!({"item":item()["item"],"encryptionPassword":random_password().as_str()})
         )
         .status
         .success());
@@ -702,7 +726,7 @@ fn executable_rejects_argv_secret_without_network_and_environment_boundary_works
         )
         .env("PASSSHARE_HOST", &server.host)
         .env("PASSSHARE_SESSION_TOKEN", TOKEN)
-        .env("PASSSHARE_ENCRYPTION_PASSWORD", PASSWORD)
+        .env("PASSSHARE_ENCRYPTION_PASSWORD", server.password.as_str())
         .env(
             "PASSSHARE_INPUT_JSON",
             serde_json::to_string(&item()).unwrap(),
@@ -736,6 +760,35 @@ fn executable_auth_transport_rejects_redirects_and_oversized_body() {
         .status
         .success());
     assert!(server.state.lock().unwrap().requests > 2);
+}
+
+#[test]
+fn executable_live_account_requires_canonical_nonnil_uuid() {
+    let server = Server::new();
+    for (index, id) in [
+        "not-a-uuid",
+        "00000000-0000-0000-0000-000000000000",
+        "11111111111141118111111111111111",
+        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "{11111111-1111-4111-8111-111111111111}",
+        "urn:uuid:11111111-1111-4111-8111-111111111111",
+    ]
+    .iter()
+    .enumerate()
+    {
+        server.state.lock().unwrap().auth_id = (*id).into();
+        let output = server.run(&["item", "list", "--vault", BOX], json!({}));
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(id));
+        let state = server.state.lock().unwrap();
+        assert!(state.requests == index + 1);
+        assert!(state.puts == 0);
+    }
+    server.state.lock().unwrap().auth_id = OWNER.into();
+    let output = server.run(&["vault", "list", "--password-box", BOX], json!({}));
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).trim() == format!("{BOX}\t1"));
 }
 
 #[test]

@@ -18,6 +18,7 @@ use reqwest::{
 };
 use serde_json::{json, Value};
 use unicode_normalization::UnicodeNormalization;
+use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{Cli, Commands, ItemCommands, VaultCommands};
@@ -254,7 +255,7 @@ fn secret(input: &Plaintext, key: &str) -> Result<Zeroizing<String>> {
 /// The SDK currently exposes only encrypted endpoints. This bounded GET is
 /// solely for /api/auth/me, with the same deadlines and redirect/proxy policy.
 /// Construct the SDK first so its complete origin and token validation applies.
-async fn live_account(host: &str, token: &str) -> Result<String> {
+async fn live_account(host: &str, token: &str) -> Result<Uuid> {
     let mut url = Url::parse(host).map_err(|_| INPUT)?;
     let path = format!("{}/api/auth/me", url.path().trim_end_matches('/'));
     url.set_path(&path);
@@ -299,15 +300,12 @@ async fn live_account(host: &str, token: &str) -> Result<String> {
         .pointer("/user/id")
         .and_then(Value::as_str)
         .ok_or(CONTEXT)?;
-    // Core's context deserializer provides the UUID type without another dependency.
-    let context: OwnerKeyContext = serde_json::from_value(json!({
-        "passwordBoxId": "aaaaaaaaaaaaaaaaaaaaaaaaaa", "ownerAccountId": id, "keyEpoch": 1
-    }))
-    .map_err(|_| CONTEXT)?;
-    if context.owner_account_id.is_nil() || context.owner_account_id.to_string() != id {
+    // This is a public account identifier, not a session credential.
+    let account_id = Uuid::parse_str(id).map_err(|_| CONTEXT)?;
+    if account_id.is_nil() || account_id.to_string() != id {
         return Err(CONTEXT);
     }
-    Ok(id.to_owned())
+    Ok(account_id)
 }
 
 struct Session {
@@ -334,14 +332,17 @@ impl Session {
                 )),
             };
         let sharing = SharingRotationClient::new(&sdk);
-        let snapshot = sharing.sharing_snapshot(box_id, &account).await?;
+        let snapshot = sharing
+            .sharing_snapshot(box_id, &account.to_string())
+            .await?;
         if snapshot.key_epoch != epoch {
             return Err(CONTEXT);
         }
-        let owner: OwnerKeyContext = serde_json::from_value(json!({
-            "passwordBoxId": id, "ownerAccountId": account, "keyEpoch": epoch,
-        }))
-        .map_err(|_| CONTEXT)?;
+        let owner = OwnerKeyContext {
+            password_box_id: id,
+            owner_account_id: account,
+            key_epoch: epoch,
+        };
         let record = sdk.get_owner_key(box_id, &owner).await?;
         if record.bundle_version != snapshot.owner_bundle_version {
             return Err(CONTEXT);
