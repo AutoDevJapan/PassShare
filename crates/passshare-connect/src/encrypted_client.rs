@@ -567,7 +567,7 @@ impl EncryptedSessionClient {
         Ok(record.identity)
     }
 
-    fn endpoint(&self, segments: &[&str]) -> EncryptedSessionResult<Url> {
+    pub(crate) fn endpoint(&self, segments: &[&str]) -> EncryptedSessionResult<Url> {
         let mut url = self.base.clone();
         {
             let mut path = url
@@ -579,7 +579,7 @@ impl EncryptedSessionClient {
         Ok(url)
     }
 
-    async fn send(
+    pub(crate) async fn send(
         &self,
         method: Method,
         url: Url,
@@ -588,7 +588,7 @@ impl EncryptedSessionClient {
         self.send_expected(method, url, body, 200).await
     }
 
-    async fn send_expected(
+    pub(crate) async fn send_expected(
         &self,
         method: Method,
         url: Url,
@@ -826,7 +826,7 @@ fn decode_identity_record(bytes: &[u8]) -> EncryptedSessionResult<AccountIdentit
     Ok(record)
 }
 
-fn decode<T: DeserializeOwned>(bytes: &[u8]) -> EncryptedSessionResult<T> {
+pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> EncryptedSessionResult<T> {
     // serde errors can echo input fragments, so none is propagated.
     serde_json::from_slice(bytes)
         .map_err(|_| Error::InvalidResponse("malformed or unexpected JSON"))
@@ -864,7 +864,7 @@ async fn read_limited(response: &mut Response, max: usize) -> EncryptedSessionRe
 }
 
 /// Decoded length of canonical padded standard Base64 (zero trailing bits), else None.
-fn b64_len(text: &str) -> Option<usize> {
+pub(crate) fn b64_len(text: &str) -> Option<usize> {
     if text.len() > 4 * MAX_CIPHERTEXT_BYTES.div_ceil(3) {
         return None;
     }

@@ -1,6 +1,7 @@
 //! Isolated account-identity formal API fixture. NOT RUN by implementation job.
 //! Core is a client fixture dependency only; production native has no Core.
 use super::*;
+use passshare_connect::{AccountIdentityBundle, EncryptedSessionClient, EncryptedSessionError};
 use passshare_core::cloud_crypto::{
     AccountIdentity, AccountIdentityContext, WrappedAccountIdentity,
 };
@@ -160,7 +161,10 @@ fn db_shape_boundary(db: &Database, account: &Account, valid: &Value) {
         // row, FK error or unexpected success cannot satisfy this assertion.
         let identity = bad["identity"].to_string().replace('\'', "''");
         let bundle = bad["bundle"].to_string().replace('\'', "''");
-        db.sql(&format!("DO $$ BEGIN BEGIN UPDATE encrypted_account_identities SET identity='{identity}'::jsonb,bundle='{bundle}'::jsonb WHERE account_id='{}'; IF NOT FOUND THEN RAISE EXCEPTION 'fixture row missing'; END IF; RAISE EXCEPTION 'invalid JSON unexpectedly persisted'; EXCEPTION WHEN check_violation THEN NULL; END; END $$;",account.id));
+        // Synthetic CHECK isolation in the owned DB: the immutable identity
+        // BEFORE guard otherwise rejects changed public JSON before CHECK.
+        // Restore the guard in the same transaction; this is not a formal API.
+        db.sql(&format!("BEGIN; ALTER TABLE encrypted_account_identities DISABLE TRIGGER passshare_immutable_identity; DO $$ BEGIN BEGIN UPDATE encrypted_account_identities SET identity='{identity}'::jsonb,bundle='{bundle}'::jsonb WHERE account_id='{}'; IF NOT FOUND THEN RAISE EXCEPTION 'fixture row missing'; END IF; RAISE EXCEPTION 'invalid JSON unexpectedly persisted'; EXCEPTION WHEN check_violation THEN NULL; END; END $$; ALTER TABLE encrypted_account_identities ENABLE TRIGGER passshare_immutable_identity; COMMIT;",account.id));
         assert_eq!(
             row(db, account),
             before,
@@ -228,6 +232,13 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     let context = a.context();
     let identity = AccountIdentity::generate(context.clone()).unwrap();
     let public = serde_json::to_value(identity.public_identity()).unwrap();
+    // Preserve the reactor between Core work and real HTTP SDK requests.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let sdk = EncryptedSessionClient::new(&format!("http://127.0.0.1:{p}"), &a.session).unwrap();
     // Deliberately independent of the account login credential.
     let encryption_password = BASE64.encode(generate_salt().unwrap());
     assert_ne!(encryption_password, a.password);
@@ -288,6 +299,33 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         json!({"bundleVersion":1,"identity":public,"bundle":sealed})
     );
     roundtrip(&first, &master, &context, &public);
+    let sdk_initial: AccountIdentityBundle = serde_json::from_value(sealed.clone()).unwrap();
+    let sdk_before = row(db, &a);
+    let sdk_put = runtime
+        .block_on(sdk.put_account_identity(0, &identity.public_identity(), &sdk_initial, None))
+        .unwrap();
+    let sdk_get = runtime
+        .block_on(sdk.get_account_identity(&context, public["keyId"].as_str().unwrap()))
+        .unwrap();
+    assert_eq!(sdk_get, sdk_put);
+    assert_eq!(
+        json!({"bundleVersion":sdk_get.bundle_version,
+        "identity":sdk_get.identity,"bundle":sdk_get.bundle}),
+        first
+    );
+    assert_eq!(
+        row(db, &a),
+        sdk_before,
+        "SDK exact bootstrap replay preserves row/xmin"
+    );
+    let sdk_restored = AccountIdentity::unwrap(
+        &sdk_get.bundle.wrapped,
+        &master,
+        &context,
+        public["keyId"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(sdk_restored.public_identity(), identity.public_identity());
     db_shape_boundary(db, &a, &initial);
     let before = row(db, &a);
     assert_eq!(http(p, "PUT", SELF_PATH, &a.headers(), &initial).0, 200);
@@ -462,7 +500,12 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         p,
         &a,
         &a.headers(),
-        &request(&public, &rewrapped, 1, Some("synthetic-wrong-login-Aa!")),
+        &request(
+            &public,
+            &rewrapped,
+            1,
+            Some(&format!("wrong-{}", ConnectId::generate().unwrap())),
+        ),
         401,
     );
     let update = request(&public, &rewrapped, 1, Some(&a.password));
@@ -548,30 +591,48 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     let b_identity = AccountIdentity::generate(b.context()).unwrap();
     let b_public = serde_json::to_value(b_identity.public_identity()).unwrap();
     let b_bundle = bundle(&b_identity, &master, salt);
+    let b_sdk = EncryptedSessionClient::new(&format!("http://127.0.0.1:{p}"), &b.session).unwrap();
+    let b_sdk_bundle: AccountIdentityBundle = serde_json::from_value(b_bundle.clone()).unwrap();
+    let b_put = runtime
+        .block_on(b_sdk.put_account_identity(0, &b_identity.public_identity(), &b_sdk_bundle, None))
+        .unwrap();
+    let b_get = runtime
+        .block_on(b_sdk.get_account_identity(&b.context(), b_public["keyId"].as_str().unwrap()))
+        .unwrap();
+    assert_eq!(b_put, b_get);
     assert_eq!(
-        http(
-            p,
-            "PUT",
-            SELF_PATH,
-            &b.headers(),
-            &request(&b_public, &b_bundle, 0, None)
+        AccountIdentity::unwrap(
+            &b_get.bundle.wrapped,
+            &master,
+            &b.context(),
+            b_public["keyId"].as_str().unwrap()
         )
-        .0,
-        200
+        .unwrap()
+        .public_identity(),
+        b_identity.public_identity()
     );
     let c_identity = AccountIdentity::generate(c.context()).unwrap();
     let c_public = serde_json::to_value(c_identity.public_identity()).unwrap();
     let c_bundle = bundle(&c_identity, &master, salt);
+    let c_sdk = EncryptedSessionClient::new(&format!("http://127.0.0.1:{p}"), &c.session).unwrap();
+    let c_sdk_bundle: AccountIdentityBundle = serde_json::from_value(c_bundle.clone()).unwrap();
+    let c_put = runtime
+        .block_on(c_sdk.put_account_identity(0, &c_identity.public_identity(), &c_sdk_bundle, None))
+        .unwrap();
+    let c_get = runtime
+        .block_on(c_sdk.get_account_identity(&c.context(), c_public["keyId"].as_str().unwrap()))
+        .unwrap();
+    assert_eq!(c_put, c_get);
     assert_eq!(
-        http(
-            p,
-            "PUT",
-            SELF_PATH,
-            &c.headers(),
-            &request(&c_public, &c_bundle, 0, None)
+        AccountIdentity::unwrap(
+            &c_get.bundle.wrapped,
+            &master,
+            &c.context(),
+            c_public["keyId"].as_str().unwrap()
         )
-        .0,
-        200
+        .unwrap()
+        .public_identity(),
+        c_identity.public_identity()
     );
     let box_root = format!("/api/encrypted/boxes/{}", a.box_id);
     assert_eq!(
@@ -628,6 +689,33 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         peer(p, &b, &a.box_id, &a),
         (200, json!({"identity":public}))
     );
+    assert_eq!(
+        runtime
+            .block_on(sdk.get_member_identity(&a.box_id, &b_identity.public_identity()))
+            .unwrap(),
+        b_identity.public_identity()
+    );
+    assert_eq!(
+        runtime
+            .block_on(b_sdk.get_member_identity(&a.box_id, &identity.public_identity()))
+            .unwrap(),
+        identity.public_identity()
+    );
+    let wrong_valid_peer = AccountIdentity::generate(b.context()).unwrap();
+    assert!(
+        matches!(
+            runtime
+                .block_on(sdk.get_member_identity(&a.box_id, &wrong_valid_peer.public_identity())),
+            Err(EncryptedSessionError::ContextMismatch)
+        ),
+        "independent wrong valid pin fails on real HTTP peer"
+    );
+    assert!(matches!(
+        runtime.block_on(
+            b_sdk.get_account_identity(&b.context(), &wrong_valid_peer.public_identity().key_id)
+        ),
+        Err(EncryptedSessionError::ContextMismatch)
+    ));
     let peer_path = format!("{box_root}/member-identities/{}", b.id);
     assert_eq!(
         http(
@@ -673,8 +761,9 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
     );
     waiting_peer_revocation(db, p, &a, &b);
 
-    // Formal transfer leaves A as a confirmed member; only formal removal
-    // then denies access. A formerly being owner does not grant lasting access.
+    // Encrypted legacy transfer/removal/retirement are fenced. Real formal
+    // removal is accepted ONLY in the sharing_rotation vertical slice.
+    let fenced_before = super::sharing_rotation::state_hash(db, true);
     assert_eq!(
         http(
             p,
@@ -684,34 +773,55 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
             &json!({"currentPassword":a.password,"targetUserId":b.id})
         )
         .0,
-        204
+        409
     );
+    assert_eq!(super::sharing_rotation::state_hash(db, true), fenced_before);
     assert_eq!(peer(p, &a, &a.box_id, &b).0, 200);
     assert_eq!(
         http(
             p,
             "DELETE",
-            &format!("/api/auth/vaults/{}/members/{}", a.box_id, a.id),
-            &b.headers(),
+            &format!("/api/auth/vaults/{}/members/{}", a.box_id, b.id),
+            &a.headers(),
             &Value::Null
         )
         .0,
-        204
+        409
     );
+    assert_eq!(super::sharing_rotation::state_hash(db, true), fenced_before);
+    assert_eq!(
+        http(
+            p,
+            "DELETE",
+            "/api/auth/account",
+            &b.headers(),
+            &json!({"currentPassword":b.password,"confirmationEmail":b.email})
+        )
+        .0,
+        409
+    );
+    assert_eq!(super::sharing_rotation::state_hash(db, true), fenced_before);
+    // Explicit SYNTHETIC membership cleanup solely to retain the identity FK
+    // cascade fixture. This does NOT prove formal key revocation or removal.
+    db.sql(&format!("BEGIN; SELECT id FROM connect_vaults WHERE id='{}' FOR UPDATE; DELETE FROM vault_memberships WHERE vault_id='{}' AND user_id='{}'; COMMIT;", a.box_id, a.box_id, b.id));
     assert_eq!(
         peer(p, &a, &a.box_id, &b).0,
         403,
-        "removed former owner denied"
+        "synthetically removed target denied"
     );
-    assert_eq!(peer(p, &b, &a.box_id, &a).0, 403, "removed target denied");
+    assert_eq!(
+        peer(p, &b, &a.box_id, &a).0,
+        403,
+        "synthetically removed caller denied"
+    );
     assert_eq!(
         read(p, &a)["identity"],
         public,
-        "box removal must not delete account identity"
+        "synthetic membership cleanup must not delete account identity"
     );
 
-    // Formal retirement of B cascades ONLY B's identity. The now-private box
-    // can be deleted by retirement; A's independent identity row survives.
+    // Formal retirement after synthetic cleanup cascades ONLY B's identity.
+    // A's independent identity and encrypted box survive.
     let a_before = row(db, &a);
     let c_before = row(db, &c);
     assert_eq!(
@@ -786,7 +896,7 @@ pub(super) fn run(db: &Database, network: &Network, mode: &Mode) {
         next_salt,
     );
     drop(host);
-    println!("account identity formal acceptance: Core roundtrip, strict public shape, immutable public identity, bootstrap replay, reauthentication, CAS, synthetic rollback/revocation, confirmed public-only peers, removal, retirement cascade and restart passed");
+    println!("account identity formal acceptance: real SDK get/put/peer and independent pins, Core full-public roundtrip, raw HTTP strict shape/auth negatives, immutable public identity, bootstrap replay, reauthentication, CAS, synthetic rollback/session faults, confirmed public-only peers, encrypted legacy 409 fences, identity cascade after explicitly synthetic membership cleanup, and restart passed; formal key revocation belongs to sharing-rotation acceptance");
 }
 
 fn waiting_peer_revocation(db: &Database, p: u16, a: &Account, b: &Account) {
@@ -906,28 +1016,20 @@ fn waiting_self_revocation(
         }
         // The credential fault keeps the original session alive, so a missing
         // hash-snapshot comparison cannot pass merely through session revocation.
-        let old_hash = db.sql(&format!(
-            "SELECT password_hash FROM users WHERE id='{}'",
-            a.id
-        ));
         let session_count = db.sql(&format!(
             "SELECT count(*) FROM sessions WHERE user_id='{}'",
             a.id
         ));
         assert_ne!(session_count, "0");
         if fault == "credential-snapshot" {
-            let replacement = db.sql(&format!(
-                "SELECT password_hash FROM users WHERE id<>'{}' ORDER BY id LIMIT 1",
-                a.id
-            ));
-            assert!(
-                !replacement.is_empty() && replacement != old_hash,
-                "distinct valid synthetic credential"
-            );
+            // Keep both synthetic hashes inside PostgreSQL. Only booleans and
+            // counts leave SQL; credentials are never captured by stdout.
+            db.sql(&format!("CREATE TABLE passshare1163_identity_synthetic_restore AS SELECT id,password_hash FROM users WHERE id='{}';", a.id));
+            assert_eq!(db.sql(&format!("SELECT EXISTS(SELECT 1 FROM users u JOIN passshare1163_identity_synthetic_restore r ON u.id<>r.id AND u.password_hash<>r.password_hash WHERE r.id='{}')",a.id)), "t", "distinct valid synthetic credential");
             writeln!(
                 held.child.stdin.as_mut().unwrap(),
-                "UPDATE users SET password_hash='{}' WHERE id='{}';",
-                replacement.replace('\'', "''"),
+                "UPDATE users SET password_hash=(SELECT password_hash FROM users WHERE id<>'{}' ORDER BY id LIMIT 1) WHERE id='{}';",
+                a.id,
                 a.id
             )
             .unwrap();
@@ -966,11 +1068,7 @@ fn waiting_self_revocation(
                 200,
                 "same original session remains live"
             );
-            db.sql(&format!(
-                "UPDATE users SET password_hash='{}' WHERE id='{}'",
-                old_hash.replace('\'', "''"),
-                a.id
-            ));
+            db.sql("UPDATE users u SET password_hash=r.password_hash FROM passshare1163_identity_synthetic_restore r WHERE u.id=r.id; DROP TABLE passshare1163_identity_synthetic_restore;");
         } else {
             assert_eq!(http(p, "GET", SELF_PATH, &a.headers(), &Value::Null).0, 401);
         }

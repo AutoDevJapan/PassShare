@@ -47,6 +47,8 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --go-session "$RUNNER_TEMP/passshare-go-session.test" backend/native/target/debug/passshare-mutations
       - name: Verify account identity with formal Node and Rust Core
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --account-identity backend/native/target/debug/passshare-mutations
+      - name: Verify sharing and atomic revocation with formal Node and Rust Core
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --sharing-rotation backend/native/target/debug/passshare-mutations
       - name: Build the actual backend-only distribution image
         run: docker build -t passshare-todo1163-encrypted-api backend
       - name: Verify the distribution image with PostgreSQL and Core encryption
@@ -55,6 +57,8 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --go-session "$RUNNER_TEMP/passshare-go-session.test" --image passshare-todo1163-encrypted-api
       - name: Verify account identity with the distribution image and Rust Core
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --account-identity --image passshare-todo1163-encrypted-api
+      - name: Verify sharing and atomic revocation with the distribution image and Rust Core
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --sharing-rotation --image passshare-todo1163-encrypted-api
       - name: Remove the owned API image and verify fixture cleanup
         if: always()
         run: |

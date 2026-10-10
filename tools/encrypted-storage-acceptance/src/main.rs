@@ -3,6 +3,8 @@
 //! real Express host. No production configuration, model API or secret files.
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 mod account_identity;
+mod local_postgres;
+mod sharing_rotation;
 use passshare_core::{
     cloud_crypto::{ItemContext, OwnerKeyContext, PasswordBoxKey, WrappedPasswordBoxKey},
     crypto::{derive_master_key_with_params, generate_salt, MasterKey},
@@ -112,7 +114,9 @@ impl Network {
 }
 impl Drop for Network {
     fn drop(&mut self) {
-        cleanup(&["network", "rm", &self.name]);
+        if !self.name.is_empty() {
+            cleanup(&["network", "rm", &self.name]);
+        }
     }
 }
 
@@ -138,12 +142,14 @@ fn port() -> u16 {
 struct Database {
     name: String,
     port: u16,
+    local: Option<local_postgres::LocalPostgres>,
 }
 impl Database {
     fn start(network: &Network) -> Self {
         let db = Self {
             name: format!("passshare1163-encrypted-{}", ConnectId::generate().unwrap()),
             port: port(),
+            local: None,
         };
         let status = command("docker")
             .args([
@@ -202,24 +208,9 @@ impl Database {
         self.sql_before(sql, std::time::Instant::now() + Duration::from_secs(15))
     }
     fn sql_before(&self, sql: &str, deadline: std::time::Instant) -> String {
-        let mut child = command("docker")
-            .args([
-                "exec",
-                &self.name,
-                "psql",
-                "-X",
-                "-q",
-                "-A",
-                "-t",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-U",
-                "passshare",
-                "-d",
-                "passshare",
-                "-c",
-                sql,
-            ])
+        let mut child = self
+            .psql(false, None)
+            .args(["-c", sql])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -279,10 +270,53 @@ impl Database {
             .trim()
             .to_owned()
     }
+    fn psql(&self, interactive: bool, label: Option<&str>) -> Command {
+        let mut c = if let Some(local) = &self.local {
+            local.client()
+        } else {
+            let mut c = command("docker");
+            c.arg("exec");
+            if interactive {
+                c.arg("-i");
+            }
+            if let Some(label) = label {
+                c.args(["--env", &format!("PGAPPNAME={label}")]);
+            }
+            c.args([
+                &self.name,
+                "psql",
+                "-X",
+                "-qAt",
+                "-v",
+                "ON_ERROR_STOP=1",
+                "-U",
+                "passshare",
+                "-d",
+                "passshare",
+            ]);
+            c
+        };
+        if let Some(label) = label {
+            c.env("PGAPPNAME", label);
+        }
+        c
+    }
+    fn url(&self) -> String {
+        let name = self
+            .local
+            .as_ref()
+            .map_or("passshare", |p| p.database.as_str());
+        format!(
+            "postgresql://passshare:passshare@127.0.0.1:{}/{name}",
+            self.port
+        )
+    }
 }
 impl Drop for Database {
     fn drop(&mut self) {
-        cleanup(&["rm", "--force", "--volumes", &self.name]);
+        if self.local.is_none() {
+            cleanup(&["rm", "--force", "--volumes", &self.name]);
+        }
     }
 }
 enum HostProcess {
@@ -329,7 +363,7 @@ impl Host {
                         "--publish",
                         &format!("127.0.0.1:{port}:8080"),
                         "--env",
-                        "APP_ENV=local",
+                        "APP_ENV=test",
                         "--env",
                         "DEV_SEED=false",
                         "--env",
@@ -386,20 +420,14 @@ impl Host {
             .arg("src/index.js")
             .current_dir(backend)
             .env("PORT", port.to_string())
-            .env("APP_ENV", "local")
+            .env("APP_ENV", "test")
             .env("DEV_SEED", "false")
             .env("PASSSHARE_MUTATIONS_BIN", binary)
             .env(
                 "PASSSHARE_ENCRYPTED_STORAGE",
                 if enabled { "true" } else { "false" },
             )
-            .env(
-                "DATABASE_URL",
-                format!(
-                    "postgresql://passshare:passshare@127.0.0.1:{}/passshare",
-                    db.port
-                ),
-            )
+            .env("DATABASE_URL", db.url())
             .stdout(Stdio::null())
             .spawn()
             .unwrap();
@@ -569,15 +597,51 @@ fn unwrap_bundle(
         .map_err(|_| PassShareError::CorruptFile)
 }
 
+// Validate fixture exclusivity before any filesystem inspection or Docker call.
+fn fixture_prefix(
+    args: &[std::ffi::OsString],
+) -> Result<(bool, bool, &[std::ffi::OsString]), &'static str> {
+    let flags = ["--account-identity", "--sharing-rotation", "--go-session"];
+    let count = args
+        .iter()
+        .filter(|arg| {
+            flags
+                .iter()
+                .any(|flag| arg.as_os_str() == std::ffi::OsStr::new(flag))
+        })
+        .count();
+    if count > 1 {
+        return Err("fixture modes are mutually exclusive");
+    }
+    let identity = args.first().is_some_and(|arg| arg == "--account-identity");
+    let sharing = args.first().is_some_and(|arg| arg == "--sharing-rotation");
+    if count == 1
+        && !args.first().is_some_and(|arg| {
+            flags
+                .iter()
+                .any(|flag| arg.as_os_str() == std::ffi::OsStr::new(flag))
+        })
+    {
+        return Err("fixture flag must be first");
+    }
+    Ok((
+        identity,
+        sharing,
+        if identity || sharing {
+            &args[1..]
+        } else {
+            args
+        },
+    ))
+}
+
 fn main() {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let (local_manifest, args) =
+        local_postgres::prefix(&args).expect("explicit local fixture prefix");
     // Consume a valueless fixture prefix before the unchanged Node/image parser.
-    let identity_fixture = args.first().is_some_and(|arg| arg == "--account-identity");
-    let mode_args = if identity_fixture {
-        &args[1..]
-    } else {
-        &args[..]
-    };
+    let (identity_fixture, sharing_fixture, mode_args) =
+        fixture_prefix(args).unwrap_or_else(|reason| panic!("{reason}"));
     let (go_executable, host_args) =
         go_session::cli(mode_args).unwrap_or_else(|reason| panic!("{reason}"));
     assert!(
@@ -585,6 +649,10 @@ fn main() {
         "fixture modes are mutually exclusive"
     );
     let mode = Mode::parse(host_args).unwrap_or_else(|reason| panic!("{reason}"));
+    assert!(
+        local_manifest.is_none() || (sharing_fixture && matches!(mode, Mode::Node(_))),
+        "local PostgreSQL is explicitly supported only for Node sharing acceptance"
+    );
     let mode = match mode {
         Mode::Node(binary) => {
             let binary = binary
@@ -601,16 +669,34 @@ fn main() {
             Mode::Image(image)
         }
     };
-    docker_ok(
-        &["image", "inspect", POSTGRES_IMAGE],
-        "inspect preloaded PostgreSQL base image",
-    );
-    let network = Network::start();
-    let db = Database::start(&network);
+    let (network, db) = if let Some(manifest) = local_manifest {
+        let local = local_postgres::LocalPostgres::start(&manifest);
+        let db = Database {
+            name: local.database.clone(),
+            port: local.port,
+            local: Some(local),
+        };
+        (
+            Network {
+                name: String::new(),
+            },
+            db,
+        )
+    } else {
+        docker_ok(
+            &["image", "inspect", POSTGRES_IMAGE],
+            "inspect preloaded PostgreSQL base image",
+        );
+        let network = Network::start();
+        let db = Database::start(&network);
+        (network, db)
+    };
     if let Some(executable) = go_executable {
         go_session::run(&db, &network, &mode, &executable);
     } else if identity_fixture {
         account_identity::run(&db, &network, &mode);
+    } else if sharing_fixture {
+        sharing_rotation::run(&db, &network, &mode);
     } else {
         run_acceptance(&db, &network, &mode);
     }
@@ -2307,23 +2393,8 @@ struct HeldBox {
 }
 impl HeldBox {
     fn start(db: &Database, box_id: &str, label: &str) -> Self {
-        let mut child = command("docker")
-            .args([
-                "exec",
-                "-i",
-                "--env",
-                &format!("PGAPPNAME={label}"),
-                &db.name,
-                "psql",
-                "-X",
-                "-qAt",
-                "-v",
-                "ON_ERROR_STOP=1",
-                "-U",
-                "passshare",
-                "-d",
-                "passshare",
-            ])
+        let mut child = db
+            .psql(true, Some(label))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

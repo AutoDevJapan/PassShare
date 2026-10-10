@@ -16,6 +16,7 @@ import { createStore, normalizeDatabaseUrl, Pool } from "./store/index.js";
 import { createMutationStore } from "./store/mutation-store.js";
 import { createEncryptedRouter, createPlaintextBoundary } from "./encrypted/router.js";
 import { createAccountIdentityRouter } from "./encrypted/account-identity-router.js";
+import { createSharingRotationRouter } from "./encrypted/sharing-rotation-router.js";
 
 // Best-effort DB pool warm-up: open the first connection during startup so the
 // first real request after a Railway cold-start (idle wake / fresh deploy) does
@@ -171,6 +172,7 @@ export async function createApp(options = {}) {
   if (encryptedEnabled) {
     const encryptedRouter = await createEncryptedRouter({pool,authStore,loginGuardStore});
     app.use("/api/encrypted",await createAccountIdentityRouter({pool,authStore,loginGuardStore,schemaReady:true}));
+    app.use("/api/encrypted",createSharingRotationRouter({pool,authStore,loginGuardStore}));
     app.use("/api/encrypted",encryptedRouter);
   }
   // A flag rollback must not make an already encrypted box appear empty in
