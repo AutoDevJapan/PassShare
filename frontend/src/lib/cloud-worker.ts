@@ -6,6 +6,7 @@ type Command = "generate" | "wrap" | "unlock" | "create" | "edit" | "encrypt" | 
 const MAX_BODY = 1024 * 1024;
 const MAX_ENVELOPE = 1_500_000;
 const MAX_MESSAGE = MAX_BODY * 6 + 4096;
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const utf8Size = (text: string) => new TextEncoder().encode(text).byteLength;
 
 export class CloudWorkerError extends Error {
@@ -19,6 +20,16 @@ export class CloudWorker {
   private stopped = false;
   private pending: { id: number; command: Command; generation: number; resolve: (reply: Reply) => void; reject: (error: CloudWorkerError) => void } | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastInput: { monotonic: number; wall: number } | null = null;
+  private readonly inputEvents = ["pointerdown", "keydown", "wheel", "click", "beforeinput", "input", "submit"] as const;
+  private readonly input = (event: Event) => {
+    if (!event.isTrusted || document.visibilityState !== "visible" || !this.lastInput) return;
+    // Check the old deadline before input can extend it. Consume the first
+    // expired input before a React handler could reveal or submit plaintext.
+    if (this.expireIdle()) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+    this.markInput();
+  };
   private readyResolve!: () => void;
   private readyReject!: (error: CloudWorkerError) => void;
   private readyReceived = false;
@@ -36,6 +47,7 @@ export class CloudWorker {
       this.worker.onmessage = (event: MessageEvent<unknown>) => this.receive(event.data);
       this.worker.onerror = () => this.dispose();
       this.worker.onmessageerror = () => this.dispose();
+      for (const type of this.inputEvents) window.addEventListener(type, this.input, { capture: true, passive: false });
       this.armTimeout();
     } catch { this.dispose(); }
   }
@@ -45,8 +57,37 @@ export class CloudWorker {
     this.timer = setTimeout(() => this.dispose(), 60_000);
   }
 
+  private markInput() {
+    this.lastInput = { monotonic: performance.now(), wall: Date.now() };
+    this.armIdleTimeout();
+  }
+
+  private armIdleTimeout() {
+    clearTimeout(this.idleTimer);
+    if (!this.lastInput) return;
+    const elapsed = Math.max(performance.now() - this.lastInput.monotonic, Date.now() - this.lastInput.wall);
+    this.idleTimer = setTimeout(() => {
+      // A timer may run early; preserve the deadline rather than renew it.
+      if (!this.expireIdle()) this.armIdleTimeout();
+    }, Math.max(1, IDLE_TIMEOUT_MS - elapsed));
+  }
+
+  private expireIdle(): boolean {
+    if (!this.lastInput) return this.stopped;
+    const monotonic = performance.now() - this.lastInput.monotonic;
+    const wall = Date.now() - this.lastInput.wall;
+    // Some platforms pause the monotonic clock during sleep. Either elapsed
+    // clock expires the session; a backwards clock change also requires unlock.
+    if (monotonic >= IDLE_TIMEOUT_MS || wall >= IDLE_TIMEOUT_MS || monotonic < 0 || wall < 0) {
+      this.dispose();
+      lockCloudUi();
+      return true;
+    }
+    return false;
+  }
+
   private receive(data: unknown) {
-    if (this.stopped) return;
+    if (this.stopped || this.expireIdle()) return;
     let reply: Reply;
     try {
       if (typeof data !== "string" || data.length > MAX_MESSAGE || utf8Size(data) > MAX_MESSAGE) throw new CloudWorkerError();
@@ -82,6 +123,7 @@ export class CloudWorker {
     this.pending = null;
     clearTimeout(this.timer);
     this.generation = reply.generation;
+    if (reply.ok && opens) this.markInput();
     if (reply.ok) pending.resolve(reply);
     else pending.reject(new CloudWorkerError());
   }
@@ -89,7 +131,7 @@ export class CloudWorker {
   private async send(command: Command, fields: Record<string, string>): Promise<Reply> {
     try {
       await this.ready;
-      if (this.stopped || !this.worker || this.pending) throw new CloudWorkerError();
+      if (this.stopped || this.expireIdle() || !this.worker || this.pending) throw new CloudWorkerError();
       for (const key of ["item", "values", "envelope", "context"] as const) {
         const limit = key === "envelope" ? MAX_ENVELOPE : key === "context" ? 512 : MAX_BODY;
         if (key in fields && (typeof fields[key] !== "string" || utf8Size(fields[key]) > limit)) throw new CloudWorkerError();
@@ -138,6 +180,9 @@ export class CloudWorker {
     if (this.stopped) return;
     this.stopped = true;
     clearTimeout(this.timer);
+    clearTimeout(this.idleTimer);
+    this.lastInput = null;
+    for (const type of this.inputEvents) window.removeEventListener(type, this.input, true);
     if (this.worker) {
       this.worker.onmessage = null;
       this.worker.onerror = null;
