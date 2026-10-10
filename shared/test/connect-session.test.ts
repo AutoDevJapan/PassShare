@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   bootstrapConnectSession,
+  isConnectTokenUsable,
   type ConnectSessionApi,
   type ConnectSessionStore,
   type StoredConnectSession,
@@ -121,6 +122,24 @@ describe("bootstrapConnectSession", () => {
       connectAccessToken: "fresh-token",
       connectExpiresAt: FUTURE,
     });
+  });
+
+  it("mints a server token after secure reauthentication even with a future cached expiry", async () => {
+    const { store, calls } = makeStore({ refreshToken: "fixture-refresh", connectAccessToken: "cached-token", connectExpiresAt: FUTURE });
+    let refreshCalls = 0;
+    const result = await bootstrapConnectSession(store, {
+      fetchCurrentUser: async () => ({ id: "same-user" }),
+      refreshConnectToken: async () => { refreshCalls += 1; return { connectAccessToken: "server-current-token", connectExpiresAt: FUTURE }; },
+    }, { forceRefresh: true });
+    assert.equal(refreshCalls, 1);
+    assert.equal(result?.user.id, "same-user");
+    assert.equal(result?.accessToken, "server-current-token");
+    assert.equal(calls.saved.length, 1);
+  });
+
+  it("does not treat absent or malformed expiry as a non-expiring token", () => {
+    assert.equal(isConnectTokenUsable({ connectAccessToken: "cached", connectExpiresAt: "" }), false);
+    assert.equal(isConnectTokenUsable({ connectAccessToken: "cached", connectExpiresAt: "not-a-time" }), false);
   });
 
   it("refreshes when the stored session has no Connect token", async () => {

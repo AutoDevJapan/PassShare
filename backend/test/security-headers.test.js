@@ -225,6 +225,38 @@ describe("security headers and CORS", () => {
       "https://pass-share-frontend-git-main-autodevjapan.vercel.app",
     );
   });
+
+  it("admits fixed native asset origins for token preflight without cookies", async () => {
+    for (const origin of ["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost"]) {
+      const res = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "OPTIONS",
+        headers: { Origin: origin, "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "content-type, x-passshare-client" },
+      });
+      assert.equal(res.status, 204);
+      assert.equal(res.headers.get("access-control-allow-origin"), origin);
+      assert.equal(res.headers.get("access-control-allow-credentials"), null);
+      assert.match(res.headers.get("access-control-allow-headers") ?? "", /x-passshare-client/i);
+      assert.equal(isAllowedWebOrigin(origin, "prd"), false);
+    }
+  });
+
+  it("keeps native token headers distinct from Web origin and cookie permission", async () => {
+    for (const headers of [{ "x-passshare-client": "mobile" }, { Authorization: "Bearer invalid-token" }]) {
+      const res = await fetch(`${baseUrl}/health`, { headers: { Origin: "http://tauri.localhost", ...headers } });
+      assert.equal(res.headers.get("access-control-allow-origin"), "http://tauri.localhost");
+      assert.equal(res.headers.get("access-control-allow-credentials"), null);
+    }
+    for (const origin of ["null", "http://tauri.localhost.evil.example", "http://tauri.localhost:8080", "https://evil.example"]) {
+      const res = await fetch(`${baseUrl}/api/auth/login`, { method: "OPTIONS", headers: {
+        Origin: origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization,x-passshare-client",
+      } });
+      assert.equal(res.headers.get("access-control-allow-origin"), null);
+      assert.equal(res.headers.get("access-control-allow-credentials"), null);
+    }
+    const noToken = await fetch(`${baseUrl}/health`, { headers: { Origin: "http://tauri.localhost" } });
+    assert.equal(noToken.headers.get("access-control-allow-origin"), null);
+  });
 });
 
 describe("preview CORS with VERCEL_TEAM_SLUG (#358)", () => {

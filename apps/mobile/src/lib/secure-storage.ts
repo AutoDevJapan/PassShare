@@ -120,8 +120,11 @@ export async function saveAuthSession(
 ): Promise<void> {
   await mutateSession(async () => {
     if (!isCurrent()) throw new Error("Session changed.");
-    await setSecureValue(AUTH_SESSION_KEY, JSON.stringify(session));
+    // Android removes the domain's Keystore alias even when deleting a missing
+    // legacy name. Purge before generating the new blob's protected key.
     await purgeLegacySecureKeys();
+    if (!isCurrent()) throw new Error("Session changed.");
+    await setSecureValue(AUTH_SESSION_KEY, JSON.stringify(session));
     if (!isCurrent()) {
       await removeSecureValue(AUTH_SESSION_KEY);
       throw new Error("Session changed.");

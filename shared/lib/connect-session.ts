@@ -41,7 +41,7 @@ export type BootstrappedConnectSession<TUser> = {
   accessToken: string;
 };
 
-/** A Connect access token is usable when present and not past its expiry. A missing/unparseable expiry is treated as non-expiring. */
+/** Only an explicit, parseable future expiry permits reusing a cached token. */
 export function isConnectTokenUsable(session: {
   connectAccessToken: string;
   connectExpiresAt: string;
@@ -50,7 +50,7 @@ export function isConnectTokenUsable(session: {
     return false;
   }
   const expiresAt = Date.parse(session.connectExpiresAt);
-  return Number.isNaN(expiresAt) || expiresAt > Date.now();
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
 }
 
 /**
@@ -67,6 +67,7 @@ export function isConnectTokenUsable(session: {
 export async function bootstrapConnectSession<TUser>(
   store: ConnectSessionStore,
   api: ConnectSessionApi<TUser>,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<BootstrappedConnectSession<TUser> | null> {
   const session = await store.load();
   if (!session?.refreshToken) {
@@ -80,7 +81,7 @@ export async function bootstrapConnectSession<TUser>(
   }
 
   let accessToken = session.connectAccessToken;
-  if (!isConnectTokenUsable(session)) {
+  if (options.forceRefresh || !isConnectTokenUsable(session)) {
     const refreshed = await api.refreshConnectToken(session.refreshToken);
     accessToken = refreshed.connectAccessToken;
     await store.save({
