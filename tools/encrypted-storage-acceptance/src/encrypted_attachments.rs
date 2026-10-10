@@ -1,10 +1,14 @@
 //! Synthetic Core -> formal Node -> independent PostgreSQL -> Core acceptance.
 //! Never uses a mock store, production account, new crypto or plaintext upload.
 use super::*;
+use passshare_connect::{
+    AttachmentItemWrite, RotationAttachmentRequest, RotationExpectation, SharingItemSummary,
+};
 use passshare_core::cloud_crypto::{AttachmentContext, AttachmentPlaintext, EncryptedAttachment};
 use std::sync::atomic::AtomicUsize;
 
 static CHECKS: AtomicUsize = AtomicUsize::new(0);
+static SDK_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 fn check(ok: bool, label: &str) {
     assert!(ok, "attachment acceptance: {label}");
     CHECKS.fetch_add(1, Ordering::Relaxed);
@@ -263,6 +267,497 @@ fn stage_item(
     next
 }
 
+// A byte-forwarding observation point, never a response fixture. Every request
+// reaches the formal Node router and its real PostgreSQL transaction. Only the
+// count survives; headers, session credentials and bodies stay in memory.
+struct SdkTap {
+    port: u16,
+    requests: std::sync::Arc<AtomicUsize>,
+    lose_reply: std::sync::Arc<AtomicBool>,
+    stop: std::sync::Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+impl SdkTap {
+    fn start(upstream: u16) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let requests = std::sync::Arc::new(AtomicUsize::new(0));
+        let lose_reply = std::sync::Arc::new(AtomicBool::new(false));
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let (count, lose, ending) = (requests.clone(), lose_reply.clone(), stop.clone());
+        let worker = thread::spawn(move || {
+            while !ending.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut client, _)) => {
+                        client.set_nonblocking(false).unwrap();
+                        client
+                            .set_read_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        client
+                            .set_write_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        let mut header = Vec::new();
+                        while !header.ends_with(b"\r\n\r\n") {
+                            assert!(header.len() < 65536, "SDK tap header bound");
+                            let mut byte = [0];
+                            client.read_exact(&mut byte).expect("SDK tap header read");
+                            header.push(byte[0]);
+                        }
+                        let header = String::from_utf8(header).expect("SDK tap header encoding");
+                        let length = header
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap_or(0);
+                        assert!(length <= 2 * 1024 * 1024, "SDK tap body bound");
+                        let mut body = vec![0; length];
+                        client.read_exact(&mut body).expect("SDK tap body read");
+                        let mut server = TcpStream::connect(("127.0.0.1", upstream)).unwrap();
+                        server
+                            .set_read_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        server
+                            .set_write_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        // Close upstream framing explicitly; payload bytes are unchanged.
+                        for line in header.lines().filter(|line| !line.is_empty()) {
+                            if !line
+                                .split_once(':')
+                                .is_some_and(|(key, _)| key.eq_ignore_ascii_case("connection"))
+                            {
+                                write!(server, "{line}\r\n").unwrap();
+                            }
+                        }
+                        server.write_all(b"Connection: close\r\n\r\n").unwrap();
+                        server.write_all(&body).unwrap();
+                        count.fetch_add(1, Ordering::SeqCst);
+                        let mut response = Vec::new();
+                        server
+                            .take(3 * 1024 * 1024 + 1)
+                            .read_to_end(&mut response)
+                            .unwrap();
+                        assert!(response.len() <= 3 * 1024 * 1024, "SDK tap response bound");
+                        if !lose.swap(false, Ordering::SeqCst) {
+                            client.write_all(&response).unwrap();
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(_) => panic!("SDK tap accept failed"),
+                }
+            }
+        });
+        Self {
+            port,
+            requests,
+            lose_reply,
+            stop,
+            worker: Some(worker),
+        }
+    }
+    fn count(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+}
+impl Drop for SdkTap {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if self.worker.take().unwrap().join().is_err() {
+            CLEANUP_FAILED.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+fn sdk_once<T>(tap: &SdkTap, operation: impl FnOnce() -> T) -> T {
+    request_slot();
+    let before = tap.count();
+    let result = operation();
+    check(
+        tap.count() == before + 1,
+        "real SDK issues exactly one formal request, no automatic retry",
+    );
+    SDK_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    result
+}
+
+fn sdk_rotation(a: &Account, path: &str, original: &Value) -> RotationExpectation {
+    RotationExpectation {
+        password_box_id: a.box_id.parse().unwrap(),
+        owner_account_id: a.id.clone(),
+        operation_id: path.rsplit('/').next().unwrap().to_owned(),
+        expected_state_revision: number(original, "expectedStateRevision"),
+        expected_key_epoch: number(original, "expectedKeyEpoch"),
+        expected_owner_bundle_version: number(original, "expectedOwnerBundleVersion"),
+        remove_account_id: text_field(original, "removeAccountId"),
+        item_count: None,
+        grant_count: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sdk_reads(
+    db: &Database,
+    p: u16,
+    rt: &tokio::runtime::Runtime,
+    a: &Account,
+    key: &PasswordBoxKey,
+    item: &str,
+    dto: &Value,
+    item_v: u64,
+    files: &[File],
+    epoch: u64,
+) {
+    let tap = SdkTap::start(p);
+    let session = a.sdk(tap.port);
+    let sharing = SharingRotationClient::new(&session);
+    let snapshot = checked(
+        sdk_once(&tap, || {
+            rt.block_on(sharing.sharing_snapshot(&a.box_id, &a.id))
+        }),
+        "SDK attachment snapshot",
+    );
+    check(
+        snapshot.state_revision == revision(db, a)
+            && snapshot.key_epoch == epoch
+            && snapshot.live_attachment_count == Some(files.len() as u64),
+        "SDK independently held snapshot revision/epoch/count",
+    );
+    let summary = SharingItemSummary {
+        item_id: item.parse().unwrap(),
+        item_version: item_v,
+        key_epoch: epoch,
+    };
+    let cipher = checked(
+        sdk_once(&tap, || {
+            rt.block_on(sharing.snapshot_item(&a.box_id, &snapshot, &summary))
+        }),
+        "SDK authenticated snapshot item",
+    );
+    let opened = checked(
+        key.decrypt_item(&cipher, &context(a, item, item_v, epoch)),
+        "Core snapshot item authentication",
+    );
+    check(
+        opened == client_dto(dto, a, item, item_v),
+        "SDK full plaintext DTO including ordered references and every unknown field",
+    );
+    let first = checked(
+        sdk_once(&tap, || {
+            rt.block_on(sharing.snapshot_attachments(&a.box_id, &snapshot, None))
+        }),
+        "SDK first metadata page",
+    );
+    check(
+        first.attachments.len() == files.len().min(100),
+        "SDK bounded first page",
+    );
+    let mut metadata = first.attachments;
+    if let Some(cursor) = first.next_cursor {
+        // Keep the complete server cursor; never split/reconstruct it for transport.
+        let next = checked(
+            sdk_once(&tap, || {
+                rt.block_on(sharing.snapshot_attachments(&a.box_id, &snapshot, Some(&cursor)))
+            }),
+            "SDK opaque cursor roundtrip",
+        );
+        check(
+            next.next_cursor.is_none() && next.attachments.len() == files.len() - 100,
+            "SDK cursor completes exact set without skipped entries",
+        );
+        metadata.extend(next.attachments);
+    }
+    let actual = metadata
+        .iter()
+        .map(|m| {
+            (
+                m.attachment_id.to_string(),
+                (m.item_id.to_string(), m.attachment_version, m.key_epoch),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let expected = files
+        .iter()
+        .map(|f| (f.id.clone(), (item.to_owned(), f.version, epoch)))
+        .collect::<BTreeMap<_, _>>();
+    check(
+        metadata.len() == files.len() && actual == expected,
+        "SDK list all independently held IDs/items/versions/epochs, no duplicates",
+    );
+    for (reference, file) in opened["attachments"].as_array().unwrap().iter().zip(files) {
+        check(
+            *reference == next_ref(file, epoch),
+            "authenticated reference order matches original input",
+        );
+        // This context is derived from the authenticated ITEM at this revision,
+        // independently compared with original inputs, never attachment metadata.
+        let expected = attach_context(
+            a,
+            item,
+            reference["attachmentId"].as_str().unwrap(),
+            reference["attachmentVersion"].as_u64().unwrap(),
+            reference["keyEpoch"].as_u64().unwrap(),
+        );
+        let cipher = checked(
+            sdk_once(&tap, || {
+                rt.block_on(sharing.snapshot_attachment(&a.box_id, &snapshot, &expected))
+            }),
+            "SDK snapshot attachment",
+        );
+        file.verify(key, a, item, &json!(cipher), epoch);
+        let live = checked(
+            sdk_once(&tap, || {
+                rt.block_on(session.get_attachment(snapshot.state_revision, &expected))
+            }),
+            "SDK revision-bound live attachment",
+        );
+        check(
+            live == cipher,
+            "SDK live and snapshot ciphertext match completely",
+        );
+        file.verify(key, a, item, &json!(live), epoch);
+    }
+    let mut stale = snapshot.clone();
+    stale.state_revision -= 1;
+    let before = state_hash(db, true);
+    let rejected = sdk_once(&tap, || {
+        rt.block_on(sharing.snapshot_attachments(&a.box_id, &stale, None))
+    });
+    check(
+        rejected.err().is_some_and(|e| e.status() == Some(409)) && state_hash(db, true) == before,
+        "SDK stale snapshot returns 409 without mutation/retry",
+    );
+    let mut wrong = attach_context(a, item, &files[0].id, files[0].version + 1, epoch);
+    let rejected = sdk_once(&tap, || {
+        rt.block_on(session.get_attachment(snapshot.state_revision, &wrong))
+    });
+    check(
+        matches!(rejected, Err(EncryptedSessionError::ContextMismatch)),
+        "SDK does not trust fetched envelope version",
+    );
+    wrong = attach_context(a, item, &files[0].id, files[0].version, epoch + 1);
+    let rejected = sdk_once(&tap, || {
+        rt.block_on(session.get_attachment(snapshot.state_revision, &wrong))
+    });
+    check(
+        matches!(rejected, Err(EncryptedSessionError::ContextMismatch)),
+        "SDK does not trust fetched envelope epoch",
+    );
+    check(
+        state_hash(db, true) == before,
+        "SDK read/context failures preserve every live/staged row and xmin",
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sdk_mutations(
+    db: &Database,
+    p: u16,
+    rt: &tokio::runtime::Runtime,
+    a: &Account,
+    denied: &Account,
+    key: &PasswordBoxKey,
+    item: &str,
+    dto: &Value,
+    item_v: &mut u64,
+) {
+    let tap = SdkTap::start(p);
+    let session = a.sdk(tap.port);
+    let mut file = File::new(key, a, item, "SDK\0任意-Ж🦀.bin", (0..=255).collect());
+    let mut next = dto.clone();
+    next["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, next_ref(&file, 1));
+    let item_write: AttachmentItemWrite = checked(
+        serde_json::from_value(
+            json!({"expectedVersion":*item_v,"envelope":item_body(key,a,item,&next,*item_v+1,1)}),
+        ),
+        "SDK item write",
+    );
+    let cipher = checked(
+        serde_json::from_value(file.sealed.clone()),
+        "SDK attachment cipher",
+    );
+    let expected = attach_context(a, item, &file.id, 1, 1);
+    let rev = revision(db, a);
+    let before = state_hash(db, true);
+    for (client, status) in [
+        (denied.sdk(tap.port), 403),
+        (
+            checked(
+                EncryptedSessionClient::new(&format!("http://127.0.0.1:{}", tap.port), &a.connect),
+                "SDK invalid session",
+            ),
+            401,
+        ),
+    ] {
+        let result = sdk_once(&tap, || {
+            rt.block_on(client.put_attachment(rev, &item_write, 0, &cipher, &expected))
+        });
+        check(
+            result.err().is_some_and(|e| e.status() == Some(status))
+                && state_hash(db, true) == before,
+            "SDK formal auth rejection preserves both resources without retry",
+        );
+    }
+    let result = sdk_once(&tap, || {
+        rt.block_on(session.put_attachment(rev - 1, &item_write, 0, &cipher, &expected))
+    });
+    check(
+        result.err().is_some_and(|e| e.status() == Some(409)) && state_hash(db, true) == before,
+        "SDK atomic stale CAS rejection without retry",
+    );
+    db.sql("CREATE FUNCTION fixture_sdk_attachment_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION USING ERRCODE='P0015',MESSAGE='fixture'; END $$; CREATE TRIGGER fixture_sdk_attachment_fault BEFORE INSERT ON encrypted_attachments FOR EACH ROW EXECUTE FUNCTION fixture_sdk_attachment_fault()");
+    let result = sdk_once(&tap, || {
+        rt.block_on(session.put_attachment(rev, &item_write, 0, &cipher, &expected))
+    });
+    check(
+        result.err().is_some_and(|e| e.status() == Some(409)) && state_hash(db, true) == before,
+        "SDK real SQL fault after item write rolls back both resources once",
+    );
+    db.sql("DROP TRIGGER fixture_sdk_attachment_fault ON encrypted_attachments; DROP FUNCTION fixture_sdk_attachment_fault()");
+    tap.lose_reply.store(true, Ordering::SeqCst);
+    let lost = sdk_once(&tap, || {
+        rt.block_on(session.put_attachment(rev, &item_write, 0, &cipher, &expected))
+    });
+    check(
+        matches!(lost, Err(EncryptedSessionError::Transport(_))) && revision(db, a) == rev + 2,
+        "SDK lost real committed PUT reply is surfaced without automatic retry",
+    );
+    let committed = state_hash(db, true);
+    let reply = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.put_attachment(rev, &item_write, 0, &cipher, &expected))
+        }),
+        "SDK explicit exact PUT retry",
+    );
+    check(
+        reply.state_revision == rev + 2
+            && reply.item_version == *item_v + 1
+            && reply.attachment_version == 1
+            && reply.key_epoch == 1
+            && state_hash(db, true) == committed,
+        "SDK exact PUT retry result and unchanged full rows/xmin",
+    );
+    *item_v += 1;
+    references(&next, key, a, item, *item_v, 1, p);
+    let live = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.get_attachment(reply.state_revision, &expected))
+        }),
+        "SDK arbitrary binary GET",
+    );
+    file.verify(key, a, item, &json!(live), 1);
+    file.version = 2;
+    file.name = "SDK更新\0🦀.bin".to_owned();
+    file.bytes.reverse();
+    file.sealed = seal(key, a, item, &file.id, &file.name, &file.bytes, 2, 1);
+    next["attachments"][1] = next_ref(&file, 1);
+    let update_item: AttachmentItemWrite = checked(
+        serde_json::from_value(
+            json!({"expectedVersion":*item_v,"envelope":item_body(key,a,item,&next,*item_v+1,1)}),
+        ),
+        "SDK update item",
+    );
+    let updated_context = attach_context(a, item, &file.id, 2, 1);
+    let updated_cipher = checked(
+        serde_json::from_value(file.sealed.clone()),
+        "SDK update cipher",
+    );
+    let updated = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.put_attachment(
+                reply.state_revision,
+                &update_item,
+                1,
+                &updated_cipher,
+                &updated_context,
+            ))
+        }),
+        "SDK real atomic attachment update",
+    );
+    let updated_rows = state_hash(db, true);
+    let updated_retry = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.put_attachment(
+                reply.state_revision,
+                &update_item,
+                1,
+                &updated_cipher,
+                &updated_context,
+            ))
+        }),
+        "SDK exact update retry",
+    );
+    check(
+        updated == updated_retry
+            && updated.state_revision == rev + 4
+            && updated.attachment_version == 2
+            && updated.item_version == *item_v + 1
+            && state_hash(db, true) == updated_rows,
+        "SDK independent attachment update CAS and exact retry preserve full rows/xmin",
+    );
+    *item_v += 1;
+    references(&next, key, a, item, *item_v, 1, p);
+    let live = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.get_attachment(updated.state_revision, &updated_context))
+        }),
+        "SDK updated binary GET",
+    );
+    file.verify(key, a, item, &json!(live), 1);
+    let delete_item: AttachmentItemWrite = checked(
+        serde_json::from_value(
+            json!({"expectedVersion":*item_v,"envelope":item_body(key,a,item,dto,*item_v+1,1)}),
+        ),
+        "SDK delete item write",
+    );
+    let deleted = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.delete_attachment(
+                updated.state_revision,
+                &delete_item,
+                &updated_context,
+            ))
+        }),
+        "SDK atomic DELETE",
+    );
+    let after = state_hash(db, true);
+    let exact = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.delete_attachment(
+                updated.state_revision,
+                &delete_item,
+                &updated_context,
+            ))
+        }),
+        "SDK explicit exact DELETE retry",
+    );
+    check(
+        deleted == exact
+            && deleted.deleted
+            && deleted.state_revision == rev + 6
+            && deleted.item_version == *item_v + 1
+            && deleted.key_epoch == 1
+            && state_hash(db, true) == after,
+        "SDK atomic DELETE metadata and exact retry preserve rows/xmin",
+    );
+    *item_v += 1;
+    references(dto, key, a, item, *item_v, 1, p);
+    let gone = sdk_once(&tap, || {
+        rt.block_on(session.get_attachment(deleted.state_revision, &updated_context))
+    });
+    check(
+        gone.err().is_some_and(|e| e.status() == Some(404)),
+        "SDK deleted ciphertext unavailable at current revision",
+    );
+}
+
 pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     let host = Host::start(db, network, mode);
     let p = host.port;
@@ -306,7 +801,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     }
     let item = ConnectId::generate().unwrap().to_string();
     let mut item_v = 1;
-    let mut dto = json!({"title":"synthetic attachment item","attachments":[],"unknown":{"ordered":[3,1,2]},"fields":[{"value":"synthetic-only"}]});
+    let mut dto = json!({"title":"synthetic attachment item","attachments":[],"unknown":{"ordered":[3,1,2],"nested":{"null":null,"flag":true,"unicode":"\0Ж🦀","bytes":(0..=255).collect::<Vec<u8>>() }},"fields":[{"id":"password","type":"CONCEALED","value":"synthetic-only\0éЖ🦀","unknown":[false,17,null]},{"id":"notes","value":"line1\nline2"}],"tags":["z","a","z"],"urls":[{"href":"https://example.invalid/","primary":true}],"notesPlain":"\0synthetic","category":"LOGIN"});
     send(
         p,
         &a,
@@ -348,6 +843,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         files.push(f);
     }
     references(&dto, &old, &a, &item, item_v, 1, p);
+    sdk_mutations(db, p, &rt, &a, &d, &old, &item, &dto, &mut item_v);
     let attachment_rows=db.sql("SELECT md5(string_agg(to_jsonb(a)::text||a.xmin::text,'|' ORDER BY box_id,item_id,attachment_id)) FROM encrypted_attachments a");
     dto["title"] = json!("synthetic title edit");
     send(
@@ -634,6 +1130,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         409,
     );
     references(&dto, &old, &a, &item, item_v, 1, p);
+    sdk_reads(db, p, &rt, &a, &old, &item, &dto, item_v, &files, 1);
     println!("attachment CRUD, public shapes, exact replay, real SQL rollback and 101-entry snapshot passed");
 
     // Intermediate failures, abort and resume never change live ciphertext.
@@ -662,6 +1159,27 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     );
     let stage_path = format!("{rotation}/items/{item}/attachments/{}", files[0].id);
     let stage_body = json!({"expectedVersion":files[0].version,"envelope":first});
+    let expected_rotation = sdk_rotation(&a, &rotation, &header);
+    let tap = SdkTap::start(p);
+    let stage_session = a.sdk(tap.port);
+    let sharing = SharingRotationClient::new(&stage_session);
+    let staged = checked(
+        sdk_once(&tap, || {
+            rt.block_on(sharing.stage_attachment(
+                &expected_rotation,
+                &checked(
+                    serde_json::from_value(stage_body.clone()),
+                    "SDK stage request",
+                ),
+                &attach_context(&a, &item, &files[0].id, files[0].version + 1, 2),
+            ))
+        }),
+        "SDK real first stage",
+    );
+    check(
+        staged.attachment_version == files[0].version + 1 && state_hash(db, false) == before_live,
+        "SDK first stage writes future cipher without changing live rows",
+    );
     send(p, &a, "PUT", &stage_path, &stage_body, 200);
     replay(db, p, &a, "PUT", &stage_path, &stage_body);
     let mut different = stage_body.clone();
@@ -676,6 +1194,42 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         2,
     );
     reject(db, p, &a, "PUT", &stage_path, &different, 409);
+    let staged_before = state_hash(db, true);
+    let stage_request: RotationAttachmentRequest = checked(
+        serde_json::from_value(stage_body.clone()),
+        "SDK saved exact stage",
+    );
+    let staged_again = checked(
+        sdk_once(&tap, || {
+            rt.block_on(sharing.stage_attachment(
+                &expected_rotation,
+                &stage_request,
+                &attach_context(&a, &item, &files[0].id, files[0].version + 1, 2),
+            ))
+        }),
+        "SDK exact stage retry",
+    );
+    check(
+        staged_again == staged && state_hash(db, true) == staged_before,
+        "SDK exact stage retry preserves all stages/xmin",
+    );
+    let different_request = checked(
+        serde_json::from_value(different.clone()),
+        "SDK changed stage request",
+    );
+    let rejected = sdk_once(&tap, || {
+        rt.block_on(sharing.stage_attachment(
+            &expected_rotation,
+            &different_request,
+            &attach_context(&a, &item, &files[0].id, files[0].version + 1, 2),
+        ))
+    });
+    check(
+        rejected.err().is_some_and(|e| e.status() == Some(409))
+            && state_hash(db, true) == staged_before,
+        "SDK changed stage conflict is surfaced once and preserves all rows",
+    );
+    drop(tap);
     let status = send(p, &a, "GET", &rotation, &Value::Null, 200);
     check(
         status["attachmentCount"] == 1,
@@ -875,6 +1429,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         file.version += 1;
         file.sealed = sealed;
     }
+    sdk_reads(db, p, &rt, &a, &new, &item, &next_dto, item_v, &files, 2);
     let member_key = own_grant(&rt, &c.sdk(p), &a, &c, 2);
     for file in &files {
         let cipher = get_file(db, p, &a, &item, file, &new, 2);
@@ -1048,7 +1603,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         )) == "accepted",
         "unrelated invitation retained",
     );
-    println!("encrypted attachment acceptance: {} measured HTTP/Core/PG assertions passed; 101-entry pagination; all-name/all-byte comparisons; no skipped cases",CHECKS.load(Ordering::Relaxed));
+    println!("encrypted attachment acceptance: {} measured HTTP/SDK/Core/PG assertions passed; {} observed real SDK requests; 101-entry pagination; all-field/all-name/all-byte comparisons; no skipped cases",CHECKS.load(Ordering::Relaxed),SDK_REQUESTS.load(Ordering::Relaxed));
 }
 
 fn waiting_attachment_session(db: &Database, p: u16, a: &Account, endpoint: &str, request: &Value) {
@@ -1160,6 +1715,96 @@ fn waiting_auth(db: &Database, p: u16, a: &Account, b: &Account, rotation: &str)
         );
         if credentials_changed {
             db.sql("UPDATE users u SET password_hash=r.password_hash FROM passshare1163_attach_credential_restore r WHERE u.id=r.id; DROP TABLE passshare1163_attach_credential_restore");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sdk_tap_forwards_fragmented_request_bytes_and_observes_lost_reply() {
+        let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+        let tap = SdkTap::start(upstream.local_addr().unwrap().port());
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = upstream.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut header = Vec::new();
+                while !header.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    header.push(byte[0]);
+                }
+                let mut bytes = [0; 3];
+                stream.read_exact(&mut bytes).unwrap();
+                assert!(bytes == [0, 255, 17]);
+                assert!(header.starts_with(b"PUT /probe HTTP/1.1\r\n"));
+                assert!(header.ends_with(b"Connection: close\r\n\r\n"));
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc",
+                    )
+                    .unwrap();
+            }
+        });
+        for lost in [false, true] {
+            tap.lose_reply.store(lost, Ordering::SeqCst);
+            let mut stream = TcpStream::connect(("127.0.0.1", tap.port)).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream.write_all(b"P").unwrap();
+            // Deliberate fragmentation exposes inherited Windows nonblocking
+            // sockets; this delay injects the defect rather than asserting timing.
+            thread::sleep(Duration::from_millis(30));
+            stream
+                .write_all(b"UT /probe HTTP/1.1\r\nContent-Length: 3\r\n\r\n")
+                .unwrap();
+            thread::sleep(Duration::from_millis(30));
+            stream.write_all(&[0, 255, 17]).unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).unwrap();
+            assert!(if lost {
+                response.is_empty()
+            } else {
+                response.ends_with(b"\r\n\r\nabc")
+            });
+        }
+        server.join().unwrap();
+        assert_eq!(tap.count(), 2);
+    }
+
+    #[test]
+    fn independent_attachment_context_binds_every_field_and_arbitrary_plaintext() {
+        let key = PasswordBoxKey::generate().unwrap();
+        let original: AttachmentContext = serde_json::from_value(json!({
+            "passwordBoxId":ConnectId::generate().unwrap(), "itemId":ConnectId::generate().unwrap(),
+            "attachmentId":ConnectId::generate().unwrap(), "attachmentVersion":7, "keyEpoch":3
+        }))
+        .unwrap();
+        let bytes: Vec<u8> = (0..=255).chain((0..=255).rev()).collect();
+        let plain = AttachmentPlaintext::new("任意\0éЖ🦀\n.bin".to_owned(), bytes.clone()).unwrap();
+        let sealed = key.encrypt_attachment(&plain, &original).unwrap();
+        let opened = key.decrypt_attachment(&sealed, &original).unwrap();
+        assert!(opened.name() == plain.name() && opened.content() == bytes);
+        for (field, replacement) in [
+            ("passwordBoxId", json!(ConnectId::generate().unwrap())),
+            ("itemId", json!(ConnectId::generate().unwrap())),
+            ("attachmentId", json!(ConnectId::generate().unwrap())),
+            ("attachmentVersion", json!(8)),
+            ("keyEpoch", json!(4)),
+        ] {
+            let mut changed = json!(original);
+            changed[field] = replacement;
+            let independent = serde_json::from_value(changed).unwrap();
+            assert!(
+                key.decrypt_attachment(&sealed, &independent).is_err(),
+                "independent {field} must bind"
+            );
         }
     }
 }
