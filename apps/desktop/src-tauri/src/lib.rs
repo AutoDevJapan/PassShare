@@ -1,6 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,7 @@ use passshare_core::{
 };
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
+use zeroize::Zeroizing;
 
 #[path = "../../../../shared/native-lock.rs"]
 mod native_lock;
@@ -22,6 +24,10 @@ use native_lock::NativeLock;
 
 struct AppState {
     data: Mutex<BoxSession>,
+    cancellation: AtomicU64,
+    recovery_active: AtomicBool,
+    recovery_session_ticket: AtomicU64,
+    foreground: AtomicBool,
 }
 
 #[derive(Clone, Serialize)]
@@ -33,6 +39,7 @@ struct NativeStatus {
 #[derive(Default)]
 struct BoxSession {
     password_box: Option<PasswordBox>,
+    box_path: Option<PathBuf>,
     session: NativeLock,
 }
 
@@ -80,6 +87,8 @@ impl AppState {
     }
 
     fn lock(&self) -> Result<(), String> {
+        // Invalidate work before waiting for an atomic Core save's mutex.
+        self.cancellation.fetch_add(1, Ordering::SeqCst);
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         data.session.lock();
         data.check_and_wipe(Instant::now());
@@ -111,14 +120,145 @@ impl AppState {
             .begin_unlock())
     }
 
-    fn finish_unlock(&self, epoch: u64, mut pb: PasswordBox) -> Result<(), String> {
+    fn finish_unlock(&self, epoch: u64, mut pb: PasswordBox, path: PathBuf) -> Result<(), String> {
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         if !data.session.unlock(epoch, Instant::now()) {
             pb.lock();
             return Err(PassShareError::BoxLocked.to_string());
         }
         data.password_box = Some(pb);
+        data.box_path = Some(path);
         Ok(())
+    }
+
+    fn recover_and_save(
+        &self,
+        epoch: u64,
+        ticket: u64,
+        path: PathBuf,
+        code: Zeroizing<String>,
+        new_password: Zeroizing<String>,
+        confirmation: Zeroizing<String>,
+    ) -> Result<(), String> {
+        if new_password.is_empty() {
+            return Err(PassShareError::PasswordRequired.to_string());
+        }
+        if *new_password != *confirmation {
+            return Err("recovery.passwordMismatch".into());
+        }
+        let cancellation = ticket;
+        self.require_recovery_foreground()?;
+        if self.cancellation.load(Ordering::SeqCst) != cancellation {
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        let recovered = PasswordBox::recover(&path, &code).map_err(map_error)?;
+        self.commit_recovery(epoch, cancellation, path, recovered, &new_password)
+    }
+
+    fn commit_recovery(
+        &self,
+        epoch: u64,
+        cancellation: u64,
+        path: PathBuf,
+        mut recovered: PasswordBox,
+        new_password: &str,
+    ) -> Result<(), String> {
+        let mut data = self.data.lock().map_err(|_| "内部エラー")?;
+        data.check_and_wipe(Instant::now());
+        if data.session.epoch() != epoch || self.cancellation.load(Ordering::SeqCst) != cancellation
+        {
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        // Read-only recovery never becomes visible. Core publishes its rekey
+        // only after its fingerprint check and atomic replacement succeed.
+        recovered.rekey_recovered(new_password).map_err(map_error)?;
+        data.check_and_wipe(Instant::now());
+        if self.cancellation.load(Ordering::SeqCst) != cancellation
+            || !data.session.unlock(epoch, Instant::now())
+        {
+            recovered.lock();
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        data.password_box = Some(recovered);
+        data.box_path = Some(path);
+        Ok(())
+    }
+
+    fn enable_local_recovery(
+        &self,
+        epoch: u64,
+        ticket: u64,
+        password: Zeroizing<String>,
+    ) -> Result<String, String> {
+        let cancellation = ticket;
+        self.require_recovery_foreground()?;
+        let mut data = self.access()?;
+        if data.session.epoch() != epoch || self.cancellation.load(Ordering::SeqCst) != cancellation
+        {
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        let pb = data
+            .password_box
+            .as_mut()
+            .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+        let code = pb.enable_recovery(&password).map_err(map_error)?;
+        if !data.check_and_wipe(Instant::now())
+            || self.cancellation.load(Ordering::SeqCst) != cancellation
+        {
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        Ok(code.to_string())
+    }
+
+    fn require_recovery_foreground(&self) -> Result<(), String> {
+        if !self.recovery_active.load(Ordering::SeqCst) || !self.foreground.load(Ordering::SeqCst) {
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        Ok(())
+    }
+
+    fn recovery_background(&self) -> Result<(), String> {
+        self.foreground.store(false, Ordering::SeqCst);
+        if self.recovery_active.load(Ordering::SeqCst) {
+            self.lock()?;
+        }
+        Ok(())
+    }
+
+    fn begin_recovery_session(&self) -> Result<LocalRecoverySession, String> {
+        let ticket = self
+            .cancellation
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1);
+        self.recovery_session_ticket.store(ticket, Ordering::SeqCst);
+        self.recovery_active.store(true, Ordering::SeqCst);
+        if !self.foreground.load(Ordering::SeqCst) {
+            self.recovery_active.store(false, Ordering::SeqCst);
+            self.lock()?;
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        Ok(LocalRecoverySession {
+            epoch: self.status()?.epoch,
+            ticket,
+        })
+    }
+
+    fn end_recovery_session(
+        &self,
+        ticket: Option<u64>,
+        lock_on_cancel: bool,
+    ) -> Result<bool, String> {
+        if !self.recovery_active.load(Ordering::SeqCst)
+            || ticket != Some(self.recovery_session_ticket.load(Ordering::SeqCst))
+        {
+            return Ok(false);
+        }
+        self.recovery_active.store(false, Ordering::SeqCst);
+        self.cancellation.fetch_add(1, Ordering::SeqCst);
+        if lock_on_cancel {
+            self.lock()?;
+        }
+        Ok(lock_on_cancel)
     }
 }
 #[derive(Serialize)]
@@ -310,12 +450,16 @@ fn create_password_box(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
+    let master_password = Zeroizing::new(master_password);
     let epoch = state.begin_unlock()?;
     let path = PathBuf::from(path);
     let pb = PasswordBox::create(&path, &master_password).map_err(map_error)?;
-    let recovery = pb.recovery_secret().map_err(map_error)?.map(String::from);
-    state.finish_unlock(epoch, pb)?;
-    Ok(recovery)
+    let recovery = pb
+        .recovery_secret()
+        .map_err(map_error)?
+        .map(|code| Zeroizing::new(code.to_string()));
+    state.finish_unlock(epoch, pb, path)?;
+    Ok(recovery.map(|code| code.to_string()))
 }
 
 #[tauri::command]
@@ -324,11 +468,162 @@ fn open_password_box(
     master_password: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let master_password = Zeroizing::new(master_password);
     let epoch = state.begin_unlock()?;
     let path = PathBuf::from(path);
     let pb = PasswordBox::open(&path, &master_password).map_err(map_error)?;
-    state.finish_unlock(epoch, pb)?;
+    state.finish_unlock(epoch, pb, path)?;
     Ok(())
+}
+
+#[tauri::command]
+async fn recover_password_box(
+    path: String,
+    code: String,
+    new_password: String,
+    confirmation: String,
+    epoch: u64,
+    ticket: u64,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let code = Zeroizing::new(code);
+    let new_password = Zeroizing::new(new_password);
+    let confirmation = Zeroizing::new(confirmation);
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().recover_and_save(
+            epoch,
+            ticket,
+            PathBuf::from(path),
+            code,
+            new_password,
+            confirmation,
+        )
+    })
+    .await
+    .map_err(|_| "内部エラー".to_string())?
+}
+
+#[tauri::command]
+async fn enable_password_box_recovery(
+    current_password: String,
+    epoch: u64,
+    ticket: u64,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let password = Zeroizing::new(current_password);
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .enable_local_recovery(epoch, ticket, password)
+    })
+    .await
+    .map_err(|_| "内部エラー".to_string())?
+}
+
+#[derive(Serialize)]
+struct LocalRecoveryInfo {
+    name: String,
+    path: String,
+    epoch: u64,
+}
+
+#[tauri::command]
+fn local_recovery_info(state: State<'_, AppState>) -> Result<LocalRecoveryInfo, String> {
+    let data = state.access()?;
+    let pb = data
+        .password_box
+        .as_ref()
+        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
+    Ok(LocalRecoveryInfo {
+        name: pb.vault().map_err(map_error)?.name.clone(),
+        path: data
+            .box_path
+            .as_ref()
+            .ok_or("内部エラー")?
+            .to_string_lossy()
+            .into_owned(),
+        epoch: data.session.epoch(),
+    })
+}
+
+#[derive(Serialize)]
+struct LocalRecoverySession {
+    epoch: u64,
+    ticket: u64,
+}
+
+#[tauri::command]
+fn local_recovery_session(
+    active: bool,
+    ticket: Option<u64>,
+    lock_on_cancel: bool,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<LocalRecoverySession, String> {
+    if active {
+        return state.begin_recovery_session();
+    }
+    if state.end_recovery_session(ticket, lock_on_cancel)? {
+        if let Ok(status) = state.status() {
+            let _ = app.emit("passshare-locked", status);
+        }
+    }
+    Ok(LocalRecoverySession {
+        epoch: state.status()?.epoch,
+        ticket: state.cancellation.load(Ordering::SeqCst),
+    })
+}
+
+#[derive(Serialize)]
+struct BoxDirectory {
+    directory: String,
+    parent: Option<String>,
+    entries: Vec<BoxDirectoryEntry>,
+}
+#[derive(Serialize)]
+struct BoxDirectoryEntry {
+    name: String,
+    path: String,
+    directory: bool,
+}
+
+#[tauri::command]
+fn browse_password_box_directory(directory: Option<String>) -> Result<BoxDirectory, String> {
+    let directory = match directory {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir().map_err(|_| "recovery.browseFailed")?,
+    }
+    .canonicalize()
+    .map_err(|_| "recovery.browseFailed")?;
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&directory).map_err(|_| "recovery.browseFailed")? {
+        let entry = entry.map_err(|_| "recovery.browseFailed")?;
+        let kind = entry.file_type().map_err(|_| "recovery.browseFailed")?;
+        let path = entry.path();
+        if kind.is_dir()
+            || (kind.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pbox")))
+        {
+            entries.push(BoxDirectoryEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                directory: kind.is_dir(),
+            });
+        }
+    }
+    entries.sort_by(|a, b| {
+        b.directory
+            .cmp(&a.directory)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(BoxDirectory {
+        directory: directory.to_string_lossy().into_owned(),
+        parent: directory
+            .parent()
+            .map(|path| path.to_string_lossy().into_owned()),
+        entries,
+    })
 }
 
 #[tauri::command]
@@ -656,6 +951,25 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             data: Mutex::new(BoxSession::default()),
+            cancellation: AtomicU64::new(0),
+            recovery_active: AtomicBool::new(false),
+            recovery_session_ticket: AtomicU64::new(0),
+            foreground: AtomicBool::new(true),
+        })
+        .on_window_event(|window, event| {
+            let state = window.state::<AppState>();
+            match event {
+                tauri::WindowEvent::Focused(true) => state.foreground.store(true, Ordering::SeqCst),
+                tauri::WindowEvent::Focused(false) => {
+                    let _ = state.recovery_background();
+                    if state.recovery_active.load(Ordering::SeqCst) {
+                        if let Ok(status) = state.status() {
+                            let _ = window.emit("passshare-locked", status);
+                        }
+                    }
+                }
+                _ => {}
+            }
         })
         .setup(|app| {
             let handle = app.handle().clone();
@@ -674,6 +988,11 @@ pub fn run() {
             get_state,
             create_password_box,
             open_password_box,
+            recover_password_box,
+            enable_password_box_recovery,
+            local_recovery_info,
+            local_recovery_session,
+            browse_password_box_directory,
             list_items,
             search_items,
             add_item,
@@ -698,6 +1017,495 @@ mod smoke_tests {
     use passshare_core::domain::item::ItemCategory;
     use std::path::PathBuf;
 
+    fn recovery_state() -> AppState {
+        AppState {
+            data: Mutex::new(BoxSession::default()),
+            cancellation: AtomicU64::new(0),
+            recovery_active: AtomicBool::new(true),
+            recovery_session_ticket: AtomicU64::new(0),
+            foreground: AtomicBool::new(true),
+        }
+    }
+
+    // Synthetic v1 containing complete DTOs, future JSON, attachment and URL
+    // reference metadata. Only public Core constructors and crypto are used.
+    fn legacy_recovery_fixture(path: &std::path::Path, password: &str) -> serde_json::Value {
+        use passshare_core::crypto::{
+            derive_master_key, encrypt, KDF_MEMORY_KIB, KDF_PARALLELISM, KDF_TIME_COST,
+        };
+        use passshare_core::domain::payload::PasswordBoxPayload;
+        use passshare_core::storage::file_format::{KdfParams, PasswordBoxFile, StoredCipher};
+        let box_info = passshare_core::Vault::new("Synthetic recovery fixture").unwrap();
+        let mut payload = PasswordBoxPayload::new(box_info, None);
+        let mut item = Item::new_login(
+            payload.vault.id.clone(),
+            "Synthetic login",
+            "synthetic-only",
+        )
+        .unwrap();
+        item = item
+            .with_optional_fields(
+                Some("https://example.test/".into()),
+                Some("synthetic-user".into()),
+                Some("notes".into()),
+            )
+            .unwrap();
+        item.tags = vec!["日本語".into(), "keep,comma".into()];
+        item.favorite = true;
+        item.last_edited_by = Some("synthetic-editor".into());
+        item.urls.push(ItemUrl {
+            href: "https://example.test/second".into(),
+            label: "second".into(),
+            primary: false,
+            extensions: Default::default(),
+        });
+        payload.items.push(item);
+        payload.sync_vault_item_count();
+        let mut value = serde_json::to_value(payload).unwrap();
+        value["items"][0]["urls"][0]["futureUrl"] = serde_json::json!({"keep": "synthetic-url"});
+        value["items"][0]["fields"][0]["futureField"] = serde_json::json!("synthetic-field");
+        value["items"][0]["files"] = serde_json::json!([{"id": "synthetic-file", "contentPath": "attachments/ref", "size": 42}]);
+        value["items"][0]["vault"]["extraReference"] = serde_json::json!("synthetic-reference");
+        value["futureRoot"] = serde_json::json!({"nested": ["synthetic-future"]});
+        let salt = [1; 16];
+        let key = derive_master_key(password, &salt).unwrap();
+        let bytes = Zeroizing::new(serde_json::to_vec(&value).unwrap());
+        let (ciphertext, nonce) = encrypt(&bytes, &key).unwrap();
+        let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let nonce: String = nonce
+            .chunks_exact(3)
+            .flat_map(|chunk| {
+                [
+                    alphabet[(chunk[0] >> 2) as usize] as char,
+                    alphabet[(((chunk[0] & 3) << 4) | (chunk[1] >> 4)) as usize] as char,
+                    alphabet[(((chunk[1] & 15) << 2) | (chunk[2] >> 6)) as usize] as char,
+                    alphabet[(chunk[2] & 63) as usize] as char,
+                ]
+            })
+            .collect();
+        PasswordBoxFile {
+            version: 1,
+            kdf: KdfParams {
+                algorithm: "argon2id".into(),
+                salt: "AQEBAQEBAQEBAQEBAQEBAQ==".into(),
+                memory_kib: KDF_MEMORY_KIB,
+                time_cost: KDF_TIME_COST,
+                parallelism: KDF_PARALLELISM,
+            },
+            cipher: StoredCipher {
+                algorithm: "xchacha20poly1305".into(),
+                nonce,
+            },
+            ciphertext,
+            recovery: None,
+        }
+        .save_to_path(path)
+        .unwrap();
+        value
+    }
+
+    fn full_recovery_payload(path: &std::path::Path, password: &str) -> serde_json::Value {
+        use passshare_core::crypto::{decrypt, derive_master_key_with_params};
+        use passshare_core::storage::file_format::PasswordBoxFile;
+        let file = PasswordBoxFile::load_from_path(path).unwrap();
+        let key = derive_master_key_with_params(
+            password,
+            &file.kdf.salt_bytes().unwrap(),
+            file.kdf.memory_kib,
+            file.kdf.time_cost,
+            file.kdf.parallelism,
+        )
+        .unwrap();
+        let bytes = Zeroizing::new(
+            decrypt(&file.ciphertext, &key, &file.cipher.nonce_bytes().unwrap()).unwrap(),
+        );
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn smoke_native_recovery_enable_lost_password_rekey_full_dto_roundtrip() {
+        let (dir, path) = temp_box("native-recovery-roundtrip");
+        let old_password = "synthetic-old-only";
+        let new_password = "synthetic-new-only";
+        let original = legacy_recovery_fixture(&path, old_password);
+        let state = recovery_state();
+        state
+            .finish_unlock(
+                0,
+                PasswordBox::open(&path, old_password).unwrap(),
+                path.clone(),
+            )
+            .unwrap();
+        let epoch = state.status().unwrap().epoch;
+        let code = Zeroizing::new(
+            state
+                .enable_local_recovery(epoch, 0, old_password.to_string().into())
+                .unwrap(),
+        );
+        let before = serde_json::to_value(
+            state
+                .access()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .list_connect_items()
+                .unwrap(),
+        )
+        .unwrap();
+        state.lock().unwrap();
+        let epoch = state.begin_unlock().unwrap();
+        let ticket = state.cancellation.load(Ordering::SeqCst);
+        state
+            .recover_and_save(
+                epoch,
+                ticket,
+                path.clone(),
+                code.clone(),
+                new_password.to_string().into(),
+                new_password.to_string().into(),
+            )
+            .unwrap();
+        assert!(state.status().unwrap().unlocked);
+        assert_eq!(state.status().unwrap().epoch, epoch + 1);
+        let reopened = PasswordBox::open(&path, new_password).unwrap();
+        assert_eq!(
+            serde_json::to_value(reopened.list_connect_items().unwrap()).unwrap(),
+            before
+        );
+        assert!(PasswordBox::open(&path, old_password).is_err());
+        let mut after = full_recovery_payload(&path, new_password);
+        after
+            .as_object_mut()
+            .unwrap()
+            .remove("localKeyRecoveryVersion");
+        after.as_object_mut().unwrap().remove("recoverySecret");
+        assert_eq!(after, original);
+        state.lock().unwrap();
+        assert!(state.access().is_err());
+        drop(reopened);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn smoke_native_recovery_invalid_inputs_preserve_original_and_current_state() {
+        let (dir, path) = temp_box("native-recovery-invalid");
+        legacy_recovery_fixture(&path, "synthetic-original-only");
+        let state = recovery_state();
+        state
+            .finish_unlock(
+                0,
+                PasswordBox::open(&path, "synthetic-original-only").unwrap(),
+                path.clone(),
+            )
+            .unwrap();
+        let epoch = state.status().unwrap().epoch;
+        let original = std::fs::read(&path).unwrap();
+        let items = state
+            .access()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .list_connect_items()
+            .unwrap();
+        assert!(state
+            .enable_local_recovery(epoch, 0, "synthetic-wrong-only".to_string().into())
+            .is_err());
+        assert!(state
+            .recover_and_save(
+                epoch,
+                0,
+                path.clone(),
+                "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+                    .to_string()
+                    .into(),
+                "synthetic-new".to_string().into(),
+                "synthetic-new".to_string().into()
+            )
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original); // v1 not enabled
+        let code = Zeroizing::new(
+            state
+                .enable_local_recovery(epoch, 0, "synthetic-original-only".to_string().into())
+                .unwrap(),
+        );
+        let original = std::fs::read(&path).unwrap();
+        for (test_code, password, confirmation) in [
+            (
+                "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+                "synthetic-new",
+                "synthetic-new",
+            ),
+            ("invalid-code-format", "synthetic-new", "synthetic-new"),
+            (code.as_str(), "synthetic-new", "synthetic-mismatch"),
+            (code.as_str(), "", ""),
+        ] {
+            assert!(state
+                .recover_and_save(
+                    epoch,
+                    0,
+                    path.clone(),
+                    test_code.to_string().into(),
+                    password.to_string().into(),
+                    confirmation.to_string().into()
+                )
+                .is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            assert_eq!(state.status().unwrap().epoch, epoch);
+            assert!(state.status().unwrap().unlocked);
+            assert_eq!(
+                state
+                    .access()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .list_connect_items()
+                    .unwrap(),
+                items
+            );
+        }
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn smoke_native_recovery_stale_manual_background_and_cancel_never_publish() {
+        let (dir, path) = temp_box("native-recovery-stale");
+        let pb = PasswordBox::create(&path, "synthetic-old-only").unwrap();
+        let code = Zeroizing::new(pb.recovery_secret().unwrap().unwrap().to_string());
+        let original = std::fs::read(&path).unwrap();
+        drop(pb);
+        for background in [false, true] {
+            let state = recovery_state();
+            let epoch = state.begin_unlock().unwrap();
+            let recovered = PasswordBox::recover(&path, &code).unwrap();
+            if background {
+                state.recovery_background().unwrap();
+            } else {
+                state.lock().unwrap();
+            }
+            assert!(state
+                .commit_recovery(epoch, 0, path.clone(), recovered, "synthetic-new-only")
+                .is_err());
+            assert!(state.access().is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+        let state = recovery_state();
+        // An old queued worker must not borrow a later form's cancellation ticket.
+        state.cancellation.store(2, Ordering::SeqCst);
+        assert!(state
+            .recover_and_save(
+                0,
+                0,
+                path.clone(),
+                code,
+                "synthetic-new-only".to_string().into(),
+                "synthetic-new-only".to_string().into()
+            )
+            .is_err());
+        assert!(state.access().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn smoke_native_recovery_save_failure_preserves_bytes_epoch_and_open_box() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (dir, path) = temp_box("native-recovery-save-failure");
+        let pb = PasswordBox::create(&path, "synthetic-old-only").unwrap();
+        let code = Zeroizing::new(pb.recovery_secret().unwrap().unwrap().to_string());
+        let state = recovery_state();
+        state.finish_unlock(0, pb, path.clone()).unwrap();
+        let epoch = state.status().unwrap().epoch;
+        let original = std::fs::read(&path).unwrap();
+        // Keep reading allowed while denying atomic replacement of this fixture.
+        let pin = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        assert!(state
+            .recover_and_save(
+                epoch,
+                0,
+                path.clone(),
+                code,
+                "synthetic-new-only".to_string().into(),
+                "synthetic-new-only".to_string().into()
+            )
+            .is_err());
+        assert!(state
+            .enable_local_recovery(epoch, 0, "synthetic-old-only".to_string().into())
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(state.status().unwrap().epoch, epoch);
+        assert!(state.status().unwrap().unlocked);
+        assert!(state
+            .access()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .list_connect_items()
+            .is_ok());
+        drop(pin);
+        assert!(PasswordBox::open(&path, "synthetic-old-only").is_ok());
+        assert!(PasswordBox::open(&path, "synthetic-new-only").is_err());
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn smoke_native_enable_stale_source_preserves_current_app_and_external_file() {
+        let (dir, path) = temp_box("native-enable-stale-source");
+        legacy_recovery_fixture(&path, "synthetic-old-only");
+        let state = recovery_state();
+        state
+            .finish_unlock(
+                0,
+                PasswordBox::open(&path, "synthetic-old-only").unwrap(),
+                path.clone(),
+            )
+            .unwrap();
+        let epoch = state.status().unwrap().epoch;
+        let before = state
+            .access()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .list_connect_items()
+            .unwrap();
+        let mut external = PasswordBox::open(&path, "synthetic-old-only").unwrap();
+        add_login(
+            &mut external,
+            "Synthetic external change",
+            "synthetic-only",
+            None,
+            None,
+            &[],
+        );
+        external.save("synthetic-old-only").unwrap();
+        let current_bytes = std::fs::read(&path).unwrap();
+        assert!(state
+            .enable_local_recovery(epoch, 0, "synthetic-old-only".to_string().into())
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), current_bytes);
+        assert_eq!(state.status().unwrap().epoch, epoch);
+        assert_eq!(
+            state
+                .access()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .list_connect_items()
+                .unwrap(),
+            before
+        );
+        drop(external);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn smoke_readonly_recovery_never_saves_and_lock_rejects_secret_reads() {
+        let (dir, path) = temp_box("native-readonly-recovery");
+        let pb = PasswordBox::create(&path, "synthetic-old-only").unwrap();
+        let code = Zeroizing::new(pb.recovery_secret().unwrap().unwrap().to_string());
+        let original = std::fs::read(&path).unwrap();
+        let mut recovered = PasswordBox::recover(&path, &code).unwrap();
+        assert!(recovered.list_connect_items().is_ok());
+        assert!(recovered.save("synthetic-new-only").is_err());
+        assert!(recovered
+            .apply_and_save(
+                SavedChange::ImportCsv("Title,Password\nsynthetic,synthetic-only"),
+                "synthetic-new-only"
+            )
+            .is_err());
+        recovered.lock();
+        assert!(recovered.list_connect_items().is_err());
+        assert!(recovered.recovery_secret().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        drop(recovered);
+        drop(pb);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn smoke_native_recovery_old_form_cleanup_cannot_cancel_new_form() {
+        let state = recovery_state();
+        let old = state.begin_recovery_session().unwrap();
+        let current = state.begin_recovery_session().unwrap();
+        assert!(!state.end_recovery_session(Some(old.ticket), true).unwrap());
+        assert!(state.recovery_active.load(Ordering::SeqCst));
+        assert_eq!(state.cancellation.load(Ordering::SeqCst), current.ticket);
+        assert_eq!(state.status().unwrap().epoch, current.epoch);
+        assert!(state
+            .end_recovery_session(Some(current.ticket), true)
+            .unwrap());
+        assert!(!state.recovery_active.load(Ordering::SeqCst));
+        assert!(state.status().unwrap().epoch > current.epoch);
+        state.foreground.store(false, Ordering::SeqCst);
+        assert!(state.begin_recovery_session().is_err());
+        assert!(!state.recovery_active.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn smoke_native_enable_saved_code_can_be_reobtained_after_background() {
+        let (dir, path) = temp_box("native-enable-code-retry");
+        legacy_recovery_fixture(&path, "synthetic-old-only");
+        let state = recovery_state();
+        state
+            .finish_unlock(
+                0,
+                PasswordBox::open(&path, "synthetic-old-only").unwrap(),
+                path.clone(),
+            )
+            .unwrap();
+        let first = state.begin_recovery_session().unwrap();
+        let code = Zeroizing::new(
+            state
+                .enable_local_recovery(
+                    first.epoch,
+                    first.ticket,
+                    "synthetic-old-only".to_string().into(),
+                )
+                .unwrap(),
+        );
+        // The save completed, but the first code never reaches a visible UI.
+        state.recovery_background().unwrap();
+        assert!(state.access().is_err());
+        assert!(!state
+            .end_recovery_session(Some(first.ticket), false)
+            .unwrap());
+        state.foreground.store(true, Ordering::SeqCst);
+        state
+            .finish_unlock(
+                state.begin_unlock().unwrap(),
+                PasswordBox::open(&path, "synthetic-old-only").unwrap(),
+                path.clone(),
+            )
+            .unwrap();
+        let retry = state.begin_recovery_session().unwrap();
+        let same_code = Zeroizing::new(
+            state
+                .enable_local_recovery(
+                    retry.epoch,
+                    retry.ticket,
+                    "synthetic-old-only".to_string().into(),
+                )
+                .unwrap(),
+        );
+        assert_eq!(*same_code, *code);
+        assert!(PasswordBox::recover(&path, &same_code).is_ok());
+        state
+            .end_recovery_session(Some(retry.ticket), false)
+            .unwrap();
+        assert!(state.status().unwrap().unlocked);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     fn fresh_master_password() -> String {
         PasswordBox::generate_password(PasswordGeneratorOptions {
             length: 32,
@@ -717,8 +1525,13 @@ mod smoke_tests {
         let mut session = NativeLock::default();
         assert!(session.unlock(session.begin_unlock(), start));
         let state = AppState {
+            cancellation: AtomicU64::new(0),
+            recovery_active: AtomicBool::new(false),
+            recovery_session_ticket: AtomicU64::new(0),
+            foreground: AtomicBool::new(true),
             data: Mutex::new(BoxSession {
                 password_box: Some(pb),
+                box_path: Some(path.clone()),
                 session,
             }),
         };
@@ -752,15 +1565,23 @@ mod smoke_tests {
         let (dir, path) = temp_box("pending-open");
         let pb = PasswordBox::create(&path, &master_password).expect("create");
         let state = AppState {
+            cancellation: AtomicU64::new(0),
+            recovery_active: AtomicBool::new(false),
+            recovery_session_ticket: AtomicU64::new(0),
+            foreground: AtomicBool::new(true),
             data: Mutex::new(BoxSession::default()),
         };
         let epoch = state.begin_unlock().expect("begin");
         state.lock().expect("manual lock");
-        assert!(state.finish_unlock(epoch, pb).is_err());
+        assert!(state.finish_unlock(epoch, pb, path.clone()).is_err());
         assert!(state.access().is_err());
         let reopened = PasswordBox::open(&path, &master_password).expect("reopen");
         state
-            .finish_unlock(state.begin_unlock().expect("fresh begin"), reopened)
+            .finish_unlock(
+                state.begin_unlock().expect("fresh begin"),
+                reopened,
+                path.clone(),
+            )
             .expect("fresh open");
         assert!(state.access().is_ok());
         drop(state);
