@@ -1,6 +1,6 @@
 {
-  "sourceCommit": "91f7f45415f5df12e47d699250f10d440a8570c8",
-  "run": 38048434256,
+  "sourceCommit": "af9b719330472f78efd3eecc7f8c6b74190b2f24",
+  "run": 38051988347,
   "buildKind": "github-actions-tested",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
@@ -14,9 +14,9 @@
     "crates/passshare-core/src/migration.rs": "5b8aa4736edda87a8ba78f243af9a18a1a5a2cfa82f38dedf53bd5f65fd81a83",
     "crates/passshare-core/src/lib.rs": "c18ff9e5539495cdcee8eb3f8e49a89edb21961e7dd07e210feeada60082e115",
     "crates/passshare-core/src/password_box.rs": "b367cffc66af8abc781b94593a4518b5f023c326430385b2447b2ceb5c1d2235",
-    "crates/passshare-core/src/crypto.rs": "f2f01d76d0662fb9ca27aa95dd89e2b0055a620845d3eb1b6e94be74a626ff80",
+    "crates/passshare-core/src/crypto.rs": "012e085319f5bb7d9e64e97c8f9c718f0039b2ba4972244b42c846c654d67260",
     "crates/passshare-core/src/storage/mod.rs": "5e73deea4e8723038ad5f1850260bb6b7671820c77b891456467a277453a2727",
-    "crates/passshare-core/src/storage/file_format.rs": "fcb7899ec67d76f390ca70db562dd175154fca29996716475cf471b323a4e3b9",
+    "crates/passshare-core/src/storage/file_format.rs": "490213271a666adbb2d9bb1476651905a804d8f4bdb5b55752dc974bbc687bfe",
     "crates/passshare-core/src/password_box_saved_tests.rs": "fd3f2671df037a9775cd477b3cbc507533c2872b94d13cf1de12250a24b9a84f",
     "crates/passshare-core/src/generator.rs": "fdf09c4c0ee524e2b5c8f1c65674f95a991174a268754337d0e8f96729da04e0",
     "crates/passshare-core/src/export/op_csv.rs": "b12a369e58b03baed7301a23ce1b98021b2058be8b87559d409935b67e0cda4b",
@@ -38,12 +38,12 @@
     "packages/cloud-wasm/src/item_edit.rs": "4373427b6397c1f2d2de8dd69df96419f67c7c7be03eaa3207e0a7bbaf3de97e",
     "backend/native/src/edit.rs": "d8e39b54705e65aa82cab651ca6604e087b9b219bc7c290cce4b8e728e29f89e",
     "packages/cloud-wasm/src/recovery.rs": "50cc8af8b7663dc46cf5cdc667a871df569da9587043853dbd3665dfd4a1e997",
-    "crates/passshare-core/src/password_box_recovery_tests.rs": "03fae103483fbd876cfacef89280908c4b332076318886252ed9c34bbe23a567"
+    "crates/passshare-core/src/password_box_recovery_tests.rs": "505a7f7f682350f19af2ab09aad62de6c4ebd46929a2778c2877b0ad9e9de770"
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
     "passshare_cloud_wasm.js": "c990db62845225f5051f1eb075fb1284167371c3fc42440fe753bf1ad0cb97c0",
-    "passshare_cloud_wasm_bg.wasm": "ccc42f3042568bba5082daa3232e63665d88fda19b9dacd18f581c925f3f1136"
+    "passshare_cloud_wasm_bg.wasm": "10f6edf3c668fc84550144001ec149a9f3f1a1af7f54d7efc2fe271a204fbe41"
   },
   "artifact": "passshare-cloud-wasm"
 }
