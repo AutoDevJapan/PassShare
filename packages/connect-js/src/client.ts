@@ -1,7 +1,9 @@
 import type { ConnectClientOptions, Item, ItemOverview, JsonPatchOperation, Vault } from "./types.js";
 
 function normalizeBaseUrl(host: string): string {
-  const trimmed = host.replace(/\/+$/, "");
+  let end = host.length;
+  while (end > 0 && host.charCodeAt(end - 1) === 47) end -= 1;
+  const trimmed = host.slice(0, end);
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 

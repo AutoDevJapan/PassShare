@@ -41,7 +41,7 @@
 | パス | 種別 | 挙動 |
 |------|------|------|
 | `/health` | liveness | DB 非依存で常に 200。Railway の `healthcheckPath`（`backend/railway.toml`）に設定。 |
-| `/health/db` | readiness | `SELECT 1` を実行し、DB 到達可否で 200 / 503 を返す。 |
+| `/health/db` | readiness | `SELECT 1` を実行し、DB 到達可否で 200 / 503 を返す。IP ごとに60秒で60件まで受け付け、超過時は問い合わせ前に429。 |
 
 ### 事象と根本原因
 
@@ -250,10 +250,14 @@ PassShare (project)
 | `VERCEL_TEAM_SLUG` | Vercel スコープ（チーム/ユーザ）スラッグ（例 `masashi-matsumotos-projects-c5830f3d`）。**preview backend にのみ設定**。ブランチ名が長く Vercel がプレビュー URL のプロジェクト prefix を切り詰めた場合（例 `pass-share-fron-git-<hash>-<slug>.vercel.app`）でも当該 origin を CORS 許可する。スラッグ suffix は自スコープ専有のため任意の `*.vercel.app` は信頼せず #315 の境界を維持（[#358](https://github.com/AutoDevJapan/PassShare/issues/358)）。prd では未設定 |
 | `OP_CONNECT_TOKEN` | Connect API Bearer トークン（`/v1/*` 必須） |
 | `TRUST_PROXY_HOPS` | 信頼するフロントプロキシのホップ数（`req.ip` 算出用）。省略時は `local`=0 / それ以外=1（Railway エッジ 1 段）。生の `X-Forwarded-For` は信頼せず per-IP スロットルのバイパスを防ぐ（[#316](https://github.com/AutoDevJapan/PassShare/issues/316)）。プロキシ段数変更時のみ設定 |
-| `DATABASE_CA_CERT` | DB 接続の TLS 検証に用いる CA 証明書（PEM 文字列）。設定時は `rejectUnauthorized: true` でサーバ証明書を検証。`*.railway.internal`（私設ネットワーク）接続では TLS 不要のため無視。公開/プロキシホスト（`railway.app` / `rlwy.net` / `sslmode=require` 等）は既定で証明書検証必須（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
+| `DATABASE_CA_CERT` | DB 接続の TLS 検証に用いる CA 証明書（PEM 文字列）。設定時は `rejectUnauthorized: true` でサーバ証明書を検証。標準 URL のホスト名が `*.railway.internal`（私設ネットワーク）の場合だけ TLS 不要のため無視。TLS 指定のないループバック接続（`localhost` / `127.0.0.1` / `[::1]`）も TLS 不要。それ以外のホストは Railway の公開/プロキシを含め証明書検証必須。URL の `sslmode=disable` 等ではこの方針を変更できない（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
 | `DATABASE_SSL_ALLOW_INSECURE` | `true` の時のみ公開ホストの TLS 証明書検証を無効化する明示的オプトアウト（MITM リスクあり・非推奨）。既定は検証有効（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
 | `METRICS_TOKEN` | `/metrics`（RSS/uptime 等の内部情報）の認証トークン。設定時は `Authorization: Bearer <token>` 必須で、不一致は 404。未設定時は `local` 以外のデプロイ環境で `/metrics` を無効化（404）し無認証の情報漏洩を防ぐ（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
 | `PORT` | Railway が自動設定（省略可） |
+
+DB の接続先は URL のホスト名で判定する。パスワード・パス・クエリ内のドメイン文字列や、`postgres.railway.internal.evil.example` は私設ネットワークとして扱わない。クエリでの `host` 上書きと不正な `sslmode` は、入力を含まない設定エラーで拒否する。`sslmode` が複数ある場合は pg と同じく最後の値を採用する。Pool に渡す URL から `ssl` / `sslmode` / `sslcert` / `sslkey` / `sslrootcert` / `uselibpqcompat` / `sslnegotiation` を除き、pg による TLS 設定の上書きや証明書ファイルの読み込みを防ぐ。CA は `DATABASE_CA_CERT` に設定する。URL の証明書ファイル指定は使用しない。`sslnegotiation=direct` は TLS 接続に限り Pool の独立した設定として渡し、CA と検証設定を維持する。私設ネットワークと TLS 指定のないループバック接続では Pool の `ssl: false` と通常の接続方式を明示し、`PGSSLMODE` / `PGSSLNEGOTIATION` で接続方針を上書きできない。ただし `sslnegotiation` / `PGSSLNEGOTIATION` の不正な方式名は、TLS不要の場合も起動時に設定エラーで拒否する。
+
+`/health/db` と認証成功後の `/metrics` は、それぞれクライアント IP ごと・プロセスごとに60秒で60件まで受け付ける。監視は各経路で1秒に1回以下を目安とし、同じ IP を使う監視元が複数ある場合は合計を調整する。超過時は DB 問い合わせの前に429を返し、`Retry-After` と `RateLimit-*` を付ける。両経路の枠は独立し、再起動・レプリカ間では共有しない。IP は既存の `TRUST_PROXY_HOPS` 方針で求める。`/metrics` の認証失敗は引き続き404となり監視の枠を消費しない。DB に問い合わせない `/health` はこの制限の対象外。
 
 ## セットアップ手順
 

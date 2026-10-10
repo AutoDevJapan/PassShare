@@ -1,8 +1,9 @@
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
 import { createLoginGuardStore } from "./auth/login-guard-store.js";
-import { resolveDbSslConfig } from "./config/db-ssl.js";
+import { resolveDbPoolConfig } from "./config/db-ssl.js";
 import { createRequireMetricsAuth } from "./config/metrics-auth.js";
 import { resolveTrustProxyHops } from "./config/trust-proxy.js";
 import { createConnectRouter } from "./connect/router.js";
@@ -70,10 +71,7 @@ export async function createApp(options = {}) {
   const pool =
     (options.pool !== undefined ? options.pool :
     (databaseUrl
-      ? new Pool({
-          connectionString: databaseUrl,
-          ssl: resolveDbSslConfig(databaseUrl),
-        })
+      ? new Pool(resolveDbPoolConfig(databaseUrl))
       : null));
 
   // Warm the connection early so the first post-cold-start request is served by
@@ -104,7 +102,12 @@ export async function createApp(options = {}) {
     });
   });
 
-  app.get("/health/db", async (_req, res) => {
+  // Separate per-IP budgets allow one probe per second for each monitoring
+  // endpoint. Use the same trusted proxy policy as the authentication routes.
+  const probeLimitOptions = { windowMs: 60_000, limit: 60,
+    standardHeaders: "draft-6", legacyHeaders: false,
+    message: { status: "rate_limited" } };
+  app.get("/health/db", rateLimit(probeLimitOptions), async (_req, res) => {
     if (!pool) {
       res.status(503).json({
         status: "error",
@@ -133,7 +136,7 @@ export async function createApp(options = {}) {
     }
   });
 
-  app.get("/metrics", createRequireMetricsAuth(appEnv), async (_req, res) => {
+  app.get("/metrics", createRequireMetricsAuth(appEnv), rateLimit(probeLimitOptions), async (_req, res) => {
     const metrics = {
       service: "pass-share-backend",
       environment: appEnv,

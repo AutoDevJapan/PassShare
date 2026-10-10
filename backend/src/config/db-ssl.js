@@ -1,56 +1,83 @@
+/** Parse once at the configuration boundary; never include the URL in errors. */
+function parseDatabaseUrl(databaseUrl) {
+  try {
+    const url = new URL(databaseUrl);
+    if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname ||
+        url.searchParams.has("host")) {
+      throw new Error("Invalid database URL");
+    }
+    // pg decodes the hostname and accepts a query host override. Reject that
+    // override so the authority validated here is also the host pg consumes.
+    const hostname = decodeURIComponent(url.hostname).toLowerCase();
+    url.hostname = hostname;
+    const modes = url.searchParams.getAll("sslmode");
+    if (modes.some((mode) => !["disable", "allow", "prefer", "require", "verify-ca",
+      "verify-full", "no-verify"].includes(mode))) {
+      throw new Error("Invalid database URL");
+    }
+    // pg consumes the last value when a query key is repeated.
+    const sslmode = modes.at(-1) ?? null;
+    return { url, hostname, sslmode };
+  } catch {
+    throw new Error("Invalid database URL configuration");
+  }
+}
+
+function resolveParsedSsl({ hostname, sslmode, url }, env) {
+  // A terminal DNS dot denotes the same host; pg still consumes the original
+  // hostname for connection and certificate identity checking.
+  const host = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
+  if (host.endsWith(".railway.internal")) return undefined;
+
+  const ca = env.DATABASE_CA_CERT?.trim();
+  if (ca) return { ca, rejectUnauthorized: true };
+
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(host);
+  const requestsTls = (sslmode !== null && sslmode !== "disable" && sslmode !== "allow") ||
+    ["true", "1", "no-verify"].includes(url.searchParams.get("ssl")) ||
+    ["sslcert", "sslkey", "sslrootcert"].some((key) => Boolean(url.searchParams.get(key))) ||
+    url.searchParams.get("sslnegotiation") === "direct";
+  if (local && !requestsTls) return undefined;
+
+  // Every host outside the trusted VPC/loopback boundary uses verified TLS,
+  // including hosts unrelated to Railway and URLs requesting sslmode=disable.
+  return { rejectUnauthorized: env.DATABASE_SSL_ALLOW_INSECURE !== "true" };
+}
+
 /**
- * Resolve the `pg` Pool `ssl` option for a given database connection string.
- *
- * All PassShare secrets are transported over this connection, so the server
- * certificate MUST be verified whenever the traffic leaves a trusted network.
- * The previous behaviour disabled verification unconditionally for any
- * `railway.app` host (`rejectUnauthorized: false`), which allowed a
- * man-in-the-middle to impersonate the database. This helper makes verification
- * the secure default and only relaxes it when an operator explicitly opts in.
- *
- * Resolution order:
- * 1. No URL → `undefined` (no pool, nothing to configure).
- * 2. Railway private network (`*.railway.internal`) → `undefined`. This traffic
- *    never leaves Railway's internal VPC, so TLS is neither required nor offered
- *    by the managed Postgres endpoint. This is the path the backend runtime uses.
- * 3. A pinned CA is provided via `DATABASE_CA_CERT` (PEM contents) → verify the
- *    server certificate against that CA (`rejectUnauthorized: true`).
- * 4. A public / proxied host (`railway.app`, `rlwy.net`) or an explicit
- *    `sslmode=require|verify-ca|verify-full` in the URL → require TLS with
- *    certificate verification. Verification is only disabled when
- *    `DATABASE_SSL_ALLOW_INSECURE === "true"` is set as a deliberate escape hatch.
- * 5. Anything else (e.g. a local Postgres) → `undefined` (no TLS).
- *
+ * Resolve TLS policy: Railway VPC -> no TLS; pinned CA -> verified TLS;
+ * loopback without a TLS request -> no TLS; all other hosts -> verified TLS.
+ * Only the exact DATABASE_SSL_ALLOW_INSECURE=true opt-out disables verification,
+ * and it never overrides a pinned CA. URL TLS settings cannot weaken the policy.
  * @param {string | null | undefined} databaseUrl
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {import('pg').ConnectionOptions['ssl']}
  */
 export function resolveDbSslConfig(databaseUrl, env = process.env) {
-  if (!databaseUrl) {
-    return undefined;
+  if (!databaseUrl) return undefined;
+  return resolveParsedSsl(parseDatabaseUrl(databaseUrl), env);
+}
+
+/**
+ * Build the actual Pool configuration. pg parses connectionString after the
+ * explicit options and can replace ssl (including a pinned CA), or read files
+ * named by sslcert/sslkey/sslrootcert. Remove these query options before pg sees
+ * them; DATABASE_CA_CERT is the supported CA source for this application.
+ * @param {string} databaseUrl
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {import('pg').PoolConfig}
+ */
+export function resolveDbPoolConfig(databaseUrl, env = process.env) {
+  const parsed = parseDatabaseUrl(databaseUrl);
+  const ssl = resolveParsedSsl(parsed, env);
+  const negotiation = parsed.url.searchParams.getAll("sslnegotiation").at(-1) ?? env.PGSSLNEGOTIATION ?? "postgres";
+  if (!["postgres", "direct"].includes(negotiation)) throw new Error("Invalid database URL configuration");
+  for (const key of ["ssl", "sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "sslnegotiation"]) {
+    parsed.url.searchParams.delete(key);
   }
-
-  // Railway private networking terminates inside the VPC; no TLS is presented.
-  if (databaseUrl.includes(".railway.internal")) {
-    return undefined;
-  }
-
-  const ca = env.DATABASE_CA_CERT?.trim();
-  if (ca) {
-    return { ca, rejectUnauthorized: true };
-  }
-
-  const requiresTls =
-    databaseUrl.includes("railway.app") ||
-    databaseUrl.includes("rlwy.net") ||
-    /[?&]sslmode=(require|verify-ca|verify-full)\b/.test(databaseUrl);
-
-  if (!requiresTls) {
-    return undefined;
-  }
-
-  // Secure by default: verify the server certificate. Skipping verification is a
-  // MITM risk and must be an explicit, auditable operator decision.
-  const allowInsecure = env.DATABASE_SSL_ALLOW_INSECURE === "true";
-  return { rejectUnauthorized: !allowInsecure };
+  // Keep direct TLS negotiation outside connectionString: pg otherwise creates
+  // ssl=true while parsing it, replacing the pinned CA / verification policy.
+  // Explicit values also keep PGSSLMODE/PGSSLNEGOTIATION off the no-TLS paths.
+  return { connectionString: parsed.url.toString(), ssl: ssl ?? false,
+    sslnegotiation: ssl ? negotiation : "postgres" };
 }

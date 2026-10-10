@@ -31,8 +31,19 @@ function extractBearerToken(req) {
   if (typeof header !== "string") {
     return null;
   }
-  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  return match ? match[1] : null;
+  const trimmed = header.trim();
+  if (trimmed.slice(0, 6).toLowerCase() !== "bearer") return null;
+  let start = 6;
+  // Match the former \s separator, greedily, without overlapping repetitions.
+  while (start < trimmed.length && trimmed[start].trim() === "") start += 1;
+  if (start === 6 || start === trimmed.length) return null;
+  const token = trimmed.slice(start);
+  // The former dot capture rejected line terminators inside the token.
+  for (let i = 0; i < token.length; i += 1) {
+    const code = token.charCodeAt(i);
+    if (code === 10 || code === 13 || code === 0x2028 || code === 0x2029) return null;
+  }
+  return token;
 }
 
 /**
