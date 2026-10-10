@@ -122,6 +122,18 @@ export class CloudPasswordBox {
         wasm.__wbg_cloudpasswordbox_free(ptr, 0);
     }
     /**
+     * Returns a one-time client-only transfer object. Split the code from the
+     * sealed bundle before saving; do not send this object to any server.
+     * @returns {any}
+     */
+    create_recovery_material() {
+        const ret = wasm.cloudpasswordbox_create_recovery_material(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * @param {string} envelope
      * @param {string} expected_context
      * @returns {any}
@@ -187,6 +199,25 @@ export class CloudPasswordBox {
         this.__wbg_ptr = ret[0];
         CloudPasswordBoxFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * @param {string} bundle
+     * @param {string} recovery_code
+     * @param {string} expected_owner
+     * @returns {CloudPasswordBox}
+     */
+    static recover(bundle, recovery_code, expected_owner) {
+        const ptr0 = passStringToWasm0(bundle, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(recovery_code, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(expected_owner, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.cloudpasswordbox_recover(ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return CloudPasswordBox.__wrap(ret[0]);
     }
     /**
      * @param {string} bundle

@@ -34,6 +34,60 @@ extern "C" {
 }
 
 #[wasm_bindgen_test]
+fn exported_offline_recovery_keeps_the_key_and_rejects_wrong_live_scope() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use passshare_core::crypto::MasterKey;
+    use zeroize::Zeroizing;
+    let owner = json!({"passwordBoxId":"aaaaaaaaaaaaaaaaaaaaaaaaaa","ownerAccountId":"11111111-1111-4111-8111-111111111111","keyEpoch":1});
+    let context = json!({"passwordBoxId":"aaaaaaaaaaaaaaaaaaaaaaaaaa","itemId":"bbbbbbbbbbbbbbbbbbbbbbbbbb","itemVersion":1,"keyEpoch":1});
+    let item = json!({"id":"bbbbbbbbbbbbbbbbbbbbbbbbbb","version":1,"vault":{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaa"},"fields":[],"extra":{"keep":[1,2,3]},"urls":[{"href":"https://example.invalid/one"},{"href":"https://example.invalid/two"}]});
+    let mut key = CloudPasswordBox::new(&owner.to_string()).unwrap();
+    let envelope = key
+        .encrypt_item(item.to_string(), &context.to_string())
+        .unwrap();
+    let material = Zeroizing::new(key.create_recovery_material().unwrap().as_string().unwrap());
+    let mut transfer: Value = serde_json::from_str(&material).unwrap();
+    let code = Zeroizing::new(transfer["recoveryCode"].as_str().unwrap().to_owned());
+    // The transfer is test-only; do not retain its extra plaintext copy.
+    if let Value::String(text) = &mut transfer["recoveryCode"] {
+        use zeroize::Zeroize;
+        text.zeroize();
+    }
+    let bundle = transfer["bundle"].to_string();
+    key.lock();
+    assert!(key.create_recovery_material().is_err());
+    let mut restored =
+        CloudPasswordBox::recover(&bundle, code.to_string(), &owner.to_string()).unwrap();
+    let got = restored
+        .decrypt_item(&envelope, &context.to_string())
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&got).unwrap(), item);
+    let new_password = Zeroizing::new(STANDARD.encode(MasterKey::generate().unwrap().as_bytes()));
+    let rewrapped = restored.wrap_for_owner(new_password.to_string()).unwrap();
+    restored.lock();
+    let new_key =
+        CloudPasswordBox::unlock(&rewrapped, new_password.to_string(), &owner.to_string()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            &new_key
+                .decrypt_item(&envelope, &context.to_string())
+                .unwrap()
+                .as_string()
+                .unwrap()
+        )
+        .unwrap(),
+        item
+    );
+    let mut stale = owner.clone();
+    stale["keyEpoch"] = json!(2);
+    assert!(CloudPasswordBox::recover(&bundle, code.to_string(), &stale.to_string()).is_err());
+    let wrong = STANDARD.encode(MasterKey::generate().unwrap().as_bytes());
+    assert!(CloudPasswordBox::recover(&bundle, wrong, &owner.to_string()).is_err());
+}
+
+#[wasm_bindgen_test]
 fn exported_worker_create_edit_node_boundary() {
     install_worker_surface();
     passshare_cloud_wasm::start_worker().unwrap();
