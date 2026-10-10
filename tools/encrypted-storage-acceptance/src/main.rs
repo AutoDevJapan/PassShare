@@ -704,6 +704,8 @@ impl Host {
                             "DATABASE_URL=postgresql://passshare:passshare@{}:5432/passshare",
                             db.name
                         ),
+                        "--env",
+                        &format!("DATABASE_TRUSTED_PRIVATE_HOSTS={}", db.name),
                         image,
                     ],
                     "start owned production API image",
