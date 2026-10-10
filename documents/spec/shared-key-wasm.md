@@ -1,5 +1,12 @@
 # 共有鍵のWASMバインディング
 
+2026-10-11のWeb接続では、公開型・既存バンドル形式を保ち、Worker内部に
+`verifyPublicIdentity`、`sharingContext`、`identityPrepare` を追加した。
+Coreの公開記述子検査、独立したコードの照合、アカウント鍵の初回作成・復元・応答喪失の照合はRustで行う。
+正確な要求・返信・上限は [Worker契約](cloud-crypto-worker.md)。
+Web配布assetは正式CI待ちであり、このソースだけを新Workerとして配布しない。
+既存public ABIのNode検査と、実Worker export＋Web transportの検査は配布完了とは区別する。
+
 既存Coreのアカウント鍵と共有鍵を、JavaScriptから不透明なハンドルで操作する境界です。
 [Core仕様](shared-key-crypto.md)の暗号処理・形式・信頼条件をそのまま使います。
 この変更はM4の一部であり、M4全体や本番導入の完了を示しません。
@@ -130,4 +137,5 @@ GitHubのCloud WASM実行37996557828（ソース `bbbfd6ca75cd046df6423b22839dc2
 
 M4に残る作業は、各クライアントへの接続、鍵の登録と信頼の確認、保存と配布、メンバー認可、
 失効と世代更新、項目の再暗号化、復旧、移行です。
-今回のフロントエンド変更は、配布バインディングと指紋の更新です。画面・画像・API・RootCoreの変更は含みません。
+初期のWASM境界のフロントエンド変更は、配布バインディングと指紋の更新でした。
+2026-10-11の有限Web子では画面とtransportを追加しています。API・RootCoreは変更しません。

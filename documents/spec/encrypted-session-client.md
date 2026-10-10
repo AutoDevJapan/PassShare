@@ -1,5 +1,38 @@
 # 暗号文セッションSDK（Rust）
 
+## Webのアカウント鍵と秘密の寿命（2026-10-11）
+
+正式本人 `/api/encrypted/account-identity` とmember identity `{identity}` を使うWeb導線を追加した。
+アカウント鍵の封印はボックスの包み鍵とは別で、画面で専用の暗号化パスワードを明示入力する。
+ログインパスワードの暗黙使用や、全ボックスのパスワードが同じという仮定は無い。
+既存identityを復元するときのaccount contextは認証済み本人UUIDと現契約の版1から独立に選び、
+期待keyIdはaccount-scoped own pin、または別に保管した本人コードのRust照合から得る。
+サーバーの同じ応答やbundleから期待context/keyIdをコピーしない。
+
+保存先はaccount別の `identity-own-pin.v1`、account+peer別の `identity-peer-pin.v1`、
+account別の `identity-pending.v1`。前2個は公開descriptorだけで、互いに代入しない。
+pendingは暗号文bundleと公開descriptor/保存版だけ。Rust生成の初回指紋を独立保存し、
+Web Lock内でpendingを保存・読み返してからexpectedVersion=0でCASする。
+応答を失ってもRustがpending/remoteの完全一致を照合し、同じ鍵と暗号文を再利用する。
+HTTP read-backの完全一致が確認できるまでpendingを消さない。
+保存に失敗した場合はHTTPを開始せず、pinだけがある状態から自動で別の鍵を作らない。
+既存identityでpinが無い、または変わった場合は別保管した本人コードの再入力を要求する。
+peerもコードを明示入力して確認し、共有直前の再取得で鍵が変われば確認状態を捨てる。
+
+秘密入力は既存暗号化画面のlabel/input/buttonと用語を用い、React stateへパスワードを保存しない。
+入力欄は送信・取消・背景移行・account切替・親画面unmountで空にする。
+送信後は世代付きの操作レコードだけに一時保持し、Workerへのwrap/unlock完了直後、
+失敗・取消時にも参照を空にする。HTTPを含む1操作の期限は60秒で、期限には操作を取消して施錠する。
+Workerへの秘密フィールドはsend終了時に捨て、RustはメッセージとパスワードをZeroizingで扱う。
+私有ハンドルの無操作期限は最初のボックスまたはidentityオープンから5分。
+通信では延長せず可信なuser inputだけで延長し、背景・手動・期限で即時Workerを終了する。
+terminateやJavaScript文字列についてメモリ全体の消去は保証しない。
+
+認証providerは実際の資格情報の変更を検出して `passshare:cloud-lock` を発行する。
+同じaccountと同じ資格情報のmetadata refreshは保持し、変更・logout・account切替で秘密とdraftを世代隔離する。
+受信者の操作スコープに入るownerAccountIdは現在の受信者であり、サーバーの所有権を意味しない。
+共有鍵由来のowner用出力拒否、全項目JSONの保持、サーバーの現在所属による認可は維持する。
+
 共有ToDo #1163 / #1175、M4の一部です。`crates/passshare-connect` の `EncryptedSessionClient` は、
 [暗号文保存API](encrypted-storage-api.md) と [所有者キーバンドルAPI](owner-key-bundle-api.md) を
 呼ぶ Rust SDK です。既存の `ConnectClient`（Connectトークン用）とは別で、変更していません。

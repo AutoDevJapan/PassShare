@@ -196,6 +196,36 @@ fn exported_worker_sharing_contract(send: &mut impl FnMut(Value) -> Value) {
     let sender_public: Value =
         serde_json::from_str(generated["publicIdentity"].as_str().unwrap()).unwrap();
     let pin_a = sender_public["keyId"].as_str().unwrap().to_owned();
+    let grouped_code = pin_a
+        .as_bytes()
+        .chunks(4)
+        .map(|c| std::str::from_utf8(c).unwrap().to_uppercase())
+        .collect::<Vec<_>>()
+        .join(" \n");
+    let verify = json!({"command":"verifyPublicIdentity","expectedGeneration":g,
+        "accountContext":a.to_string(),"publicIdentity":generated["publicIdentity"],"verificationCode":grouped_code});
+    assert_eq!(
+        send(verify.clone())["publicIdentity"],
+        generated["publicIdentity"]
+    );
+    let mut mismatch = verify.clone();
+    mismatch["verificationCode"] = json!("0".repeat(64));
+    assert_eq!(send(mismatch)["error"], INVALID);
+    let mut bad = verify.clone();
+    bad["verificationCode"] = Value::Null;
+    assert_eq!(send(bad)["ok"], false);
+    let mut changed = verify.clone();
+    changed["publicIdentity"] = json!(CloudAccountIdentity::new(&a.to_string())
+        .unwrap()
+        .public_identity()
+        .unwrap());
+    assert_eq!(send(changed)["error"], INVALID);
+    let mut duplicate = verify;
+    duplicate["publicIdentity"] = json!(generated["publicIdentity"]
+        .as_str()
+        .unwrap()
+        .replace("\"keyId\":", "\"unknown\":1,\"keyId\":"));
+    assert_eq!(send(duplicate)["error"], INVALID);
     assert_eq!(
         send(json!({"command":"identityPublic","expectedGeneration":g}))["publicIdentity"],
         generated["publicIdentity"]

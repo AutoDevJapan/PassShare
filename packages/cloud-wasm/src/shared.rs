@@ -31,6 +31,129 @@ struct IdentityBundle {
     wrapped: WrappedAccountIdentity,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IdentityRecord {
+    bundle_version: u64,
+    identity: PublicAccountIdentity,
+    bundle: IdentityBundle,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IdentityPreparation {
+    account_context: String,
+    own_pin: String,
+    remote_record: String,
+    pending_record: String,
+    verification_code: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IdentityPrepared {
+    public_identity: String,
+    record: String,
+    requires_create: bool,
+    has_pending: bool,
+}
+
+fn identity_record(value: &str) -> Result<Option<IdentityRecord>, &'static str> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let record: IdentityRecord = parse(value, 4096)?;
+    if !(1..=MAX_JSON_INTEGER).contains(&record.bundle_version) {
+        return Err(INVALID);
+    }
+    let raw: serde_json::Value = parse(value, 4096)?;
+    public_descriptor(&serde_json::to_string(&raw["identity"]).map_err(|_| INVALID)?)?;
+    Ok(Some(record))
+}
+
+// Reconciliation policy lives with the identity, rather than in React. Empty
+// strings explicitly represent absent public records; JSON null is not accepted.
+pub(crate) fn prepare_identity(
+    values: &str,
+    secret: String,
+) -> Result<(CloudAccountIdentity, String), &'static str> {
+    let secret = zeroize::Zeroizing::new(secret);
+    let input: IdentityPreparation = parse(values, 12_288)?;
+    let context = account_context(&input.account_context)?;
+    // The current server contract supports version 1; never select it from a
+    // concurrently received bundle or descriptor.
+    if context.identity_version != 1 || input.verification_code.len() > 256 {
+        return Err(INVALID);
+    }
+    let remote = identity_record(&input.remote_record)?;
+    let pending = identity_record(&input.pending_record)?;
+    if let Some(pending) = &pending {
+        if pending.bundle_version != 1 {
+            return Err(INVALID);
+        }
+        if let Some(remote) = &remote {
+            if serde_json::to_value(remote).map_err(|_| INVALID)?
+                != serde_json::to_value(pending).map_err(|_| INVALID)?
+            {
+                return Err(INVALID);
+            }
+        }
+    }
+    let has_pending = pending.is_some();
+    let requires_create = remote.is_none();
+    let held = remote.or(pending);
+    let identity;
+    let record;
+    if let Some(held) = held {
+        let public = serde_json::to_string(&held.identity).map_err(|_| INVALID)?;
+        let pin = if !input.verification_code.is_empty() {
+            verify_public(&public, &input.account_context, &input.verification_code)?
+        } else {
+            let pin = public_descriptor(&input.own_pin)?;
+            if pin.account_id != context.account_id
+                || pin.identity_version != context.identity_version
+            {
+                return Err(INVALID);
+            }
+            let checked = verify_public(&public, &input.account_context, &pin.key_id)?;
+            if serde_json::from_str::<serde_json::Value>(&checked).map_err(|_| INVALID)?
+                != serde_json::to_value(&pin).map_err(|_| INVALID)?
+            {
+                return Err(INVALID);
+            }
+            checked
+        };
+        let pin: PublicAccountIdentity = parse(&pin, MAX_PUBLIC)?;
+        identity = CloudAccountIdentity::restore(
+            &serde_json::to_string(&held.bundle).map_err(|_| INVALID)?,
+            secret.to_string(),
+            &input.account_context,
+            &pin.key_id,
+        )?;
+        record = held;
+    } else {
+        // A previously held pin with no reconstructable ciphertext never
+        // authorizes replacing its key, even if an unrelated server says 404.
+        if !input.own_pin.is_empty() {
+            return Err(INVALID);
+        }
+        identity = CloudAccountIdentity::generate(&input.account_context)?;
+        record = IdentityRecord {
+            bundle_version: 1,
+            identity: parse(&identity.public()?, MAX_PUBLIC)?,
+            bundle: parse(&identity.seal(secret.to_string())?, MAX_BUNDLE)?,
+        };
+    }
+    let output = serde_json::to_string(&IdentityPrepared {
+        public_identity: identity.public()?,
+        record: serde_json::to_string(&record).map_err(|_| INVALID)?,
+        requires_create,
+        has_pending: has_pending || requires_create,
+    })
+    .map_err(|_| INVALID)?;
+    Ok((identity, output))
+}
+
 fn account_context(value: &str) -> Result<AccountIdentityContext, &'static str> {
     let context: AccountIdentityContext = parse(value, MAX_CONTEXT)?;
     if context.account_id.is_nil() || !(1..=MAX_JSON_INTEGER).contains(&context.identity_version) {
@@ -48,6 +171,119 @@ fn fingerprint(value: &str) -> Result<(), &'static str> {
         return Err(INVALID);
     }
     Ok(())
+}
+
+fn public_descriptor(value: &str) -> Result<PublicAccountIdentity, &'static str> {
+    let public: PublicAccountIdentity = parse(value, MAX_PUBLIC)?;
+    public.validate_public().map_err(|_| INVALID)?;
+    // UUID serde also accepts compact/uppercase text; the public wire contract
+    // accepts only the canonical lowercase UUID spelling.
+    let raw: serde_json::Value = parse(value, MAX_PUBLIC)?;
+    if raw["accountId"].as_str() != Some(public.account_id.to_string().as_str()) {
+        return Err(INVALID);
+    }
+    Ok(public)
+}
+
+// User-supplied out-of-band code. No server value can substitute for this input.
+pub(crate) fn verify_public(
+    value: &str,
+    context: &str,
+    code: &str,
+) -> Result<String, &'static str> {
+    if code.len() > 256 {
+        return Err(INVALID);
+    }
+    let mut normalized = String::with_capacity(64);
+    for byte in code.bytes() {
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        if !byte.is_ascii_hexdigit() || normalized.len() == 64 {
+            return Err(INVALID);
+        }
+        normalized.push(char::from(byte.to_ascii_lowercase()));
+    }
+    fingerprint(&normalized)?;
+    let expected = account_context(context)?;
+    let public = public_descriptor(value)?;
+    if public.account_id != expected.account_id
+        || public.identity_version != expected.identity_version
+        || public.key_id != normalized
+    {
+        return Err(INVALID);
+    }
+    serde_json::to_string(&public).map_err(|_| INVALID)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SharingSelection {
+    password_box_id: String,
+    caller_account_id: String,
+    key_epoch: u64,
+    sender: PublicAccountIdentity,
+    recipient: PublicAccountIdentity,
+    members: Vec<SharingMember>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SharingMember {
+    account_id: String,
+    role: String,
+    membership_confirmed: bool,
+}
+
+// Membership comes from the authenticated API; trust comes from independently
+// pinned descriptors. The server must independently enforce current membership.
+pub(crate) fn sharing_context(value: &str) -> Result<String, &'static str> {
+    let selection: SharingSelection = parse(value, 65_536)?;
+    passshare_core::ConnectId::validate(&selection.password_box_id).map_err(|_| INVALID)?;
+    if !(1..=MAX_JSON_INTEGER).contains(&selection.key_epoch) || selection.members.len() > 1000 {
+        return Err(INVALID);
+    }
+    selection.sender.validate_public().map_err(|_| INVALID)?;
+    selection.recipient.validate_public().map_err(|_| INVALID)?;
+    let sender_id = selection.sender.account_id.to_string();
+    let recipient_id = selection.recipient.account_id.to_string();
+    let mut ids = std::collections::HashSet::new();
+    let mut owners = 0;
+    for member in &selection.members {
+        if !ids.insert(&member.account_id)
+            || !matches!(member.role.as_str(), "owner" | "member" | "readonly")
+        {
+            return Err(INVALID);
+        }
+        if member.role == "owner" {
+            owners += 1;
+        }
+    }
+    if owners != 1
+        || sender_id == recipient_id
+        || (selection.caller_account_id != sender_id && selection.caller_account_id != recipient_id)
+        || !selection
+            .members
+            .iter()
+            .any(|m| m.account_id == sender_id && m.role == "owner" && m.membership_confirmed)
+        || !selection
+            .members
+            .iter()
+            .any(|m| m.account_id == recipient_id && m.role != "owner" && m.membership_confirmed)
+    {
+        return Err(INVALID);
+    }
+    serde_json::to_string(&SharedKeyContext {
+        password_box_id: selection.password_box_id.parse().map_err(|_| INVALID)?,
+        sender_account_id: selection.sender.account_id,
+        recipient_account_id: selection.recipient.account_id,
+        key_epoch: selection.key_epoch,
+        sender_identity_version: selection.sender.identity_version,
+        recipient_identity_version: selection.recipient.identity_version,
+        sender_key_id: selection.sender.key_id,
+        recipient_key_id: selection.recipient.key_id,
+    })
+    .map_err(|_| INVALID)
 }
 
 // Core's identity wrapper predates strict canonical Base64 validation. Enforce

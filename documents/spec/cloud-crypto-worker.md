@@ -1,7 +1,65 @@
 # クライアント暗号化Workerの境界
 
+## ToDo1163: 正式Webへの接続ソース（2026-10-11）
+
+`frontend/src/lib/cloud-worker.ts` は、すべての返信で必須の `identityLocked` と、
+操作に対応する `publicIdentity` / `sharedContext` / `identityPrepared` を厳密に受け付ける。
+従来の所有者用 `generate/unlock/wrap/recover/create/edit/encrypt/decrypt` も同じ通信を使う。
+コマンドと違う結果、null、未知フィールド、固定エラー以外、要求番号・世代・両鍵の状態の不一致は
+Worker終了とする。配布WASMとWeb transportを必ず同時に更新する。
+
+追加要求は、既存の `version:1`, `requestId`, `expectedGeneration` に次を加える。
+
+| command | 追加フィールド | 成功時だけの結果フィールド | 世代 |
+|---|---|---|---|
+| `verifyPublicIdentity` | `accountContext`, `publicIdentity`, `verificationCode`（すべて文字列） | `publicIdentity`（canonicalな公開記述子のJSON文字列） | 不変 |
+| `sharingContext` | `values`（下記JSON文字列） | `sharedContext`（期待共有文脈のJSON文字列） | 不変 |
+| `identityPrepare` | `values`（下記JSON文字列）, `identitySecret`（専用の暗号化パスワード） | `identityPrepared`（下記JSON文字列） | 成功時+1 |
+
+`verifyPublicIdentity` の文脈は独立した `{accountId,identityVersion}`。記述子512 bytes、文脈256 bytes、
+入力コード256 UTF-8 bytesを上限とする。コードはASCII空白を除去し、ASCII大文字を小文字に変え、
+ちょうど64桁のhexだけを許す。Coreの `validate_public()` とアカウント・版・指紋一致を確認する。
+サーバーの自己整合や招待コードを本人確認として扱わず、入力コードをサーバーから補充しない。
+このコマンドは鍵を開かず、idle期限も更新しない。
+
+`sharingContext.values` は `{passwordBoxId,callerAccountId,keyEpoch,sender,recipient,members}`。
+sender/recipientは独立して確認した公開記述子。membersは正式APIの現所属を
+`{accountId,role,membershipConfirmed}` に投影する。Rustが両記述子、現呼出元、正のsafe integer世代、
+重複のない所属、確認済みの単一所有者と確認済みの非所有者の受信者を検査する。
+入力上限65536 bytes、所属上限1000件。サーバーはPUT/self GET時に改めて現所属を認可する。
+期待文脈は受信エンベロープから作らない。
+
+`identityPrepare.values` は次の5個の必須文字列だけを持つ（上限12288 bytes）。
+
+```json
+{"accountContext":"<独立したアカウント文脈JSON>","ownPin":"<独立保存した公開記述子JSON、無ければ空文字列>","remoteRecord":"<正式本人GETのJSON、404なら空文字列>","pendingRecord":"<保存済み初回暗号文レコードJSON、無ければ空文字列>","verificationCode":"<別保管した本人コード、既存pinを使うなら空文字列>"}
+```
+
+JSON null・未知フィールド・欠落は全階層で拒否する。レコードは
+`{bundleVersion,identity,bundle}`（4096 bytes以内）、現契約のidentityVersionは独立に選ぶ1のみ。
+初回はremote/pending/pinがすべて無い場合だけ生成・専用パスワードで封印する。
+既存レコードは独立pin、または本人が別保管したコードをRustで照合した後に復元する。
+pendingとremoteが両方あれば全公開JSONの完全一致を要求する。pendingは保存版1だけを許す。
+不一致・パスワード失敗・別アカウントは既存ハンドルと世代を変えない。
+`identityPrepared` は `{publicIdentity,record,requiresCreate,hasPending}`。
+先頭2フィールドはJSON文字列、後ろ2個はboolean。秘密鍵やパスワードを返さない。
+identityはmatching owner boxに追加できるが、開いているidentityを置き換えない。
+
+Webは最初の私有ハンドル（ボックスまたはidentity）の成功返信で5分期限を開始する。
+第2ハンドルのオープン・暗号通信・HTTPでは延長せず、可視画面の `isTrusted` user inputだけで更新する。
+単調時計の停止を壁時計でも検知し、時計逆行時も施錠する。期限後の最初の入力は消費する。
+背景移行、pagehide、手動施錠、認証資格情報変更、account切替、親画面unmountは即時terminateと
+UI世代の無効化を行う。同じアカウント・同じ資格情報のmetadata refreshは保持する。
+通常のRust lockが鍵を消去することと、terminate後のメモリ回収の保証が無いことは従来どおり区別する。
+
+**配布は未完了。** ソース変更に対してfrontendの指紋gateが失敗することを確認した。
+成功した正式CIのWASM・manifestへの更新は親scopeであり、この子は値を偽って通さない。
+Nodeは実WASM exportを呼び、React test rendererは実部品を動かすが、timer/event/HTTPは合成である。
+正式API/PG・Chrome・320pxの実画面・最終workspace/CI受入は親が行う。
+
 共有ToDo #1163 / #1175 のM4の一部です。`cloud-wasm.md` のWASM境界を、専用Workerの中で
-動かすためのメッセージ境界を定めます。共有鍵の暗号操作を含みますが、画面・拡張・鍵の更新・サーバー保存への接続は含みません。
+動かすためのメッセージ境界を定めます。元のWorker有限子は共有鍵の暗号操作までを対象としました。
+上記のWeb接続子で画面と初回保存を追加し、拡張・鍵の更新・正式配布は未完了です。
 これだけで全クライアントの暗号化が完成したとは扱いません。
 
 ## 責務

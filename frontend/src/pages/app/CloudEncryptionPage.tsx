@@ -9,6 +9,7 @@ import { CloudApiError, bundleText, clearPendingBundle, getBoxState, getOwnerBun
   readPendingBundle, sameBundle, savePendingBundle, setupBox, type BoxState } from "../../lib/cloud-api";
 import { EncryptedItemsPage } from "./EncryptedItemsPage";
 import { CloudRecoveryBackup, CloudRecoveryPanel } from "./CloudRecoveryPanel";
+import { CloudSharingPanel } from "./CloudSharingPanel";
 
 function errorKey(error: unknown): MessageKey {
   if (error instanceof CloudApiError) {
@@ -113,6 +114,8 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
   const ownerId = user?.id ?? "";
   const [name, setName] = useState("");
   const [authorized, setAuthorized] = useState(false);
+  const [recipient, setRecipient] = useState(false);
+  const [sharingStarted, setSharingStarted] = useState(false);
   const [state, setState] = useState(initialState);
   const [opened, setOpened] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -144,6 +147,7 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
     worker.current?.dispose(); worker.current = null;
     heldOwnerContext.current = null;
     clearInputs(); setOpened(false); setBusy(false); setVerifying(false); setError(null);
+    setSharingStarted(false);
     setRecovering(false); setRecoveryComplete(false);
     setLoggingOut(false);
     setAuthorized(false);
@@ -184,16 +188,19 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
       !logoutPending.current && document.visibilityState !== "hidden";
     // Same-account metadata refresh must keep the mounted decrypted draft.
     // Failed authorization still disposes the worker and hides all content.
-    if (!opened) setAuthorized(false);
+    if (!opened && !worker.current) setAuthorized(false);
     if (!connectClient || !ownerId || document.visibilityState === "hidden") return;
     const controller = new AbortController();
     void (async () => {
       try {
         const members = await listVaultMembers(boxId, controller.signal);
         if (!active()) return;
-        if (!members.some((m) => m.userId === ownerId && m.role === "owner")) {
+        const ownMember = members.find((m) => m.userId === ownerId);
+        const sharedRecipient = !isSetup && ownMember?.role !== "owner" && ownMember?.identityConfirmed === true;
+        if (!ownMember || (ownMember.role !== "owner" && !sharedRecipient)) {
           lock(false); setError("cloud.ownerOnly"); return;
         }
+        setRecipient(sharedRecipient);
         // Metadata only; never request legacy items for an encrypted box.
         const box = isSetup ? await connectClient.getVault(boxId)
           : (await connectClient.listVaults()).find((candidate) => candidate.id === boxId);
@@ -317,10 +324,27 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
         {unlocked && <button type="button" className="ps-button cloud-submit" onClick={lockCloudUi}>{t("cloud.lock")}</button>}
       </div>
       {!unlocked && !recovering && <p>{t(isSetup ? "cloud.setupLead" : "cloud.openLead")}</p>}
+      {recipient && authorized && sharingStarted && worker.current && <div hidden={!!unlocked}>
+        <CloudSharingPanel worker={worker.current}
+          scope={{ passwordBoxId: boxId, ownerAccountId: ownerId, keyEpoch: state.keyEpoch! }} recipient
+          onLock={lock} onReceive={() => {
+            heldOwnerContext.current = { passwordBoxId: boxId, ownerAccountId: ownerId, keyEpoch: state.keyEpoch! };
+            setOpened(true);
+          }} />
+      </div>}
       {unlocked ? <div className="cloud-opened">
-        <CloudRecoveryBackup worker={unlocked.worker} scope={unlocked.scope} />
+        {!recipient && <><CloudRecoveryBackup worker={unlocked.worker} scope={unlocked.scope} />
+          <CloudSharingPanel worker={unlocked.worker} scope={unlocked.scope} onLock={lock} /></>}
         <EncryptedItemsPage worker={unlocked.worker} scope={unlocked.scope} onLock={lock} />
-      </div> : <form hidden={recovering} style={recovering ? { display: "none" } : undefined}
+      </div> : recipient && authorized ? <>
+        {!sharingStarted && <button className="ps-button cloud-submit" type="button" onClick={() => {
+          const next = new CloudWorker();
+          worker.current = next;
+          const token = generation.current;
+          void next.closed.then(() => { if (mounted.current && generation.current === token && worker.current === next) lock(); });
+          setSharingStarted(true);
+        }}>{t("cloud.openSubmit")}</button>}
+      </> : <form hidden={recovering} style={recovering ? { display: "none" } : undefined}
         onSubmit={(event) => void submit(event)} aria-busy={busy}>
         <label className="ps-label" htmlFor="cloud-password">{t("cloud.password")}</label>
         <input id="cloud-password" ref={passwordInput} className="ps-input" type="password" autoComplete="off"
@@ -337,10 +361,10 @@ function CloudEncryptionScreen({ boxId, initialState }: { boxId: string; initial
           {t(busy ? (verifying ? "cloud.verifying" : "cloud.working") : isSetup ? "cloud.setupSubmit" : "cloud.openSubmit")}</button>
         {busy && <button className="ps-button ps-button--secondary" type="button" onClick={lockCloudUi}>{t("cloud.lock")}</button>}
       </form>}
-      {!unlocked && !isSetup && authorized && !busy && !recovering && <button type="button"
+      {!recipient && !unlocked && !isSetup && authorized && !busy && !recovering && <button type="button"
         className="ps-button ps-button--secondary" onClick={() => { clearInputs(); setError(null); setRecoveryComplete(false); setRecovering(true); }}>
         {t("cloudRecovery.title")}</button>}
-      {!unlocked && !isSetup && authorized && <CloudRecoveryPanel
+      {!recipient && !unlocked && !isSetup && authorized && <CloudRecoveryPanel
         scope={{ passwordBoxId: boxId, ownerAccountId: ownerId, keyEpoch: state.keyEpoch! }} visible={recovering}
         onCancel={() => setRecovering(false)} onComplete={() => { setRecovering(false); setRecoveryComplete(true); }} />}
       {recoveryComplete && <p className="cloud-note" role="status">{t("cloudRecovery.complete")}</p>}
