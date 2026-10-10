@@ -16,3 +16,9 @@ passshare-core = { path = "../passshare-core" }
 clap.workspace = true
 tokio.workspace = true
 serde_json = { workspace = true }
+reqwest.workspace = true
+zeroize.workspace = true
+
+[[test]]
+name = "encrypted_cli"
+path = "src/encrypted_cli_tests.rs"
