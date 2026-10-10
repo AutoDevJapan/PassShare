@@ -142,6 +142,19 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
  reply={grantVersion:1,keyEpoch:context.keyEpoch,envelope:JSON.parse(envelope)};await api.getSelfGrant(context.passwordBoxId,context,signal);
  status=403;const removedRefused=await rejected(api.getSelfGrant(context.passwordBoxId,context,signal));
  status=200;reply.envelope.context.senderKeyId='0'.repeat(64);const switchedRefused=await rejected(api.getSelfGrant(context.passwordBoxId,context,signal));
+ const snapshot={stateRevision:7,keyEpoch:context.keyEpoch,ownerAccountId:a.accountId,ownerBundleVersion:1,memberCount:2,liveItemCount:1,grantCount:0};
+ reply=snapshot;const emptySnapshot=await api.getSnapshot(context.passwordBoxId,signal);
+ const emptySnapshotCounters=emptySnapshot.liveAttachmentCount===0&&emptySnapshot.liveAttachmentBytes===0;
+ reply={...snapshot,liveAttachmentCount:1,liveAttachmentBytes:512};const attachedSnapshot=await api.getSnapshot(context.passwordBoxId,signal);
+ const attachmentSnapshotCounters=attachedSnapshot.liveAttachmentCount===1&&attachedSnapshot.liveAttachmentBytes===512;
+ const malformedSnapshots=[];
+ for(const counters of [{liveAttachmentCount:1},{liveAttachmentBytes:512},{liveAttachmentCount:0,liveAttachmentBytes:512},
+   {liveAttachmentCount:-1,liveAttachmentBytes:512},{liveAttachmentCount:'1',liveAttachmentBytes:512},
+   {liveAttachmentCount:1025,liveAttachmentBytes:512},{liveAttachmentCount:1,liveAttachmentBytes:1073741825},
+   {liveAttachmentCount:1,liveAttachmentBytes:512,unknown:true}]){
+  reply={...snapshot,...counters};malformedSnapshots.push(await rejected(api.getSnapshot(context.passwordBoxId,signal)));
+ }
+ const malformedAttachmentSnapshots=malformedSnapshots.length===8&&malformedSnapshots.every(Boolean);
  stage='react-lifetime';
  const React=require(path.join(path.dirname(f.renderer),'react')), renderer=require(f.renderer), {act}=renderer;
  globalThis.IS_REACT_ACT_ENVIRONMENT=true;
@@ -253,7 +266,7 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
   transferDetached,attachmentExact,releasedWiped,maximumExact,oversizeRejected,revisionRejected,malformedName,circularContextRejected,detachedOutputLock,attachmentCancelled,attachmentLateWiped,attachmentLockWiped,
    ownerStillAlive:!ow.dead,recipientWrapRefused,recipientRecoveryRefused,identityOnlyExpired,secondHandleDidNotExtend,untrustedExpired,inputExtended,trustedExpired,
    expiredInputConsumed,backgroundClosed:bgw.dead,tokenClosed:tokenw.dead,pausedMonotonicExpired,backwardsClockExpired,invalid,pinIsolation,pendingExact,memberExtraRefused,wrongVersionRefused,removedRefused,switchedRefused,
-   member,calls,unpinnedForm,secretClearedOnSubmit,cancelledUi,unmountUi,accountSwitchUi,missingPinRejected,separatePasswordOpened,peerMismatchDisabled,peerMatchEnabled,changedPeerDisabled,locks,
+   member,calls,emptySnapshotCounters,attachmentSnapshotCounters,malformedAttachmentSnapshots,unpinnedForm,secretClearedOnSubmit,cancelledUi,unmountUi,accountSwitchUi,missingPinRejected,separatePasswordOpened,peerMismatchDisabled,peerMatchEnabled,changedPeerDisabled,locks,
    sameCredentialKept,credentialChangeClosed,accountCredentialClosed,
    encryptedRemoveDisabled,encryptedRemoveRefused,delayedInviteDiscarded,compatibilityRemoveEnabled,compatibilityRemoveWorked,
    listeners:[...listeners.values()].reduce((n,s)=>n+s.size,0)}));
@@ -377,6 +390,9 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
         "wrongVersionRefused",
         "removedRefused",
         "switchedRefused",
+        "emptySnapshotCounters",
+        "attachmentSnapshotCounters",
+        "malformedAttachmentSnapshots",
         "unpinnedForm",
         "secretClearedOnSubmit",
         "cancelledUi",

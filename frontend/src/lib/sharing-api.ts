@@ -7,7 +7,7 @@ import type { PublicIdentity, SharedContext } from "./cloud-worker";
 export type IdentityRecord = { bundleVersion: number; identity: PublicIdentity; bundle: unknown };
 export type Member = { accountId: string; role: string; membershipConfirmed: boolean; keyGranted: boolean };
 export type Snapshot = { stateRevision: number; keyEpoch: number; ownerAccountId: string; ownerBundleVersion: number;
-  memberCount: number; liveItemCount: number; grantCount: number };
+  memberCount: number; liveItemCount: number; grantCount: number; liveAttachmentCount: number; liveAttachmentBytes: number };
 const boxPath = (id: string) => `/api/encrypted/boxes/${encodeURIComponent(id)}`;
 const identityPath = "/api/encrypted/account-identity";
 const exact = (value: unknown, keys: string[]): boolean => !!value && typeof value === "object" && !Array.isArray(value) &&
@@ -65,10 +65,16 @@ export async function getMemberIdentity(boxId: string, accountId: string, signal
 }
 export async function getSnapshot(boxId: string, signal: AbortSignal): Promise<Snapshot> {
   const value = await request(`${boxPath(boxId)}/sharing-snapshot`, signal);
-  if (!exact(value, ["stateRevision", "keyEpoch", "ownerAccountId", "ownerBundleVersion", "memberCount", "liveItemCount", "grantCount"]) ||
+  const keys = ["stateRevision", "keyEpoch", "ownerAccountId", "ownerBundleVersion", "memberCount", "liveItemCount", "grantCount"];
+  // The official API omits both attachment counters only for an empty set.
+  // Keep strict shape validation, including rejection of a missing peer counter.
+  const hasAttachments = !!value && Object.hasOwn(value, "liveAttachmentCount");
+  if (!exact(value, hasAttachments ? [...keys, "liveAttachmentCount", "liveAttachmentBytes"] : keys) ||
     ![value.stateRevision, value.keyEpoch, value.ownerBundleVersion, value.memberCount].every(positive) ||
-    ![value.liveItemCount, value.grantCount].every((v) => Number.isSafeInteger(v) && v >= 0) || typeof value.ownerAccountId !== "string") throw new CloudApiError(502);
-  return value;
+    ![value.liveItemCount, value.grantCount].every((v) => Number.isSafeInteger(v) && v >= 0) || typeof value.ownerAccountId !== "string" ||
+    (hasAttachments && (!positive(value.liveAttachmentCount) || value.liveAttachmentCount > 1024 ||
+      !positive(value.liveAttachmentBytes) || value.liveAttachmentBytes > 1073741824))) throw new CloudApiError(502);
+  return { ...value, liveAttachmentCount: value.liveAttachmentCount ?? 0, liveAttachmentBytes: value.liveAttachmentBytes ?? 0 };
 }
 export async function getSnapshotMembers(boxId: string, snapshot: Snapshot, signal: AbortSignal): Promise<Member[]> {
   const members: Member[] = [];

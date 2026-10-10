@@ -26,6 +26,12 @@
 
 ## version 1の有限binary surface
 
+Web共有画面のsnapshotは、添付がある場合に正式APIが返す `liveAttachmentCount` と
+`liveAttachmentBytes` を両方保持します。添付がない旧応答では、両方の省略だけを0として扱います。
+片方だけの省略、型違い、不正整数、件数・容量の上限超過、未知の属性は拒否します。
+実WASMとTypeScriptの接続検査に正常2形式と不正8形式を加え、Cloud WASM CIにも接続します。
+添付ありのsnapshotを古い7属性だけの応答検査で拒否する不整合を修復するための条件です。
+
 既存の文字列要求を維持し、添付暗号化だけに構造化cloneの `{message,bytes}` を加える。余分な外側属性を拒否し、bytesは通常の `Uint8Array` または `ArrayBuffer` のみ。SharedArrayBuffer、null、JSON数値配列、Base64文字列を拒否する。入力本文は1MiB以内、名前4096 UTF8 bytes以内。Workerを通すWeb transportは所有権をtransferし、部分viewは専用コピーへ移して元viewを消す。
 
 | command | message内の追加必須属性 | 成功結果 |
