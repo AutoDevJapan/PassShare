@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Recovery-enabled `.pbox` files and Desktop emergency-kit recovery with explicit new-password saving; existing v1 files upgrade only after authenticated opt-in.
+- Desktop recovery cancellation guards and real native-form acceptance for content preservation and old-password rejection.
+
 - Web documentation hub (`/docs`) with user guide, extension install, FAQ, terms, and privacy pages
 - Legal documents (draft) with footer links and legal review table
 - Operations runbook for incidents and DB backup verification
