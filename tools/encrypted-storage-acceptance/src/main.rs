@@ -187,10 +187,23 @@ impl Database {
             if command("docker")
                 .args([
                     "exec",
+                    "--env",
+                    "PGPASSWORD=passshare",
                     &db.name,
-                    "pg_isready",
+                    // The initialization server accepts socket connections
+                    // before the selected database exists. Require its final
+                    // TCP listener and a successful query in the actual DB.
+                    "psql",
+                    "-h",
+                    "127.0.0.1",
+                    "-X",
+                    "-w",
+                    "-v",
+                    "ON_ERROR_STOP=1",
                     "-U",
                     "passshare",
+                    "-c",
+                    "SELECT 1",
                     "-d",
                     "passshare",
                 ])
