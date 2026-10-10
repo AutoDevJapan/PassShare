@@ -38,7 +38,9 @@
     "packages/cloud-wasm/src/item_edit.rs": "4373427b6397c1f2d2de8dd69df96419f67c7c7be03eaa3207e0a7bbaf3de97e",
     "backend/native/src/edit.rs": "d8e39b54705e65aa82cab651ca6604e087b9b219bc7c290cce4b8e728e29f89e",
     "packages/cloud-wasm/src/recovery.rs": "50cc8af8b7663dc46cf5cdc667a871df569da9587043853dbd3665dfd4a1e997",
-    "crates/passshare-core/src/password_box_recovery_tests.rs": "508ba3a1a92579562f6ae62b83ae4d0983a94e20aaaa5b9bbb9a170d36284e79"
+    "crates/passshare-core/src/password_box_recovery_tests.rs": "508ba3a1a92579562f6ae62b83ae4d0983a94e20aaaa5b9bbb9a170d36284e79",
+    "crates/passshare-core/src/cloud_crypto/attachments.rs": "6882b86d444c88ba061a55dbd3d281ffbb41172ed05b7d5c953ffbe0169668f3",
+    "packages/cloud-wasm/src/attachment.rs": "e0aa890e9e260a7ae5b0931229a15b4b82734f6467fee71df9ac4f3b17f64c6a"
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
