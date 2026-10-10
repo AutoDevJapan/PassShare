@@ -75,6 +75,9 @@ jobs:
           pnpm --dir apps/mobile exec tauri build --no-bundle
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop blocked "$PWD/native-webview-results"
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-mobile" mobile blocked "$PWD/native-webview-results"
+      - name: Verify desktop local recovery through the actual protected renderer form
+        run: |
+          dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop local-recovery "$PWD/native-webview-results"
       - name: Verify desktop manual relock and production five-minute idle lock
         run: |
           dbus-run-session -- xvfb-run -a target/debug/examples/webview_acceptance "$PWD/target/release/passshare-desktop" desktop auto-lock "$PWD/native-webview-results"

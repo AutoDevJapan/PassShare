@@ -24,6 +24,7 @@ import { formatTauriError } from "../errors";
 import { StatusMessage } from "./StatusMessage";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
 import { CloudSyncSettings } from "./CloudSyncSettings";
+import { LocalRecoveryPanel } from "./LocalRecoveryPanel";
 
 type MainPanelProps = {
   boxPath: string;
@@ -32,6 +33,7 @@ type MainPanelProps = {
 };
 
 export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps) {
+  const [enablingRecovery, setEnablingRecovery] = useState(false);
   const { locale } = useI18n();
   const itemLabels = useItemLabels();
   const desktopLabels = useDesktopLabels();
@@ -171,6 +173,8 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
     }
   }
 
+  if (enablingRecovery) return <LocalRecoveryPanel mode="enable" onClose={() => setEnablingRecovery(false)} />;
+
   return (
     <section className="ps-main" aria-labelledby="main-heading">
       <div className="ps-card ps-card--toolbar">
@@ -210,6 +214,11 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
       />
 
       <div className="ps-settings-grid">
+        <section className="ps-card">
+          <h3 className="ps-heading-3">{desktopLabels.localRecovery.enableTitle}</h3>
+          <p className="ps-text-muted">{desktopLabels.localRecovery.localOnly}</p>
+          <button type="button" className="ps-button ps-button--secondary" onClick={() => setEnablingRecovery(true)}>{desktopLabels.localRecovery.enableTitle}</button>
+        </section>
         <ClipboardClearSettings labels={desktopLabels.clipboard} />
         <BiometricUnlockSettings boxPath={boxPath} masterPassword={masterPassword} />
         <CloudSyncSettings

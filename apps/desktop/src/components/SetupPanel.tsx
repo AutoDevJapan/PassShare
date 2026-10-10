@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useDesktopLabels } from "../hooks/useDesktopLabels";
-import { createPasswordBox, openPasswordBox } from "../tauri";
+import { createPasswordBox, openPasswordBox, lockPasswordBox } from "../tauri";
 import { formatTauriError } from "../errors";
 import { hasBiometricUnlock, isBiometricAvailable, unlockWithBiometric } from "../biometric-unlock";
 import { RecoveryKitPanel } from "./RecoveryKitPanel";
+import { LocalRecoveryPanel } from "./LocalRecoveryPanel";
 import { StatusMessage } from "./StatusMessage";
 
 type SetupPanelProps = {
@@ -25,6 +26,8 @@ export function SetupPanel({
   const [message, setMessage] = useState("");
   const [messageVariant, setMessageVariant] = useState<"info" | "error" | "success">("info");
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [recovering, setRecovering] = useState(false);
   const [recoverySecret, setRecoverySecret] = useState<string | null>(null);
   const [biometricReady, setBiometricReady] = useState(false);
   const mounted = useRef(true);
@@ -71,6 +74,7 @@ export function SetupPanel({
   }
 
   async function handleCreate() {
+    if (busyRef.current) return;
     if (!boxPath.trim()) {
       showMessage(labels.setup.errorPathRequired, "error");
       return;
@@ -80,6 +84,7 @@ export function SetupPanel({
       return;
     }
 
+    busyRef.current = true;
     setBusy(true);
     clearMessage();
     try {
@@ -94,16 +99,19 @@ export function SetupPanel({
     } catch (err) {
       showMessage(formatTauriError(err), "error");
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function handleBiometricOpen() {
+    if (busyRef.current) return;
     if (!boxPath.trim()) {
       showMessage(labels.setup.errorPathRequired, "error");
       return;
     }
 
+    busyRef.current = true;
     setBusy(true);
     clearMessage();
     try {
@@ -117,11 +125,13 @@ export function SetupPanel({
     } catch (err) {
       showMessage(formatTauriError(err), "error");
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function handleOpen() {
+    if (busyRef.current) return;
     if (!boxPath.trim()) {
       showMessage(labels.setup.errorPathRequired, "error");
       return;
@@ -131,6 +141,7 @@ export function SetupPanel({
       return;
     }
 
+    busyRef.current = true;
     setBusy(true);
     clearMessage();
     try {
@@ -141,14 +152,31 @@ export function SetupPanel({
     } catch (err) {
       showMessage(formatTauriError(err), "error");
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
+  }
+
+  if (recovering) {
+    return <LocalRecoveryPanel mode="recover" initialPath={boxPath}
+      onClose={() => setRecovering(false)}
+      onRecovered={(path, password) => {
+        onBoxPathChange(path);
+        onMasterPasswordChange(password);
+        setRecovering(false);
+        onUnlocked();
+      }} />;
   }
 
   if (recoverySecret) {
     return (
       <RecoveryKitPanel
         secret={recoverySecret}
+        onDismiss={() => {
+          setRecoverySecret(null);
+          onMasterPasswordChange("");
+          void lockPasswordBox();
+        }}
         onConfirm={() => {
           setRecoverySecret(null);
           onUnlocked();
@@ -189,6 +217,10 @@ export function SetupPanel({
       </label>
 
       <div className="ps-actions">
+        <button type="button" data-testid="recover-password-box" className="ps-button ps-button--secondary" disabled={busy} onClick={() => {
+          onMasterPasswordChange("");
+          setRecovering(true);
+        }}>{labels.localRecovery.title}</button>
         {biometricReady ? (
           <button
             type="button"
@@ -210,6 +242,7 @@ export function SetupPanel({
         <button
           type="button"
           className="ps-button ps-button--secondary"
+          data-testid="open-password-box"
           onClick={() => void handleOpen()}
           disabled={busy}
         >

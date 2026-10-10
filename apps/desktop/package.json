@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test ../../shared/test/sync-conflicts.test.ts ../../shared/test/connect-session.test.ts ../../shared/test/csv-export.test.ts src/lib/sync-run.test.ts"
+    "test": "node --experimental-strip-types --test ../../shared/test/sync-conflicts.test.ts ../../shared/test/connect-session.test.ts ../../shared/test/csv-export.test.ts src/lib/sync-run.test.ts src/lib/local-recovery-session.test.ts"
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-biometry-api": "^0.2.6",

@@ -2,7 +2,9 @@
 //! No production accounts, browser profiles or credentials are used.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
+use passshare_core::PasswordBox;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -13,8 +15,26 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use zeroize::{Zeroize, Zeroizing};
 
 const LIMIT: usize = 4 * 1024 * 1024;
+
+// serde_json::Value cannot implement Zeroize. Own secret-bearing DTOs and
+// transport arguments here so their string leaves are erased even on failure.
+struct SecretJson(Value);
+impl Drop for SecretJson {
+    fn drop(&mut self) {
+        fn erase(value: &mut Value) {
+            match value {
+                Value::String(text) => text.zeroize(),
+                Value::Array(values) => values.iter_mut().for_each(erase),
+                Value::Object(values) => values.values_mut().for_each(erase),
+                _ => {}
+            }
+        }
+        erase(&mut self.0);
+    }
+}
 
 fn remaining(deadline: Instant, limit: Duration) -> Result<Duration, String> {
     deadline
@@ -182,15 +202,15 @@ fn http_at(
     socket
         .set_write_timeout(Some(remaining(deadline, Duration::from_secs(5))?))
         .map_err(|_| "write deadline")?;
-    let payload = if method == "GET" {
+    let payload = Zeroizing::new(if method == "GET" {
         Vec::new()
     } else {
         serde_json::to_vec(body).map_err(|_| "request encoding")?
-    };
+    });
     let headers = format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", payload.len());
     write_request(&mut socket, headers.as_bytes(), deadline)?;
     write_request(&mut socket, &payload, deadline)?;
-    let bytes = read_response(&mut socket, deadline)?;
+    let bytes = Zeroizing::new(read_response(&mut socket, deadline)?);
     let split = bytes
         .windows(4)
         .position(|part| part == b"\r\n\r\n")
@@ -209,8 +229,10 @@ fn http_at(
     if status != "200" {
         return Err(format!("driver status {status}"));
     }
-    let result: Value = serde_json::from_slice(&bytes[split + 4..]).map_err(|_| "response JSON")?;
+    let mut result =
+        SecretJson(serde_json::from_slice(&bytes[split + 4..]).map_err(|_| "response JSON")?);
     if result
+        .0
         .get("value")
         .and_then(|value| value.get("error"))
         .is_some()
@@ -218,8 +240,9 @@ fn http_at(
         return Err("driver command rejected".into());
     }
     result
-        .get("value")
-        .cloned()
+        .0
+        .get_mut("value")
+        .map(Value::take)
         .ok_or_else(|| "missing driver value".into())
 }
 
@@ -355,10 +378,11 @@ impl Driver {
         if Instant::now() >= self.deadline {
             return Err("native acceptance total deadline".into());
         }
+        let request = SecretJson(json!({"script":source,"args":args}));
         http(
             "POST",
             &self.route("execute/async")?,
-            &json!({"script":source,"args":args}),
+            &request.0,
             self.deadline,
         )
     }
@@ -490,7 +514,7 @@ fn ensure(value: bool, label: &str) -> Result<(), String> {
 }
 
 fn open_desktop_ui(driver: &Driver, path: &Path, master: &str) -> Result<(), String> {
-    let opened = driver.script("const done=arguments[arguments.length-1];const inputs=document.querySelectorAll('#setup-heading~label input');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;inputs.forEach((el,i)=>{setter.call(el,arguments[i]);el.dispatchEvent(new Event('input',{bubbles:true}));});setTimeout(()=>{document.querySelector('.ps-actions .ps-button--secondary').click();const end=Date.now()+3000;const probe=()=>{if(document.querySelector('.ps-item-card__title')?.textContent==='Lock fixture')done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false);};probe();},50);", json!([path,master]))?;
+    let opened = driver.script("const done=arguments[arguments.length-1];const inputs=document.querySelectorAll('#setup-heading~label input');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;inputs.forEach((el,i)=>{setter.call(el,arguments[i]);el.dispatchEvent(new Event('input',{bubbles:true}));});setTimeout(()=>{const button=document.querySelector('[data-testid=\"open-password-box\"]');if(!button || button.disabled){done(false);return;}button.click();const end=Date.now()+3000;const probe=()=>{if(document.querySelector('.ps-item-card__title')?.textContent==='Lock fixture')done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false);};probe();},50);", json!([path,master]))?;
     ensure(
         opened == true,
         "actual desktop unlock screen did not show fixture",
@@ -501,6 +525,372 @@ fn open_desktop_ui(driver: &Driver, path: &Path, master: &str) -> Result<(), Str
 
 fn assert_locked_ui(driver: &Driver) -> Result<(), String> {
     ensure(driver.script("const done=arguments[arguments.length-1];const end=Date.now()+2000;const probe=()=>{if(document.querySelector('#setup-heading') && !document.querySelector('[type=password]')?.value && !document.querySelector('.ps-item-card'))done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false);};probe();", json!([]))? == true, "lock retained password input or list")
+}
+
+fn random_secret() -> Result<Zeroizing<String>, String> {
+    let mut entropy = Zeroizing::new([0u8; 32]);
+    getrandom::fill(entropy.as_mut()).map_err(|_| "recovery fixture entropy")?;
+    Ok(Zeroizing::new(STANDARD.encode(entropy.as_ref())))
+}
+
+fn full_payload(path: &Path, password: &str) -> Result<SecretJson, String> {
+    use passshare_core::crypto::{decrypt, derive_master_key_with_params};
+    use passshare_core::storage::file_format::PasswordBoxFile;
+    let file = PasswordBoxFile::load_from_path(path).map_err(|_| "recovery fixture file")?;
+    let key = derive_master_key_with_params(
+        password,
+        &file.kdf.salt_bytes().map_err(|_| "recovery fixture salt")?,
+        file.kdf.memory_kib,
+        file.kdf.time_cost,
+        file.kdf.parallelism,
+    )
+    .map_err(|_| "recovery fixture key")?;
+    let plaintext = Zeroizing::new(
+        decrypt(
+            &file.ciphertext,
+            &key,
+            &file
+                .cipher
+                .nonce_bytes()
+                .map_err(|_| "recovery fixture nonce")?,
+        )
+        .map_err(|_| "recovery fixture decrypt")?,
+    );
+    serde_json::from_slice(&plaintext)
+        .map(SecretJson)
+        .map_err(|_| "recovery fixture payload".into())
+}
+
+fn successful_value(driver: &Driver, command: &str, args: Value) -> Result<SecretJson, String> {
+    let mut reply = SecretJson(driver.invoke(command, args)?);
+    ensure(
+        reply.0["ok"] == true,
+        "recovery fixture native command failed",
+    )?;
+    reply
+        .0
+        .get_mut("value")
+        .map(Value::take)
+        .map(SecretJson)
+        .ok_or_else(|| "recovery fixture native value absent".into())
+}
+
+fn unchanged_file(path: &Path, original: &[u8]) -> Result<bool, String> {
+    let current = std::fs::read(path).map_err(|_| "recovery fixture bytes absent")?;
+    Ok(current == original && Sha256::digest(&current) == Sha256::digest(original))
+}
+
+fn wait_dom(driver: &Driver, condition: &str, label: &str) -> Result<(), String> {
+    // Conditions are static source, never credentials. The driver's absolute
+    // deadline also bounds this finite renderer poll.
+    let source = format!("const done=arguments[arguments.length-1];const end=Date.now()+3000;const probe=()=>{{if({condition})done(true);else if(Date.now()<end)setTimeout(probe,25);else done(false);}};probe();");
+    ensure(driver.script(&source, json!([]))? == true, label)
+}
+
+fn open_recovery_ui(driver: &Driver) -> Result<(), String> {
+    wait_dom(
+        driver,
+        "!!document.querySelector('[data-testid=\"recover-password-box\"]:not(:disabled)')",
+        "recovery setup button absent",
+    )?;
+    ensure(
+        driver.script(
+            r#"
+        const done=arguments[arguments.length-1];
+        const button=document.querySelector('[data-testid="recover-password-box"]');
+        if(!button || button.disabled){done(false);return;}
+        button.click();done(true);
+    "#,
+            json!([]),
+        )? == true,
+        "recovery setup click failed",
+    )?;
+    wait_dom(driver, "!!document.querySelector('#local-recovery-heading')?.closest('section')?.querySelector('form button[type=submit]:not(:disabled)')", "recovery form not ready")
+}
+
+fn fill_recovery_ui(
+    driver: &Driver,
+    path: &Path,
+    code: &str,
+    password: &str,
+    confirmation: &str,
+) -> Result<(), String> {
+    ensure(driver.script(r#"
+        const done=arguments[arguments.length-1];
+        const form=document.querySelector('#local-recovery-heading')?.closest('section')?.querySelector('form');
+        const inputs=form?.querySelectorAll('input');
+        if(!inputs || inputs.length!==4 || [...inputs].some(el=>el.disabled)) {done(false);return;}
+        const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+        inputs.forEach((el,i)=>{setter.call(el,arguments[i]);el.dispatchEvent(new Event('input',{bubbles:true}));});
+        done([...inputs].every((el,i)=>el.value===arguments[i]) && inputs[0].type==='text'
+            && [...inputs].slice(1).every(el=>el.type==='password') && form.checkValidity());
+    "#, json!([path, code, password, confirmation]))? == true, "recovery form fill precondition failed")
+}
+
+fn submit_recovery_ui(driver: &Driver) -> Result<(), String> {
+    ensure(driver.script(r#"
+        const done=arguments[arguments.length-1];
+        const form=document.querySelector('#local-recovery-heading')?.closest('section')?.querySelector('form');
+        const submit=form?.querySelector('button[type=submit]');
+        if(!submit || submit.disabled || !form.checkValidity()){done(false);return;}
+        submit.click();done(true);
+    "#, json!([]))? == true, "recovery form submit precondition failed")
+}
+
+fn cancel_recovery_ui(driver: &Driver) -> Result<(), String> {
+    ensure(driver.script(r#"
+        const done=arguments[arguments.length-1];
+        const section=document.querySelector('#local-recovery-heading')?.closest('section');
+        const inputs=section?.querySelectorAll('form input');
+        const output=section?.querySelector('textarea');
+        const cancel=section?.querySelector(':scope > .ps-actions button');
+        if(!inputs || inputs.length!==4 || ![...inputs].every(el=>el.value) || !cancel || cancel.disabled){done(false);return;}
+        // Keep the real detached refs in this callback, not on window. Merely
+        // removing the form cannot satisfy the erasure assertion.
+        const secrets=[...inputs].slice(1);
+        cancel.click();
+        const end=Date.now()+3000;
+        const probe=()=>{
+            const setup=document.querySelector('#setup-heading')?.closest('section');
+            if(setup && !document.querySelector('#local-recovery-heading')
+                && !document.querySelector('.ps-recovery-secret') && !document.querySelector('.ps-item-card')
+                && [...setup.querySelectorAll('input')].every(el=>!el.value)
+                && secrets.every(el=>!el.isConnected && !el.value) && (!output || !output.value))done(true);
+            else if(Date.now()<end)setTimeout(probe,25);else done(false);
+        };probe();
+    "#, json!([]))? == true, "recovery cancellation retained form or secrets")
+}
+
+fn assert_native_locked(driver: &Driver) -> Result<(), String> {
+    let status = successful_value(driver, "native_session_status", json!({}))?;
+    ensure(
+        status.0["unlocked"] == false,
+        "recovery rejection unlocked native state",
+    )?;
+    ensure(
+        driver.invoke("list_items", json!({}))?["ok"] == false,
+        "recovery rejection allowed secret read",
+    )
+}
+
+fn run_local_recovery(application: &Path, output: &Path) -> Result<(), String> {
+    let temp = tempfile::TempDir::new().map_err(|_| "recovery fixture directory")?;
+    std::fs::create_dir_all(output).map_err(|_| "recovery output directory")?;
+    let mut driver = Driver::start(temp.path(), &output.join("desktop-recovery-driver.log"))?;
+    driver.open(application)?;
+    // No production idle override. This entire mode ends inside 120 seconds.
+    assert_locked_ui(&driver)?;
+    assert_native_locked(&driver)?;
+    let old_password = random_secret()?;
+    let new_password = random_secret()?;
+    let item_password = random_secret()?;
+    let note_body = random_secret()?;
+    let mismatch = random_secret()?;
+    ensure(
+        old_password != new_password && mismatch != new_password,
+        "recovery entropy collision",
+    )?;
+    let path = temp.path().join("recovery.pbox");
+    let mut created = successful_value(
+        &driver,
+        "create_password_box",
+        json!({"path":path,"masterPassword":old_password.as_str()}),
+    )?;
+    let code = match created.0.take() {
+        Value::String(code) if !code.is_empty() => Zeroizing::new(code),
+        _ => return Err("create did not return recovery code".into()),
+    };
+    let added = successful_value(
+        &driver,
+        "add_item",
+        json!({
+            "category":"LOGIN", "title":"Lock fixture", "password":item_password.as_str(),
+            "username":"synthetic-user", "url":"https://synthetic.invalid/recovery",
+            "notes":"Synthetic recovery notes", "tags":["synthetic","recovery"], "favorite":true,
+            "masterPassword":old_password.as_str()
+        }),
+    )?;
+    let saved = successful_value(&driver, "list_items", json!({}))?;
+    let added_note = successful_value(
+        &driver,
+        "add_item",
+        json!({
+            "category":"SECURE_NOTE", "title":"Recovery body fixture", "body":note_body.as_str(),
+            "tags":["recovery","body"], "favorite":false, "masterPassword":old_password.as_str()
+        }),
+    )?;
+    let expected = SecretJson(json!([
+        {"id":added.0["id"], "title":"Lock fixture", "category":"LOGIN",
+         "tags":["synthetic","recovery"], "favorite":true, "url":"https://synthetic.invalid/recovery",
+         "username":"synthetic-user", "password":item_password.as_str(), "body":null,
+         "notes":"Synthetic recovery notes"},
+        {"id":added_note.0["id"], "title":"Recovery body fixture", "category":"SECURE_NOTE",
+         "tags":["recovery","body"], "favorite":false, "url":null, "username":null,
+         "password":null, "body":note_body.as_str(), "notes":null}
+    ]));
+    for item in [&added.0, &added_note.0] {
+        let id = item["id"]
+            .as_str()
+            .ok_or("recovery generated item ID missing")?;
+        id.parse::<passshare_core::ConnectId>()
+            .map_err(|_| "invalid recovery generated item ID")?;
+    }
+    ensure(
+        added.0["id"] != added_note.0["id"]
+            && added.0 == expected.0[0]
+            && added_note.0 == expected.0[1]
+            && saved.0 == json!([expected.0[0]]),
+        "recovery full DTO precondition failed",
+    )?;
+    let saved = successful_value(&driver, "list_items", json!({}))?;
+    ensure(saved.0 == expected.0, "recovery stored input DTO mismatch")?;
+    let original_payload = full_payload(&path, &old_password)?;
+    let original = std::fs::read(&path).map_err(|_| "recovery original bytes")?;
+    successful_value(&driver, "lock_password_box", json!({}))?;
+    assert_locked_ui(&driver)?;
+
+    // Independent cancellation while locked, before any successful rekey.
+    open_recovery_ui(&driver)?;
+    fill_recovery_ui(&driver, &path, &code, &new_password, &new_password)?;
+    cancel_recovery_ui(&driver)?;
+    assert_native_locked(&driver)?;
+    ensure(
+        unchanged_file(&path, &original)?,
+        "cancel changed recovery file",
+    )?;
+    // Capture only the cleared synthetic setup screen; never the code form.
+    let screenshot = http(
+        "GET",
+        &driver.route("screenshot")?,
+        &json!({}),
+        driver.deadline,
+    )?;
+    let png = STANDARD
+        .decode(screenshot.as_str().ok_or("recovery screenshot response")?)
+        .map_err(|_| "recovery screenshot encoding")?;
+    std::fs::write(output.join("desktop-local-recovery-cancel.png"), png)
+        .map_err(|_| "recovery screenshot write")?;
+
+    open_recovery_ui(&driver)?;
+    fill_recovery_ui(&driver, &path, &code, &new_password, &mismatch)?;
+    submit_recovery_ui(&driver)?;
+    wait_dom(&driver, "!!document.querySelector('#local-recovery-heading')?.closest('section')?.querySelector('[role=alert]')?.textContent && !document.querySelector('.ps-item-card')", "mismatch UI error absent")?;
+    assert_native_locked(&driver)?;
+    ensure(
+        unchanged_file(&path, &original)?,
+        "mismatch changed recovery file",
+    )?;
+
+    // Only the confirmation changes. The actual React form invokes recovery.
+    ensure(driver.script(r#"
+        const done=arguments[arguments.length-1];
+        const inputs=document.querySelector('#local-recovery-heading')?.closest('section')?.querySelectorAll('form input');
+        if(!inputs || inputs.length!==4 || inputs[3].disabled){done(false);return;}
+        const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+        setter.call(inputs[3],arguments[0]);inputs[3].dispatchEvent(new Event('input',{bubbles:true}));
+        done(inputs[3].value===arguments[0]);
+    "#, json!([new_password.as_str()]))? == true, "recovery confirmation correction failed")?;
+    submit_recovery_ui(&driver)?;
+    wait_dom(&driver, "!document.querySelector('#local-recovery-heading') && document.querySelector('.ps-item-card__title')?.textContent==='Lock fixture' && !document.querySelector('.ps-recovery-secret')", "recovery UI did not show saved item")?;
+    ensure(driver.script("const done=arguments[arguments.length-1];requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(()=>done(true),0)));", json!([]))? == true,
+        "recovery renderer cleanup did not settle")?;
+    // Flush renderer effects and a native round-trip after the form unmounts:
+    // a cleanup that relocks the box must fail this read/status observation.
+    ensure(
+        successful_value(&driver, "list_items", json!({}))?.0 == saved.0,
+        "recovery changed full UI DTO",
+    )?;
+    let status = successful_value(&driver, "native_session_status", json!({}))?;
+    ensure(
+        status.0["unlocked"] == true,
+        "successful form cleanup relocked native state",
+    )?;
+    wait_dom(
+        &driver,
+        "!document.querySelector('#setup-heading') && !!document.querySelector('.ps-item-card')",
+        "recovery cleanup removed unlocked UI",
+    )?;
+
+    // Authenticate the same existing original path before the old-password
+    // negative check, so a missing/corrupt file cannot masquerade as rejection.
+    let reopened = PasswordBox::open(&path, &new_password)
+        .map_err(|_| "new recovery password cannot open original file")?;
+    ensure(
+        reopened
+            .list_connect_items()
+            .map_err(|_| "recovery reopened items")?
+            .len()
+            == 2,
+        "recovery reopened fixture missing",
+    )?;
+    ensure(
+        full_payload(&path, &new_password)?.0 == original_payload.0,
+        "recovery changed full encrypted payload",
+    )?;
+    ensure(
+        !unchanged_file(&path, &original)?,
+        "successful recovery did not rekey file",
+    )?;
+    ensure(
+        matches!(
+            PasswordBox::open(&path, &old_password),
+            Err(passshare_core::PassShareError::InvalidMasterPassword)
+        ),
+        "old recovery password was not rejected by authentication",
+    )?;
+    let rekeyed = std::fs::read(&path).map_err(|_| "rekeyed recovery bytes")?;
+    let reused =
+        PasswordBox::recover(&path, &code).map_err(|_| "recovery code was unexpectedly rotated")?;
+    let reopened_items = SecretJson(
+        serde_json::to_value(reopened.list_connect_items().map_err(|_| "reopened DTO")?)
+            .map_err(|_| "reopened DTO encoding")?,
+    );
+    let reused_items = SecretJson(
+        serde_json::to_value(
+            reused
+                .list_connect_items()
+                .map_err(|_| "reused recovery DTO")?,
+        )
+        .map_err(|_| "reused DTO encoding")?,
+    );
+    ensure(
+        reused_items.0 == reopened_items.0 && unchanged_file(&path, &rekeyed)?,
+        "read-only code reuse changed contents",
+    )?;
+
+    successful_value(&driver, "lock_password_box", json!({}))?;
+    assert_locked_ui(&driver)?;
+    ensure(
+        driver.invoke(
+            "open_password_box",
+            json!({"path":path,"masterPassword":old_password.as_str()}),
+        )?["ok"]
+            == false,
+        "native open accepted old recovery password",
+    )?;
+    assert_native_locked(&driver)?;
+    open_desktop_ui(&driver, &path, &new_password)?;
+    ensure(
+        successful_value(&driver, "list_items", json!({}))?.0 == saved.0,
+        "new password UI reopen lost DTO",
+    )?;
+    successful_value(&driver, "lock_password_box", json!({}))?;
+    assert_locked_ui(&driver)?;
+    ensure(
+        unchanged_file(&path, &rekeyed)?,
+        "authentication checks changed recovery file",
+    )?;
+    std::fs::write(output.join("desktop-local-recovery.json"), serde_json::to_vec_pretty(&json!({
+        "realLinuxRenderer":true, "desktopOnly":true, "syntheticOnly":true, "physicalAndroid":false,
+        "actualRecoveryForm":true, "fixtureItems":2, "independentInputDto":true, "mismatchRejected":true,
+        "mismatchBytesAndHashPreserved":true, "mismatchRemainedLocked":true,
+        "cancelErasedDetachedRefs":true, "cancelSetupBlank":true, "cancelBytesAndHashPreserved":true,
+        "cancelRemainedLocked":true, "successfulUnmountRemainedUnlocked":true,
+        "newPasswordOpenedOriginalFile":true, "oldPasswordAuthenticationRejected":true,
+        "fullDtoPreserved":true, "fullPayloadPreserved":true, "reusableCodePreserved":true
+    })).map_err(|_| "recovery proof encoding")?).map_err(|_| "recovery proof write")?;
+    println!("native desktop local recovery acceptance succeeded");
+    Ok(())
 }
 
 fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
@@ -531,6 +921,15 @@ fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
         saved.as_array().is_some_and(|items| items.len() == 1),
         "lock fixture count",
     )?;
+    // Fixture IPC leaves the native box unlocked. The renderer can correctly
+    // observe that state during startup and show its main screen. Begin the
+    // actual unlock-screen checks from a proven locked UI/native boundary.
+    ensure(
+        driver.invoke("lock_password_box", json!({}))?["ok"] == true,
+        "lock fixture preparation did not lock",
+    )?;
+    assert_locked_ui(&driver)?;
+    assert_native_locked(&driver)?;
     // Reopen and close twice. Each native transition has its own epoch and
     // must destroy the secret-bearing UI; the UI may also observe its poll.
     for _ in 0..2 {
@@ -869,24 +1268,36 @@ fn run(application: &Path, flavor: &str, blocked: bool, output: &Path) -> Result
     Ok(())
 }
 
+fn valid_mode(flavor: &str, mode: &str) -> bool {
+    ["desktop", "mobile"].contains(&flavor)
+        && [
+            "blocked",
+            "executed",
+            "auto-lock",
+            "mobile-lock",
+            "local-recovery",
+        ]
+        .contains(&mode)
+        && (!["auto-lock", "local-recovery"].contains(&mode) || flavor == "desktop")
+        && (mode != "mobile-lock" || flavor == "mobile")
+}
+
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() != 5 {
-        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed|auto-lock|mobile-lock OUTPUT");
+        eprintln!("usage: webview_acceptance APP desktop|mobile blocked|executed|auto-lock|mobile-lock|local-recovery OUTPUT");
         std::process::exit(2);
     }
     let flavor = args[2].to_str().unwrap_or("");
     let mode = args[3].to_str().unwrap_or("");
-    if !["desktop", "mobile"].contains(&flavor)
-        || !["blocked", "executed", "auto-lock", "mobile-lock"].contains(&mode)
-        || (mode == "auto-lock" && flavor != "desktop")
-        || (mode == "mobile-lock" && flavor != "mobile")
-    {
+    if !valid_mode(flavor, mode) {
         std::process::exit(2);
     }
     let app = PathBuf::from(&args[1]);
     let output = PathBuf::from(&args[4]);
-    let result = if mode == "mobile-lock" {
+    let result = if mode == "local-recovery" {
+        run_local_recovery(&app, &output)
+    } else if mode == "mobile-lock" {
         run_mobile_lock(&app, &output)
     } else if mode == "auto-lock" {
         run_auto_lock(&app, &output)
@@ -902,6 +1313,130 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_recovery_mode_is_desktop_only_and_retains_prior_modes() {
+        assert!(valid_mode("desktop", "local-recovery"));
+        assert!(!valid_mode("mobile", "local-recovery"));
+        assert!(!valid_mode("desktop", "mobile-lock"));
+        assert!(!valid_mode("mobile", "auto-lock"));
+        assert!(valid_mode("desktop", "auto-lock"));
+        assert!(valid_mode("mobile", "mobile-lock"));
+        for flavor in ["desktop", "mobile"] {
+            for mode in ["blocked", "executed"] {
+                assert!(valid_mode(flavor, mode));
+            }
+        }
+        assert!(!valid_mode("desktop", "unknown"));
+    }
+
+    #[test]
+    fn unchanged_recovery_file_requires_existing_identical_bytes() {
+        let temp = tempfile::TempDir::new().expect("synthetic directory");
+        let path = temp.path().join("bytes.pbox");
+        let bytes = b"synthetic ciphertext";
+        std::fs::write(&path, bytes).expect("synthetic file");
+        assert!(unchanged_file(&path, bytes).expect("existing file"));
+        std::fs::write(&path, b"synthetic ciphertext changed").expect("mutated file");
+        assert!(!unchanged_file(&path, bytes).expect("mutated existing file"));
+        std::fs::remove_file(&path).expect("remove synthetic file");
+        assert!(unchanged_file(&path, bytes).is_err());
+    }
+
+    #[test]
+    fn recovery_rekey_preserves_full_content_and_reusable_code_on_existing_file() {
+        use passshare_core::{Item, SavedChange};
+        let temp = tempfile::TempDir::new().expect("synthetic directory");
+        let path = temp.path().join("semantic-recovery.pbox");
+        let old = random_secret().expect("old entropy");
+        let new = random_secret().expect("new independent entropy");
+        let secret = random_secret().expect("item entropy");
+        assert!(old != new, "independent passwords");
+        let mut pb = PasswordBox::create(&path, &old).expect("synthetic create");
+        let code = Zeroizing::new(
+            pb.recovery_secret()
+                .expect("unlocked code")
+                .expect("created recovery code")
+                .to_owned(),
+        );
+        let mut login = Item::new_login(
+            pb.vault().expect("unlocked box").id.clone(),
+            "Lock fixture",
+            secret.as_str(),
+        )
+        .expect("synthetic login")
+        .with_optional_fields(
+            Some("https://synthetic.invalid/recovery".into()),
+            Some("synthetic-user".into()),
+            Some("Synthetic notes".into()),
+        )
+        .expect("optional fields");
+        login.set_tags(vec!["synthetic".into(), "recovery".into()]);
+        login.set_favorite(true);
+        pb.apply_and_save(SavedChange::Add(&login), &old)
+            .expect("persist login");
+        let note = Item::new_secure_note(
+            pb.vault().expect("unlocked box").id.clone(),
+            "Synthetic note",
+            secret.as_str(),
+        )
+        .expect("synthetic note");
+        pb.apply_and_save(SavedChange::Add(&note), &old)
+            .expect("persist body");
+        let dto = SecretJson(
+            serde_json::to_value(pb.list_connect_items().expect("fixture DTO"))
+                .expect("fixture DTO encoding"),
+        );
+        assert!(
+            dto.0.as_array().is_some_and(|items| items.len() == 2),
+            "nonempty full DTO precondition"
+        );
+        let payload = full_payload(&path, &old).expect("fixture full payload");
+        let original = std::fs::read(&path).expect("fixture exists before recovery");
+        pb.lock();
+        assert!(
+            PasswordBox::recover(&path, &random_secret().expect("wrong entropy")).is_err(),
+            "wrong code rejected"
+        );
+        assert!(unchanged_file(&path, &original).expect("wrong-code file exists"));
+        let mut recovered = PasswordBox::recover(&path, &code).expect("valid read-only recovery");
+        assert!(unchanged_file(&path, &original).expect("read-only file exists"));
+        recovered.rekey_recovered(&new).expect("synthetic rekey");
+        let reopened =
+            PasswordBox::open(&path, &new).expect("new password authenticates existing file");
+        let after = SecretJson(
+            serde_json::to_value(reopened.list_connect_items().expect("reopened full DTO"))
+                .expect("reopened DTO encoding"),
+        );
+        assert!(after.0 == dto.0, "all item fields preserved");
+        assert!(
+            full_payload(&path, &new).expect("new payload").0 == payload.0,
+            "all payload fields preserved"
+        );
+        assert!(!unchanged_file(&path, &original).expect("rekey file exists"));
+        assert!(
+            matches!(
+                PasswordBox::open(&path, &old),
+                Err(passshare_core::PassShareError::InvalidMasterPassword)
+            ),
+            "old password fails authentication, not file lookup"
+        );
+        let rekeyed = std::fs::read(&path).expect("rekey fixture exists");
+        let reusable = PasswordBox::recover(&path, &code).expect("same code still authenticates");
+        let reusable_dto = SecretJson(
+            serde_json::to_value(reusable.list_connect_items().expect("code reuse DTO"))
+                .expect("code reuse DTO encoding"),
+        );
+        assert!(reusable_dto.0 == dto.0, "code reuse preserves full DTO");
+        assert!(unchanged_file(&path, &rekeyed).expect("code reuse file exists"));
+        // Equal counts are insufficient: the oracle must detect lost fields.
+        let mut lost_field = SecretJson(dto.0.clone());
+        lost_field.0[0]["fields"][0]["value"] = json!("changed synthetic username");
+        assert!(
+            lost_field.0 != dto.0,
+            "full DTO detects changed content at equal counts"
+        );
+    }
 
     #[test]
     fn native_proxy_status_must_be_ready_after_early_eof_and_not_ready() {
