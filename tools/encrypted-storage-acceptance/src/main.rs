@@ -244,82 +244,10 @@ impl Database {
         self.sql_before(sql, std::time::Instant::now() + Duration::from_secs(15))
     }
     fn sql_before(&self, sql: &str, deadline: std::time::Instant) -> String {
-        let mut child = self
-            .psql(false, None)
-            .args(["-c", sql])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let mut readers = Vec::new();
-        for (is_stdout, pipe) in [
-            (true, Box::new(stdout) as Box<dyn Read + Send>),
-            (false, Box::new(stderr) as Box<dyn Read + Send>),
-        ] {
-            let sender = sender.clone();
-            readers.push(thread::spawn(move || {
-                let mut bytes = Vec::new();
-                let result = pipe.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes);
-                let _ = sender.send((is_stdout, result, bytes));
-            }));
-        }
-        drop(sender);
-        let mut failure_category = "other";
-        let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
-            }
-            if std::time::Instant::now() >= deadline {
-                let _ = child.kill();
-                if !reap_before(
-                    &mut child,
-                    std::time::Instant::now() + Duration::from_secs(2),
-                ) {
-                    CLEANUP_FAILED.store(true, Ordering::SeqCst);
-                }
-                panic!("fixture SQL exceeded its deadline");
-            }
-            thread::sleep(Duration::from_millis(10));
-        };
-        let mut output = None;
-        for _ in 0..2 {
-            let (is_stdout, result, bytes) = receiver
-                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
-                .expect("fixture SQL output drain exceeded deadline");
-            result.expect("fixture SQL output read failed");
-            assert!(
-                bytes.len() <= 8 * 1024 * 1024,
-                "fixture SQL output exceeded bound"
-            );
-            if is_stdout {
-                output = Some(bytes);
-            } else {
-                let diagnostic = String::from_utf8_lossy(&bytes);
-                if diagnostic.contains("canceling statement due to statement timeout") {
-                    failure_category = "statement_timeout";
-                } else if diagnostic.contains("does not exist") {
-                    failure_category = "missing_dependency";
-                } else if diagnostic.contains("could not connect")
-                    || diagnostic.contains("connection refused")
-                {
-                    failure_category = "connection_unavailable";
-                }
-            }
-        }
-        for reader in readers {
-            reader.join().expect("fixture SQL reader failed");
-        }
-        assert!(
-            status.success(),
-            "fixture SQL failed category={failure_category}"
-        );
-        String::from_utf8(output.unwrap())
-            .unwrap()
-            .trim()
-            .to_owned()
+        let mut cmd = self.psql(true, None);
+        // SQLSTATE is safe diagnostic metadata; verbose text is never logged.
+        cmd.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"]);
+        fixture_sql(cmd, sql, deadline).unwrap_or_else(|reason| panic!("fixture SQL {reason}"))
     }
     fn psql(&self, interactive: bool, label: Option<&str>) -> Command {
         let mut c = if let Some(local) = &self.local {
@@ -362,6 +290,157 @@ impl Database {
             self.port
         )
     }
+}
+
+struct SqlChild(Child);
+impl Drop for SqlChild {
+    fn drop(&mut self) {
+        if !matches!(self.0.try_wait(), Ok(Some(_))) {
+            let _ = self.0.kill();
+            if !reap_before(
+                &mut self.0,
+                std::time::Instant::now() + Duration::from_secs(2),
+            ) {
+                CLEANUP_FAILED.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+// -f alone splits statements and changes the former single -c transaction/result
+// semantics. One gexec cell sends the ENTIRE SQL literally as one server request.
+// Base64 keeps quotes, newlines, dollar bodies and backslashes out of psql's lexer.
+// Audited callers include explicit BEGIN/COMMIT/ROLLBACK and multi-statement DDL;
+// CREATE/DROP DATABASE use the separate local fixture control, without wrapping.
+fn fixture_sql(
+    mut cmd: Command,
+    sql: &str,
+    deadline: std::time::Instant,
+) -> Result<String, &'static str> {
+    const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
+    if std::time::Instant::now() >= deadline {
+        return Err("exceeded its deadline");
+    }
+    let input = format!(
+        "SELECT pg_catalog.convert_from(pg_catalog.decode('{}','base64'),'UTF8') \\gexec\n",
+        BASE64.encode(sql)
+    );
+    if std::time::Instant::now() >= deadline {
+        return Err("exceeded its deadline");
+    }
+    let mut child = SqlChild(
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|_| "launch failed")?,
+    );
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let mut workers = Vec::new();
+    let mut stdin = child.0.stdin.take().unwrap();
+    let writer_sender = sender.clone();
+    workers.push(thread::spawn(move || {
+        let result = stdin.write_all(input.as_bytes());
+        drop(stdin); // EOF is part of completion, not deferred until after wait.
+        let _ = writer_sender.send((0, result.map(|_| 0), Vec::new()));
+    }));
+    for (kind, pipe) in [
+        (
+            1,
+            Box::new(child.0.stdout.take().unwrap()) as Box<dyn Read + Send>,
+        ),
+        (
+            2,
+            Box::new(child.0.stderr.take().unwrap()) as Box<dyn Read + Send>,
+        ),
+    ] {
+        let sender = sender.clone();
+        workers.push(thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = pipe.take(OUTPUT_LIMIT as u64 + 1).read_to_end(&mut bytes);
+            let _ = sender.send((kind, result, bytes));
+        }));
+    }
+    drop(sender);
+    let mut status = None;
+    let mut output = Vec::new();
+    let mut events = 0;
+    let mut failure = "failed category=other";
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("exceeded its deadline");
+        }
+        if status.is_none() {
+            status = child.0.try_wait().map_err(|_| "child wait failed")?;
+        }
+        while let Ok((kind, result, bytes)) = receiver.try_recv() {
+            result.map_err(|_| {
+                if kind == 0 {
+                    "input write failed"
+                } else {
+                    "output read failed"
+                }
+            })?;
+            if bytes.len() > OUTPUT_LIMIT {
+                return Err("output exceeded bound");
+            }
+            events += 1;
+            if kind == 1 {
+                output = bytes;
+            } else if kind == 2 {
+                // PostgreSQL diagnostics can contain SQL/row values. Classify only.
+                let diagnostic = String::from_utf8_lossy(&bytes);
+                if diagnostic.contains("canceling statement due to statement timeout") {
+                    failure = "failed category=statement_timeout";
+                } else if diagnostic.contains("does not exist") {
+                    failure = "failed category=missing_dependency";
+                } else if diagnostic.contains("could not connect")
+                    || diagnostic.contains("connection refused")
+                {
+                    failure = "failed category=connection_unavailable";
+                } else {
+                    for (code, category) in [
+                        ("55P03", "failed category=lock_timeout"),
+                        ("40P01", "failed category=deadlock"),
+                        ("42601", "failed category=syntax_error"),
+                        ("22021", "failed category=invalid_encoding"),
+                        ("22012", "failed category=division_by_zero"),
+                        ("53100", "failed category=disk_full"),
+                        ("53200", "failed category=out_of_memory"),
+                        ("53300", "failed category=connections_exhausted"),
+                        ("55006", "failed category=object_in_use"),
+                        ("42501", "failed category=permission_denied"),
+                        ("XX000", "failed category=internal_error"),
+                    ] {
+                        if diagnostic.contains(&format!("ERROR:  {code}:")) {
+                            failure = category;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // Even after a worker sends its event it may not have returned yet.
+        // Join only finished workers; never introduce an unbounded writer join.
+        if status.is_some() && events == 3 && workers.iter().all(|w| w.is_finished()) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    for worker in workers {
+        worker.join().map_err(|_| "I/O worker failed")?;
+    }
+    if !status.unwrap().success() {
+        return Err(failure);
+    }
+    let output = String::from_utf8(output)
+        .map_err(|_| "output encoding failed")?
+        .trim()
+        .to_owned();
+    if std::time::Instant::now() >= deadline {
+        return Err("exceeded its deadline");
+    }
+    Ok(output)
 }
 impl Drop for Database {
     fn drop(&mut self) {
@@ -3255,6 +3334,193 @@ fn assert_setup_rejected_intact(
 mod contract_tests {
     use super::*;
     use base64::engine::general_purpose::STANDARD as BASE64;
+
+    fn sql_child(mode: &str) -> Command {
+        let mut cmd = command(std::env::current_exe().unwrap().to_str().unwrap());
+        cmd.args([
+            "--ignored",
+            "--exact",
+            "contract_tests::sql_transport_child",
+            "--nocapture",
+        ])
+        .env("PASSSHARE_SQL_CHILD_CONTROL", mode);
+        cmd
+    }
+
+    #[test]
+    #[ignore = "subprocess control invoked only by the SQL transport tests"]
+    fn sql_transport_child() {
+        match std::env::var("PASSSHARE_SQL_CHILD_CONTROL")
+            .expect("explicit SQL child control")
+            .as_str()
+        {
+            "drain" => {
+                // Fill BOTH output pipes before consuming input. Sequential I/O
+                // deadlocks on this control even though the process is healthy.
+                std::io::stdout()
+                    .write_all(&vec![b'Z'; 300 * 1024])
+                    .unwrap();
+                std::io::stderr()
+                    .write_all(&vec![b'E'; 300 * 1024])
+                    .unwrap();
+                let mut input = Vec::new();
+                std::io::stdin().read_to_end(&mut input).unwrap();
+                assert!(input.len() > 256 * 1024);
+                assert!(input.ends_with(b" \\gexec\n"));
+            }
+            "blocked" => thread::sleep(Duration::from_secs(30)),
+            "reject" => std::process::exit(7),
+            "overflow" => {
+                let _ = std::io::stdout().write_all(&vec![b'Z'; 8 * 1024 * 1024 + 1]);
+            }
+            _ => panic!("unknown SQL child control"),
+        }
+    }
+
+    #[test]
+    fn sql_transport_drains_both_outputs_while_writing_large_input() {
+        let reply = fixture_sql(
+            sql_child("drain"),
+            &"x".repeat(300 * 1024),
+            std::time::Instant::now() + Duration::from_secs(5),
+        )
+        .expect("concurrent transport success control");
+        assert_eq!(reply.bytes().filter(|b| *b == b'Z').count(), 300 * 1024);
+    }
+
+    #[test]
+    fn sql_transport_deadline_covers_a_blocked_writer_and_reaps_child() {
+        let start = std::time::Instant::now();
+        let reply = fixture_sql(
+            sql_child("blocked"),
+            &"x".repeat(2 * 1024 * 1024),
+            start + Duration::from_millis(400),
+        );
+        assert!(matches!(reply, Err("exceeded its deadline")));
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn sql_transport_rejects_early_exit_and_output_overflow() {
+        for (mode, expected) in [
+            ("reject", "input write failed"),
+            ("overflow", "output exceeded bound"),
+        ] {
+            let input = if mode == "overflow" {
+                "SELECT 1".to_owned()
+            } else {
+                "x".repeat(2 * 1024 * 1024)
+            };
+            let reply = fixture_sql(
+                sql_child(mode),
+                &input,
+                std::time::Instant::now() + Duration::from_secs(5),
+            );
+            assert!(matches!(reply, Err(reason) if reason == expected));
+        }
+        assert!(matches!(
+            fixture_sql(
+                command("unused-sql-client"),
+                "SELECT 1",
+                std::time::Instant::now()
+            ),
+            Err("exceeded its deadline")
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires PASSSHARE_SQL_FIXTURE_MANIFEST naming an owned PostgreSQL 16 fixture"]
+    fn sql_transport_live_large_sql_preserves_single_request_semantics() {
+        let manifest = PathBuf::from(
+            std::env::var_os("PASSSHARE_SQL_FIXTURE_MANIFEST")
+                .expect("explicit owned PostgreSQL fixture manifest required"),
+        );
+        assert!(manifest.is_absolute());
+        let local = local_postgres::LocalPostgres::start(&manifest);
+        let db = Database {
+            name: local.database.clone(),
+            port: local.port,
+            local: Some(local),
+        };
+        // The invocation owns this fresh DB. Bind its purpose outside public,
+        // just as restore acceptance does, and retain the standard Drop cleanup.
+        println!("SQL transport live owned_database={}", db.name);
+        println!("SQL transport live step=bind");
+        db.sql("CREATE SCHEMA passshare_acceptance_control; CREATE TABLE passshare_acceptance_control.binding AS SELECT 'sql-transport-regression'::text AS purpose, owner_id, current_database() AS database_name FROM passshare_fixture_owner; CREATE TABLE sql_transport_fixture(id integer PRIMARY KEY, payload text)");
+        assert_eq!(db.sql("SELECT purpose='sql-transport-regression' AND database_name=current_database() AND owner_id=(SELECT owner_id FROM passshare_fixture_owner) FROM passshare_acceptance_control.binding"), "t");
+        let payload = format!(
+            "';\\q\n$$ :name /* BEGIN; COMMIT */ 日本語{}",
+            "x".repeat(300 * 1024)
+        );
+        let quoted = payload.replace('\'', "''");
+        let sql = format!("INSERT INTO sql_transport_fixture VALUES(1,'{quoted}'); SELECT octet_length(payload)::text || ':' || md5(payload) FROM sql_transport_fixture WHERE id=1");
+        assert!(sql.len() > 256 * 1024);
+        println!("SQL transport live step=large_insert");
+        let reply = db.sql(&sql);
+        assert!(reply.starts_with(&format!("{}:", payload.len())));
+        // Compare the full stored value without putting it in assertion output.
+        println!("SQL transport live step=large_compare");
+        assert_eq!(
+            db.sql(&format!(
+                "SELECT payload='{quoted}' FROM sql_transport_fixture WHERE id=1"
+            )),
+            "t"
+        );
+        println!("SQL transport live step=transaction_ids");
+        let txids = db.sql("SELECT txid_current(); SELECT txid_current()");
+        let txids = txids.lines().collect::<Vec<_>>();
+        assert!(txids.len() == 2 && txids[0] == txids[1]);
+        assert_eq!(
+            db.sql("SELECT 'first'; SELECT 'last'")
+                .lines()
+                .collect::<Vec<_>>(),
+            ["first", "last"]
+        );
+        println!("SQL transport live: large input and multi-results passed");
+
+        let execute = |sql: &str| {
+            let mut cmd = db.psql(true, None);
+            cmd.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"]);
+            fixture_sql(
+                cmd,
+                sql,
+                std::time::Instant::now() + Duration::from_secs(15),
+            )
+        };
+        assert!(
+            execute("INSERT INTO sql_transport_fixture VALUES(2,'implicit'); SELECT 1/0").is_err()
+        );
+        assert_eq!(
+            db.sql("SELECT count(*) FROM sql_transport_fixture WHERE id=2"),
+            "0"
+        );
+        assert!(execute("CREATE TABLE sql_transport_rollback(id integer); SELECT 1/0").is_err());
+        assert_eq!(
+            db.sql("SELECT to_regclass('sql_transport_rollback') IS NULL"),
+            "t"
+        );
+        println!("SQL transport live: implicit DML/DDL rollback passed");
+        assert_eq!(db.sql("BEGIN; INSERT INTO sql_transport_fixture VALUES(3,'rollback'); SELECT 'rollback-result'; ROLLBACK"), "rollback-result");
+        assert_eq!(
+            db.sql("SELECT count(*) FROM sql_transport_fixture WHERE id=3"),
+            "0"
+        );
+        assert!(execute(
+            "BEGIN; INSERT INTO sql_transport_fixture VALUES(4,'committed'); COMMIT; SELECT 1/0"
+        )
+        .is_err());
+        assert_eq!(
+            db.sql("SELECT count(*) FROM sql_transport_fixture WHERE id=4"),
+            "1"
+        );
+        println!("SQL transport live: explicit rollback/commit passed");
+        assert_eq!(db.sql("VACUUM sql_transport_fixture"), "");
+        println!("SQL transport live: nontransaction operation passed");
+        db.sql("DO $$ BEGIN IF (SELECT count(*) FROM sql_transport_fixture)<>2 THEN RAISE EXCEPTION 'synthetic count mismatch'; END IF; END $$");
+        drop(db);
+        assert!(!CLEANUP_FAILED.load(Ordering::SeqCst));
+        println!("SQL transport: >256KiB payload, exact bytes, one implicit transaction, multi-results, DDL rollback, explicit rollback/commit, nontransaction command and owned DB cleanup passed");
+    }
 
     #[test]
     fn cli_modes_are_exact_and_image_values_cannot_be_docker_options() {
