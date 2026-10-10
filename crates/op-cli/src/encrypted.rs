@@ -355,7 +355,9 @@ impl Session {
         }
         .salt_bytes()
         .map_err(|_| CRYPTO)?;
-        let normalized = Zeroizing::new(password.nfc().collect::<String>());
+        let size = password.nfc().map(char::len_utf8).sum();
+        let mut normalized = Zeroizing::new(String::with_capacity(size));
+        normalized.extend(password.nfc());
         let root = crypto::derive_master_key_with_params(&normalized, &salt, 65_536, 3, 4)
             .map_err(|_| CRYPTO)?;
         let key = PasswordBoxKey::unwrap_for_owner(&record.bundle.wrapped, &root, &owner)
