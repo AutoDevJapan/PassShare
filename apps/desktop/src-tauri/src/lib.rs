@@ -1207,6 +1207,7 @@ mod smoke_tests {
         let wrong_code =
             Zeroizing::new(passshare_core::crypto::generate_recovery_secret().unwrap());
         let invalid_code = fresh_master_password();
+        let empty_password = String::new();
 
         let (dir, path) = temp_box("native-recovery-invalid");
         legacy_recovery_fixture(&path, &old_password);
@@ -1263,7 +1264,11 @@ mod smoke_tests {
                 new_password.as_str(),
                 other_password.as_str(),
             ),
-            (code.as_str(), "", ""),
+            (
+                code.as_str(),
+                empty_password.as_str(),
+                empty_password.as_str(),
+            ),
         ] {
             assert!(state
                 .recover_and_save(
