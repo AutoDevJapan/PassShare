@@ -41,11 +41,11 @@ mod tests {
     #[test]
     fn rejects_malformed_references() {
         for bad in [
-            "Work/Gmail/password",       // missing op:// prefix
-            "op://Work/Gmail",           // too few components
-            "op:///Gmail/password",      // empty vault
-            "op://Work//password",       // empty item
-            "op://Work/Gmail/",          // empty field
+            "Work/Gmail/password",  // missing op:// prefix
+            "op://Work/Gmail",      // too few components
+            "op:///Gmail/password", // empty vault
+            "op://Work//password",  // empty item
+            "op://Work/Gmail/",     // empty field
         ] {
             assert!(parse_op_reference(bad).is_none(), "should reject: {bad}");
         }

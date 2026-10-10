@@ -47,7 +47,7 @@ jobs:
             --label cc.project=PassShare --label "cc.job=ci-${GITHUB_RUN_ID}" \
             --mount "type=volume,source=$drill_volume,target=/var/lib/postgresql/data" \
             --env POSTGRES_HOST_AUTH_METHOD=trust \
-            postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+            mirror.gcr.io/library/postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
           drill_ready=0
           for drill_attempt in $(seq 1 60); do
             if test "$(docker exec "$drill_db" cat /proc/1/comm)" = postgres \

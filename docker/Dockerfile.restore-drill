@@ -1,16 +1,16 @@
-FROM rust:1-bookworm AS mutations
+FROM mirror.gcr.io/library/rust:1-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS mutations
 WORKDIR /native
 COPY backend/native ./
 RUN cargo build --release --locked --bin passshare-mutations
 
-FROM rust:1-bookworm AS drill
+FROM mirror.gcr.io/library/rust:1-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS drill
 WORKDIR /drill
 COPY tools/restore-drill-rs ./
 COPY frontend/vercel.json /frontend/vercel.json
 COPY scripts/sync-vercel-env.mjs /scripts/sync-vercel-env.mjs
 RUN cargo test --locked && cargo build --release --locked --bin passshare-restore-drill
 
-FROM node:24-bookworm-slim AS backend
+FROM mirror.gcr.io/library/node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS backend
 WORKDIR /app
 COPY backend/package.json backend/pnpm-lock.yaml ./
 RUN corepack enable \
@@ -18,7 +18,7 @@ RUN corepack enable \
   && pnpm install --prod --frozen-lockfile --ignore-scripts
 COPY backend/src ./src
 
-FROM postgres:16-bookworm
+FROM mirror.gcr.io/library/postgres:16-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4
 WORKDIR /app
 COPY --from=backend /usr/local/bin/node /usr/local/bin/node
 COPY --from=backend /app /app

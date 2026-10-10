@@ -12,6 +12,8 @@ use unicode_normalization::UnicodeNormalization;
 use wasm_bindgen::prelude::*;
 use zeroize::{Zeroize, Zeroizing};
 
+mod shared;
+pub use shared::CloudAccountIdentity;
 mod worker;
 
 const INVALID: &str = "PS051: Invalid encrypted data";
@@ -98,6 +100,7 @@ fn password(value: String) -> Result<Zeroizing<String>, &'static str> {
 struct Session {
     key: Option<PasswordBoxKey>,
     owner: OwnerKeyContext,
+    can_wrap_owner: bool,
 }
 impl Session {
     fn generate(context: &str) -> Result<Self, &'static str> {
@@ -106,6 +109,7 @@ impl Session {
         Ok(Self {
             key: Some(key),
             owner,
+            can_wrap_owner: true,
         })
     }
     fn unlock(bundle: &str, secret: String, expected: &str) -> Result<Self, &'static str> {
@@ -125,6 +129,7 @@ impl Session {
         Ok(Self {
             key: Some(key),
             owner,
+            can_wrap_owner: true,
         })
     }
     fn key(&self) -> Result<&PasswordBoxKey, &'static str> {
@@ -142,6 +147,9 @@ impl Session {
     fn wrap(&self, secret: String) -> Result<String, &'static str> {
         let secret = password(secret)?;
         let key = self.key()?;
+        if !self.can_wrap_owner {
+            return Err(INVALID);
+        }
         let salt = generate_salt().map_err(|_| INVALID)?;
         let root = derive_root(&secret, &salt)?;
         let wrapped = key

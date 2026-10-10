@@ -72,7 +72,8 @@ impl ConnectClient {
     }
 
     pub async fn list_items(&self, vault_id: &str) -> ConnectResult<Vec<ItemOverview>> {
-        self.get_json(&format!("/vaults/{}/items", seg(vault_id))).await
+        self.get_json(&format!("/vaults/{}/items", seg(vault_id)))
+            .await
     }
 
     pub async fn get_item(&self, vault_id: &str, item_id: &str) -> ConnectResult<Item> {
@@ -148,10 +149,7 @@ impl ConnectClient {
         self.decode_error(response).await
     }
 
-    async fn get_json<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> ConnectResult<T> {
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> ConnectResult<T> {
         let url = format!("{}{}", self.base_url, path);
         let response = self
             .http
@@ -224,7 +222,10 @@ mod tests {
     fn debug_redacts_token() {
         let client = ConnectClient::new("https://example.test", "super-secret-token").unwrap();
         let rendered = format!("{client:?}");
-        assert!(!rendered.contains("super-secret-token"), "token must not appear in Debug");
+        assert!(
+            !rendered.contains("super-secret-token"),
+            "token must not appear in Debug"
+        );
         assert!(rendered.contains("<redacted>"));
     }
 
