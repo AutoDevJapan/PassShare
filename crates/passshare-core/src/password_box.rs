@@ -684,6 +684,7 @@ fn merge_extensions(current: &mut serde_json::Value, original: &serde_json::Valu
                     "contentVersion",
                     "attributeVersion",
                 ],
+                "vault-ref" => &["id"],
                 "items" => &[
                     "id",
                     "title",
@@ -706,7 +707,14 @@ fn merge_extensions(current: &mut serde_json::Value, original: &serde_json::Valu
             };
             for (name, previous) in original {
                 if let Some(value) = current.get_mut(name) {
-                    merge_extensions(value, previous, name);
+                    // The payload owns a full Vault; an Item owns only a
+                    // reference. Preserve extensions on that narrower DTO.
+                    let nested = if context == "items" && name == "vault" {
+                        "vault-ref"
+                    } else {
+                        name
+                    };
+                    merge_extensions(value, previous, nested);
                 } else if !known.contains(&name.as_str()) {
                     current.insert(name.clone(), previous.clone());
                 }
@@ -716,10 +724,16 @@ fn merge_extensions(current: &mut serde_json::Value, original: &serde_json::Valu
             if matches!(context, "items" | "fields" | "sections" | "urls") =>
         {
             let key = if context == "urls" { "href" } else { "id" };
+            let mut used = vec![false; original.len()];
             for value in current {
-                if let Some(previous) = original.iter().find(|previous| {
-                    value.get(key).is_some() && previous.get(key) == value.get(key)
-                }) {
+                if let Some((index, previous)) =
+                    original.iter().enumerate().find(|(index, previous)| {
+                        !used[*index]
+                            && value.get(key).is_some()
+                            && previous.get(key) == value.get(key)
+                    })
+                {
+                    used[index] = true;
                     merge_extensions(value, previous, context);
                 }
             }

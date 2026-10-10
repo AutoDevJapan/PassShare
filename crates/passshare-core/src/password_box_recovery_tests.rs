@@ -65,6 +65,83 @@ fn raw_payload(path: &Path, password: &str) -> SecretJson {
 }
 
 #[test]
+fn first_save_and_rekey_preserve_reference_extensions_and_duplicate_url_metadata() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("extensions.pbox");
+    let mut pb = PasswordBox::create(&path, OLD_PASSWORD).unwrap();
+    add_complete_item(&mut pb);
+    let code = Zeroizing::new(pb.recovery_secret().unwrap().unwrap().to_owned());
+    // Seed independently authenticated bytes, before the merge implementation
+    // gets a chance to omit anything during its first save.
+    let mut full = SecretJson(serde_json::to_value(&pb.payload).unwrap());
+    full.0["localKeyRecoveryVersion"] = serde_json::json!(2);
+    full.0["items"][0]["vault"]["name"] = serde_json::json!("synthetic-reference-name");
+    full.0["items"][0]["vault"]["contentVersion"] = serde_json::json!(91);
+    full.0["items"][0]["urls"] = serde_json::json!([
+        {"href":"https://example.invalid/same","primary":true,"label":"First","extension":"first-only"},
+        {"href":"https://example.invalid/same","primary":false,"label":"Second","extension":"second-only"}
+    ]);
+    let mut file = PasswordBoxFile::load_from_path(&path).unwrap();
+    let key = derive_master_key_with_params(
+        OLD_PASSWORD,
+        &file.kdf.salt_bytes().unwrap(),
+        file.kdf.memory_kib,
+        file.kdf.time_cost,
+        file.kdf.parallelism,
+    )
+    .unwrap();
+    let bytes = Zeroizing::new(serde_json::to_vec(&full.0).unwrap());
+    let (ciphertext, nonce) = encrypt(&bytes, &key).unwrap();
+    file.ciphertext = ciphertext;
+    file.cipher.nonce = BASE64.encode(nonce);
+    let (ciphertext, nonce) = encrypt_recovery_key(
+        &key,
+        &recovery_key(&code).unwrap(),
+        &file.recovery_aad().unwrap(),
+    )
+    .unwrap();
+    file.recovery = Some(RecoveryWrapper {
+        cipher: StoredCipher {
+            algorithm: "xchacha20poly1305".into(),
+            nonce: BASE64.encode(nonce),
+        },
+        ciphertext,
+    });
+    file.save_to_path(&path).unwrap();
+    drop(pb);
+    let original = raw_payload(&path, OLD_PASSWORD);
+    assert_eq!(
+        original.0["items"][0]["vault"]["name"],
+        "synthetic-reference-name"
+    );
+    assert_eq!(
+        original.0["items"][0]["urls"][1]["extension"],
+        "second-only"
+    );
+    let mut opened = PasswordBox::open(&path, OLD_PASSWORD).unwrap();
+    opened.save(OLD_PASSWORD).unwrap();
+    drop(opened);
+    let saved = raw_payload(&path, OLD_PASSWORD);
+    assert_eq!(
+        saved.0["items"][0]["vault"],
+        original.0["items"][0]["vault"]
+    );
+    assert_eq!(saved.0["items"][0]["urls"], original.0["items"][0]["urls"]);
+    let mut recovered = PasswordBox::recover(&path, &code).unwrap();
+    recovered.rekey_recovered(NEW_PASSWORD).unwrap();
+    drop(recovered);
+    let rekeyed = raw_payload(&path, NEW_PASSWORD);
+    assert_eq!(
+        rekeyed.0["items"][0]["vault"],
+        original.0["items"][0]["vault"]
+    );
+    assert_eq!(
+        rekeyed.0["items"][0]["urls"],
+        original.0["items"][0]["urls"]
+    );
+}
+
+#[test]
 fn v2_restart_recover_rekey_preserves_full_json_and_code() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("box.pbox");

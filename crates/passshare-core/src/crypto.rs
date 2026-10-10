@@ -104,16 +104,18 @@ pub fn generate_recovery_secret() -> Result<String, PassShareError> {
 }
 
 pub(crate) fn recovery_key(code: &str) -> Result<MasterKey, PassShareError> {
-    let bytes = Zeroizing::new(
-        BASE64
-            .decode(code)
-            .map_err(|_| PassShareError::CorruptFile)?,
-    );
-    let canonical = Zeroizing::new(BASE64.encode(bytes.as_slice()));
-    if bytes.len() != RECOVERY_SECRET_BYTES || canonical.as_str() != code {
+    if code.len() != 44 {
         return Err(PassShareError::CorruptFile);
     }
-    MasterKey::from_bytes(&bytes)
+    let mut bytes = Zeroizing::new([0u8; RECOVERY_SECRET_BYTES]);
+    let count = BASE64
+        .decode_slice(code, bytes.as_mut())
+        .map_err(|_| PassShareError::CorruptFile)?;
+    let canonical = Zeroizing::new(BASE64.encode(bytes.as_ref()));
+    if count != RECOVERY_SECRET_BYTES || canonical.as_str() != code {
+        return Err(PassShareError::CorruptFile);
+    }
+    MasterKey::from_bytes(bytes.as_ref())
 }
 
 pub(crate) fn encrypt_recovery_key(
