@@ -59,6 +59,33 @@ function makeFakeApi() {
   return { api, backing, getDataCalls: () => getDataCalls };
 }
 
+test("saving after legacy cleanup retains the Android domain key needed to reopen", async () => {
+  const records = new Map<string, string>();
+  let domainKeyPresent = false;
+  const api = {
+    async setData({ name, data }: { name: string; data: string }) {
+      domainKeyPresent = true;
+      records.set(name, data);
+    },
+    async getData({ name }: { name: string }) {
+      if (!domainKeyPresent) throw new Error("No key pair found");
+      return { data: records.get(name) ?? null };
+    },
+    async removeData({ name }: { name: string }) {
+      records.delete(name);
+      // The real Android plugin deletes the domain alias for every remove,
+      // including a legacy name that does not have any stored data.
+      domainKeyPresent = false;
+    },
+  };
+  __setBiometryApiForTests(api as never);
+  await saveAuthSession(SESSION);
+  assert.deepEqual(await loadAuthSession(REASON), SESSION);
+  await clearAuthSession();
+  assert.equal(records.size, 0);
+  assert.equal(domainKeyPresent, false);
+});
+
 beforeEach(() => {
   storage.clear();
 });

@@ -93,7 +93,7 @@ export async function refreshConnectToken(
 ): Promise<ConnectTokenRefreshResponse> {
   const response = await fetch(`${getApiBaseUrl()}/api/auth/token/refresh`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: mobileHeaders(),
     body: JSON.stringify({ refreshToken }),
   });
   if (!response.ok) {

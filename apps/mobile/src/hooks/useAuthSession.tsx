@@ -85,6 +85,9 @@ async function buildConnectClientFromStorage(reason: string, isCurrent: () => bo
       clear: () => clearAuthSession(isCurrent),
     },
     { fetchCurrentUser, refreshConnectToken },
+    // Secure reauthentication must not reuse an expired server token merely
+    // because the device's wall clock is behind the server.
+    { forceRefresh: true },
   );
 
   if (!result) {
