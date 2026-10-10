@@ -307,6 +307,48 @@ impl Drop for SqlChild {
     }
 }
 
+// Only SQLSTATE and schema-owned identifiers may leave PostgreSQL stderr.
+// Never report arbitrary quoted names, function arguments, SQL or row values.
+fn sql_error_metadata(diagnostic: &str) -> Vec<(String, Option<String>)> {
+    const SCHEMA: &str = include_str!("../../../backend/native/src/encrypted-schema.sql");
+    diagnostic
+        .lines()
+        .filter_map(|line| {
+            let (_, error) = line.split_once("ERROR:  ")?;
+            let (code, message) = error.split_once(": ")?;
+            if code.len() != 5
+                || !code
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            {
+                return None;
+            }
+            let name = match code {
+                "42P01" => message
+                    .strip_prefix("relation \"")
+                    .and_then(|m| m.strip_suffix("\" does not exist")),
+                "42883" => message
+                    .strip_prefix("function ")
+                    .and_then(|m| m.split_once('(').map(|(name, _)| name)),
+                _ => None,
+            };
+            let dependency = name
+                .map(|n| n.strip_prefix("public.").unwrap_or(n))
+                .filter(|name| {
+                    *name == "passshare_fixture_owner"
+                        || SCHEMA.lines().any(|line| {
+                            line.strip_prefix("CREATE TABLE IF NOT EXISTS ")
+                                .or_else(|| line.strip_prefix("CREATE OR REPLACE FUNCTION "))
+                                .and_then(|definition| definition.split([' ', '(']).next())
+                                == Some(*name)
+                        })
+                })
+                .map(str::to_owned);
+            Some((code.to_owned(), dependency))
+        })
+        .collect()
+}
+
 // -f alone splits statements and changes the former single -c transaction/result
 // semantics. One gexec cell sends the ENTIRE SQL literally as one server request.
 // Base64 keeps quotes, newlines, dollar bodies and backslashes out of psql's lexer.
@@ -390,6 +432,12 @@ fn fixture_sql(
             } else if kind == 2 {
                 // PostgreSQL diagnostics can contain SQL/row values. Classify only.
                 let diagnostic = String::from_utf8_lossy(&bytes);
+                for (code, dependency) in sql_error_metadata(&diagnostic) {
+                    eprintln!(
+                        "fixture SQL SQLSTATE={code} dependency={}",
+                        dependency.as_deref().unwrap_or("suppressed")
+                    );
+                }
                 if diagnostic.contains("canceling statement due to statement timeout") {
                     failure = "failed category=statement_timeout";
                 } else if diagnostic.contains("does not exist") {
@@ -3398,6 +3446,20 @@ fn assert_setup_rejected_intact(
 
 #[cfg(test)]
 mod contract_tests {
+    #[test]
+    fn sql_diagnostics_emit_only_states_and_allowlisted_dependencies() {
+        let errors = sql_error_metadata("psql:<stdin>:1: ERROR:  42P01: relation \"passshare_fixture_owner\" does not exist\nCONTEXT: secret token\npsql:<stdin>:2: ERROR:  42883: function public.passshare_attachment_shape(secret arguments) does not exist\npsql:<stdin>:3: ERROR:  42P01: relation \"secret_value\" does not exist\npsql:<stdin>:4: ERROR:  22012: secret_value");
+        assert_eq!(
+            errors,
+            vec![
+                ("42P01".into(), Some("passshare_fixture_owner".into())),
+                ("42883".into(), Some("passshare_attachment_shape".into())),
+                ("42P01".into(), None),
+                ("22012".into(), None),
+            ]
+        );
+        assert!(sql_error_metadata("CONTEXT: relation \"passshare_fixture_owner\" does not exist\nERROR:  secret: parameters").is_empty());
+    }
     use super::*;
     use base64::engine::general_purpose::STANDARD as BASE64;
 
