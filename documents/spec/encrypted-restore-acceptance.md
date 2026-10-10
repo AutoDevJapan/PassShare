@@ -61,6 +61,20 @@ PostgreSQL 16とサーバー内の `owner_id` を既存の手順で照合する�
 archiveは上限64MiBのメモリ内に保持し、dump/restoreプロセスの起動・入力・出力回収には
 60秒の共通期限を設ける。DB作成も60秒で打ち切り、作成先を起動前から所有登録する。
 通常のSQL期限と所有資源のDropを維持する。
+通常のfixture SQLもDockerでは `exec -i`、psqlでは `-f -` を使い、全文を標準入力へ送る。
+SQLをBase64で運び、1行1列の `SELECT convert_from(decode(...))` の結果を `\gexec` で
+そのまま1回のサーバー要求として実行する。SQL全文をプロセス引数やログへ出さない。
+単に `-f -` で文を分割したり、全呼び出しを `--single-transaction` で包んだりしない。
+元の単一 `-c` と同じ暗黙トランザクションと複数結果の出力を保つ。
+この実行単位は [PostgreSQL 16のpsql仕様](https://www.postgresql.org/docs/16/app-psql.html) の
+`-c` と `\gexec` の規則に従う。
+呼び出し元を確認すると、通常の読取・更新・複数文DDLのほか、識別鍵と共有鍵の制約検査に
+明示的なBEGIN/COMMITがあり、暗号化操作の拒否検査にはBEGIN/ROLLBACKがある。
+関数定義の中のBEGIN、引用・改行・コメントも分割しない。
+トランザクション外で実行するDB作成・削除は、別の所有fixture制御のままにする。
+入力の書込と両出力の回収を同時に進め、呼び出し元が渡した絶対期限を更新しない。
+終了していないI/Oスレッドをjoinしない。失敗時は子プロセスをkillして最大2秒でreapし、
+回収できなければ既存の後片付け失敗フラグを立てる。新規依存は追加しない。
 プロセスの異常終了、期限超過、内容不一致、後片付け失敗を成功に読み替えない。
 秘密値、暗号文、パスワード、認証文字列、DTO本文、PostgreSQLエラー本文を報告しない。
 失敗は静的な分類、成功は件数とfixture測定だけを出力する。
@@ -76,6 +90,29 @@ archiveは上限64MiBのメモリ内に保持し、dump/restoreプロセスの�
 添付はメタデータの照合であり、実ファイルの暗号化・復号の証拠ではない。
 
 ## 検証記録
+
+SQLの標準入力経路には、Docker不要の子プロセス対照検査がある。
+256KiBを超える入力を書いている間に両出力を回収する成功対照、入力を読まない子の期限超過、
+早期終了による書込失敗、8MiBの出力上限超過、起動前に期限切れになった要求を検査する。
+所有PostgreSQLの実検査は、通常の `LocalPostgres::start` でこの実行専用DBを作り、
+所有ID・用途・DB名を照合する。引用・改行・日本語を含む300KiB以上のSQLで全値を照合し、
+暗黙トランザクション、複数結果、エラー時のDML/DDL巻き戻し、明示的COMMIT/ROLLBACK、
+トランザクション外のVACUUM、Dropでの専用DB削除を検査する。
+この実検査は明示的な所有manifestを必要とし、通常のunit testでは実行しない。
+
+```powershell
+$env:PASSSHARE_SQL_FIXTURE_MANIFEST='<absolute-owned-fixture-manifest>'
+cargo test --locked --manifest-path tools/encrypted-storage-acceptance/Cargo.toml -p passshare-encrypted-storage-acceptance contract_tests::sql_transport_live_large_sql_preserves_single_request_semantics -- --ignored --exact --nocapture
+```
+
+2026-10-10、SQL経路の最終ソースで書式検査、nextest 12件、Clippy全対象
+（警告をエラー扱い）が成功した。nextestで省略した2件は子プロセス専用対照と
+明示manifestが必要な実DB検査である。後者は指定の所有PostgreSQL 16.15で別に実行し、
+1件成功と専用DBの後片付けを確認した。既存101項目の条件と拒否検査は変更していない。
+この修正のDocker配布イメージ方式は担当のPCでは実行しておらず、CI成功は未確認である。
+途中の試行ではWindowsの改行比較を修正したほか、DB操作が静的分類 `other` で2回失敗した。
+その2回の原因は取得済みの静的ログからは特定できていない。削除が失敗した専用DB1件は、
+用途・所有ID・DB名を照合してそのDBだけを削除した。失敗ログも保持している。
 
 2026-10-10、基点 `a6aa864` の既存Core/API/SDKを使い、指定の所有サーバーで
 `--local-postgres ... --encrypted-restore ...` を実行した。終了コード0と
