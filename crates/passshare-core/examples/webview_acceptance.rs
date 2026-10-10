@@ -921,6 +921,15 @@ fn run_auto_lock(application: &Path, output: &Path) -> Result<(), String> {
         saved.as_array().is_some_and(|items| items.len() == 1),
         "lock fixture count",
     )?;
+    // Fixture IPC leaves the native box unlocked. The renderer can correctly
+    // observe that state during startup and show its main screen. Begin the
+    // actual unlock-screen checks from a proven locked UI/native boundary.
+    ensure(
+        driver.invoke("lock_password_box", json!({}))?["ok"] == true,
+        "lock fixture preparation did not lock",
+    )?;
+    assert_locked_ui(&driver)?;
+    assert_native_locked(&driver)?;
     // Reopen and close twice. Each native transition has its own epoch and
     // must destroy the secret-bearing UI; the UI may also observe its poll.
     for _ in 0..2 {
