@@ -71,8 +71,11 @@ export function CloudRecoveryBackup({ worker, scope }: { worker: CloudWorker; sc
     if (operation.current || document.visibilityState === "hidden" || user?.id !== scope.ownerAccountId) return;
     const controller = new AbortController();
     operation.current = controller;
-    const timeout = setTimeout(() => { controller.abort(); clear(); }, 60_000);
     const token = ++generation.current;
+    const timeout = setTimeout(() => {
+      if (operation.current !== controller || generation.current !== token) return;
+      controller.abort(); clear();
+    }, 60_000);
     const active = () => generation.current === token && !controller.signal.aborted && current.current.worker === worker &&
       current.current.userId === scope.ownerAccountId && current.current.location === location.key && document.visibilityState !== "hidden";
     const assertActive = () => { if (!active()) throw new DOMException("Inactive", "AbortError"); };
