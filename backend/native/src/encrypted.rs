@@ -3,7 +3,11 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 
-pub const SCHEMA: &str = include_str!("encrypted-schema.sql");
+pub const SCHEMA: &str = concat!(
+    include_str!("encrypted-schema.sql"),
+    "\n",
+    include_str!("encrypted-migration-schema.sql")
+);
 const MAX_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_CIPHERTEXT: usize = 1024 * 1024 + 16;
 

@@ -1,6 +1,11 @@
 name: Cloud WASM acceptance
 on:
   workflow_dispatch:
+    inputs:
+      final_workspace:
+        description: Run the final workspace nextest and doctest gate once for this source
+        type: boolean
+        default: false
   pull_request:
     paths: ['packages/cloud-wasm/**', 'crates/passshare-core/**', 'backend/native/src/edit.rs', 'Cargo.toml', 'Cargo.lock', 'frontend/src/lib/cloud-worker.ts', 'frontend/src/lib/sharing-api.ts', 'frontend/src/pages/app/CloudSharingPanel.tsx', 'frontend/src/pages/app/VaultSharePage.tsx', 'frontend/src/hooks/useAuthSession.tsx', 'apps/mobile/package.json', 'apps/mobile/pnpm-lock.yaml', '.github/workflows/cloud-wasm.yml']
   push:
@@ -12,6 +17,36 @@ concurrency:
   group: cloud-wasm-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  final-workspace:
+    if: github.event_name == 'workflow_dispatch' && inputs.final_workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/final-migration-workspace
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22'
+      - name: Prepare the existing native workspace
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir apps/desktop install --frozen-lockfile
+          pnpm --dir apps/desktop run build
+          pnpm --dir apps/mobile install --frozen-lockfile
+          pnpm --dir apps/mobile run build
+          cargo install cargo-nextest --version 0.9.146 --locked
+      - name: Verify the final workspace and doctests in sequence
+        run: |
+          cargo nextest run --locked --workspace
+          cargo test --locked --workspace --doc
   verify:
     runs-on: ubuntu-latest
     defaults:

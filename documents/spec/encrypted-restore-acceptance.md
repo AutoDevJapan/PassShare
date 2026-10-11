@@ -37,6 +37,13 @@ PostgreSQL 16とサーバー内の `owner_id` を既存の手順で照合する�
    `xmin` は復元で変わるためDB間比較から除き、元DBの保持検査では含める。
 5. 復元先の所有ID、接続中のDB名、接続用途が一致し、元DBと接続先が異なることを検査する。
    所有・用途記録はdump対象外の専用スキーマに置く。復元後のpublicの所有IDも照合する。
+   Dockerの元DBは生成時に一度だけ所有IDを割り当て、publicの所有表を初期化する。
+   同じ元DBから二度dump/restoreしても、保存したIDと表の形・1行だけの内容を読み取り照合する。
+   publicの既存行から所有権を推定せず、不一致・複数行・欠落・不正な表は修復せず拒否する。
+   接続オブジェクトの所有ID・用途・コンテナ名・ポートをDBのカタログ記録と照合する。
+   復元先は独自の所有IDで生成し、publicは空のまま復元を待つ。
+   復元されたpublicのIDには元archiveのIDを要求し、復元先の所有情報とは区別する。
+   PCでのmanifestの期待IDと既存カタログ記録の形式は変えない。
    書き込み前に用途と空DBを検査し、その復元先だけで `--clean --if-exists` を使う。
    PostgreSQLが初期作成するpublicスキーマも正しく扱う。
    nativeの制約検査関数にはpublic内の別関数を修飾無しで呼ぶものがある。
@@ -90,6 +97,35 @@ SQLをBase64で運び、1行1列の `SELECT convert_from(decode(...))` の結果
 添付はメタデータの照合であり、実ファイルの暗号化・復号の証拠ではない。
 
 ## 検証記録
+
+2026-10-11、元ソース `f5a7c3ee6718f4aa7b4d55ff5092004e45754d4a` のCI
+`38094780687` は正式Nodeの移行で二度目のdump/restoreに進み、所有表の再作成を
+`42P07` で拒否した。初回の所有表欠落 `42P01` に続く同じ生成・再利用経路の問題として、
+生成時に一度だけ信頼する識別情報を確定し、通常の読取・復元では厳密照合する形へ修正した。
+
+関連するDocker＋正式Node検査を同じ元DBからの二度の復元に拡張した。
+Dockerだけで行う検査も1件追加し、二度の実dump/restore、元DBの全行とxminの保持、
+誤ったID・複数行・空表・欠落・表の形の不一致と、別DB・別用途・別所有情報の拒否を検査する。
+拒否の前後も全行とxminを照合する。2件とも明示して実行する検査で、通常は省略される。
+
+この担当では変更したRust 2ファイルの書式と差分を確認した。新ソースのテスト実行数は0件で、
+追加・拡張した2件、Clippy、正式Node＋Dockerと配布イメージの移行検査は未検証である。
+空きメモリの観測値は約2〜8GiBで共有Cargoゲートの16GiB条件を満たさず、
+関連nextestの起動試行は20秒で終了させた。Dockerのバージョン確認も応答せず終了させ、
+Docker Desktopや別担当のPostgreSQLを起動・停止していない。
+親が修正コミットを統合してCIで新ソースを検証する。
+過去の1244件成功や元ソースの全workspace・WASM検査を、この修正の成功には数えない。
+GPT-5.5による読み取り専用レビューは修正必須の指摘なしだった。
+目的記録の表の追加検査とIDの文字表記をそろえる提案は、既存の検証を保つ今回の範囲では追加しない。
+WASMのCIに宣言された13入力パスは元ソースと同じ内容で、根のworkspace検査は繰り返していない。
+
+追加・拡張した実DB検査を親が明示して実行する場合は、次を使う。
+正式Nodeバイナリと取得済みの固定PostgreSQLイメージが必要である。
+配布イメージを使った移行検査は、既存CIの `--encrypted-migration --image` の手順で別途確認する。
+
+```text
+PASSSHARE_ACCEPTANCE_NATIVE=<production-native-binary> cargo nextest run --locked --manifest-path tools/encrypted-storage-acceptance/Cargo.toml -p passshare-encrypted-storage-acceptance -E 'test(encrypted_restore)' --run-ignored all --test-threads=1
+```
 
 SQLの標準入力経路には、Docker不要の子プロセス対照検査がある。
 256KiBを超える入力を書いている間に両出力を回収する成功対照、入力を読まない子の期限超過、

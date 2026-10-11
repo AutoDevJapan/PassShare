@@ -5,6 +5,7 @@ pub mod create;
 pub mod edit;
 pub mod encrypted;
 pub mod encrypted_attachment;
+pub mod encrypted_migration;
 pub mod encrypted_rotation;
 pub mod encrypted_setup;
 pub mod lifecycle_page;
@@ -26,6 +27,7 @@ pub fn dispatch(input: &Value) -> Value {
         Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),
         Some("encrypted-plan") => encrypted::plan(input),
         Some("encrypted-attachment-plan") => encrypted_attachment::plan(input),
+        Some("encrypted-migration-plan") => encrypted_migration::plan(input),
         Some("shared-grant-plan") => shared_grant::plan(input),
         Some("encrypted-rotation-plan") => encrypted_rotation::plan(input),
         Some("encrypted-setup-plan") => encrypted_setup::plan(input),
