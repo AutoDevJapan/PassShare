@@ -23,7 +23,7 @@
       "@shared/*": ["../../shared/*"],
       "react": ["./node_modules/@types/react/index.d.ts"],
       "react/*": ["./node_modules/@types/react/*"],
-      "@passshare/connect": ["./node_modules/@passshare/connect"]
+      "@passshare/connect": ["../../packages/connect-js/dist/client.d.ts"]
     }
   },
   "include": ["src", "../../shared/types", "../../shared/ui"],

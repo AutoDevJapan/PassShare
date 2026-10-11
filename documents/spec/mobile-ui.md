@@ -29,6 +29,10 @@
 
 ## Shared components
 
+Encrypted item/attachment mode uses [the shared cross-client runtime](cross-client-encrypted-items-ui.md)
+with the formal mobile session and native lock generation. Connect remains the compatibility transport;
+it is never an encrypted-mode fallback. Native acceptance remains a separate parent integration check.
+
 - `shared/ui/ItemForm`, `ConnectItemList`, `CategoryPicker`
 - `shared/i18n` keys under `mobile.*`
 

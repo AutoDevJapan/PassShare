@@ -7,6 +7,7 @@ originalToDo1163 / M4 の CLI 接続部分です。製品全体・全クライ�
 
 `op --encrypted` を明示した場合だけ、現在有効なセッションを使います。
 `item list/get/create/edit/delete`、`read`、限定された `vault list`、`item retry` が対象です。
+共有受信者は `--recipient --secret-stdin` を併用し、後述の有限な読取だけを行います。
 コマンドの `vault` / `--vault` は op 互換の綴りであり、指す対象はパスワードボックスです。
 暗号化モードの指定がない場合は、従来の Connect API の操作を維持します。
 
@@ -31,6 +32,7 @@ IDと鍵世代だけを表示します。セッションAPIによるアカウン
 | `item` | 作成時の全項目JSON。`title`、対応する大文字の`category`、`fields`配列が必要 |
 | `selectedFields` | 編集するフィールド名・IDと文字列値のオブジェクト。`title`も選択可 |
 | `preparedWrite` | 明示的な再送時に渡す、準備済みの不透明な要求 |
+| `sharedReceive` | `--recipient` の独立した信頼入力。所有者の操作では拒否 |
 
 標準入力を選んだ場合、環境変数の認証情報は補充しません。端末からの直接入力は、入力値が表示されるため拒否します。
 入力JSONは2MiBまで、認証情報の文字列は各16KiBまでです。Coreの平文上限1MiBがBase64の暗号文に
@@ -135,6 +137,134 @@ CLI manifestはworkspaceの `uuid` を直接参照し、検査用にはworkspace
 今回の追加修正は `encrypted.rs` と関連検査・この仕様書だけです。
 manifest・rootのCargo.lock・SDK/Core・他クライアント・出力用素材は変更していません。
 
-現在は所有者だけが対象です。共有受信者の鍵・指紋の独立した確認、共有鍵の受け取り、
-鍵更新の操作、認証情報の安全な永続保管、オフライン操作、ログイン自体、移行・復旧・添付の
-CLI操作、全ボックスの発見は未提供です。他クライアントの実装状況をこの文書から推定しません。
+所有者の既存操作と、次の受信者の読取だけが対象です。鍵更新の操作、受信者による書込み、
+認証情報の安全な永続保管、オフライン操作、ログイン自体、移行・復旧、添付の変更操作、
+全ボックスの発見は未提供です。他クライアントの実装状況をこの文書から推定しません。
+
+## 共有受信者の有限読取
+
+`--encrypted --recipient --secret-stdin` は `item list/get`、`read`、`attachment get` だけに対応します。
+所有者の操作を自動的に受信者へ切り替えません。`vault list`、create/edit/delete/retry、
+`--prepare-only` は受信者モードで通信前に拒否します。受信者の秘密入力はパイプだけです。
+環境変数から信頼値や認証情報を補充せず、Connectへの自動切替も行いません。
+
+最上位の入力キーは `sessionToken`、`encryptionPassword`、`sharedReceive` だけです。
+`encryptionPassword` は自身のidentityバンドルを開く暗号化パスワードです。
+次は形の説明であり、秘密値をシェルのリテラルへ記載する例ではありません。
+
+```json
+{
+  "sessionToken": "<current-session>",
+  "encryptionPassword": "<identity-encryption-password>",
+  "sharedReceive": {
+    "sender": {"accountId":"<sender-uuid>","identityVersion":1,"publicKey":"<verified-base64>","keyId":"<verified-fingerprint>"},
+    "recipient": {"accountId":"<self-uuid>","identityVersion":1,"publicKey":"<held-base64>","keyId":"<held-fingerprint>"},
+    "context": {
+      "passwordBoxId":"<box-id>","senderAccountId":"<sender-uuid>","recipientAccountId":"<self-uuid>","keyEpoch":1,
+      "senderIdentityVersion":1,"recipientIdentityVersion":1,"senderKeyId":"<verified-fingerprint>","recipientKeyId":"<held-fingerprint>"
+    },
+    "identityBundleVersion":1,
+    "itemContext":{"passwordBoxId":"<box-id>","itemId":"<item-id>","itemVersion":3,"keyEpoch":1},
+    "attachmentContext":{"passwordBoxId":"<box-id>","itemId":"<item-id>","attachmentId":"<attachment-id>","attachmentVersion":1,"keyEpoch":1}
+  }
+}
+```
+
+一覧では `itemContext` と `attachmentContext` を省略します。項目のget/readでは `itemContext` だけを付けます。
+添付getでは両方が必須です。context・公開identity・世代・版は独立して保持し、送り手と自身の公開identityを
+別手段で照合した後に供給します。CLIは信頼の自動承認、サーバーからのpin採用・更新を提供しません。
+一覧の公開項目版を表示することと、暗号文自身から期待する版を採ることは区別します。
+
+これらの制御JSONは未知・欠落・同名キー（エスケープの別表記を含む）・null・配列によるオブジェクト代用を拒否します。
+整数は1〜9,007,199,254,740,991、UUIDは小文字の正規表記かつnil以外です。
+公開identityはCoreのcanonical Base64と指紋・座標の検査も通します。
+版・世代・ルート・sender/recipientの全対応関係を、最初のHTTP前に検査します。
+全項目DTO内の未知属性やnullは従来どおり保持します。制御形式の拒否と、損失のない本文の保持を混同しません。
+
+1. SDKの接続検査後、正式sessionの `/api/auth/me` を自身のidentityと照合します。
+2. ボックスの現在世代を独立した期待世代と照合します。
+3. `get_account_identity` で自身のバンドルを取得し、保持した公開identity・指紋・バンドル版と完全一致を要求します。
+4. 形式1固定KDFとNFCで鍵を導出し、Core `AccountIdentity::unwrap` で自身の秘密identityを復元します。
+5. SDK `get_self_grant(SharedKeyExpectation)` とCoreのHPKE Auth `unwrap_for_recipient` で共有鍵を開きます。
+
+受信者を所有者用sharing-snapshotや所有者バンドルへ通しません。返信から期待世代やpinを更新しません。
+一覧は正式 `list` のページをID順に検査し、全ページ成功後にID・版だけを表示します。
+get/readは `get_attachment_state` → 同状態版の `get_attachment_snapshot` を各1回使い、
+独立した `ItemContext` に対してCoreで全項目JSONを認証します。明示した全項目または選択欄だけを標準出力へ返します。
+
+添付getは同じ状態版の全項目をCoreで認証し、順序を保った `attachments` 配列を検査します。
+各参照の形は `{attachmentId,attachmentVersion,keyEpoch}` だけです。全参照のID重複・無効ID・
+世代不一致・不正整数を拒否し、指定した添付の版を独立した `AttachmentContext` と照合します。
+一致後にSDK `get_attachment` を1回だけ呼び、Coreで名前と全bytesを認証します。
+公開状態はCASの入力だけであり、暗号認証や鍵の信頼の根拠ではありません。
+
+`--out <path>` は利用者が明示した保存先です。認証した名前をパスへ解釈せず、親フォルダも作りません。
+認証の成功後に `create_new` で新規作成し、既存ファイル・symlinkの上書きを拒否します。
+Unixでは新規ファイルを0600で作り、全bytesを書き込み・同期します。空ファイルも0 bytesのまま保持します。
+書込み失敗は失敗終了し、新規ファイルに一部だけ残る可能性を固定診断で伝えます。
+保存に成功しても標準出力は空です。`--print-name` を明示した場合だけ元の名前をJSON文字列で返し、
+Unicode・NUL・空の名前も損失なく扱います。鍵・本文・認証情報は、この明示した出力以外に保存しません。
+所有する秘密入力・NFCパスワードはZeroizingまたは再帰消去guard、鍵と添付の名前/bytesはCoreの消去付き型で保持します。
+
+設定不備、暗号認証失敗、401・403・409、未確認、除名、旧grant、世代・identityの不一致は失敗のままです。
+HTTPの自動再送はありません。受信者による鍵更新・再共有・移行・復旧・変更操作はこのCLIでは未対応です。
+
+## 受信者の正式受入
+
+CLI専用のloopback検査は実 `op` と実SDK/Coreで行います。正式Node/PGを模擬した成功とは数えません。
+`tools/encrypted-storage-acceptance/src/cli_recipient.rs` は、既存補助処理を使う独立した明示実行の検査です。
+既存main・SQL輸送・local_postgres・添付受入の処理を変更せず、共有受入モジュールへ検査の登録だけを加えています。
+
+```text
+PASSSHARE_CLI_PG_MANIFEST=<absolute-owned-fixture-manifest>
+PASSSHARE_CLI_NATIVE=<absolute-formal-native-binary>
+PASSSHARE_CLI_BINARY=<absolute-op-binary>
+PASSSHARE_CLI_OUTPUT_DIR=<absolute-directory-created-by-safe-delete>
+cargo test --locked --manifest-path tools/encrypted-storage-acceptance/Cargo.toml sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --nocapture
+```
+
+正式Node・所有情報を照合したPGの専用DB・実opで、全JSON/field/配列順、名前、全bytes、空ファイル、
+明示保存先、上書き拒否を確認します。実要求を転送するtapで、状態→同revision項目→添付が各1回のSDK要求であることを照合します。
+未確認と旧grantの拒否は専用DB内の明示した合成条件です。除名は正式な所有者の鍵更新APIを使い、
+全項目・全添付を新鍵へ包み直した後、旧sessionと新ログインの受信者を拒否することを確認します。
+全CLI要求の前後で全保存行・xminの不変を照合し、所有したNodeと専用DBだけを回収します。
+添付出力とビルド生成物の回収は呼出担当がsafe-deleteの所有記録に従って行います。
+親のPG・画面用DBは停止・変更しません。全workspace・配布image・CI・別モデルレビューは親担当の工程です。
+
+2026-10-11の最終ソースで、関連nextestは82件成功・省略0（CLI18件、SDK64件）でした。
+CLI/SDKと受入ツールのall-targets Clippy `-D warnings`、変更Rustファイルの整形検査も成功しました。
+正式Node・PG・実opの明示受入は1件成功・省略0、24回のCLI実行で実SDKのGETを77回観測しました。
+この77回にはCLI内のauth/meを含めません。正常添付2件の各要求は、状態→同revision項目→添付が各1回でした。
+512 bytesの任意値と0 bytes、NUL/Unicode/空の名前、全JSON/field/配列順、上書き拒否を照合しました。
+未確認・旧grant・実APIによる除名後の旧/新sessionでは、項目と添付の両方を拒否し、ダウンロード先を作りませんでした。
+成功・拒否の全CLI実行で保存行とxminが不変でした。
+
+受入コードの初回失敗は、Cookieログイン応答からBearer用のrefreshTokenを読もうとした取り違えでした。
+正式なmobileログイン応答を使う検査へ修正しました。次の失敗は、現在世代のgrantがない場合の正式404を
+受入側が403と期待した誤りでした。正式契約に合わせ、世代2に対して旧世代1のgrantが残る明示した合成条件も検査しました。
+どちらもCLI/APIの権限を緩めていません。失敗時と最終成功時の専用DBは全て回収しました。
+親担当が調べている過去のpsql終了2は、この成功を根拠に修復済みとは扱いません。
+
+片付け後に、今回作った4つの専用DBが全て不在であることをPGのcatalogで確認しました。
+親PGはPID68512・port50196・元の起動日時のままです。C1と他担当のDB・作業フォルダには触れていません。
+nextest・正式受入の成功ログと初回2つの失敗ログは、この子ジョブの記録フォルダへ保存しました。
+一時生成物2,203,338,425 bytesはsafe-deleteの容量上限により「削除希望」へ退避済みです。
+検査用pnpm依存6,541,350 bytesも同じDドライブの「削除希望」へ保持しました。
+後者の計画拒否は279件のjunctionによるもので、全て今回の元node_modules内を指すことを確認しました。
+リンク先を変更・削除せずフォルダ全体を移動し、理由を残して所有記録の元パス不在を記録しました。
+どちらも削除成功とは報告しません。追加のToDo・Discord投稿・push・PR・merge・全workspace検査は行っていません。
+
+### Linuxと配布イメージの正式CLI検査
+
+受信者の復号能力は鍵だけを保持する。HTTPクライアント、公開ボックスID、
+独立して確認した共有文脈は呼出側に保持し、復号済みの能力から送信先や期待値を作らない。
+本人の鍵包みを復元した戻り値と公開輸送を分け、同じ認証・世代・固定期待値を維持する。
+平文の項目・名前・添付本文はSDKのHTTP要求には渡さない。
+
+親の統合候補では、同じ `formal_cli_recipient` を正式Nodeと固定Dockerfileの配布イメージでも実行する。
+`PASSSHARE_CLI_DOCKER_MODE` を `node` または `image` に明示し、既存の所有ラベル・固定PostgreSQLイメージ・
+所有者マーカーを持つ専用DBとネットワークを作る。Windowsの所有済みPGは、従来どおり絶対パスの
+`PASSSHARE_CLI_PG_MANIFEST` だけで選ぶ。両方の指定、未知の指定、指定なしでは開始しない。
+CLI本体・Node用のnative本体・新しい出力先は呼出側が明示する。イメージ用の検査はホストnativeを
+コンテナへ持ち込まない。同じ全JSON・添付全バイト・失効・上書き拒否・単一要求の判定を維持し、
+Nodeとイメージの検査がそれぞれ成功するまで実行済みと数えない。

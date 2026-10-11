@@ -5,6 +5,9 @@ export default defineManifest({
   name: "PassShare",
   description: "PassShare password manager browser extension",
   version: "0.1.0",
+  content_security_policy: {
+    extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; worker-src 'self'; base-uri 'self'",
+  },
   action: {
     default_popup: "popup.html",
     default_title: "PassShare",

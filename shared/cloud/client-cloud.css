@@ -1,0 +1,16 @@
+.client-cloud { min-width: 0; line-break: strict; word-break: normal; }
+.client-cloud .encrypted-items-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .75rem; }
+.client-cloud form, .client-cloud .ps-label { display: grid; gap: .75rem; min-width: 0; }
+.client-cloud input, .client-cloud textarea { min-width: 0; max-width: 100%; }
+.client-cloud .encrypted-items__form .ps-grid { grid-template-columns: minmax(0, 1fr); }
+.client-cloud .encrypted-items__footer { grid-template-columns: minmax(0, 1fr); }
+.client-cloud button { min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.client-cloud .encrypted-attachments__name { flex-basis: 7rem; }
+@media (min-width: 800px) {
+  .client-cloud .encrypted-items--split { grid-template-columns: minmax(0, .85fr) minmax(0, 1fr); align-items: start; }
+  .client-cloud .encrypted-items--split > * { grid-column: 1; }
+  .client-cloud .encrypted-items--split > .encrypted-items__form { grid-column: 2; grid-row: 2 / span 8; }
+  .client-cloud .encrypted-items--split > .cloud-note, .client-cloud .encrypted-items--split > .ps-error { grid-column: 1 / -1; }
+  .client-cloud .encrypted-items--split .encrypted-items__row { grid-template-columns: minmax(0, 1fr); }
+  .client-cloud .encrypted-items--split .encrypted-items__head { display: none; }
+}

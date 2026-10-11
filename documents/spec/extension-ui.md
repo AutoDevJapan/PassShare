@@ -17,6 +17,10 @@ Status: Implemented (Issue [#89](https://github.com/AutoDevJapan/PassShare/issue
 
 ## Shared components
 
+The popup uses [the shared encrypted item/attachment runtime](cross-client-encrypted-items-ui.md)
+with its formal session. Encrypted autofill/save remains unsupported; background discovery excludes
+encrypted boxes and retains no plaintext password cache. Packaged MV3/native acceptance is separate.
+
 - `shared/ui/MatrixBackground`
 - `shared/styles/*` design tokens
 - `shared/i18n` keys prefixed with `extension.*`

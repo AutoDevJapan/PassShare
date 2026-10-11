@@ -23,6 +23,7 @@ export type MessageType =
 export const OFFSCREEN_CLEAR_CLIPBOARD = "OFFSCREEN_CLEAR_CLIPBOARD" as const;
 
 export type CredentialMatch = {
+  accountId: string;
   itemId: string;
   vaultId: string;
   title: string;
@@ -43,6 +44,7 @@ export type GetCredentialsResponse = {
 };
 
 export type FillCredentialRequest = {
+  accountId: string;
   type: "FILL_CREDENTIAL";
   itemId: string;
   vaultId: string;

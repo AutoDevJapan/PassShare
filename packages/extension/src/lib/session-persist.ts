@@ -1,7 +1,6 @@
 import type { TokenAuthResponse } from "./auth-api";
-import { saveConnectToken, saveRefreshToken } from "./storage";
+import { saveStoredAuthSession } from "./storage";
 
-export async function persistAuthSession(response: TokenAuthResponse): Promise<void> {
-  await saveRefreshToken(response.refreshToken);
-  await saveConnectToken(response.connectAccessToken, response.connectExpiresAt);
+export async function persistAuthSession(response: TokenAuthResponse, isCurrent = () => true): Promise<boolean> {
+  return saveStoredAuthSession(response, isCurrent);
 }

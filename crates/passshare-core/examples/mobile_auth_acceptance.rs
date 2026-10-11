@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 const HOST: &str = r#"
 import {registerHooks,createRequire} from 'node:module';
-import {readFileSync} from 'node:fs';
+import {readFileSync,existsSync} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 const app=resolve(process.argv[1]);
@@ -15,7 +15,7 @@ const root=resolve(app,'../..');
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});return {promise,resolve,reject}};
 const doc=new EventTarget();doc.hidden=false;doc.hasFocus=()=>true;
 globalThis.document=doc;
-globalThis.window={setInterval:()=>0,clearInterval:()=>{}};
+globalThis.window=Object.assign(new EventTarget(),{setInterval:()=>0,clearInterval:()=>{}});
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 globalThis.fetch=()=>{throw new Error('Unexpected real network access')};
 const native={epoch:0,id:null,foreground:true,unlocked:false};
@@ -60,13 +60,17 @@ const modules={
   '@tauri-apps/api/core':`export const isTauri=()=>true;export const invoke=(...args)=>globalThis.__mobileFixture.invoke(...args);`,
   '@tauri-apps/api/event':`export const listen=async(_,cb)=>globalThis.__mobileFixture.listen(cb);`,
   '@shared/i18n/I18nProvider':`export const useI18n=()=>({t:key=>key});`,
-  '../lib/auth-api':`export class AuthApiError extends Error{};export const getApiBaseUrl=()=> 'http://synthetic.invalid';export const mobileLogin=()=>globalThis.__mobileFixture.login();export const mobileSignup=mobileLogin;export const mobileLogout=()=>globalThis.__mobileFixture.logout();export const fetchCurrentUser=async()=>globalThis.__mobileFixture.user;export const refreshConnectToken=async()=>({connectAccessToken:'synthetic-access',connectExpiresAt:'2999-01-01'});`,
+  '../lib/auth-api':`export class AuthApiError extends Error{};export const getApiBaseUrl=()=> 'http://127.0.0.1:12345';export const mobileLogin=()=>globalThis.__mobileFixture.login();export const mobileSignup=mobileLogin;export const mobileLogout=()=>globalThis.__mobileFixture.logout();export const fetchCurrentUser=async()=>globalThis.__mobileFixture.user;export const refreshConnectToken=async()=>({connectAccessToken:'synthetic-access',connectExpiresAt:'2999-01-01'});`,
 };
 fixture.user=user;fixture.listen=cb=>{listeners.add(cb);return ()=>listeners.delete(cb)};
 registerHooks({
   resolve(specifier,context,next){
     if(modules[specifier])return {url:'data:text/javascript,'+encodeURIComponent(modules[specifier]),shortCircuit:true};
-    if(specifier.startsWith('@shared/lib/'))return {url:pathToFileURL(join(root,'shared/lib',specifier.slice('@shared/lib/'.length)+'.ts')).href,shortCircuit:true};
+    if(specifier.startsWith('@shared/'))return {url:pathToFileURL(join(root,'shared',specifier.slice('@shared/'.length)+'.ts')).href,shortCircuit:true};
+    if(specifier.startsWith('.')&&context.parentURL?.startsWith(pathToFileURL(join(root,'shared')).href)){
+      const path=resolve(dirname(fileURLToPath(context.parentURL)),specifier);
+      if(existsSync(path+'.ts'))return {url:pathToFileURL(path+'.ts').href,shortCircuit:true};
+    }
     if(specifier==='../lib/secure-storage')return {url:pathToFileURL(join(app,'src/lib/secure-storage.ts')).href,shortCircuit:true};
     if(['react','react/jsx-runtime','react-test-renderer'].includes(specifier))return {url:pathToFileURL(require.resolve(specifier)).href,shortCircuit:true};
     return next(specifier,context);

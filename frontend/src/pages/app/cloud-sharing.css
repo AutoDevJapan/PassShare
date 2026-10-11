@@ -1,10 +1,1 @@
-.cloud-sharing { margin-block: 1rem; min-width: 0; }
-.sharing-step { border: 1px solid #28596b; border-radius: .5rem; padding: .8rem; display: grid; gap: .6rem; min-width: 0; }
-.sharing-step h3 { margin: 0; font-size: 1rem; }
-.sharing-own { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .8rem; min-width: 0; }
-.sharing-code { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .3rem .8rem; line-height: 1.8; max-width: 100%; }
-.sharing-code span { min-width: 0; }
-.sharing-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
-.sharing-actions > button { flex: 1 1 10rem; }
-.cloud-sharing .ps-input { min-width: 0; max-width: 100%; }
-@media (max-width: 400px) { .cloud-sharing { padding: .6rem; } .sharing-step { padding: .5rem; } .sharing-own > button { width: 100%; } }
+@import "../../../../shared/cloud/cloud-sharing.css";

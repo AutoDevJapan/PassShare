@@ -29,6 +29,10 @@ function moduleAt(path, imports, globals = {}) {
     Uint8Array, ArrayBuffer, Blob, URL, TextEncoder, TextDecoder, AbortController, Number, Object, ...globals });
   return exports;
 }
+function apiAt(imports, globals) {
+  const module = moduleAt('../shared/cloud/cloud-api.ts', {}, globals);
+  return module.createCloudApi(imports['./auth-api'].authFetch);
+}
 function target() {
   const listeners = new Map();
   return { addEventListener(type, fn) { const set = listeners.get(type) ?? new Set(); set.add(fn); listeners.set(type, set); },
@@ -91,16 +95,16 @@ function host({ empty = false, attachmentFailure = null, itemFailure = null, hol
     '@shared/types/item.js': { emptyFormValues: () => ({ ...values, title: '', password: '' }), formValuesFromItem: () => ({ ...values }),
       ITEM_CATEGORIES: ['LOGIN'], categoryLabel: () => 'LOGIN' },
     '@shared/i18n/I18nProvider': { useI18n: () => ({ t: (key) => key }) }, '../../hooks/useAuthSession': { useAuthSession: () => ({ user: { id: userId } }) },
-    '../../hooks/useItemLabels': { useItemLabels: () => labels }, '../../lib/connect-items': { connectItemFromApi: (item) => ({ ...item, tags: [] }) },
-    '../../lib/cloud-api': api, './encrypted-items.css': {},
+    './useItemLabels': { useItemLabels: () => labels }, './connect-items': { connectItemFromApi: (item) => ({ ...item, tags: [] }) },
+    './cloud-api': api, './encrypted-items.css': {},
   };
   if (realReact) { imports.react = React; imports['react/jsx-runtime'] = reactRequire('react/jsx-runtime'); }
   const URLFixture = { createObjectURL: () => 'blob:fixture', revokeObjectURL: (url) => calls.revoked.push(url) };
-  const { EncryptedItemsPage } = moduleAt('src/pages/app/EncryptedItemsPage.tsx', imports, { window, document, URL: URLFixture });
+  const { EncryptedItems: EncryptedItemsPage } = moduleAt('../shared/cloud/EncryptedItems.tsx', imports, { window, document, URL: URLFixture });
   function render() {
     if (realReact) {
       renderer.act(() => {
-        const element = React.createElement(EncryptedItemsPage, { worker, scope: heldScope, onLock: () => locked++ });
+        const element = React.createElement(EncryptedItemsPage, { worker, scope: heldScope, api, userId, onLock: () => locked++ });
         if (mounted) mounted.update(element);
         else mounted = renderer.create(element, { createNodeMock: (node) => node.type === 'input' ? fileInput : { querySelector: () => ({ focus() {}, type: 'password' }) } });
       });
@@ -111,7 +115,7 @@ function host({ empty = false, attachmentFailure = null, itemFailure = null, hol
       };
       tree = snapshot(mounted.root); return tree;
     }
-    slot = 0; tree = EncryptedItemsPage({ worker, scope: heldScope, onLock: () => locked++ });
+    slot = 0; tree = EncryptedItemsPage({ worker, scope: heldScope, api, userId, onLock: () => locked++ });
     for (const node of all(tree, (node) => !!node.props.ref)) {
       const ref = node.props.ref;
       const element = node.type === 'input' ? fileInput : { querySelector: () => ({ focus() {}, type: 'password' }) };
@@ -141,6 +145,7 @@ test('new item plus arbitrary binary/empty/259-byte files closes only after all 
   h.form().props.onSubmit({ ...values }); await flush();
   assert.equal(h.calls.create, 1); assert.equal(h.calls.attachment.length, 4); assert.equal(h.form(), undefined);
   assert.deepEqual(h.calls.encrypt.map((r) => r.bytes.length), [2, 0, 259, 1]);
+  assert.deepEqual(h.calls.encrypt.map((r) => r.name), ['日本語.bin', '空', 'same', 'same']);
   assert.deepEqual(h.calls.encrypt[2].bytes, Array.from({ length: 259 }, (_, i) => i % 256));
   assert.deepEqual(h.calls.encrypt[0].bytes, [0, 255]); assert.equal(h.fileInput.value, '');
 });
@@ -253,7 +258,7 @@ test('a stale replacement-cancel callback cannot alter a frozen prepared draft',
 });
 
 test('attachment GET refuses a response beyond its own public envelope bound', async () => {
-  const api = moduleAt('src/lib/cloud-api.ts', { './auth-api': { authFetch: async () =>
+  const api = apiAt({ './auth-api': { authFetch: async () =>
     new Response('x'.repeat(1404001), { status: 200, headers: { 'Content-Length': '1404001' } }) } }, { Response, atob, btoa });
   await assert.rejects(api.getEncryptedAttachment({ passwordBoxId: box, itemId, attachmentId, attachmentVersion: 17, keyEpoch: 1 }, 17, new AbortController().signal),
     (error) => error.status === 502 && error.message === 'Encrypted storage request failed');
@@ -261,7 +266,7 @@ test('attachment GET refuses a response beyond its own public envelope bound', a
 
 test('actual HTTP attachment transport embeds opaque envelopes and validates complete atomic reply', async () => {
   let reply = { stateRevision: 19, itemVersion: 18, attachmentVersion: 18, keyEpoch: 1 }, seen;
-  const api = moduleAt('src/lib/cloud-api.ts', { './auth-api': { authFetch: async (url, init) => {
+  const api = apiAt({ './auth-api': { authFetch: async (url, init) => {
     seen = { url, init }; return new Response(JSON.stringify(reply), { status: 200 });
   } } }, { Response, atob, btoa });
   const context = { ...itemContext, attachmentId, attachmentVersion: 18 }; delete context.itemVersion;
@@ -278,7 +283,7 @@ test('actual HTTP attachment transport embeds opaque envelopes and validates com
 
 test('public attachment state and item snapshot use recipient routes and reject malformed metadata', async () => {
   let reply = { stateRevision: 17, keyEpoch: 1 }, seen;
-  const api = moduleAt('src/lib/cloud-api.ts', { './auth-api': { authFetch: async (url, init) => {
+  const api = apiAt({ './auth-api': { authFetch: async (url, init) => {
     seen = { url, init }; return new Response(JSON.stringify(reply), { status: 200 });
   } } }, { Response, atob, btoa });
   const signal = new AbortController().signal;

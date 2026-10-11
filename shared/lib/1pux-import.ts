@@ -51,6 +51,15 @@ export async function import1puxWithSession(
     throw new Error("Login failed");
   }
 
+  const modeResponse = await fetch(`${apiBaseUrl}/api/encrypted/boxes/${encodeURIComponent(vaultId)}`, {
+    credentials: "include", cache: "no-store", redirect: "error",
+  });
+  if (modeResponse.status !== 404) {
+    if (!modeResponse.ok) throw new Error("Password box mode unavailable");
+    const mode = await modeResponse.json() as { mode: string; keyEpoch: number | null };
+    if (mode.mode !== "compatibility" || mode.keyEpoch !== null) throw new Error("Encrypted password box requires encrypted migration");
+  }
+
   const tokenRes = await fetch(`${apiBaseUrl}/api/auth/connect-token`, {
     credentials: "include",
   });
@@ -58,6 +67,14 @@ export async function import1puxWithSession(
     throw new Error("Connect token fetch failed");
   }
   const tokenBody = (await tokenRes.json()) as { accessToken: string };
+
+  if (modeResponse.status === 404) {
+    // Metadata only; flag-off still preserves the server's ciphertext boundary.
+    const metadata = await fetch(`${apiBaseUrl}/v1/vaults/${encodeURIComponent(vaultId)}`, {
+      headers: { Authorization: `Bearer ${tokenBody.accessToken}` }, cache: "no-store", redirect: "error",
+    });
+    if (metadata.status !== 200) throw new Error("Compatibility password box unavailable");
+  }
 
   const buffer = await file.arrayBuffer();
   const base64 = bufferToBase64(buffer);

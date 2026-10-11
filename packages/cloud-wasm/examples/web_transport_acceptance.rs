@@ -26,22 +26,32 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
  let now = 0, wallOffset=0, nextTimer = 0, constructing = null;
  const window = { addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type,new Set()); listeners.get(type).add(fn); },
    removeEventListener(type, fn) { listeners.get(type)?.delete(fn); }, dispatchEvent(event) { for(const fn of [...(listeners.get(event.type) || [])]) fn(event); } };
- const document = {visibilityState:'visible',addEventListener:window.addEventListener,removeEventListener:window.removeEventListener};
+ const document = {baseURI:'https://example.invalid/',visibilityState:'visible',addEventListener:window.addEventListener,removeEventListener:window.removeEventListener};
  globalThis.DedicatedWorkerGlobalScope = class { static [Symbol.hasInstance](value) { return value === globalThis; } };
  class Worker {
   constructor() {
+   stage='bindings-load';
    this.dead = false; this.hold = false; this.queue = []; this.mutate = null; this.commands=[]; workers.push(this); constructing = this;
-   delete require.cache[require.resolve(f.bindings)]; this.api = require(f.bindings);
+   const bindings=fs.readFileSync(f.bindings,'utf8');
+   if(bindings.includes('export class CloudPasswordBox')) {
+    // Host the already-promoted browser bytes without regenerating assets.
+    const module={exports:{},globalThis,self:globalThis,DedicatedWorkerGlobalScope:globalThis.DedicatedWorkerGlobalScope,TextEncoder,TextDecoder,Uint8Array,ArrayBuffer};
+    vm.runInNewContext(ts.transpileModule(bindings.replaceAll('import.meta.url',"'file:///unused/'"),
+      {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,module);
+    stage='bindings-init';module.bytes=fs.readFileSync(path.join(path.dirname(f.bindings),'passshare_cloud_wasm_bg.wasm'));
+    vm.runInNewContext('exports.initSync({module:bytes});',module);this.api=module.exports;
+   } else {delete require.cache[require.resolve(f.bindings)];this.api=require(f.bindings);}
    globalThis.postMessage = (raw,transfer=[]) => { const self = constructing; if (self) self.emit(structuredClone(raw,{transfer})); };
+   stage='worker-start';
    this.api.start_worker(); this.handler = globalThis.onmessage;
   }
   emit(raw) { queueMicrotask(() => { if (this.hold) this.queue.push(raw); else this.onmessage?.({data:this.mutate ? this.mutate(raw) : raw}); }); }
   postMessage(raw,transfer=[]) { this.commands.push(JSON.parse(typeof raw==='string'?raw:raw.message).command); constructing = this; this.handler({data:structuredClone(raw,{transfer})}); }
   terminate() { this.dead = true; }
  }
- const sandbox = {exports:{},Worker,window,document,TextEncoder,Uint8Array,ArrayBuffer,Event:class {constructor(type){this.type=type;}},
+ const sandbox = {exports:{},URL,Worker,window,document,TextEncoder,Uint8Array,ArrayBuffer,Event:class {constructor(type){this.type=type;}},
   performance:{now:()=>now},Date:{now:()=>now+wallOffset},setTimeout(fn, ms){const id=++nextTimer; timers.set(id,{fn,at:now+ms}); return id;},clearTimeout(id){timers.delete(id);}};
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(f.root,'frontend/src/lib/cloud-worker.ts'),'utf8'),
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(f.root,'shared/cloud/cloud-worker.ts'),'utf8'),
    {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
  const {CloudWorker,lockCloudUi}=sandbox.exports;
  function tick(ms, fire=true) {now+=ms; if(fire) for(const [id,t] of [...timers]) if(t.at<=now){timers.delete(id);t.fn();}}
@@ -123,13 +133,13 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
   invalid.push(await rejected(c.generateIdentity(a))&&w.dead);
  }
  // Exact public API routes/response framing and account-scoped pin storage.
- stage='http-and-pins'; const source=ts.transpileModule(fs.readFileSync(path.join(f.root,'frontend/src/lib/sharing-api.ts'),'utf8'),
+ stage='http-and-pins'; const source=ts.transpileModule(fs.readFileSync(path.join(f.root,'shared/cloud/sharing-api.ts'),'utf8'),
    {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
  const storage=new Map(), calls=[]; let reply=null, status=200, responseHook=null;
  const apiSandbox={exports:{},TextEncoder,TextDecoder,localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
   require(name){if(name==='./auth-api')return {authFetch:async(url,init)=>{calls.push({url,method:init.method??'GET',body:init.body===undefined?null:JSON.parse(init.body)});if(responseHook)return responseHook(url,init);return new Response(JSON.stringify(reply),{status});}};
    if(name==='./cloud-api') return {CloudApiError:class extends Error{constructor(status){super('fixed');this.status=status;}}};throw Error('unexpected module');}};
- vm.runInNewContext(source,apiSandbox);const api=apiSandbox.exports, signal=new AbortController().signal;
+ vm.runInNewContext(source,apiSandbox);const api=apiSandbox.exports.createSharingApi(apiSandbox.require('./auth-api').authFetch), signal=new AbortController().signal;
  api.savePreparedOwnPin(a.accountId,own); api.savePeerPin(a.accountId,b.accountId,peer);
  const pinIsolation=api.readOwnPin(b.accountId)===null&&api.readPeerPin(b.accountId,a.accountId)===null&&api.readPeerPin(a.accountId,b.accountId).keyId===peer.keyId;
  const record=JSON.parse(prepared.record);api.savePendingIdentity(a.accountId,record);
@@ -171,14 +181,15 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
   require(name){if(name==='react')return React;if(name==='react/jsx-runtime')return require(path.join(path.dirname(f.renderer),'react/jsx-runtime'));
    if(name==='@shared/i18n/I18nProvider')return {useI18n:()=>({t:key=>key})};
    if(name==='../../lib/auth-api')return {listVaultMembers:async()=>members};
-   if(name==='../../lib/cloud-worker')return sandbox.exports;
-   if(name==='../../lib/cloud-api')return {...apiSandbox.require('./cloud-api'),getBoxState:async()=>({mode:'encrypted',keyEpoch:f.fixture.owner.keyEpoch})};
+   if(name==='./cloud-worker')return sandbox.exports;
+   if(name==='./cloud-api')return apiSandbox.require('./cloud-api');
    if(name==='../../lib/sharing-api')return api;if(name.endsWith('.css'))return {};throw Error('unexpected panel module');}};
- vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(f.root,'frontend/src/pages/app/CloudSharingPanel.tsx'),'utf8'),
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(f.root,'shared/cloud/CloudSharingPanel.tsx'),'utf8'),
   {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,panelSandbox);
- const Panel=panelSandbox.exports.CloudSharingPanel, nodes=new Map();
+ const Panel=panelSandbox.exports.SharedCloudSharingPanel, nodes=new Map();
  const nodeMock=element=>{const key=element.props.name;if(!key)return {};if(!nodes.has(key))nodes.set(key,{value:''});return nodes.get(key);};
- function Shell(props){React.useLayoutEffect(()=>()=>props.worker.dispose(),[props.worker]);return React.createElement(Panel,{...props,key:props.scope.ownerAccountId});}
+ const panelApi={getBoxState:async()=>({mode:'encrypted',keyEpoch:f.fixture.owner.keyEpoch})};
+ function Shell(props){React.useLayoutEffect(()=>()=>props.worker.dispose(),[props.worker]);return React.createElement(Panel,{...props,key:props.scope.ownerAccountId,api:panelApi,sharing:api,listVaultMembers:async()=>members});}
  const mount=async(worker,scope=f.fixture.owner)=>{let tree;await act(async()=>{tree=renderer.create(React.createElement(Shell,{worker,scope,onLock:()=>{worker.dispose();}}),{createNodeMock:nodeMock});});return tree;};
  const button=(tree,key)=>tree.root.findAllByType('button').find(node=>node.props.children===key);
  const submit=async(tree)=>act(async()=>{tree.root.findByType('form').props.onSubmit({preventDefault(){}});});

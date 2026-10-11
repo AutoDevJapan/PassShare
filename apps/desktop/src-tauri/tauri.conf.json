@@ -21,7 +21,8 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "worker-src": "'self'",
         "style-src": "'self'",
         "style-src-attr": "'unsafe-inline'",
         "img-src": "'self' asset: http://asset.localhost data: blob:",

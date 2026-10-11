@@ -31,7 +31,9 @@ import {
 } from "../lib/secure-storage";
 import { bootstrapConnectSession } from "@shared/lib/connect-session";
 
+import { createCloudSession, type CloudSession } from "@shared/cloud/session-transport";
 type AuthSessionContextValue = {
+  cloudSession: CloudSession | null;
   user: AuthUser | null;
   loading: boolean;
   connectClient: ConnectClient | null;
@@ -104,6 +106,8 @@ async function buildConnectClientFromStorage(reason: string, isCurrent: () => bo
 export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [cloudSession, setCloudSession] = useState<CloudSession | null>(null);
+  const cloudRef = useRef<CloudSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [connectClient, setConnectClient] = useState<ConnectClient | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
@@ -126,6 +130,8 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   clientRef.current = connectClient;
 
   const lock = useCallback(() => {
+    cloudRef.current?.dispose(); cloudRef.current = null; setCloudSession(null);
+    window.dispatchEvent(new Event("passshare:cloud-lock"));
     setLockGeneration((value) => value + 1);
     setUnlocked(false);
     generation.current += 1;
@@ -194,6 +200,11 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
         if (refreshFlight.current?.attempt === attempt) refreshFlight.current.generation = applied;
         started = applied;
         logoutToken.current = refreshToken;
+        if (currentUser && refreshToken && !cloudRef.current) {
+          const heldGeneration = generation.current;
+          cloudRef.current = createCloudSession(getApiBaseUrl(), currentUser.id, refreshToken, () => heldGeneration === generation.current && revision === sessionRevision.current);
+          setCloudSession(cloudRef.current);
+        }
         setUser(currentUser);
         clientRef.current = client;
         setConnectClient(client);
@@ -256,6 +267,8 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!isCurrent()) return;
     setUser(response.user);
     logoutToken.current = response.refreshToken;
+    cloudRef.current = createCloudSession(getApiBaseUrl(), response.user.id, response.refreshToken, () => started === generation.current && isSessionCurrent());
+    setCloudSession(cloudRef.current);
     clientRef.current = client;
     setConnectClient(client);
   }, [adoptAccount, captureEpoch, lock, prepareSignIn]);
@@ -282,6 +295,8 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!isCurrent()) return;
     setUser(response.user);
     logoutToken.current = response.refreshToken;
+    cloudRef.current = createCloudSession(getApiBaseUrl(), response.user.id, response.refreshToken, () => started === generation.current && isSessionCurrent());
+    setCloudSession(cloudRef.current);
     clientRef.current = client;
     setConnectClient(client);
   }, [adoptAccount, captureEpoch, lock, prepareSignIn]);
@@ -384,6 +399,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", onVisibility);
       binding.dispose();
       nativeLock.current = null;
+      cloudRef.current?.dispose(); cloudRef.current = null;
       generation.current += 1;
       authAttempt.current += 1;
       sessionRevision.current += 1;
@@ -396,6 +412,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       user,
+      cloudSession,
       loading,
       connectClient,
       connectLoading,
@@ -412,6 +429,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     }),
     [
       user,
+      cloudSession,
       loading,
       connectClient,
       connectLoading,

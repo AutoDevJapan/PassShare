@@ -39,6 +39,7 @@ jobs:
           cargo clippy --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked --all-targets -- -D warnings
           cargo build --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked
           cargo build --manifest-path backend/native/Cargo.toml --locked --bin passshare-mutations
+          cargo build --locked -p op-cli
       - name: Load the pinned PostgreSQL fixture
         run: docker pull mirror.gcr.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
       - name: Verify repeated restore ownership and rejection invariants
@@ -52,6 +53,15 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --go-session "$RUNNER_TEMP/passshare-go-session.test" backend/native/target/debug/passshare-mutations
       - name: Verify account identity with formal Node and Rust Core
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --account-identity backend/native/target/debug/passshare-mutations
+      - name: Verify real recipient CLI with formal Node and owned PostgreSQL
+        env:
+          PASSSHARE_CLI_DOCKER_MODE: node
+          PASSSHARE_CLI_NATIVE: ${{ github.workspace }}/backend/native/target/debug/passshare-mutations
+          PASSSHARE_CLI_BINARY: ${{ github.workspace }}/target/debug/op
+          PASSSHARE_CLI_OUTPUT_DIR: ${{ runner.temp }}/passshare1163-cli-node
+        run: |
+          mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1 --nocapture
       - name: Verify atomic encrypted attachment storage and rotation with formal Node
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments backend/native/target/debug/passshare-mutations
       - name: Verify complete owner migration with the formal Node API
@@ -70,6 +80,15 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --go-session "$RUNNER_TEMP/passshare-go-session.test" --image passshare-todo1163-encrypted-api
       - name: Verify account identity with the distribution image and Rust Core
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --account-identity --image passshare-todo1163-encrypted-api
+      - name: Verify real recipient CLI with the distribution image and owned PostgreSQL
+        env:
+          PASSSHARE_CLI_DOCKER_MODE: image
+          PASSSHARE_CLI_IMAGE: passshare-todo1163-encrypted-api
+          PASSSHARE_CLI_BINARY: ${{ github.workspace }}/target/debug/op
+          PASSSHARE_CLI_OUTPUT_DIR: ${{ runner.temp }}/passshare1163-cli-image
+        run: |
+          mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1 --nocapture
       - name: Verify atomic encrypted attachment storage and rotation with the distribution image
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments --image passshare-todo1163-encrypted-api
       - name: Verify complete owner migration with the distribution image

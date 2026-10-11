@@ -10,12 +10,26 @@ import { connectItemFromApi, connectItemToCreateBody } from "../lib/connect-item
 import { useAuthSession } from "../hooks/useAuthSession";
 import { useItemLabels } from "../hooks/useItemLabels";
 
+import { CloudBoxPanel } from "@shared/cloud/CloudBoxPanel";
 type Props = {
   vaultId: string;
   onBack: () => void;
 };
 
-export function ItemsPanel({ vaultId, onBack }: Props) {
+export function ItemsPanel(props: Props) {
+  const { cloudSession, connectClient } = useAuthSession();
+  const metadataProof = useCallback(async (id: string, signal: AbortSignal) => {
+    signal.throwIfAborted();
+    if (!connectClient) throw new Error("Session unavailable");
+    await connectClient.getVault(id); signal.throwIfAborted();
+  }, [connectClient]);
+  const { t } = useI18n();
+  if (!cloudSession) return <p role="status">{t("session.loading")}</p>;
+  return <><button type="button" className="ps-button ps-button--secondary" onClick={props.onBack}>{t("app.vault.back")}</button>
+    <CloudBoxPanel key={`${cloudSession.userId}:${props.vaultId}`} session={cloudSession} boxId={props.vaultId} metadataProof={metadataProof}
+      compatibility={(ensureCompatibility) => <CompatibilityItemsPanel {...props} ensureCompatibility={ensureCompatibility} />} /></>;
+}
+function CompatibilityItemsPanel({ vaultId, onBack, ensureCompatibility }: Props & { ensureCompatibility: () => Promise<void> }) {
   const { t } = useI18n();
   const labels = useItemLabels();
   const { user, connectClient, connectLoading } = useAuthSession();
@@ -54,6 +68,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
     setError(null);
     const active = scope.current;
     try {
+      await ensureCompatibility();
       const vault = await connectClient.getVault(vaultId);
       if (active !== scope.current) return;
       setVaultName(vault.name);
@@ -67,7 +82,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
     } catch (err) {
       if (active === scope.current) setError(t("app.item.loadError"));
     }
-  }, [connectClient, vaultId, t]);
+  }, [connectClient, vaultId, t, ensureCompatibility]);
 
   useEffect(() => {
     createOperation.current = null;
@@ -92,6 +107,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
     const active = scope.current;
     createOperation.current ??= crypto.randomUUID();
     try {
+      await ensureCompatibility();
       await connectClient.createItem(vaultId, connectItemToCreateBody(values), createOperation.current);
     } catch (err) { const conflict = err instanceof Error && "status" in err && err.status === 409;
       if (active === scope.current) setError(t(conflict ? "app.item.createConflictError" : "app.item.createResultUnknown")); return; }
@@ -110,7 +126,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
     busyRef.current = true;
     setBusy(true);
     const active = scope.current;
-    try { await connectClient.editItemForm(vaultId, editingId, editingItem.version, values); }
+    try { await ensureCompatibility(); await connectClient.editItemForm(vaultId, editingId, editingItem.version, values); }
     catch { if (active === scope.current) setError(t("app.item.saveError")); return; }
     finally { busyRef.current = false; setBusy(false); }
     if (active !== scope.current) return;
@@ -125,6 +141,7 @@ export function ItemsPanel({ vaultId, onBack }: Props) {
     if (!connectClient || busyRef.current || !window.confirm(labels.confirmDelete)) {
       return;
     }
+    await ensureCompatibility();
     await connectClient.deleteItem(vaultId, itemId);
     await loadItems();
   }
