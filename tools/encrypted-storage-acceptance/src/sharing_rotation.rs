@@ -227,8 +227,13 @@ fn state_hash_sql(include_staging: bool) -> String {
         parts.join(" UNION ALL ")
     )
 }
+#[track_caller]
 pub(super) fn state_hash(db: &Database, include_staging: bool) -> String {
-    db.sql(&state_hash_sql(include_staging))
+    db.sql_phase_before(
+        &state_hash_sql(include_staging),
+        std::time::Instant::now() + Duration::from_secs(15),
+        super::SqlPhase::StateHash,
+    )
 }
 fn rejected(
     db: &Database,

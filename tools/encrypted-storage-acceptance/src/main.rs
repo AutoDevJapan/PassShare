@@ -342,15 +342,45 @@ impl Database {
     }
     #[track_caller]
     fn sql_before(&self, sql: &str, deadline: std::time::Instant) -> String {
+        self.sql_phase_before(sql, deadline, SqlPhase::Query)
+    }
+    #[track_caller]
+    fn sql_phase_before(&self, sql: &str, deadline: std::time::Instant, phase: SqlPhase) -> String {
         let mut cmd = self.psql(true, None);
         // SQLSTATE is safe diagnostic metadata; verbose text is never logged.
         cmd.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"]);
-        match fixture_sql(cmd, sql, deadline) {
+        match fixture_sql_phase(cmd, sql, deadline, phase, 8 * 1024 * 1024) {
             Ok(value) => value,
-            Err(reason) => panic!("fixture SQL {reason}"),
+            Err(reason) => {
+                // This independent selected-DB probe is observation, never a
+                // replay of the failed operation or a reason to accept it.
+                let mut probe = self.psql_bounded(true, None, true);
+                probe.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"]);
+                probe
+                    .env("PGCONNECT_TIMEOUT", "2")
+                    .env("PGOPTIONS", "-c statement_timeout=2000");
+                let ready = fixture_sql_phase(
+                    probe,
+                    "SELECT 1",
+                    std::time::Instant::now() + Duration::from_secs(3),
+                    SqlPhase::Readiness,
+                    16 * 1024,
+                );
+                eprintln!(
+                    "fixture SQL readiness selected_db_query_ok={}",
+                    matches!(&ready, Ok(value) if value == "1")
+                );
+                if let Err(probe_failure) = ready {
+                    eprintln!("fixture SQL {probe_failure}");
+                }
+                panic!("fixture SQL {reason}")
+            }
         }
     }
     fn psql(&self, interactive: bool, label: Option<&str>) -> Command {
+        self.psql_bounded(interactive, label, false)
+    }
+    fn psql_bounded(&self, interactive: bool, label: Option<&str>, readiness: bool) -> Command {
         let mut c = if let Some(local) = &self.local {
             local.client()
         } else {
@@ -359,6 +389,16 @@ impl Database {
             if interactive {
                 c.arg("-i");
             }
+            // Docker does not forward the CLI process's environment into exec.
+            if readiness {
+                c.args([
+                    "--env",
+                    "PGCONNECT_TIMEOUT=2",
+                    "--env",
+                    "PGOPTIONS=-c statement_timeout=2000",
+                ]);
+            }
+            c.args(["--env", "LC_ALL=C", "--env", "LANG=C"]);
             if let Some(label) = label {
                 c.args(["--env", &format!("PGAPPNAME={label}")]);
             }
@@ -378,6 +418,10 @@ impl Database {
         };
         if let Some(label) = label {
             c.env("PGAPPNAME", label);
+        }
+        if readiness {
+            c.env("PGCONNECT_TIMEOUT", "2")
+                .env("PGOPTIONS", "-c statement_timeout=2000");
         }
         c
     }
@@ -410,13 +454,30 @@ impl Drop for SqlChild {
 
 // Only SQLSTATE and schema-owned identifiers may leave PostgreSQL stderr.
 // Never report arbitrary quoted names, function arguments, SQL or row values.
+fn sql_severity_fields(line: &str) -> Option<(&str, &str)> {
+    let error = if let Some(rest) = line.strip_prefix("psql:<stdin>:") {
+        let (line_number, error) = rest.split_once(": ")?;
+        if line_number.is_empty() || !line_number.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        error
+    } else if let Some(rest) = line.strip_prefix("psql: error: connection to server at ") {
+        // libpq puts startup FATAL diagnostics after its connection frame.
+        rest.split_once(" failed: ")?.1
+    } else {
+        line
+    };
+    ["ERROR:  ", "FATAL:  ", "PANIC:  "]
+        .iter()
+        .find_map(|severity| error.strip_prefix(severity))?
+        .split_once(": ")
+}
 fn sql_error_metadata(diagnostic: &str) -> Vec<(String, Option<String>)> {
     const SCHEMA: &str = passshare_mutations::encrypted::SCHEMA;
     diagnostic
         .lines()
         .filter_map(|line| {
-            let (_, error) = line.split_once("ERROR:  ")?;
-            let (code, message) = error.split_once(": ")?;
+            let (code, message) = sql_severity_fields(line)?;
             if code.len() != 5
                 || !code
                     .bytes()
@@ -450,41 +511,314 @@ fn sql_error_metadata(diagnostic: &str) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
-// -f alone splits statements and changes the former single -c transaction/result
-// semantics. One gexec cell sends the ENTIRE SQL literally as one server request.
-// Base64 keeps quotes, newlines, dollar bodies and backslashes out of psql's lexer.
-// Audited callers include explicit BEGIN/COMMIT/ROLLBACK and multi-statement DDL;
-// CREATE/DROP DATABASE use the separate local fixture control, without wrapping.
+#[derive(Clone, Copy, Debug)]
+enum SqlPhase {
+    Query,
+    StateHash,
+    Readiness,
+    CreateDatabase,
+    DropDatabase,
+    Ownership,
+    Control,
+}
+impl SqlPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Query => "fixture_query",
+            Self::StateHash => "attachment_state_hash",
+            Self::Readiness => "selected_db_readiness",
+            Self::CreateDatabase => "create_database",
+            Self::DropDatabase => "drop_database",
+            Self::Ownership => "verify_ownership",
+            Self::Control => "fixture_control",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SqlFailure {
+    phase: SqlPhase,
+    client: &'static str,
+    caller: &'static str,
+    line: u32,
+    category: &'static str,
+    transport_category: Option<&'static str>,
+    elapsed_ms: u128,
+    pid: Option<u32>,
+    exit: Option<i32>,
+    spawned: bool,
+    kill_requested: bool,
+    input_done: bool,
+    input_ok: bool,
+    stdout_done: bool,
+    stderr_done: bool,
+    stdout_bytes: usize,
+    stderr_bytes: usize,
+    reaped: bool,
+    workers_joined: bool,
+    io_cancel_requested: bool,
+    os_errors: [Option<i32>; 7],
+    io_kinds: [Option<&'static str>; 7],
+    milestones_ms: [Option<u128>; 5],
+    states: Vec<&'static str>,
+    dependencies: Vec<String>,
+    socket_errors: Vec<u32>,
+}
+impl std::fmt::Display for SqlFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "phase={} client={} caller={}:{} category={} transport_category={:?} elapsed_ms={} pid={:?} exit={:?} spawned={} kill_requested={} input_done={} input_ok={} stdout_done={} stderr_done={} stdout_bytes={} stderr_bytes={} reaped={} workers_joined={} io_cancel_requested={} os_errors={:?} io_kinds={:?} milestones_ms={:?} SQLSTATE={:?} dependencies={:?} socket_errors={:?}",
+            self.phase.label(), self.client, self.caller, self.line, self.category, self.transport_category, self.elapsed_ms,
+            self.pid, self.exit, self.spawned, self.kill_requested, self.input_done, self.input_ok,
+            self.stdout_done, self.stderr_done, self.stdout_bytes, self.stderr_bytes,
+            self.reaped, self.workers_joined, self.io_cancel_requested, self.os_errors, self.io_kinds, self.milestones_ms, self.states,
+            self.dependencies, self.socket_errors)
+    }
+}
+fn sql_io_kind(error: &std::io::Error) -> &'static str {
+    use std::io::ErrorKind;
+    match error.kind() {
+        ErrorKind::NotFound => "not_found",
+        ErrorKind::PermissionDenied => "permission_denied",
+        ErrorKind::BrokenPipe => "broken_pipe",
+        ErrorKind::TimedOut => "timed_out",
+        ErrorKind::ConnectionRefused => "connection_refused",
+        ErrorKind::ConnectionReset => "connection_reset",
+        ErrorKind::InvalidInput => "invalid_input",
+        ErrorKind::Interrupted => "interrupted",
+        ErrorKind::UnexpectedEof => "unexpected_eof",
+        _ => "other",
+    }
+}
+const SQL_STATES: &[(&str, &str)] = &[
+    ("57014", "query_canceled"),
+    ("55P03", "lock_timeout"),
+    ("40P01", "deadlock"),
+    ("42601", "syntax_error"),
+    ("22021", "invalid_encoding"),
+    ("22012", "division_by_zero"),
+    ("53100", "disk_full"),
+    ("53200", "out_of_memory"),
+    ("53300", "connections_exhausted"),
+    ("55006", "object_in_use"),
+    ("42501", "permission_denied"),
+    ("XX000", "internal_error"),
+    ("42P01", "missing_dependency"),
+    ("42883", "missing_dependency"),
+    ("42P07", "object_already_exists"),
+    ("42P04", "object_already_exists"),
+    ("57P01", "administrator_termination"),
+    ("57P02", "server_crash"),
+    ("57P03", "server_not_ready"),
+    ("08006", "connection_failure"),
+    ("08001", "connection_unavailable"),
+    ("28P01", "authentication_failed"),
+    ("28000", "authentication_failed"),
+    ("3D000", "database_missing"),
+];
+fn classify_sql(failure: &mut SqlFailure, bytes: &[u8]) {
+    let diagnostic = String::from_utf8_lossy(bytes);
+    // Accept SQLSTATE only directly after severity, and only from a fixed list.
+    // Arbitrary five-character strings in SQL/CONTEXT cannot escape as codes.
+    let server_error = diagnostic.lines().find_map(sql_severity_fields);
+    if let Some((code, _)) = server_error {
+        if let Some(&(state, category)) = SQL_STATES.iter().find(|(s, _)| *s == code) {
+            if !failure.states.contains(&state) {
+                failure.states.push(state);
+            }
+            if failure.category == "other" {
+                failure.category = category;
+            }
+        }
+    }
+    for (code, dependency) in sql_error_metadata(&diagnostic).into_iter().take(1) {
+        if SQL_STATES.iter().any(|(s, _)| *s == code) {
+            if let Some(dependency) = dependency {
+                if !failure.dependencies.contains(&dependency) {
+                    failure.dependencies.push(dependency);
+                }
+            }
+        }
+    }
+    let normalized = server_error
+        .map_or(diagnostic.as_ref(), |(_, message)| message)
+        .to_ascii_lowercase();
+    if failure.category == "query_canceled"
+        && normalized.contains("canceling statement due to statement timeout")
+    {
+        failure.category = "statement_timeout";
+    }
+    if failure.category == "other" && server_error.is_none() {
+        for (pattern, category) in [
+            ("connection refused", "connection_unavailable"),
+            ("could not connect", "connection_unavailable"),
+            ("timeout expired", "connection_timeout"),
+            (
+                "server closed the connection unexpectedly",
+                "server_closed_connection",
+            ),
+            (
+                "could not receive data from server",
+                "receive_connection_lost",
+            ),
+            ("could not send data to server", "send_connection_lost"),
+            ("password authentication failed", "authentication_failed"),
+            ("no password supplied", "authentication_failed"),
+            (
+                "could not create shared memory segment",
+                "shared_memory_creation",
+            ),
+            ("could not fork new process", "server_process_creation"),
+            ("could not spawn new process", "server_process_creation"),
+            ("too many clients", "connections_exhausted"),
+            ("remaining connection slots", "connections_exhausted"),
+        ] {
+            if normalized.contains(pattern) {
+                failure.category = category;
+                break;
+            }
+        }
+    }
+    // libpq Windows socket diagnostics use (0xHEX/DECIMAL). Validate the
+    // numeric equivalence; do not echo surrounding text or arbitrary OS names.
+    for suffix in diagnostic
+        .lines()
+        .filter(|line| {
+            server_error.is_none()
+                && ((line.starts_with("psql:") && line.contains(": error: "))
+                    || line.starts_with("could not receive data from server:")
+                    || line.starts_with("could not send data to server:"))
+        })
+        .flat_map(|line| line.split("(0x").skip(1))
+    {
+        if let Some((pair, _)) = suffix.split_once(')') {
+            if let Some((hex, dec)) = pair.split_once('/') {
+                if !hex.is_empty()
+                    && hex.len() <= 8
+                    && !dec.is_empty()
+                    && dec.len() <= 10
+                    && hex.bytes().all(|b| b.is_ascii_hexdigit())
+                    && dec.bytes().all(|b| b.is_ascii_digit())
+                {
+                    if let (Ok(a), Ok(b)) = (u32::from_str_radix(hex, 16), dec.parse::<u32>()) {
+                        if a == b
+                            && (10000..12000).contains(&a)
+                            && !failure.socket_errors.contains(&a)
+                        {
+                            failure.socket_errors.push(a);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// One gexec cell preserves the former single -c transaction/result semantics.
+// Neither SQL nor raw client output is retained in a failure value or logged.
+#[track_caller]
+#[cfg(test)]
 fn fixture_sql(
+    cmd: Command,
+    sql: &str,
+    deadline: std::time::Instant,
+) -> Result<String, Box<SqlFailure>> {
+    fixture_sql_phase(cmd, sql, deadline, SqlPhase::Query, 8 * 1024 * 1024)
+}
+#[track_caller]
+fn fixture_sql_phase(
     mut cmd: Command,
     sql: &str,
     deadline: std::time::Instant,
-) -> Result<String, &'static str> {
-    const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
-    if std::time::Instant::now() >= deadline {
-        return Err("exceeded its deadline");
-    }
+    phase: SqlPhase,
+    output_limit: usize,
+) -> Result<String, Box<SqlFailure>> {
+    let start = std::time::Instant::now();
+    let location = std::panic::Location::caller();
+    let caller = location
+        .file()
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|s| {
+            matches!(
+                *s,
+                "main.rs"
+                    | "local_postgres.rs"
+                    | "encrypted_attachments.rs"
+                    | "sharing_rotation.rs"
+            )
+        })
+        .unwrap_or("suppressed");
+    let mut failure = SqlFailure {
+        phase,
+        client: match cmd
+            .get_program()
+            .to_string_lossy()
+            .rsplit(['/', '\\'])
+            .next()
+        {
+            Some("psql.exe" | "psql") => "psql",
+            Some("docker.exe" | "docker") => "docker_exec",
+            _ => "suppressed",
+        },
+        caller,
+        line: location.line(),
+        category: "other",
+        transport_category: None,
+        elapsed_ms: 0,
+        pid: None,
+        exit: None,
+        spawned: false,
+        kill_requested: false,
+        input_done: false,
+        input_ok: false,
+        stdout_done: false,
+        stderr_done: false,
+        stdout_bytes: 0,
+        stderr_bytes: 0,
+        reaped: false,
+        workers_joined: false,
+        io_cancel_requested: false,
+        os_errors: [None; 7],
+        io_kinds: [None; 7],
+        milestones_ms: [None; 5],
+        states: Vec::new(),
+        dependencies: Vec::new(),
+        socket_errors: Vec::new(),
+    };
     let input = format!(
         "SELECT pg_catalog.convert_from(pg_catalog.decode('{}','base64'),'UTF8') \\gexec\n",
         BASE64.encode(sql)
     );
     if std::time::Instant::now() >= deadline {
-        return Err("exceeded its deadline");
+        failure.category = "deadline";
+        failure.elapsed_ms = start.elapsed().as_millis();
+        return Err(Box::new(failure));
     }
-    let mut child = SqlChild(
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| "launch failed")?,
-    );
+    let spawned = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => SqlChild(child),
+        Err(error) => {
+            failure.category = "spawn";
+            failure.os_errors[0] = error.raw_os_error();
+            failure.io_kinds[0] = Some(sql_io_kind(&error));
+            failure.elapsed_ms = start.elapsed().as_millis();
+            return Err(Box::new(failure));
+        }
+    };
+    failure.spawned = true;
+    failure.pid = Some(child.0.id());
+    failure.milestones_ms[0] = Some(start.elapsed().as_millis());
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut workers = Vec::new();
     let mut stdin = child.0.stdin.take().unwrap();
     let writer_sender = sender.clone();
     workers.push(thread::spawn(move || {
         let result = stdin.write_all(input.as_bytes());
-        drop(stdin); // EOF is part of completion, not deferred until after wait.
+        drop(stdin);
         let _ = writer_sender.send((0, result.map(|_| 0), Vec::new()));
     }));
     for (kind, pipe) in [
@@ -500,7 +834,7 @@ fn fixture_sql(
         let sender = sender.clone();
         workers.push(thread::spawn(move || {
             let mut bytes = Vec::new();
-            let result = pipe.take(OUTPUT_LIMIT as u64 + 1).read_to_end(&mut bytes);
+            let result = pipe.take(output_limit as u64 + 1).read_to_end(&mut bytes);
             let _ = sender.send((kind, result, bytes));
         }));
     }
@@ -508,132 +842,154 @@ fn fixture_sql(
     let mut status = None;
     let mut output = Vec::new();
     let mut events = 0;
-    let mut failure = "failed category=other";
+    let mut transport_failure = None;
+    let mut cleanup_deadline = None;
     loop {
-        if std::time::Instant::now() >= deadline {
-            return Err("exceeded its deadline");
+        while let Ok((kind, result, bytes)) = receiver.try_recv() {
+            events += 1;
+            failure.milestones_ms[kind + 1] = Some(start.elapsed().as_millis());
+            if let Err(error) = &result {
+                failure.os_errors[kind + 1] = error.raw_os_error();
+                failure.io_kinds[kind + 1] = Some(sql_io_kind(error));
+                transport_failure.get_or_insert(if kind == 0 {
+                    "input_write"
+                } else {
+                    "output_read"
+                });
+            }
+            if bytes.len() > output_limit {
+                transport_failure = Some("output_bound");
+            }
+            match kind {
+                0 => {
+                    failure.input_done = true;
+                    failure.input_ok = result.is_ok();
+                }
+                1 => {
+                    failure.stdout_done = true;
+                    failure.stdout_bytes = bytes.len();
+                    output = bytes;
+                }
+                2 => {
+                    failure.stderr_done = true;
+                    failure.stderr_bytes = bytes.len();
+                    classify_sql(&mut failure, &bytes);
+                }
+                _ => unreachable!(),
+            }
         }
         if status.is_none() {
-            status = child.0.try_wait().map_err(|_| "child wait failed")?;
-        }
-        while let Ok((kind, result, bytes)) = receiver.try_recv() {
-            result.map_err(|_| {
-                if kind == 0 {
-                    "input write failed"
-                } else {
-                    "output read failed"
-                }
-            })?;
-            if bytes.len() > OUTPUT_LIMIT {
-                return Err("output exceeded bound");
-            }
-            events += 1;
-            if kind == 1 {
-                output = bytes;
-            } else if kind == 2 {
-                // PostgreSQL diagnostics can contain SQL/row values. Classify only.
-                let diagnostic = String::from_utf8_lossy(&bytes);
-                for (code, dependency) in sql_error_metadata(&diagnostic) {
-                    eprintln!(
-                        "fixture SQL SQLSTATE={code} dependency={}",
-                        dependency.as_deref().unwrap_or("suppressed")
-                    );
-                }
-                if diagnostic.contains("canceling statement due to statement timeout") {
-                    failure = "failed category=statement_timeout";
-                } else if diagnostic.contains("does not exist") {
-                    failure = "failed category=missing_dependency";
-                } else if diagnostic.contains("could not connect")
-                    || diagnostic.contains("connection refused")
-                {
-                    failure = "failed category=connection_unavailable";
-                } else if diagnostic.contains("server closed the connection unexpectedly") {
-                    failure = "failed category=server_closed_connection";
-                } else if diagnostic.contains("could not receive data from server") {
-                    failure = "failed category=receive_connection_lost";
-                } else if diagnostic.contains("could not send data to server") {
-                    failure = "failed category=send_connection_lost";
-                } else if diagnostic.contains("terminating connection due to administrator command")
-                {
-                    failure = "failed category=administrator_termination";
-                } else if diagnostic.contains("could not create shared memory segment") {
-                    failure = "failed category=shared_memory_creation";
-                } else if diagnostic.contains("could not fork new process") {
-                    failure = "failed category=server_process_creation";
-                } else if diagnostic.contains("too many clients")
-                    || diagnostic.contains("remaining connection slots")
-                {
-                    failure = "failed category=connections_exhausted";
-                } else {
-                    for (code, category) in [
-                        ("55P03", "failed category=lock_timeout"),
-                        ("40P01", "failed category=deadlock"),
-                        ("42601", "failed category=syntax_error"),
-                        ("22021", "failed category=invalid_encoding"),
-                        ("22012", "failed category=division_by_zero"),
-                        ("53100", "failed category=disk_full"),
-                        ("53200", "failed category=out_of_memory"),
-                        ("53300", "failed category=connections_exhausted"),
-                        ("55006", "failed category=object_in_use"),
-                        ("42501", "failed category=permission_denied"),
-                        ("XX000", "failed category=internal_error"),
-                    ] {
-                        if diagnostic.contains(&format!("ERROR:  {code}:"))
-                            || diagnostic.contains(&format!("FATAL:  {code}:"))
-                        {
-                            failure = category;
-                            break;
-                        }
+            match child.0.try_wait() {
+                Ok(value) => {
+                    status = value;
+                    if status.is_some() {
+                        failure.milestones_ms[4] = Some(start.elapsed().as_millis());
                     }
                 }
-                if failure == "failed category=other" && !diagnostic.is_empty() {
-                    // Diagnostic values may be secret. Emit only its byte count
-                    // and canonical SQLSTATE tokens immediately after severity.
-                    let fields = diagnostic.split_ascii_whitespace().collect::<Vec<_>>();
-                    let codes = fields
-                        .windows(2)
-                        .filter(|w| matches!(w[0], "ERROR:" | "FATAL:"))
-                        .filter_map(|w| w[1].strip_suffix(':'))
-                        .filter(|code| {
-                            code.len() == 5
-                                && code
-                                    .bytes()
-                                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-                        })
-                        .collect::<Vec<_>>();
-                    eprintln!(
-                        "fixture SQL diagnostic bytes={} SQLSTATE={codes:?}",
-                        bytes.len()
-                    );
+                Err(error) => {
+                    failure.os_errors[4] = error.raw_os_error();
+                    failure.io_kinds[4] = Some(sql_io_kind(&error));
+                    transport_failure = Some("child_wait");
                 }
             }
         }
-        // Even after a worker sends its event it may not have returned yet.
-        // Join only finished workers; never introduce an unbounded writer join.
         if status.is_some() && events == 3 && workers.iter().all(|w| w.is_finished()) {
+            break;
+        }
+        let now = std::time::Instant::now();
+        if cleanup_deadline.is_none()
+            && (now >= deadline || transport_failure.is_some_and(|c| c != "input_write"))
+        {
+            if now >= deadline {
+                transport_failure.get_or_insert("deadline");
+            }
+            // Reap and drain even after broken stdin. Do not lose the child exit
+            // or libpq diagnostic by returning at the first worker error.
+            if status.is_none() {
+                failure.kill_requested = true;
+                if let Err(error) = child.0.kill() {
+                    failure.os_errors[5] = error.raw_os_error();
+                    failure.io_kinds[5] = Some(sql_io_kind(&error));
+                }
+            }
+            cleanup_deadline = Some(now + Duration::from_secs(2));
+        }
+        #[cfg(windows)]
+        if !failure.io_cancel_requested
+            && cleanup_deadline.is_some_and(|end| now + Duration::from_millis(500) >= end)
+        {
+            // A descendant may keep an inherited pipe open after the direct
+            // child exits. Cancel our blocked synchronous I/O, never join it
+            // without a bound and never terminate an unrelated server.
+            use std::os::windows::io::AsRawHandle;
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn CancelSynchronousIo(thread: *mut std::ffi::c_void) -> i32;
+            }
+            failure.io_cancel_requested = true;
+            for worker in &workers {
+                if !worker.is_finished()
+                    && unsafe { CancelSynchronousIo(worker.as_raw_handle()) } == 0
+                {
+                    let error = std::io::Error::last_os_error();
+                    failure.os_errors[6] = error.raw_os_error();
+                    failure.io_kinds[6] = Some(sql_io_kind(&error));
+                }
+            }
+        }
+        if cleanup_deadline.is_some_and(|end| now >= end) {
             break;
         }
         thread::sleep(Duration::from_millis(10));
     }
-    for worker in workers {
-        worker.join().map_err(|_| "I/O worker failed")?;
-    }
-    if !status.unwrap().success() {
-        // Preserve safe process metadata for fixture startup/OS failures that
-        // do not produce PostgreSQL SQLSTATE diagnostics. Never print stderr.
-        if failure == "control rejected or exceeded output bound"
-            || failure == "failed category=other"
-        {
-            eprintln!("fixture SQL nonzero exit={:?}", status.unwrap().code());
+    failure.reaped = status.is_some();
+    failure.exit = status.and_then(|s| s.code());
+    failure.workers_joined = workers.iter().all(|w| w.is_finished());
+    if failure.workers_joined {
+        for worker in workers {
+            if worker.join().is_err() {
+                transport_failure = Some("worker_panic");
+                failure.workers_joined = false;
+            }
         }
-        return Err(failure);
     }
-    let output = String::from_utf8(output)
-        .map_err(|_| "output encoding failed")?
-        .trim()
-        .to_owned();
+    if !failure.reaped || !failure.workers_joined {
+        CLEANUP_FAILED.store(true, Ordering::SeqCst);
+        transport_failure = Some("reap_or_drain_deadline");
+    }
+    // A nonzero child with a classified server/transport diagnostic is primary;
+    // input failure remains independently visible. An unclassified exit 2 is
+    // still visibly a client connection failure, not merely `other` + bytes.
+    if failure.category == "other" && failure.exit == Some(2) && !failure.kill_requested {
+        failure.category = "psql_connection_exit";
+    }
+    failure.transport_category = transport_failure;
+    if let Some(category) = transport_failure {
+        if failure.category == "other" {
+            failure.category = category;
+        }
+    }
+    if failure.category == "other" && !status.is_some_and(|s| s.success()) {
+        failure.category = match failure.exit {
+            Some(2) => "psql_connection_exit",
+            Some(3) => "psql_sql_exit",
+            _ => "child_exit",
+        };
+    }
+    failure.elapsed_ms = start.elapsed().as_millis();
+    if transport_failure.is_some() || !status.is_some_and(|s| s.success()) {
+        return Err(Box::new(failure));
+    }
+    let output = match String::from_utf8(output) {
+        Ok(output) => output.trim().to_owned(),
+        Err(_) => {
+            failure.category = "output_encoding";
+            return Err(Box::new(failure));
+        }
+    };
     if std::time::Instant::now() >= deadline {
-        return Err("exceeded its deadline");
+        failure.category = "deadline";
+        return Err(Box::new(failure));
     }
     Ok(output)
 }
@@ -3613,6 +3969,11 @@ mod contract_tests {
                 assert!(input.ends_with(b" \\gexec\n"));
             }
             "blocked" => thread::sleep(Duration::from_secs(30)),
+            "secret_exit" => {
+                std::io::stdout().write_all(b"secret-canary-row").unwrap();
+                std::io::stderr().write_all(b"psql: error: could not receive data from server: secret-canary-password (0x00002745/10053)\n").unwrap();
+                std::process::exit(2);
+            }
             "reject" => std::process::exit(7),
             "overflow" => {
                 let _ = std::io::stdout().write_all(&vec![b'Z'; 8 * 1024 * 1024 + 1]);
@@ -3640,16 +4001,15 @@ mod contract_tests {
             &"x".repeat(2 * 1024 * 1024),
             start + Duration::from_millis(400),
         );
-        assert!(matches!(reply, Err("exceeded its deadline")));
+        let failure = reply.unwrap_err();
+        assert_eq!(failure.category, "deadline");
+        assert!(failure.reaped && failure.workers_joined);
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
     fn sql_transport_rejects_early_exit_and_output_overflow() {
-        for (mode, expected) in [
-            ("reject", "input write failed"),
-            ("overflow", "output exceeded bound"),
-        ] {
+        for (mode, expected) in [("reject", "input_write"), ("overflow", "output_bound")] {
             let input = if mode == "overflow" {
                 "SELECT 1".to_owned()
             } else {
@@ -3660,16 +4020,248 @@ mod contract_tests {
                 &input,
                 std::time::Instant::now() + Duration::from_secs(5),
             );
-            assert!(matches!(reply, Err(reason) if reason == expected));
+            let failure = reply.unwrap_err();
+            assert_eq!(failure.category, expected);
+            assert!(failure.reaped && failure.workers_joined);
+            assert!(failure.input_done && failure.stdout_done && failure.stderr_done);
+            if mode == "reject" {
+                assert_eq!(failure.exit, Some(7));
+            }
         }
-        assert!(matches!(
+        assert_eq!(
             fixture_sql(
                 command("unused-sql-client"),
                 "SELECT 1",
                 std::time::Instant::now()
+            )
+            .unwrap_err()
+            .category,
+            "deadline"
+        );
+    }
+
+    #[test]
+    fn sql_failure_metadata_suppresses_secret_canaries_and_unknown_states() {
+        let mut failure = fixture_sql(
+            command("missing-sql-diagnostics1163-binary"),
+            "secret-canary-input",
+            std::time::Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(failure.category, "spawn");
+        assert!(!failure.spawned && failure.pid.is_none());
+        assert_eq!(failure.io_kinds[0], Some("not_found"));
+        failure.category = "other";
+        classify_sql(&mut failure, b"psql:<stdin>:1: ERROR:  42P01: relation \"secret-canary-relation\" does not exist\nCONTEXT: secret-canary-row password='secret-canary-password'\nFATAL:  ABCDE: secret-canary-token\ncould not receive data from server: secret-canary-os (0x00002745/10053)\nsecret-canary-number (0x2745/77777)");
+        assert_eq!(failure.category, "missing_dependency");
+        assert_eq!(failure.states, ["42P01"]);
+        assert!(failure.dependencies.is_empty());
+        assert!(failure.socket_errors.is_empty());
+        let encoded = format!("{failure:?}\n{failure}");
+        assert!(
+            !encoded.contains("secret-canary")
+                && !encoded.contains("ABCDE")
+                && !encoded.contains("77777")
+        );
+        failure.category = "other";
+        failure.states.clear();
+        classify_sql(&mut failure, b"psql: error: connection to server at \"secret-canary-host\" failed: Connection refused (0x0000274D/10061)");
+        assert_eq!(failure.category, "connection_unavailable");
+        assert!(failure.states.is_empty());
+        assert!(!format!("{failure}").contains("secret-canary"));
+        failure.category = "other";
+        failure.states.clear();
+        failure.socket_errors.clear();
+        classify_sql(&mut failure, b"psql:<stdin>:1: ERROR:  P0001: secret-canary-row\nCONTEXT: ERROR:  42P01: relation \"passshare_fixture_owner\" does not exist\nDETAIL: FATAL:  57P01: spoof\nERROR:  22012: multiline secret-canary-row\nCONTEXT: could not receive data from server: (0x00002745/10053)");
+        assert_eq!(failure.category, "other");
+        assert!(
+            failure.states.is_empty()
+                && failure.dependencies.is_empty()
+                && failure.socket_errors.is_empty()
+        );
+        assert!(sql_severity_fields("CONTEXT: ERROR:  42P01: spoof").is_none());
+        assert!(sql_severity_fields("DETAIL: FATAL:  57P01: spoof").is_none());
+        assert!(sql_severity_fields("psql:<stdin>:secret-canary: ERROR:  42P01: spoof").is_none());
+        assert_eq!(sql_severity_fields("psql: error: connection to server at \"secret-canary-host\", port 1 failed: FATAL:  57P03: starting"), Some(("57P03", "starting")));
+    }
+
+    #[test]
+    fn sql_transport_keeps_exit_and_stderr_after_broken_input_without_leaking_values() {
+        let failure = fixture_sql(
+            sql_child("secret_exit"),
+            &"secret-canary-input".repeat(100_000),
+            std::time::Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert_eq!(failure.exit, Some(2));
+        assert_eq!(failure.category, "receive_connection_lost");
+        assert_eq!(failure.transport_category, Some("input_write"));
+        assert!(
+            failure.input_done && !failure.input_ok && failure.stdout_done && failure.stderr_done
+        );
+        assert!(failure.reaped && failure.workers_joined && !failure.kill_requested);
+        assert!(failure.stderr_bytes > 0 && failure.stdout_bytes > 0);
+        let report = format!("{failure:?}\n{failure}");
+        assert!(!report.contains("secret-canary"));
+    }
+
+    #[test]
+    #[ignore = "requires PASSSHARE_SQL_FIXTURE_MANIFEST naming an owned PostgreSQL 16 fixture"]
+    fn sql_diagnostics_live_faults_are_finite_and_owned_database_is_recovered() {
+        let manifest = PathBuf::from(
+            std::env::var_os("PASSSHARE_SQL_FIXTURE_MANIFEST").expect("explicit fixture manifest"),
+        );
+        let local = local_postgres::LocalPostgres::start_attachments(&manifest);
+        let db = Database::from_local(local, "source");
+        let name = db.name.clone();
+        let execute = |sql: &str, options: &str| {
+            let mut cmd = db.psql(true, None);
+            cmd.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"])
+                .env("PGOPTIONS", options);
+            fixture_sql_phase(
+                cmd,
+                sql,
+                std::time::Instant::now() + Duration::from_secs(3),
+                SqlPhase::StateHash,
+                16 * 1024,
+            )
+        };
+        for (sql, options, category, code) in [
+            (
+                "SELECT 1/0",
+                "-c statement_timeout=1000",
+                "division_by_zero",
+                "22012",
             ),
-            Err("exceeded its deadline")
-        ));
+            (
+                "SELECT * FROM sql_diagnostics_missing",
+                "-c statement_timeout=1000",
+                "missing_dependency",
+                "42P01",
+            ),
+            (
+                "SELECT pg_sleep(1)",
+                "-c statement_timeout=100",
+                "statement_timeout",
+                "57014",
+            ),
+            (
+                "SELEC 1",
+                "-c statement_timeout=1000",
+                "syntax_error",
+                "42601",
+            ),
+            (
+                "DO $$ BEGIN RAISE EXCEPTION 'secret-canary-row'; END $$",
+                "-c statement_timeout=1000",
+                "psql_sql_exit",
+                "",
+            ),
+        ] {
+            let failure = execute(sql, options).unwrap_err();
+            assert_eq!(failure.category, category);
+            assert_eq!(failure.exit, Some(3));
+            assert!(
+                failure.reaped
+                    && failure.workers_joined
+                    && failure.input_ok
+                    && !failure.kill_requested
+            );
+            assert!(code.is_empty() || failure.states.contains(&code));
+            assert!(!format!("{failure:?}\n{failure}").contains("secret-canary"));
+            eprintln!("SQL controlled fault {failure}");
+            assert_eq!(db.sql("SELECT 1"), "1");
+        }
+        // Select a fresh local port, release our socket, and first prove TCP
+        // refusal. Never stop or reconfigure the parent's PostgreSQL server.
+        let reserved = tokio::net::TcpSocket::new_v4().unwrap();
+        reserved
+            .bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+            .unwrap();
+        let refused_address = reserved.local_addr().unwrap();
+        drop(reserved);
+        // Windows delivers loopback TCP refusal after about two seconds.
+        // Use the existing fixture connect budget so this fault can arrive.
+        let tcp_error =
+            TcpStream::connect_timeout(&refused_address, Duration::from_secs(5)).unwrap_err();
+        assert_eq!(tcp_error.kind(), std::io::ErrorKind::ConnectionRefused);
+        let mut refused = db.psql(true, None);
+        refused
+            .args([
+                "-p",
+                &refused_address.port().to_string(),
+                "-f",
+                "-",
+                "-v",
+                "VERBOSITY=verbose",
+            ])
+            .env("PGCONNECT_TIMEOUT", "5");
+        let failure = fixture_sql(
+            refused,
+            "SELECT 1",
+            std::time::Instant::now() + Duration::from_secs(15),
+        )
+        .unwrap_err();
+        assert_eq!(failure.exit, Some(2));
+        assert_eq!(failure.category, "connection_unavailable");
+        assert!(failure.states.is_empty() && failure.reaped && failure.workers_joined);
+        eprintln!("SQL controlled refused connection {failure}");
+
+        // Both blocker and terminated session belong to this invocation's DB.
+        let start_session = |label: &'static str, sql: &'static str| {
+            let mut cmd = db.psql(true, Some(label));
+            cmd.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"]);
+            thread::spawn(move || {
+                fixture_sql(cmd, sql, std::time::Instant::now() + Duration::from_secs(5))
+            })
+        };
+        let holder = start_session(
+            "sql-diagnostics-lock-holder",
+            "SELECT pg_advisory_lock(1163); SELECT pg_sleep(2)",
+        );
+        assert!(wait_db(&db, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE a.datname=current_database() AND a.application_name='sql-diagnostics-lock-holder' AND l.locktype='advisory' AND l.granted)"));
+        let failure = execute(
+            "SELECT pg_advisory_lock(1163)",
+            "-c lock_timeout=100 -c statement_timeout=1000",
+        )
+        .unwrap_err();
+        assert_eq!(failure.category, "lock_timeout");
+        assert_eq!(failure.states, ["55P03"]);
+        assert!(failure.reaped && failure.workers_joined);
+        eprintln!("SQL controlled lock {failure}");
+        assert!(holder.join().unwrap().is_ok());
+        let victim = start_session("sql-diagnostics-terminated-session", "SELECT pg_sleep(4)");
+        assert!(wait_db(&db, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='sql-diagnostics-terminated-session' AND wait_event='PgSleep')"));
+        assert_eq!(db.sql("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=current_database() AND application_name='sql-diagnostics-terminated-session'"), "t");
+        let failure = victim.join().unwrap().unwrap_err();
+        assert_eq!(failure.category, "administrator_termination");
+        assert!(failure.reaped && failure.workers_joined);
+        eprintln!("SQL controlled terminated session {failure}");
+        assert_eq!(db.sql("SELECT 1"), "1");
+        let mut catalog = db.psql(true, None);
+        catalog.args([
+            "-d",
+            "passshare",
+            "-f",
+            "-",
+            "-v",
+            "ECHO=none",
+            "-v",
+            "VERBOSITY=verbose",
+        ]);
+        drop(db);
+        // Exact created name only; no enumeration of the parent's databases.
+        assert_eq!(
+            fixture_sql(
+                catalog,
+                &format!("SELECT count(*) FROM pg_database WHERE datname='{name}'"),
+                std::time::Instant::now() + Duration::from_secs(3)
+            )
+            .unwrap(),
+            "0"
+        );
+        assert!(!CLEANUP_FAILED.load(Ordering::SeqCst));
+        println!("SQL diagnostics live: 8 controlled faults, selected DB recovery and exact owned DB absence passed");
     }
 
     #[test]

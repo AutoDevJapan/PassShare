@@ -160,6 +160,15 @@ impl LocalPostgres {
     fn create_database(&mut self, prefix: &str) {
         assert!(matches!(prefix, "" | "attach_" | "migration_"));
         let name = format!("passshare1163_{prefix}{}", ConnectId::generate().unwrap());
+        self.create_database_named(name);
+    }
+    fn create_database_named(&mut self, name: String) {
+        assert!(
+            name.starts_with("passshare1163_")
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        );
         let mut cmd = self.client();
         // Windows fixture creation can exceed the normal 10-second statement
         // limit during filesystem sync. Keep a separate finite creation budget.
@@ -168,16 +177,6 @@ impl LocalPostgres {
             "-c statement_timeout=55000 -c lock_timeout=10000",
         );
         self.database = name.clone(); // Register ownership BEFORE launch/failure.
-        control_with_budget(
-            cmd,
-            &format!("CREATE DATABASE {name} TEMPLATE template0 STRATEGY WAL_LOG"),
-            Duration::from_secs(60),
-        )
-        .expect("bounded owned database creation failed");
-        let marker = format!(
-            "passshare-acceptance:{}:{}:{}",
-            self.ownership_id, self.purpose, self.database
-        );
         let catalog = Self {
             psql: self.psql.clone(),
             port: self.port,
@@ -186,6 +185,20 @@ impl LocalPostgres {
             ownership_id: self.ownership_id.clone(),
             purpose: self.purpose,
         };
+        if let Err(reason) = control_with_budget(
+            cmd,
+            &format!("CREATE DATABASE {name} TEMPLATE template0 STRATEGY WAL_LOG"),
+            Duration::from_secs(60),
+        ) {
+            // CREATE used the catalog connection, not the newly registered
+            // target that may never have been created. Keep the first failure.
+            catalog.report_readiness();
+            panic!("bounded owned database creation failed: {reason}");
+        }
+        let marker = format!(
+            "passshare-acceptance:{}:{}:{}",
+            self.ownership_id, self.purpose, self.database
+        );
         catalog.query(&format!(
             "COMMENT ON DATABASE {} IS '{marker}'",
             self.database
@@ -268,6 +281,7 @@ impl LocalPostgres {
         );
         c
     }
+    #[track_caller]
     fn query(&self, sql: &str) -> String {
         let operation = if sql.starts_with("CREATE DATABASE") {
             "create_database"
@@ -277,8 +291,31 @@ impl LocalPostgres {
             "fixture_control"
         };
         control(self.client(), sql).unwrap_or_else(|reason| {
+            self.report_readiness();
             panic!("bounded owned fixture operation={operation} failed: {reason}")
         })
+    }
+    #[track_caller]
+    fn report_readiness(&self) {
+        let mut probe = self.client();
+        probe
+            .args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"])
+            .env("PGCONNECT_TIMEOUT", "2")
+            .env("PGOPTIONS", "-c statement_timeout=2000");
+        let ready = fixture_sql_phase(
+            probe,
+            "SELECT 1",
+            std::time::Instant::now() + Duration::from_secs(3),
+            SqlPhase::Readiness,
+            16 * 1024,
+        );
+        eprintln!(
+            "fixture SQL readiness selected_db_query_ok={}",
+            matches!(&ready, Ok(value) if value == "1")
+        );
+        if let Err(failure) = ready {
+            eprintln!("fixture SQL {failure}");
+        }
     }
 }
 impl Drop for LocalPostgres {
@@ -292,8 +329,12 @@ impl Drop for LocalPostgres {
             self.ownership_id, self.purpose
         );
         let guard=format!("SELECT count(*) FROM pg_database d WHERE datname='{name}' AND datdba=(SELECT oid FROM pg_roles WHERE rolname='passshare') AND shobj_description(d.oid,'pg_database')='{marker}'");
-        if control(self.client(), &guard).as_deref() != Ok("1") {
+        let guarded = control(self.client(), &guard);
+        if !matches!(&guarded, Ok(value) if value == "1") {
             CLEANUP_FAILED.store(true, Ordering::SeqCst);
+            if let Err(reason) = guarded {
+                eprintln!("fixture SQL {reason}");
+            }
             eprintln!(
                 "local database ownership/purpose catalog guard failed; preserved database={name}"
             );
@@ -319,123 +360,81 @@ impl Drop for LocalPostgres {
     }
 }
 
-fn control(cmd: Command, sql: &str) -> Result<String, &'static str> {
+#[track_caller]
+fn control(cmd: Command, sql: &str) -> Result<String, Box<SqlFailure>> {
     control_with_budget(cmd, sql, Duration::from_secs(15))
 }
-
+#[track_caller]
 fn control_with_budget(
     mut cmd: Command,
     sql: &str,
     budget: Duration,
-) -> Result<String, &'static str> {
-    let deadline = std::time::Instant::now() + budget;
-    let mut child = cmd
-        .args(["-c", sql])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|_| "control launch failed")?;
-    let out = child.stdout.take().unwrap();
-    let err = child.stderr.take().unwrap();
-    let (send, receive) = std::sync::mpsc::channel();
-    let mut readers = Vec::new();
-    for (stdout, pipe) in [
-        (true, Box::new(out) as Box<dyn Read + Send>),
-        (false, Box::new(err) as Box<dyn Read + Send>),
-    ] {
-        let send = send.clone();
-        readers.push(thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let result = pipe.take(16 * 1024 + 1).read_to_end(&mut bytes);
-            let _ = send.send((stdout, result, bytes));
-        }));
-    }
-    drop(send);
-    let mut timed_out = false;
-    let mut wait_failed = false;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {}
-            Err(_) => wait_failed = true,
-        }
-        if wait_failed || std::time::Instant::now() >= deadline {
-            timed_out = !wait_failed;
-            let _ = child.kill();
-            if !reap_before(
-                &mut child,
-                std::time::Instant::now() + Duration::from_secs(2),
-            ) {
-                CLEANUP_FAILED.store(true, Ordering::SeqCst);
-                break None;
-            }
-            match child.wait() {
-                Ok(status) => break Some(status),
-                Err(_) => {
-                    CLEANUP_FAILED.store(true, Ordering::SeqCst);
-                    break None;
-                }
-            }
-        }
-        thread::sleep(Duration::from_millis(10));
+) -> Result<String, Box<SqlFailure>> {
+    cmd.args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"]);
+    let phase = if sql.starts_with("CREATE DATABASE") {
+        SqlPhase::CreateDatabase
+    } else if sql.starts_with("DROP DATABASE") {
+        SqlPhase::DropDatabase
+    } else if sql.starts_with("SELECT owner_id")
+        || sql.starts_with("SELECT count(*) FROM pg_database")
+    {
+        SqlPhase::Ownership
+    } else {
+        SqlPhase::Control
     };
-    let drain = std::time::Instant::now() + Duration::from_secs(2);
-    let mut stdout = Vec::new();
-    let mut failure = "control rejected or exceeded output bound";
-    let mut invalid = false;
-    for _ in 0..2 {
-        let (is_stdout, result, bytes) = match receive
-            .recv_timeout(drain.saturating_duration_since(std::time::Instant::now()))
-        {
-            Ok(reply) => reply,
-            Err(_) => {
-                CLEANUP_FAILED.store(true, Ordering::SeqCst);
-                return Err("control drain deadline exceeded");
-            }
-        };
-        invalid |= result.is_err() || bytes.len() > 16 * 1024;
-        if is_stdout {
-            stdout = bytes;
-        } else {
-            let diagnostic = String::from_utf8_lossy(&bytes);
-            if diagnostic.contains("canceling statement due to statement timeout") {
-                failure = "control statement timeout";
-            } else if diagnostic.contains("being accessed by other users") {
-                failure = "control template database in use";
-            } else if diagnostic.contains("already exists") {
-                failure = "control object already exists";
-            } else if diagnostic.contains("could not connect")
-                || diagnostic.contains("connection refused")
-            {
-                failure = "control connection unavailable";
-            }
-        }
-    }
-    for reader in readers {
-        if reader.join().is_err() {
-            CLEANUP_FAILED.store(true, Ordering::SeqCst);
-            invalid = true;
-        }
-    }
-    if wait_failed || status.is_none() {
-        return Err("control child wait or reap failed");
-    }
-    if timed_out {
-        return Err("control deadline exceeded");
-    }
-    if invalid || !status.is_some_and(|status| status.success()) {
-        return Err(failure);
-    }
-    Ok(String::from_utf8(stdout)
-        .map_err(|_| "control reply encoding")?
-        .trim()
-        .to_owned())
+    fixture_sql_phase(
+        cmd,
+        sql,
+        std::time::Instant::now() + budget,
+        phase,
+        16 * 1024,
+    )
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires PASSSHARE_SQL_FIXTURE_MANIFEST naming an owned PostgreSQL 16 fixture"]
+    fn create_failure_observes_catalog_and_preserves_original_failure_and_owned_database() {
+        let manifest = PathBuf::from(
+            std::env::var_os("PASSSHARE_SQL_FIXTURE_MANIFEST").expect("explicit fixture manifest"),
+        );
+        let local = LocalPostgres::start_attachments(&manifest);
+        let name = local.database.clone();
+        let mut duplicate = LocalPostgres {
+            psql: local.psql.clone(),
+            port: local.port,
+            database: "passshare".to_owned(),
+            passfile: local.passfile.clone(),
+            ownership_id: local.ownership_id.clone(),
+            purpose: local.purpose,
+        };
+        // Inject only a duplicate name belonging to this test; no permissions,
+        // templates, server settings or another caller's databases are changed.
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            duplicate.create_database_named(name.clone())
+        }));
+        duplicate.database = "passshare".to_owned(); // The original owner retains Drop responsibility.
+        let panic = rejected.expect_err("duplicate owned database creation must fail");
+        let report = panic
+            .downcast_ref::<String>()
+            .expect("safe failure metadata");
+        assert!(
+            report.contains("phase=create_database")
+                && report.contains("category=object_already_exists")
+                && report.contains("42P04")
+        );
+        assert_eq!(local.query("SELECT 1"), "1");
+        drop(local);
+        assert_eq!(
+            duplicate.query(&format!(
+                "SELECT count(*) FROM pg_database WHERE datname='{name}'"
+            )),
+            "0"
+        );
+        assert!(!CLEANUP_FAILED.load(Ordering::SeqCst));
+        println!("SQL control live: duplicate owned CREATE remains failed; catalog readiness and exact DB recovery passed");
+    }
     #[test]
     fn explicit_absolute_manifest_prefix_preserves_the_fixture_mode() {
         let absolute = std::env::current_dir().unwrap().join("fixture.json");
