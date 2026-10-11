@@ -1,4 +1,4 @@
-//! The browser must reach its own site's proxy; direct cross-site cookie auth fails.
+//! Hosted routing is production only; browser cookies use its canonical proxy.
 use serde_json::Value;
 
 const CONFIG: &str = include_str!("../../../frontend/vercel.json");
@@ -27,19 +27,41 @@ fn production_is_bound_to_canonical_host(value: &Value) -> bool {
     })
 }
 
+fn hosted_routes_are_prd_only(value: &Value) -> bool {
+    let proxies: Vec<_> = value["rewrites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| {
+            rule["source"]
+                .as_str()
+                .is_some_and(|source| source.starts_with("/backend/"))
+        })
+        .collect();
+    proxies.len() == 1
+        && proxies[0]["source"] == "/backend/prd/:path*"
+        && proxies[0]["destination"]
+            == "https://pass-share-backend-production.up.railway.app/:path*"
+        && production_is_bound_to_canonical_host(value)
+}
+
 #[test]
-fn each_relative_prefix_targets_only_its_environment() {
-    let value = config();
-    for (environment, backend) in [
-        ("prd", "production"),
-        ("stg", "staging"),
-        ("dev", "development"),
-    ] {
-        assert_eq!(
-            route(&value, environment)["destination"],
-            format!("https://pass-share-backend-{backend}.up.railway.app/:path*")
-        );
-    }
+fn only_the_production_prefix_reaches_a_hosted_backend() {
+    assert!(hosted_routes_are_prd_only(&config()));
+}
+
+#[test]
+fn adding_a_development_proxy_to_production_is_rejected() {
+    let mut value = config();
+    assert!(hosted_routes_are_prd_only(&value));
+    value["rewrites"].as_array_mut().unwrap().insert(
+        0,
+        serde_json::json!({
+            "source": "/backend/dev/:path*",
+            "destination": "https://pass-share-backend-production.up.railway.app/:path*"
+        }),
+    );
+    assert!(!hosted_routes_are_prd_only(&value));
 }
 
 #[test]
@@ -63,11 +85,16 @@ fn missing_host_condition_would_fail_production_boundary() {
 fn proxy_prefixes_precede_spa_and_authenticated_responses_are_not_cached() {
     let value = config();
     let rules = value["rewrites"].as_array().unwrap();
-    assert_eq!(rules.len(), 4);
-    assert_eq!(rules[3]["destination"], "/index.html");
-    assert!(rules[..3]
+    let proxy = rules
         .iter()
-        .all(|rule| rule["source"].as_str().unwrap().starts_with("/backend/")));
+        .position(|rule| rule["source"] == "/backend/prd/:path*")
+        .unwrap();
+    let spa = rules
+        .iter()
+        .position(|rule| rule["destination"] == "/index.html")
+        .unwrap();
+    assert!(proxy < spa);
+    assert!(hosted_routes_are_prd_only(&value));
     assert!(value["headers"].as_array().unwrap().iter().any(|rule| {
         rule["source"] == "/backend/:environment/:path*"
             && rule["headers"]
@@ -79,37 +106,44 @@ fn proxy_prefixes_precede_spa_and_authenticated_responses_are_not_cached() {
 }
 
 fn sync_values_match(source: &str) -> bool {
-    [
-        ("production", "prd"),
-        ("stgBranch", "stg"),
-        ("development", "dev"),
-        ("previewDefault", "dev"),
-    ]
-    .iter()
-    .all(|(scope, environment)| {
-        source
-            .split_once(&format!("{scope}: {{"))
-            .and_then(|(_, tail)| tail.split_once('}'))
-            .is_some_and(|(block, _)| {
-                block.matches("VITE_API_BASE_URL:").count() == 1
-                    && block.contains(&format!("VITE_API_BASE_URL: '/backend/{environment}'"))
-            })
-    })
+    source
+        .split_once("const ENV_VALUES = {")
+        .and_then(|(_, tail)| tail.split_once('}'))
+        .is_some_and(|(block, _)| {
+            block.matches("VITE_API_BASE_URL:").count() == 1
+                && block.contains("VITE_API_BASE_URL: '/backend/prd'")
+                && block.contains("VITE_APP_ENV: 'prd'")
+        })
+        && source.contains("target: ['production']")
+        && !source.contains("target: ['preview']")
+        && !source.contains("target: ['development']")
 }
 
 #[test]
-fn environment_sync_keeps_each_of_four_scopes_on_its_own_origin_prefix() {
+fn environment_sync_targets_only_production_on_its_origin_prefix() {
     assert!(sync_values_match(ENV_SYNC));
     assert!(!ENV_SYNC.contains("VITE_API_BASE_URL: 'https://"));
 }
 
 #[test]
-fn swapping_production_and_staging_or_development_to_production_is_rejected() {
-    let swapped = ENV_SYNC
-        .replace("'/backend/prd'", "'temporary'")
-        .replace("'/backend/stg'", "'/backend/prd'")
-        .replace("'temporary'", "'/backend/stg'");
+fn staging_prefix_or_preview_sync_target_is_rejected() {
+    assert!(sync_values_match(ENV_SYNC));
+    let swapped = ENV_SYNC.replace("'/backend/prd'", "'/backend/stg'");
+    assert_ne!(swapped, ENV_SYNC);
     assert!(!sync_values_match(&swapped));
-    let dev_to_production = ENV_SYNC.replace("'/backend/dev'", "'/backend/prd'");
-    assert!(!sync_values_match(&dev_to_production));
+    let preview = ENV_SYNC.replace("target: ['production']", "target: ['preview']");
+    assert_ne!(preview, ENV_SYNC);
+    assert!(!sync_values_match(&preview));
+}
+
+#[test]
+fn git_configuration_enables_only_main() {
+    let value = config();
+    let branches = value["git"]["deploymentEnabled"].as_object().unwrap();
+    assert_eq!(branches.get("main"), Some(&Value::Bool(true)));
+    assert_eq!(branches.get("*"), Some(&Value::Bool(false)));
+    assert_eq!(branches.get("**"), Some(&Value::Bool(false)));
+    assert!(branches
+        .iter()
+        .all(|(branch, enabled)| branch == "main" || enabled == &Value::Bool(false)));
 }
