@@ -2,7 +2,7 @@
 
 > Issue [#115](https://github.com/AutoDevJapan/PassShare/issues/115)  
 > 親 Epic: [#37](https://github.com/AutoDevJapan/PassShare/issues/37)  
-> 最終更新: 2026-10-06
+> 最終更新: 2026-10-11
 
 ## 目的
 
@@ -18,7 +18,7 @@
 | S2 | `/health/db` 継続 503 | 接続と直近変更を調査。DB を変更せず原因を特定 | 運用担当者 |
 | S3 | 単一 PR デプロイ失敗 | 固定 HEAD の CI と配備記録を確認 | 変更担当者 |
 
-受付先・担当者・受付時間はまだ確定していない。自動で全員へ送信する運用や24時間対応を、この表から契約上の約束として扱わない。
+受付先は AutoDevJapan の contact@autodevjapan.com、随時受付、初回返信は2営業日を目安とする。[承認済みの契約条件](../spec/commercial-packaging.md)に従い、受信・担当者への配送・同じ受付番号の返信を実経路で検証する。担当体制と実受付の受入は未完である。自動で全員へ送信する運用や24時間対応を、この表から契約上の約束として扱わない。
 
 ## 障害対応フロー
 
