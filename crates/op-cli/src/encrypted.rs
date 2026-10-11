@@ -1,4 +1,4 @@
-//! Owner-only encrypted CLI. Session identity and revisioned box metadata are
+//! Encrypted CLI. Session identity and revisioned box metadata are
 //! authoritative inputs; neither an opaque bundle nor a replay supplies trust.
 use std::fmt;
 use std::io::{IsTerminal, Read};
@@ -6,10 +6,17 @@ use std::time::Duration;
 
 use passshare_connect::{
     BoxState, EncryptedItem, EncryptedSessionClient, EncryptedSessionError, ItemContext,
-    OwnerKeyContext, SharingItemSummary, SharingRotationClient, SharingSnapshot,
+    OwnerKeyContext, SharedKeyExpectation, SharingItemSummary, SharingRotationClient,
+    SharingSnapshot,
 };
 use passshare_core::{
-    cloud_crypto::PasswordBoxKey, crypto, storage::file_format::KdfParams, ConnectId,
+    cloud_crypto::{
+        AccountIdentity, AccountIdentityContext, AttachmentContext, PasswordBoxKey,
+        PublicAccountIdentity, SharedKeyContext,
+    },
+    crypto,
+    storage::file_format::KdfParams,
+    ConnectId,
 };
 use reqwest::{
     header::{HeaderValue, AUTHORIZATION},
@@ -21,7 +28,7 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::{Cli, Commands, ItemCommands, VaultCommands};
+use super::{AttachmentCommands, Cli, Commands, ItemCommands, VaultCommands};
 
 // A maximal Core envelope expands to about 1.4 MiB in JSON/Base64. Allow
 // bounded replay input as well as the original one-MiB plaintext DTO.
@@ -42,7 +49,9 @@ impl fmt::Display for Error {
                 Some(401) => {
                     f.write_str("HTTP 401: session expired or invalid; authenticate again")
                 }
-                Some(403) => f.write_str("HTTP 403: current owner permission is required"),
+                Some(403) => {
+                    f.write_str("HTTP 403: current permission or shared key grant is required")
+                }
                 Some(409) => f.write_str(
                     "HTTP 409: item, key epoch or box metadata changed; no automatic retry",
                 ),
@@ -105,6 +114,7 @@ fn parse_input(bytes: &[u8]) -> Result<Plaintext> {
             "item",
             "selectedFields",
             "preparedWrite",
+            "sharedReceive",
         ],
     ) {
         return Err(INPUT);
@@ -708,6 +718,427 @@ fn create_item(input: &Plaintext, box_id: &str) -> Result<Plaintext> {
     Ok(item)
 }
 
+/// Only caller-held trust and versions enter this structure. JSON DTOs are
+/// preserved in full; strict allowlists apply to these control inputs.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SharedReceive {
+    sender: PublicAccountIdentity,
+    recipient: PublicAccountIdentity,
+    context: SharedKeyContext,
+    identity_bundle_version: u64,
+    #[serde(default)]
+    item_context: Option<ItemContext>,
+    #[serde(default)]
+    attachment_context: Option<AttachmentContext>,
+}
+
+fn trust_input(input: &Plaintext, box_id: &str) -> Result<SharedReceive> {
+    if !object_keys(
+        &input.0,
+        &["sessionToken", "encryptionPassword", "sharedReceive"],
+    ) {
+        return Err(INPUT);
+    }
+    let value = input
+        .0
+        .get("sharedReceive")
+        .filter(|v| v.is_object())
+        .ok_or(INPUT)?;
+    for name in [
+        "sender",
+        "recipient",
+        "context",
+        "itemContext",
+        "attachmentContext",
+    ] {
+        if value.get(name).is_some_and(|v| !v.is_object()) {
+            return Err(INPUT);
+        }
+    }
+    // serde UUID parsing accepts aliases. Trust supplied on this boundary must
+    // retain the canonical public account spelling, not silently normalize it.
+    for path in [
+        "/sender/accountId",
+        "/recipient/accountId",
+        "/context/senderAccountId",
+        "/context/recipientAccountId",
+    ] {
+        let raw = value.pointer(path).and_then(Value::as_str).ok_or(INPUT)?;
+        let id = Uuid::parse_str(raw).map_err(|_| INPUT)?;
+        if id.is_nil() || id.to_string() != raw {
+            return Err(INPUT);
+        }
+    }
+    let trust: SharedReceive = serde_json::from_value(value.clone()).map_err(|_| INPUT)?;
+    if !(1..=MAX_SAFE).contains(&trust.identity_bundle_version) {
+        return Err(INPUT);
+    }
+    trust.expectation().validate(box_id)?;
+    if let Some(c) = &trust.item_context {
+        if c.password_box_id.as_str() != box_id
+            || c.key_epoch != trust.context.key_epoch
+            || !(1..=MAX_SAFE).contains(&c.item_version)
+        {
+            return Err(INPUT);
+        }
+    }
+    if let Some(c) = &trust.attachment_context {
+        if c.password_box_id.as_str() != box_id
+            || c.key_epoch != trust.context.key_epoch
+            || trust
+                .item_context
+                .as_ref()
+                .is_none_or(|i| i.item_id != c.item_id)
+        {
+            return Err(INPUT);
+        }
+    }
+    Ok(trust)
+}
+impl SharedReceive {
+    fn expectation(&self) -> SharedKeyExpectation {
+        SharedKeyExpectation {
+            context: self.context.clone(),
+            sender: self.sender.clone(),
+            recipient: self.recipient.clone(),
+        }
+    }
+    fn item(&self, id: &str) -> Result<&ItemContext> {
+        self.item_context
+            .as_ref()
+            .filter(|c| c.item_id.as_str() == id)
+            .ok_or(INPUT)
+    }
+}
+
+struct RecipientSession {
+    sdk: EncryptedSessionClient,
+    box_route: ConnectId,
+    key: PasswordBoxKey,
+    trust: SharedReceive,
+}
+impl RecipientSession {
+    async fn open(
+        host: &str,
+        token: &str,
+        password: &str,
+        box_id: &str,
+        trust: SharedReceive,
+    ) -> Result<Self> {
+        let box_route = box_id.parse().map_err(|_| INPUT)?;
+        let sdk = EncryptedSessionClient::new(host, token)?;
+        let subject_id = live_subject(host, token).await?;
+        if subject_id != trust.recipient.account_id {
+            return Err(CONTEXT);
+        }
+        if sdk.state(box_id).await?
+            != (BoxState::Encrypted {
+                key_epoch: trust.context.key_epoch,
+            })
+        {
+            return Err(CONTEXT);
+        }
+        let identity_context = AccountIdentityContext {
+            account_id: trust.recipient.account_id,
+            identity_version: trust.recipient.identity_version,
+        };
+        let record = sdk
+            .get_account_identity(&identity_context, &trust.recipient.key_id)
+            .await?;
+        if record.identity != trust.recipient
+            || record.bundle_version != trust.identity_bundle_version
+        {
+            return Err(CONTEXT);
+        }
+        let salt = KdfParams {
+            algorithm: "argon2id".into(),
+            salt: record.bundle.salt,
+            memory_kib: crypto::KDF_MEMORY_KIB,
+            time_cost: crypto::KDF_TIME_COST,
+            parallelism: crypto::KDF_PARALLELISM,
+        }
+        .salt_bytes()
+        .map_err(|_| CRYPTO)?;
+        let mut normalized = Zeroizing::new(String::with_capacity(
+            password.nfc().map(char::len_utf8).sum(),
+        ));
+        normalized.extend(password.nfc());
+        let root = crypto::derive_master_key_with_params(&normalized, &salt, 65_536, 3, 4)
+            .map_err(|_| CRYPTO)?;
+        let identity = AccountIdentity::unwrap(
+            &record.bundle.wrapped,
+            &root,
+            &identity_context,
+            &trust.recipient.key_id,
+        )
+        .map_err(|_| CRYPTO)?;
+        if identity.public_identity() != trust.recipient {
+            return Err(CONTEXT);
+        }
+        let expected = trust.expectation();
+        let grant = SharingRotationClient::new(&sdk)
+            .get_self_grant(box_id, &expected)
+            .await?;
+        let key = PasswordBoxKey::unwrap_for_recipient(
+            &grant.envelope,
+            &identity,
+            &trust.sender,
+            &trust.context,
+        )
+        .map_err(|_| CRYPTO)?;
+        Ok(Self {
+            sdk,
+            box_route,
+            key,
+            trust,
+        })
+    }
+    async fn item_at(&self, revision: u64, expected: &ItemContext) -> Result<Plaintext> {
+        let envelope = self.sdk.get_attachment_snapshot(revision, expected).await?;
+        Ok(Plaintext(
+            self.key
+                .decrypt_item(&envelope, expected)
+                .map_err(|_| CRYPTO)?,
+        ))
+    }
+    async fn get(&self, id: &str) -> Result<Plaintext> {
+        let expected = self.trust.item(id)?;
+        let state = self
+            .sdk
+            .get_attachment_state(self.box_route.as_str(), self.trust.context.key_epoch)
+            .await?;
+        self.item_at(state.state_revision, expected).await
+    }
+    async fn download(
+        &self,
+        item: &str,
+        attachment: &str,
+        out: &std::path::Path,
+        print_name: bool,
+    ) -> Result<()> {
+        let expected_item = self.trust.item(item)?;
+        let expected = self
+            .trust
+            .attachment_context
+            .as_ref()
+            .filter(|c| c.attachment_id.as_str() == attachment)
+            .ok_or(INPUT)?;
+        let state = self
+            .sdk
+            .get_attachment_state(self.box_route.as_str(), self.trust.context.key_epoch)
+            .await?;
+        let dto = self.item_at(state.state_revision, expected_item).await?;
+        authenticated_reference(&dto.0, expected)?;
+        let envelope = self
+            .sdk
+            .get_attachment(state.state_revision, expected)
+            .await?;
+        let file = self
+            .key
+            .decrypt_attachment(&envelope, expected)
+            .map_err(|_| CRYPTO)?;
+        // Never interpret the encrypted name as a path. The user supplies the
+        // only destination, and create_new is atomic against files and symlinks.
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut destination = options
+            .open(out)
+            .map_err(|_| Error::Invalid("cannot create output file; choose a new explicit path"))?;
+        destination
+            .write_all(file.content())
+            .and_then(|_| destination.sync_all())
+            .map_err(|_| {
+                Error::Invalid("attachment output failed; the new file may be incomplete")
+            })?;
+        if print_name {
+            println!(
+                "{}",
+                Zeroizing::new(serde_json::to_string(file.name()).map_err(|_| CRYPTO)?).as_str()
+            );
+        }
+        Ok(())
+    }
+}
+
+fn authenticated_reference(dto: &Value, expected: &AttachmentContext) -> Result<()> {
+    let references = dto
+        .get("attachments")
+        .and_then(Value::as_array)
+        .ok_or(CRYPTO)?;
+    let mut ids = std::collections::HashSet::new();
+    let mut found = false;
+    for reference in references {
+        if !reference.is_object()
+            || reference.as_object().unwrap().len() != 3
+            || !object_keys(
+                reference,
+                &["attachmentId", "attachmentVersion", "keyEpoch"],
+            )
+        {
+            return Err(CRYPTO);
+        }
+        let id = reference["attachmentId"].as_str().ok_or(CRYPTO)?;
+        ConnectId::validate(id).map_err(|_| CRYPTO)?;
+        let version = reference["attachmentVersion"]
+            .as_u64()
+            .filter(|v| (1..=MAX_SAFE).contains(v))
+            .ok_or(CRYPTO)?;
+        let epoch = reference["keyEpoch"]
+            .as_u64()
+            .filter(|v| (1..=MAX_SAFE).contains(v))
+            .ok_or(CRYPTO)?;
+        if !ids.insert(id) || epoch != expected.key_epoch {
+            return Err(CRYPTO);
+        }
+        if id == expected.attachment_id.as_str() {
+            if version != expected.attachment_version {
+                return Err(CRYPTO);
+            }
+            found = true;
+        }
+    }
+    if !found {
+        return Err(CRYPTO);
+    }
+    Ok(())
+}
+
+async fn run_recipient(cli: Cli, mut input: Plaintext) -> Result<()> {
+    if !cli.secret_stdin || cli.prepare_only {
+        return Err(INPUT);
+    }
+    let box_id = match &cli.command {
+        Commands::Item { command: ItemCommands::List { vault } | ItemCommands::Get { vault, .. } } => vault.clone(),
+        Commands::Read { reference } => passshare_connect::parse_op_reference(reference).ok_or(INPUT)?.vault,
+        Commands::Attachment { command: AttachmentCommands::Get { vault, .. } } => vault.clone(),
+        _ => return Err(Error::Invalid("recipient mode supports only item list/get, read and attachment get; writes, rotation, migration and recovery are unsupported")),
+    };
+    let trust = trust_input(&input, &box_id)?;
+    // Validate all operation context before sending even the session GET.
+    match &cli.command {
+        Commands::Item {
+            command: ItemCommands::Get { item, .. },
+        } => {
+            trust.item(item)?;
+            if trust.attachment_context.is_some() {
+                return Err(INPUT);
+            }
+        }
+        Commands::Read { reference } => {
+            trust.item(
+                &passshare_connect::parse_op_reference(reference)
+                    .ok_or(INPUT)?
+                    .item,
+            )?;
+            if trust.attachment_context.is_some() {
+                return Err(INPUT);
+            }
+        }
+        Commands::Attachment {
+            command:
+                AttachmentCommands::Get {
+                    item,
+                    attachment,
+                    out,
+                    ..
+                },
+        } => {
+            trust.item(item)?;
+            if out.as_os_str().is_empty()
+                || trust
+                    .attachment_context
+                    .as_ref()
+                    .is_none_or(|c| c.attachment_id.as_str() != attachment)
+            {
+                return Err(INPUT);
+            }
+        }
+        _ if trust.item_context.is_some() || trust.attachment_context.is_some() => {
+            return Err(INPUT)
+        }
+        _ => {}
+    }
+    let token = secret(&input, "sessionToken")?;
+    let password = secret(&input, "encryptionPassword")?;
+    let host = cli
+        .passshare_host
+        .or_else(|| std::env::var("PASSSHARE_HOST").ok())
+        .ok_or(INPUT)?;
+    let session = RecipientSession::open(&host, &token, &password, &box_id, trust).await?;
+    drop(token);
+    drop(password);
+    erase(&mut input.0);
+    match cli.command {
+        Commands::Item {
+            command: ItemCommands::List { .. },
+        } => {
+            let mut cursor = None;
+            let mut items = Vec::new();
+            loop {
+                let page = session.sdk.list(&box_id, cursor.as_deref()).await?;
+                if page
+                    .items
+                    .iter()
+                    .any(|i| i.key_epoch != session.trust.context.key_epoch)
+                {
+                    return Err(CONTEXT);
+                }
+                items.extend(page.items);
+                cursor = page.next_cursor.map(|c| c.to_string());
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            // Failures must not leave a partially successful listing on stdout.
+            for i in items {
+                println!("{}\t{}", i.item_id, i.item_version);
+            }
+        }
+        Commands::Item {
+            command: ItemCommands::Get { item, fields, .. },
+        } => {
+            let dto = session.get(&item).await?;
+            if let Some(name) = fields {
+                println!("{}", selected_value(&dto.0, &name)?);
+            } else {
+                println!(
+                    "{}",
+                    Zeroizing::new(serde_json::to_string_pretty(&dto.0).map_err(|_| INPUT)?)
+                        .as_str()
+                );
+            }
+        }
+        Commands::Read { reference } => {
+            let r = passshare_connect::parse_op_reference(&reference).ok_or(INPUT)?;
+            let dto = session.get(&r.item).await?;
+            println!("{}", selected_value(&dto.0, &r.field)?);
+        }
+        Commands::Attachment {
+            command:
+                AttachmentCommands::Get {
+                    item,
+                    attachment,
+                    out,
+                    print_name,
+                    ..
+                },
+        } => {
+            session
+                .download(&item, &attachment, &out, print_name)
+                .await?
+        }
+        _ => return Err(INPUT),
+    }
+    Ok(())
+}
+
 pub(super) async fn run(cli: Cli) -> Result<()> {
     // Reject argv secret assignments before reading credentials or making HTTP calls.
     match &cli.command {
@@ -716,6 +1147,15 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         _ => {},
     }
     let mut input = read_input(cli.secret_stdin)?;
+    if cli.recipient {
+        return run_recipient(cli, input).await;
+    }
+    if input.0.get("sharedReceive").is_some() || matches!(cli.command, Commands::Attachment { .. })
+    {
+        return Err(Error::Invalid(
+            "shared recipient reads require --recipient --secret-stdin",
+        ));
+    }
     let token = secret(&input, "sessionToken")?;
     let password = secret(&input, "encryptionPassword")?;
     let host = cli
@@ -731,6 +1171,7 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             | ItemCommands::Edit { vault, .. } | ItemCommands::Delete { vault, .. } | ItemCommands::Retry { vault } => vault.clone(),
         },
         Commands::Read { reference } => passshare_connect::parse_op_reference(reference).ok_or(INPUT)?.vault,
+        Commands::Attachment { .. } => return Err(INPUT),
     };
     let session = Session::open(&host, &token, &password, &box_id).await?;
     // Keys and credentials are kept only in memory for this invocation.
@@ -743,6 +1184,7 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         erase(s);
     }
     let prepared = match cli.command {
+        Commands::Attachment { .. } => return Err(INPUT),
         Commands::Vault {
             command: VaultCommands::List,
         } => {
@@ -840,6 +1282,48 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_reference_requires_exact_authenticated_versions_and_unique_ordered_ids() {
+        let expected = AttachmentContext {
+            password_box_id: "aaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap(),
+            item_id: "bbbbbbbbbbbbbbbbbbbbbbbbbb".parse().unwrap(),
+            attachment_id: "cccccccccccccccccccccccccc".parse().unwrap(),
+            attachment_version: 2,
+            key_epoch: 3,
+        };
+        let first =
+            json!({"attachmentId":"dddddddddddddddddddddddddd","attachmentVersion":1,"keyEpoch":3});
+        let selected =
+            json!({"attachmentId":expected.attachment_id,"attachmentVersion":2,"keyEpoch":3});
+        let valid =
+            json!({"attachments":[first,selected],"unknown":{"ordered":[3,1,2],"null":null}});
+        authenticated_reference(&valid, &expected).unwrap();
+        assert!(valid["attachments"][1] == selected);
+        for (name, value) in [
+            ("attachmentId", json!(null)),
+            ("attachmentVersion", json!(0)),
+            ("attachmentVersion", json!(1)),
+            ("attachmentVersion", json!(2.0)),
+            ("attachmentVersion", json!(MAX_SAFE + 1)),
+            ("keyEpoch", json!(2)),
+            ("keyEpoch", json!(MAX_SAFE + 1)),
+            ("unknown", json!(false)),
+        ] {
+            let mut bad = valid.clone();
+            bad["attachments"][1][name] = value;
+            assert!(authenticated_reference(&bad, &expected).is_err());
+        }
+        for bad in [
+            json!({"attachments":null}),
+            json!({"attachments":[]}),
+            json!({"attachments":[selected,selected]}),
+            json!({"attachments":[first]}),
+            json!({"attachments":[selected,{"attachmentId":"dddddddddddddddddddddddddd","attachmentVersion":1,"keyEpoch":2}]}),
+        ] {
+            assert!(authenticated_reference(&bad, &expected).is_err());
+        }
+    }
 
     #[test]
     fn raw_duplicate_keys_and_escaped_aliases_are_rejected() {

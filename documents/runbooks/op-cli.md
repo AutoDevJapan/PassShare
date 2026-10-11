@@ -7,7 +7,7 @@
 
 開発者・運用者が **op 互換 CLI** をビルドし、パスワードボックスと項目を操作できるようにする。
 暗号化したボックスは明示的な `--encrypted` モードを使う。
-[CLI の暗号化モード](../spec/encrypted-cli.md) に入力境界、所有者限定、再送と未対応範囲を記載する。
+[CLI の暗号化モード](../spec/encrypted-cli.md) に入力境界、所有者の操作、共有受信者の読取、再送と未対応範囲を記載する。
 
 ## 前提
 
@@ -75,7 +75,7 @@ op read "op://My Password Box/Example/password"
 
 ## 検証
 
-### 暗号化モード（所有者のみ）
+### 暗号化モード（所有者）
 
 秘密管理ツールから `sessionToken` と `encryptionPassword` を含むJSONをパイプで渡す。
 秘密値をコマンド引数やシェル履歴へ書かない。
@@ -92,7 +92,27 @@ op --encrypted --secret-stdin item retry --vault "<box-id>"
 作成のJSONに `item`、編集のJSONに `selectedFields`、再送のJSONに保持した `preparedWrite` を含める。
 一覧は秘密値を表示しない。取得は利用者が明示した秘密値を標準出力へ出すため、出力先を管理する。
 現在の利用者・所有者・鍵世代・バンドル版は毎回取得する。401・403・409や通信失敗を自動再送しない。
-共有受信者と認証情報の永続保管は未対応であり、M4全体の完成を示さない。
+認証情報の永続保管は未対応であり、M4全体の完成を示さない。
+
+### 暗号化モード（共有受信者の読取）
+
+`--recipient --secret-stdin` を追加し、確認済みの送り手・自身の公開identity、
+共有context、鍵世代、自身のidentityバンドル版を `sharedReceive` に明示する。
+公開鍵は別手段で照合し、サーバーの返信からpinや期待世代を作らない。
+入力の完全な形は [受信者の有限読取仕様](../spec/encrypted-cli.md#共有受信者の有限読取) を参照する。
+項目の取得には独立した `itemContext`、添付にはさらに `attachmentContext` が必要。
+
+```powershell
+# 秘密管理ツールからJSONをパイプする。秘密値はargvに書かない。
+op --encrypted --recipient --secret-stdin item list --vault "<box-id>"
+op --encrypted --recipient --secret-stdin item get "<item-id>" --vault "<box-id>" --fields password
+op --encrypted --recipient --secret-stdin read "op://<box-id>/<item-id>/password"
+op --encrypted --recipient --secret-stdin attachment get "<attachment-id>" --item "<item-id>" --vault "<box-id>" --out "<new-file-path>"
+```
+
+添付の保存先は必ず利用者が指定する。既存ファイルは上書きしない。
+成功時も標準出力には何も出さず、`--print-name` を付けたときだけ認証した元の名前をJSON文字列で返す。
+受信者による書込み・鍵更新・移行・復旧は未対応。401・403・409を自動再送しない。
 
 ```powershell
 cargo nextest run --locked -p op-cli -p passshare-connect

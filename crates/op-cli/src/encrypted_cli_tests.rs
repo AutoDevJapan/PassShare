@@ -16,6 +16,9 @@ use passshare_core::{cloud_crypto::PasswordBoxKey, crypto};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
+#[path = "recipient_cli_tests.rs"]
+mod recipient;
+
 const BOX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OWNER: &str = "11111111-1111-4111-8111-111111111111";
 const TOKEN: &str = "fixture-session-only-marker";

@@ -10,9 +10,12 @@ mod encrypted;
 #[derive(Parser)]
 #[command(name = "op", about = "PassShare 1Password Connect compatible CLI")]
 struct Cli {
-    /// Use the live PassShare session API for an owner-operated encrypted password box.
+    /// Use the live PassShare session API for an encrypted password box.
     #[arg(long, global = true)]
     encrypted: bool,
+    /// Read as a shared recipient using independently verified trust inputs on stdin.
+    #[arg(long, global = true, requires_all = ["encrypted", "secret_stdin"])]
+    recipient: bool,
     /// Read session credentials and secret operation input as JSON from a pipe.
     #[arg(long, global = true)]
     secret_stdin: bool,
@@ -43,6 +46,27 @@ enum Commands {
     },
     /// Read op:// secret reference
     Read { reference: String },
+    /// Download an authenticated encrypted attachment to an explicit new file.
+    Attachment {
+        #[command(subcommand)]
+        command: AttachmentCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AttachmentCommands {
+    Get {
+        attachment: String,
+        #[arg(long)]
+        item: String,
+        #[arg(long)]
+        vault: String,
+        #[arg(long)]
+        out: std::path::PathBuf,
+        /// Print the authenticated original name as a JSON string after saving.
+        #[arg(long)]
+        print_name: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -111,7 +135,9 @@ async fn main() -> std::process::ExitCode {
                 let _ = error.print();
                 return std::process::ExitCode::SUCCESS;
             }
-            if encrypted_requested || std::env::args().any(|arg| arg.starts_with("--secret-stdin"))
+            if encrypted_requested
+                || std::env::args()
+                    .any(|arg| arg.starts_with("--secret-stdin") || arg.starts_with("--recipient"))
             {
                 eprintln!("invalid encrypted command options; use --help (secret input is never an argument)");
             } else {
@@ -145,12 +171,16 @@ async fn run_connect(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         || cli.passshare_host.is_some()
         || cli.password_box.is_some()
         || cli.prepare_only
+        || cli.recipient
     {
         return Err("PassShare encrypted options require --encrypted".into());
     }
     let client = ConnectClient::from_env()?;
 
     match cli.command {
+        Commands::Attachment { .. } => {
+            return Err("attachment get requires --encrypted --recipient".into())
+        }
         Commands::Vault { command } => match command {
             VaultCommands::List => {
                 let vaults = client.list_vaults().await?;

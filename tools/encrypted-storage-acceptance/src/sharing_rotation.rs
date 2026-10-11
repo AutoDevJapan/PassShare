@@ -22,6 +22,10 @@ mod legacy_expiry;
 #[path = "sharing_sdk.rs"]
 mod sharing_sdk;
 
+#[cfg(test)]
+#[path = "cli_recipient.rs"]
+mod cli_recipient;
+
 fn request_slot() {
     // Honor the REAL formal router quota; never increase its limit or rewrite
     // rate-limit DB rows. This pacing is unrelated to lock-race evidence.
