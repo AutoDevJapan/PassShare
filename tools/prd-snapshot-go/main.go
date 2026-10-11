@@ -46,12 +46,40 @@ func execute(ctx context.Context, name string, args ...string) ([]byte, error) {
 	hideWindow(cmd)
 	cmd.WaitDelay = 3 * time.Second
 	var stdout capBuffer
+	var stderr capBuffer
 	// Child stderr may include database diagnostics. Never copy it to CI logs.
-	cmd.Stdout, cmd.Stderr = &stdout, &capBuffer{}
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s command failed", filepath.Base(name))
+		code := -1
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			code = exit.ExitCode()
+		}
+		class := failureClass(stderr.Bytes())
+		if ctx.Err() != nil {
+			class = "cancelled-or-deadline"
+		}
+		return nil, fmt.Errorf("%s command failed (exit=%d, class=%s)", filepath.Base(name), code, class)
 	}
 	return stdout.Bytes(), nil
+}
+
+// Return fixed diagnostic labels only, never command arguments or stderr.
+func failureClass(stderr []byte) string {
+	text := strings.ToLower(string(stderr))
+	for _, entry := range []struct{ needle, class string }{
+		{"host key verification failed", "host-key-verification"},
+		{"remote host identification has changed", "host-key-changed"},
+		{"permission denied (publickey)", "ssh-identity-rejected"},
+		{"could not resolve hostname", "ssh-name-resolution"},
+		{"connection timed out", "ssh-connect-timeout"},
+		{"unauthorized", "provider-auth-rejected"},
+	} {
+		if strings.Contains(text, entry.needle) {
+			return entry.class
+		}
+	}
+	return "unclassified"
 }
 
 type client struct {
@@ -246,7 +274,7 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 	remote := `set -eu; umask 077; dump=$(mktemp /tmp/passshare-prd-dump.XXXXXX); trap 'rm -f -- "$dump"' EXIT; trap 'exit 1' HUP INT TERM; export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -Fc --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" --file "$dump"; pg_restore --list "$dump" >/dev/null; sha256sum "$dump"; base64 -w 0 "$dump"; printf '\n'; rm -f -- "$dump"; test ! -e "$dump"; trap - EXIT HUP INT TERM`
 	data, err := run(ctx, "railway", "ssh", "--project", projectID, "--environment", environmentID, "--service", databaseID, "--identity-file", identity, "--", "sh", "-lc", remote)
 	if err != nil {
-		return errors.New("private production archive capture failed")
+		return fmt.Errorf("private production archive capture failed: %w", err)
 	}
 	archive, err := decodeArchive(data)
 	if err != nil {
