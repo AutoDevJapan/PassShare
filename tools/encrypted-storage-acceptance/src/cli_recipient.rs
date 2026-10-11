@@ -1,4 +1,4 @@
-//! Explicit ignored acceptance: formal Node + verified owned PG + real op.
+//! Explicit ignored acceptance: Node/image + owned PG + real op.
 //! Only the caller-supplied disposable output directory receives plaintext.
 use super::*;
 use passshare_core::cloud_crypto::{AttachmentContext, AttachmentPlaintext};
@@ -202,27 +202,56 @@ fn file_context(a: &Account, item: &str, id: &str, version: u64, epoch: u64) -> 
 }
 
 #[test]
-#[ignore = "requires explicit verified local PG manifest, native/op binaries and owned output directory"]
+#[ignore = "requires explicit owned local/Docker PG, backend/op binaries and owned output directory"]
 fn formal_cli_recipient() {
     let supplied =
         |name: &str| PathBuf::from(std::env::var_os(name).expect("explicit CLI fixture input"));
-    let manifest = supplied("PASSSHARE_CLI_PG_MANIFEST");
     let binary = supplied("PASSSHARE_CLI_BINARY").canonicalize().unwrap();
-    let native = supplied("PASSSHARE_CLI_NATIVE").canonicalize().unwrap();
     let output = supplied("PASSSHARE_CLI_OUTPUT_DIR").canonicalize().unwrap();
-    assert!(output.is_dir() && manifest.is_absolute() && binary.is_file() && native.is_file());
-    let db = Database::from_local(
-        local_postgres::LocalPostgres::start_attachments(&manifest),
-        "source",
-    );
+    assert!(output.is_dir() && binary.is_file());
+    let manifest = std::env::var_os("PASSSHARE_CLI_PG_MANIFEST");
+    let source = std::env::var_os("PASSSHARE_CLI_DOCKER_MODE");
+    let source = source
+        .as_ref()
+        .map(|value| value.to_str().expect("CLI fixture selector must be UTF-8"));
+    let (network, db, mode) = match (manifest, source) {
+        (Some(manifest), None) => {
+            let manifest = PathBuf::from(manifest);
+            assert!(manifest.is_absolute());
+            let native = supplied("PASSSHARE_CLI_NATIVE").canonicalize().unwrap();
+            assert!(native.is_file());
+            (
+                Network {
+                    name: String::new(),
+                },
+                Database::from_local(
+                    local_postgres::LocalPostgres::start_attachments(&manifest),
+                    "source",
+                ),
+                Mode::Node(native),
+            )
+        }
+        (None, Some("node" | "image")) => {
+            let mode = if source == Some("node") {
+                let native = supplied("PASSSHARE_CLI_NATIVE").canonicalize().unwrap();
+                assert!(native.is_file());
+                Mode::Node(native)
+            } else {
+                let tag =
+                    std::env::var_os("PASSSHARE_CLI_IMAGE").expect("explicit owned CLI image");
+                Mode::parse(&["--image".into(), tag]).expect("valid owned CLI image tag")
+            };
+            let network = Network::start();
+            let db = Database::start(&network);
+            (network, db, mode)
+        }
+        _ => panic!("choose exactly one explicit local or Docker CLI fixture"),
+    };
     println!(
         "CLI fixture created: database={} port={} owner={}",
         db.name, db.port, db.fixture_owner_id
     );
-    let network = Network {
-        name: String::new(),
-    };
-    let host = Host::start(&db, &network, &Mode::Node(native));
+    let host = Host::start(&db, &network, &mode);
     let p = host.port;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)

@@ -253,3 +253,13 @@ nextest・正式受入の成功ログと初回2つの失敗ログは、この子
 後者の計画拒否は279件のjunctionによるもので、全て今回の元node_modules内を指すことを確認しました。
 リンク先を変更・削除せずフォルダ全体を移動し、理由を残して所有記録の元パス不在を記録しました。
 どちらも削除成功とは報告しません。追加のToDo・Discord投稿・push・PR・merge・全workspace検査は行っていません。
+
+### Linuxと配布イメージの正式CLI検査
+
+親の統合候補では、同じ `formal_cli_recipient` を正式Nodeと固定Dockerfileの配布イメージでも実行する。
+`PASSSHARE_CLI_DOCKER_MODE` を `node` または `image` に明示し、既存の所有ラベル・固定PostgreSQLイメージ・
+所有者マーカーを持つ専用DBとネットワークを作る。Windowsの所有済みPGは、従来どおり絶対パスの
+`PASSSHARE_CLI_PG_MANIFEST` だけで選ぶ。両方の指定、未知の指定、指定なしでは開始しない。
+CLI本体・Node用のnative本体・新しい出力先は呼出側が明示する。イメージ用の検査はホストnativeを
+コンテナへ持ち込まない。同じ全JSON・添付全バイト・失効・上書き拒否・単一要求の判定を維持し、
+Nodeとイメージの検査がそれぞれ成功するまで実行済みと数えない。
