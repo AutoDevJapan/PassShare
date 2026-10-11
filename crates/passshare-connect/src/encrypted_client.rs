@@ -246,6 +246,16 @@ impl fmt::Debug for EncryptedSessionClient {
 }
 
 impl EncryptedSessionClient {
+    pub(crate) fn authenticated_request(
+        &self,
+        method: Method,
+        url: Url,
+    ) -> reqwest::RequestBuilder {
+        self.http
+            .request(method, url)
+            .header(AUTHORIZATION, self.auth.clone())
+            .header(ACCEPT, "application/json")
+    }
     /// `session_token` is the session bearer (not a Connect token), supplied by
     /// the caller. `base_url` is the origin (optionally with a path prefix);
     /// `/api/encrypted` is appended.
@@ -260,6 +270,9 @@ impl EncryptedSessionClient {
         let http = Client::builder()
             .no_proxy()
             .redirect(Policy::none())
+            // Migration commits and opaque writes require explicit caller replay,
+            // including protocol NACKs reqwest would otherwise retry by default.
+            .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()

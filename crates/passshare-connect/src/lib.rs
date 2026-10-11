@@ -2,6 +2,8 @@ mod attachment_client;
 mod client;
 pub use attachment_client::*;
 mod encrypted_client;
+mod migration_client;
+pub use migration_client::*;
 mod error;
 mod op_ref;
 mod sharing_client;
