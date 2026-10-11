@@ -26,6 +26,7 @@ enum Command {
     Decrypt,
     Create,
     Edit,
+    EditAttachmentItem,
     Lock,
     IdentityGenerate,
     IdentityPublic,
@@ -251,7 +252,9 @@ impl WorkerSession {
             Command::Create => [true, false, false, false, false, false, false, true],
             Command::SharingContext => [true, false, false, false, false, false, false, true],
             Command::IdentityPrepare => [true, false, false, false, false, false, false, true],
-            Command::Edit => [true, false, true, false, false, true, false, true],
+            Command::Edit | Command::EditAttachmentItem => {
+                [true, false, true, false, false, true, false, true]
+            }
             Command::Decrypt => [true, false, true, false, true, false, false, false],
             Command::EncryptAttachment => [true, false, false, false, false, false, false, false],
             Command::DecryptAttachment => [true, false, false, false, true, false, false, false],
@@ -453,6 +456,14 @@ impl WorkerSession {
                 let item = std::mem::take(&mut r.item.as_mut().unwrap().0);
                 let values = std::mem::take(&mut r.values.as_mut().unwrap().0);
                 session.edit_item(item, values, context).map(Out::Envelope)
+            }
+            Command::EditAttachmentItem => {
+                let session = self.open()?;
+                let item = std::mem::take(&mut r.item.as_mut().ok_or(INVALID)?.0);
+                let values = std::mem::take(&mut r.values.as_mut().ok_or(INVALID)?.0);
+                session
+                    .edit_attachment_item(item, values, context)
+                    .map(Out::Envelope)
             }
             Command::Decrypt => self
                 .open()?
@@ -1333,6 +1344,84 @@ mod tests {
             );
             assert_eq!(reply["ok"], true);
         }
+    }
+
+    #[test]
+    fn attachment_parent_mutations_preserve_full_json_order_and_independent_versions() {
+        let mut h = Harness::new();
+        h.send(json!({"command":"generate","expectedGeneration":0,"owner":owner()}));
+        let generation = h.generation();
+        let mut original = full_item();
+        original["version"] = json!(17);
+        original["attachments"] = json!([
+            {"attachmentId":"cccccccccccccccccccccccccc","attachmentVersion":17,"keyEpoch":1,"unknown":{"keep":[null,7]}},
+            {"attachmentId":"dddddddddddddddddddddddddd","attachmentVersion":3,"keyEpoch":1}
+        ]);
+        let context = json!({"passwordBoxId":"aaaaaaaaaaaaaaaaaaaaaaaaaa","itemId":"bbbbbbbbbbbbbbbbbbbbbbbbbb","itemVersion":18,"keyEpoch":1});
+        for action in ["add", "replace", "remove"] {
+            let mut values = json!({"form":form(),"action":action});
+            if action != "add" {
+                values["attachmentId"] = json!("cccccccccccccccccccccccccc");
+            }
+            let reply = h.send(json!({"command":"editAttachmentItem","expectedGeneration":generation,
+                "item":original.to_string(),"values":values.to_string(),"context":context.to_string()}));
+            assert!(reply["ok"] == true);
+            let reply = h.send(json!({"command":"decrypt","expectedGeneration":generation,"envelope":reply["envelope"],"context":context.to_string()}));
+            let got: Value = serde_json::from_str(reply["item"].as_str().unwrap()).unwrap();
+            let mut expected = original.clone();
+            expected["version"] = json!(18);
+            if action == "add" {
+                let added = &got["attachments"][2];
+                passshare_core::ConnectId::validate(added["attachmentId"].as_str().unwrap())
+                    .unwrap();
+                assert!(added["attachmentVersion"] == 1 && added["keyEpoch"] == 1);
+                expected["attachments"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(added.clone());
+            } else if action == "replace" {
+                expected["attachments"][0]["attachmentVersion"] = json!(18);
+            } else {
+                expected["attachments"].as_array_mut().unwrap().remove(0);
+            }
+            assert!(got == expected);
+        }
+        for (item, values, context) in [
+            (
+                original.clone(),
+                json!({"form":form(),"action":"replace","attachmentId":"eeeeeeeeeeeeeeeeeeeeeeeeee"}),
+                context.clone(),
+            ),
+            (
+                original.clone(),
+                json!({"form":form(),"action":"add","extra":null}),
+                context.clone(),
+            ),
+            (
+                original.clone(),
+                json!({"form":form(),"action":"remove","attachmentId":null}),
+                context.clone(),
+            ),
+            (
+                original.clone(),
+                json!({"form":form(),"action":"add"}),
+                json!({"passwordBoxId":"aaaaaaaaaaaaaaaaaaaaaaaaaa","itemId":"bbbbbbbbbbbbbbbbbbbbbbbbbb","itemVersion":17,"keyEpoch":1}),
+            ),
+        ] {
+            let reply = h.send(
+                json!({"command":"editAttachmentItem","expectedGeneration":generation,
+                "item":item.to_string(),"values":values.to_string(),"context":context.to_string()}),
+            );
+            assert!(reply["ok"] == false && reply["error"] == INVALID);
+            assert!(h.generation() == generation);
+        }
+        original["attachments"][0]["attachmentVersion"] = json!(MAX_SAFE);
+        let values =
+            json!({"form":form(),"action":"replace","attachmentId":"cccccccccccccccccccccccccc"});
+        assert!(h.send(json!({"command":"editAttachmentItem","expectedGeneration":generation,"item":original.to_string(),"values":values.to_string(),"context":context.to_string()}))["ok"] == false);
+        original["attachments"][0]["attachmentVersion"] = json!(17);
+        original["attachments"][1] = original["attachments"][0].clone();
+        assert!(h.send(json!({"command":"editAttachmentItem","expectedGeneration":generation,"item":original.to_string(),"values":values.to_string(),"context":context.to_string()}))["ok"] == false);
     }
 
     #[test]

@@ -465,5 +465,19 @@
   "sharing.complete": "Conexão com a chave compartilhada concluída.",
   "sharing.irrevocable": "Conteúdo já compartilhado não pode ser apagado do outro dispositivo.",
   "sharing.rotationPending": "A remoção de uma caixa criptografada está indisponível até conectar a rotação de chaves, incluindo anexos.",
-  "sharing.failed": "Falha na verificação ou conexão. Verifique novamente se o código ou a chave mudou."
+  "sharing.failed": "Falha na verificação ou conexão. Verifique novamente se o código ou a chave mudou.",
+  "attachments.heading": "Anexos",
+  "attachments.add": "Adicionar arquivos",
+  "attachments.download": "Baixar",
+  "attachments.delete": "Excluir",
+  "attachments.cancel": "Cancelar",
+  "attachments.replace": "Substituir",
+  "attachments.undoDelete": "Desfazer exclusão",
+  "attachments.undoReplace": "Desfazer substituição",
+  "attachments.pending": "Aguardando salvamento",
+  "attachments.pendingDelete": "A exclusão ocorre ao salvar",
+  "attachments.limit": "Até 1MiB (1.048.576 bytes) por arquivo. Arquivos vazios são aceitos.",
+  "attachments.encrypted": "Os nomes e conteúdos são criptografados neste dispositivo.",
+  "attachments.tooLarge": "Um arquivo excede 1MiB. Os arquivos selecionados não foram adicionados.",
+  "attachments.unavailable": "O acesso a anexos compartilhados está sendo preparado. Seus dados foram mantidos."
 }

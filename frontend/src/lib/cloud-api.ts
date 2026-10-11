@@ -1,5 +1,5 @@
 import { authFetch } from "./auth-api";
-import type { ItemContext, OwnerContext } from "./cloud-worker";
+import type { AttachmentContext, ItemContext, OwnerContext } from "./cloud-worker";
 
 export type BoxState = { mode: "compatibility"; keyEpoch: null } | { mode: "encrypted"; keyEpoch: number };
 export type OwnerBundle = { format: number; salt: string; wrapped: { format: number; context: OwnerContext; nonce: string; ciphertext: string } };
@@ -173,7 +173,7 @@ async function boundedText(response: Response, limit: number): Promise<string> {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
-async function itemRequest(url: string, init: RequestInit, status = 200): Promise<string> {
+async function itemRequest(url: string, init: RequestInit, status = 200, limit = 1572864): Promise<string> {
   try {
     const response = await authFetch(url, { cache: "no-store", redirect: "error", ...init });
     if (response.status !== status) {
@@ -188,7 +188,7 @@ async function itemRequest(url: string, init: RequestInit, status = 200): Promis
     }
     if (status === 204 && (response.headers.has("Transfer-Encoding") ||
       (response.headers.has("Content-Length") && response.headers.get("Content-Length") !== "0"))) throw new CloudApiError(502);
-    return await boundedText(response, status === 204 ? 0 : 1572864);
+    return await boundedText(response, status === 204 ? 0 : limit);
   } catch (error) {
     if (error instanceof CloudApiError) throw error;
     throw new CloudApiError(0);
@@ -238,4 +238,44 @@ export async function deleteEncryptedItem(expected: ItemContext, signal: AbortSi
   validateItemContext(expected);
   await itemRequest(itemsPath(expected.passwordBoxId, expected.itemId), { method: "DELETE",
     body: JSON.stringify({ expectedVersion: expected.itemVersion, keyEpoch: expected.keyEpoch }), signal }, 204);
+}
+
+// Existing owner snapshot transport. It does not grant snapshot access to members.
+export async function getAttachmentItemSnapshot(expected: ItemContext, revision: number, signal: AbortSignal): Promise<string> {
+  validateItemContext(expected);
+  if (!positiveInteger(revision)) throw new CloudApiError(502);
+  const text = await itemRequest(`${path(expected.passwordBoxId)}/sharing-snapshot/items/${expected.itemId}?revision=${revision}`, { signal });
+  readItemEnvelope(text, expected);
+  return text;
+}
+function attachmentPath(context: AttachmentContext): string {
+  if (!validId(context.attachmentId) || !positiveInteger(context.attachmentVersion) || !positiveInteger(context.keyEpoch)) throw new CloudApiError(502);
+  return `${itemsPath(context.passwordBoxId, context.itemId)}/attachments/${context.attachmentId}`;
+}
+export async function getEncryptedAttachment(context: AttachmentContext, revision: number, signal: AbortSignal): Promise<string> {
+  if (!positiveInteger(revision)) throw new CloudApiError(502);
+  // Forward the opaque response to Rust for full validation and authentication.
+  return itemRequest(`${attachmentPath(context)}?revision=${revision}`, { signal }, 200, 1404000);
+}
+export type AttachmentWrite = { context: AttachmentContext; itemContext: ItemContext; revision: number;
+  itemEnvelope: string; expectedVersion: number; envelope: string | null };
+export async function writeEncryptedAttachment(prepared: AttachmentWrite, signal: AbortSignal): Promise<number> {
+  const { context, itemContext, revision, itemEnvelope, expectedVersion, envelope } = prepared;
+  const url = attachmentPath(context);
+  validateItemContext(itemContext);
+  if (!positiveInteger(revision) || revision > Number.MAX_SAFE_INTEGER - 2 || itemContext.itemVersion < 2 ||
+    context.passwordBoxId !== itemContext.passwordBoxId || context.itemId !== itemContext.itemId || context.keyEpoch !== itemContext.keyEpoch ||
+    !Number.isSafeInteger(expectedVersion) || expectedVersion < (envelope === null ? 1 : 0) ||
+    (envelope !== null && (expectedVersion >= Number.MAX_SAFE_INTEGER || context.attachmentVersion !== expectedVersion + 1)) ||
+    (envelope === null && context.attachmentVersion !== expectedVersion)) throw new CloudApiError(502);
+  readItemEnvelope(itemEnvelope, itemContext);
+  const body = `{"expectedStateRevision":${revision},"item":{"expectedVersion":${itemContext.itemVersion - 1},"envelope":${itemEnvelope}},"expectedVersion":${expectedVersion},${envelope === null ? `"keyEpoch":${context.keyEpoch}` : `"envelope":${envelope}`}}`;
+  if (new TextEncoder().encode(body).byteLength > 2 * 1024 * 1024) throw new CloudApiError(413);
+  const text = await itemRequest(url, { method: envelope === null ? "DELETE" : "PUT", body, signal });
+  let reply: Record<string, unknown>;
+  try { reply = JSON.parse(text); } catch { throw new CloudApiError(502); }
+  if (!fields(reply, ["stateRevision", "itemVersion", "keyEpoch", envelope === null ? "deleted" : "attachmentVersion"]) ||
+    reply.stateRevision !== revision + 2 || reply.itemVersion !== itemContext.itemVersion || reply.keyEpoch !== context.keyEpoch ||
+    (envelope === null ? reply.deleted !== true : reply.attachmentVersion !== context.attachmentVersion)) throw new CloudApiError(502);
+  return revision + 2;
 }

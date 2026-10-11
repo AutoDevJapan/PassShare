@@ -10,7 +10,7 @@ export type SharedContext = { passwordBoxId: string; senderAccountId: string; re
   keyEpoch: number; senderIdentityVersion: number; recipientIdentityVersion: number; senderKeyId: string; recipientKeyId: string };
 type Reply = { version: number; requestId: number | null; generation: number; locked: boolean; identityLocked: boolean; ok: boolean; error?: string; bundle?: string; envelope?: string; item?: string; recovery?: string; publicIdentity?: string; sharedContext?: string; identityPrepared?: string; name?: string; bytes?: Uint8Array };
 type Command = "generate" | "wrap" | "unlock" | "recover" | "recoveryMaterial" | "create" | "edit" | "encrypt" | "decrypt" |
-  "identityGenerate" | "identityPublic" | "identityWrap" | "identityUnlock" | "identityPrepare" | "verifyPublicIdentity" | "sharingContext" | "sharedRecipientWrap" | "sharedReceiveUnlock" | "encryptAttachment" | "decryptAttachment";
+  "identityGenerate" | "identityPublic" | "identityWrap" | "identityUnlock" | "identityPrepare" | "verifyPublicIdentity" | "sharingContext" | "sharedRecipientWrap" | "sharedReceiveUnlock" | "encryptAttachment" | "decryptAttachment" | "editAttachmentItem";
 const MAX_BODY = 1024 * 1024;
 const MAX_ENVELOPE = 1_500_000;
 const MAX_MESSAGE = MAX_BODY * 6 + 4096;
@@ -151,7 +151,7 @@ export class CloudWorker {
     const opensIdentity = ["identityGenerate", "identityUnlock", "identityPrepare"].includes(pending.command);
     const payload = pending.command === "identityPrepare" ? "identityPrepared" : pending.command === "sharingContext" ? "sharedContext" : ["identityGenerate", "identityUnlock", "identityPublic", "verifyPublicIdentity"].includes(pending.command) ? "publicIdentity" :
       pending.command === "decryptAttachment" ? "name" : pending.command === "recoveryMaterial" ? "recovery" : ["wrap", "identityWrap"].includes(pending.command) ? "bundle" : pending.command === "decrypt" ? "item" :
-      ["create", "edit", "encrypt", "sharedRecipientWrap", "encryptAttachment"].includes(pending.command) ? "envelope" : null;
+      ["create", "edit", "editAttachmentItem", "encrypt", "sharedRecipientWrap", "encryptAttachment"].includes(pending.command) ? "envelope" : null;
     if ((reply.ok ? reply.error !== undefined : typeof reply.error !== "string") ||
       (["bundle", "envelope", "item", "recovery", "publicIdentity", "sharedContext", "identityPrepared", "name"] as const).some((key) =>
         reply.ok && key === payload ? typeof reply[key] !== "string" : reply[key] !== undefined)) { this.dispose(); return; }
@@ -223,6 +223,9 @@ export class CloudWorker {
   }
   editItem(originalFullJSON: string, valuesJSON: string, nextItemContext: ItemContext): Promise<string> {
     return this.send("edit", { item: originalFullJSON, values: valuesJSON, context: JSON.stringify(nextItemContext) }).then((reply) => reply.envelope!);
+  }
+  editAttachmentItem(originalFullJSON: string, valuesJSON: string, nextItemContext: ItemContext): Promise<string> {
+    return this.send("editAttachmentItem", { item: originalFullJSON, values: valuesJSON, context: JSON.stringify(nextItemContext) }).then((reply) => reply.envelope!);
   }
   encrypt(itemJSON: string, context: ItemContext): Promise<string> {
     return this.send("encrypt", { item: itemJSON, context: JSON.stringify(context) }).then((reply) => reply.envelope!);

@@ -465,5 +465,19 @@
   "sharing.complete": "Conexión con la clave compartida completada.",
   "sharing.irrevocable": "El contenido ya compartido no puede borrarse del otro dispositivo.",
   "sharing.rotationPending": "No se puede quitar a una persona de una caja cifrada hasta conectar la rotación de claves, incluidos los adjuntos.",
-  "sharing.failed": "Falló la verificación o la conexión. Verifique de nuevo si el código o la clave cambió."
+  "sharing.failed": "Falló la verificación o la conexión. Verifique de nuevo si el código o la clave cambió.",
+  "attachments.heading": "Archivos adjuntos",
+  "attachments.add": "Añadir archivos",
+  "attachments.download": "Descargar",
+  "attachments.delete": "Eliminar",
+  "attachments.cancel": "Cancelar",
+  "attachments.replace": "Reemplazar",
+  "attachments.undoDelete": "Deshacer eliminación",
+  "attachments.undoReplace": "Deshacer reemplazo",
+  "attachments.pending": "Pendiente de guardar",
+  "attachments.pendingDelete": "La eliminación se aplica al guardar",
+  "attachments.limit": "Hasta 1MiB (1.048.576 bytes) por archivo. Se admiten archivos vacíos.",
+  "attachments.encrypted": "Los nombres y contenidos se cifran en este dispositivo.",
+  "attachments.tooLarge": "Un archivo supera 1MiB. Los archivos seleccionados no se añadieron.",
+  "attachments.unavailable": "Se está preparando el acceso a adjuntos compartidos. Se conservan los datos introducidos."
 }
