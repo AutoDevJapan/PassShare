@@ -73,15 +73,221 @@ fn business_hash_sql() -> String {
     )
 }
 
-fn poll_before(db: &Database, sql: &str, deadline: Instant) -> bool {
-    while Instant::now() < deadline {
-        if db.sql_before(sql, deadline) == "t" {
-            return true;
+// One owned psql connection, with a fresh autocommit SELECT for every sample.
+// No transaction/row lock is retained between samples. The stdin transport and
+// output cap match fixture_sql; neither SQL nor untrusted stderr is printed.
+struct Observer {
+    child: SqlChild,
+    input: Option<std::sync::mpsc::SyncSender<String>>,
+    replies: std::sync::mpsc::Receiver<Result<Value, &'static str>>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+impl Observer {
+    fn start(db: &Database, label: &str) -> Self {
+        let mut child = SqlChild(
+            db.psql(true, Some(label))
+                .args(["-f", "-", "-v", "ECHO=none", "-v", "VERBOSITY=verbose"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("owned expiry observer launch"),
+        );
+        let (input, requests) = std::sync::mpsc::sync_channel::<String>(1);
+        let (send, replies) = std::sync::mpsc::channel();
+        let mut stdin = child.0.stdin.take().unwrap();
+        let writer_send = send.clone();
+        let writer = thread::spawn(move || {
+            for sql in requests {
+                let cell = format!("SELECT pg_catalog.convert_from(pg_catalog.decode('{}','base64'),'UTF8') \\gexec\n", BASE64.encode(sql));
+                if stdin
+                    .write_all(cell.as_bytes())
+                    .and_then(|_| stdin.flush())
+                    .is_err()
+                {
+                    let _ = writer_send.send(Err("input write failed"));
+                    return;
+                }
+            }
+            // Closing the only stdin owner supplies EOF, also on failure.
+        });
+        let stdout = child.0.stdout.take().unwrap();
+        let reader_send = send.clone();
+        let reader = thread::spawn(move || {
+            use std::io::BufRead;
+            let mut reader = std::io::BufReader::new(stdout.take(8 * 1024 * 1024 + 1));
+            let mut total = 0;
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(n) => total += n,
+                    Err(_) => {
+                        let _ = reader_send.send(Err("output read failed"));
+                        break;
+                    }
+                }
+                if total > 8 * 1024 * 1024 {
+                    let _ = reader_send.send(Err("output exceeded bound"));
+                    break;
+                }
+                let sample =
+                    serde_json::from_str(line.trim()).map_err(|_| "invalid observer reply");
+                if reader_send.send(sample).is_err() {
+                    break;
+                }
+            }
+        });
+        let stderr = child.0.stderr.take().unwrap();
+        let errors = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = stderr.take(8 * 1024 * 1024 + 1).read_to_end(&mut bytes);
+            if result.is_err() || bytes.len() > 8 * 1024 * 1024 {
+                let _ = send.send(Err("stderr exceeded bound or read failed"));
+            } else if !bytes.is_empty() {
+                // Never propagate PostgreSQL context, SQL or secret literals.
+                let text = String::from_utf8_lossy(&bytes);
+                let lock = text.contains("55P03") || text.contains("40P01");
+                let timeout = text.contains("57014");
+                eprintln!("legacy observer SQL error: lock={lock} statement_timeout={timeout}");
+                let _ = send.send(Err("observer SQL failed"));
+            }
+        });
+        Self {
+            child,
+            input: Some(input),
+            replies,
+            workers: vec![writer, reader, errors],
         }
-        // Poll pacing only: evidence comes exclusively from PostgreSQL.
-        thread::sleep(Duration::from_millis(20));
     }
-    false
+    fn query(&self, sql: &str, deadline: Instant) -> Result<Value, &'static str> {
+        if Instant::now() >= deadline {
+            return Err("observation deadline");
+        }
+        self.input
+            .as_ref()
+            .unwrap()
+            .try_send(sql.to_owned())
+            .map_err(|_| "observer input unavailable")?;
+        let reply = self
+            .replies
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| "observation deadline")?;
+        // A queued reply/drain after the boundary must never become evidence.
+        if Instant::now() >= deadline {
+            return Err("observation deadline");
+        }
+        reply
+    }
+}
+impl Drop for Observer {
+    fn drop(&mut self) {
+        drop(self.input.take());
+        if !reap_before(&mut self.child.0, Instant::now() + Duration::from_secs(2)) {
+            let _ = self.child.0.kill();
+            if !reap_before(&mut self.child.0, Instant::now() + Duration::from_secs(2)) {
+                CLEANUP_FAILED.store(true, Ordering::SeqCst);
+            }
+        }
+        let drain = Instant::now() + Duration::from_secs(2);
+        while self.workers.iter().any(|w| !w.is_finished()) && Instant::now() < drain {
+            thread::sleep(Duration::from_millis(10));
+        }
+        for worker in self.workers.drain(..) {
+            if !worker.is_finished() || worker.join().is_err() {
+                CLEANUP_FAILED.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct Evidence {
+    live: Option<(u64, u64)>,
+    expired: bool,
+}
+impl Evidence {
+    fn record(&mut self, sample: &Value, received: Instant, deadline: Instant) {
+        if received >= deadline
+            || sample["native"] != true
+            || sample["blocked"] != true
+            || sample["observer_blocks_writer"] != false
+        {
+            return;
+        }
+        let Some(waiter) = sample["waiter"].as_u64().filter(|p| *p > 0) else {
+            return;
+        };
+        let Some(holder) = sample["holder"].as_u64().filter(|p| *p > 0) else {
+            return;
+        };
+        let pair = (waiter, holder);
+        if sample["live"] == true && sample["expired"] == false && self.live.is_none() {
+            self.live = Some(pair);
+        } else if sample["expired"] == true && sample["live"] == false && self.live == Some(pair) {
+            self.expired = true;
+        }
+    }
+}
+
+fn observe(
+    db: &Database,
+    sql: &str,
+    marker: &str,
+    deadline: Instant,
+) -> (Evidence, Option<Observer>) {
+    let started = Instant::now();
+    if started >= deadline {
+        eprintln!("legacy observation marker={marker} phase=not_started remaining_ms=0");
+        return (Evidence::default(), None);
+    }
+    let observer = Observer::start(db, &format!("ps1163-observer-{marker}"));
+    let spawn_ms = started.elapsed().as_millis();
+    eprintln!(
+        "legacy phase marker={marker} phase=observer_launched remaining_ms={} spawn_ms={spawn_ms}",
+        deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+    );
+    let mut evidence = Evidence::default();
+    let mut samples = 0;
+    let mut last = Value::Null;
+    let mut first_ms = None;
+    let mut max_roundtrip_ms = 0;
+    let mut failure = "none";
+    loop {
+        let query_start = Instant::now();
+        match observer.query(sql, deadline) {
+            Ok(sample) => {
+                samples += 1;
+                first_ms.get_or_insert(started.elapsed().as_millis());
+                max_roundtrip_ms = max_roundtrip_ms.max(query_start.elapsed().as_millis());
+                evidence.record(&sample, Instant::now(), deadline);
+                last = sample;
+                if evidence.expired {
+                    break;
+                }
+            }
+            Err(reason) => {
+                failure = reason;
+                break;
+            }
+        }
+        // Pacing only; every accepted sample is a separate real PG statement.
+        thread::sleep(
+            Duration::from_millis(20).min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
+    eprintln!("legacy observation marker={marker} phase={} remaining_ms={} spawn_ms={spawn_ms} first_reply_ms={first_ms:?} max_roundtrip_ms={max_roundtrip_ms} last_sql_ms={:?} samples={samples} native_seen={} blocked={} other_blocked={} observer_blocks_writer={} session_live={} session_expired={} same_pair={} failure={failure}",
+        if evidence.expired { "expired_blocked" } else if evidence.live.is_some() { "live_blocked" } else if samples == 0 { "observer_not_ready" } else { "native_pending" },
+        deadline.saturating_duration_since(Instant::now()).as_millis(),
+        last["sql_ms"].as_f64(), last["native"] == true, last["blocked"] == true,
+        last["other_blocked"] == true, last["observer_blocks_writer"] == true,
+        last["live"] == true, last["expired"] == true, evidence.expired);
+    // All deadline decisions are sealed above. The coordinator releases the
+    // business holder BEFORE observer close/kill/reap/drain, including timeout.
+    // No response received during that cleanup can promote failed evidence.
+    (evidence, Some(observer))
 }
 
 fn hold_row(db: &Database, label: &str, lock_sql: &str) -> HeldBox {
@@ -132,9 +338,6 @@ fn expired_while_waiting(db: &Database, p: u16, b: &Account, op: Concurrent, loc
         ), Instant::now() + Duration::from_secs(5)), "t",
             "ordinary guard SELECT succeeds while the exact failure row is locked");
     }
-    let waiting = format!(
-        "EXISTS(SELECT 1 FROM pg_stat_activity w JOIN pg_stat_activity h ON h.pid=ANY(pg_blocking_pids(w.pid)) WHERE h.application_name='{label}' AND h.state='idle in transaction' AND w.wait_event_type='Lock' AND w.query LIKE '%{marker}(%')"
-    );
     let session_live = format!(
         "EXISTS(SELECT 1 FROM sessions WHERE id={id} AND user_id={} AND expires_at>clock_timestamp())",
         literal(&b.id)
@@ -150,40 +353,71 @@ fn expired_while_waiting(db: &Database, p: u16, b: &Account, op: Concurrent, loc
     assert_eq!(db.sql_before(&format!(
         "WITH synthetic AS (UPDATE sessions SET expires_at=clock_timestamp()+interval '8 seconds' WHERE id={id} RETURNING id) SELECT count(*) FROM synthetic"
     ), deadline), "1");
+    eprintln!(
+        "legacy phase marker={marker} phase=setup remaining_ms={}",
+        deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+    );
     let (auth_status, me) = http(p, "GET", "/api/auth/me", &b.headers(), &Value::Null);
     assert_eq!(
         auth_status, 200,
         "B token is accepted AFTER synthetic time setup"
     );
     assert_eq!(me["user"]["id"], b.id);
+    eprintln!(
+        "legacy phase marker={marker} phase=auth_accepted remaining_ms={}",
+        deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+    );
     let hash_sql = business_hash_sql();
+    let hash_started = Instant::now();
     let before = db.sql_before(&hash_sql, deadline);
+    eprintln!(
+        "legacy phase marker={marker} phase=snapshot remaining_ms={} roundtrip_ms={}",
+        deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis(),
+        hash_started.elapsed().as_millis()
+    );
     let response_deadline = Instant::now() + Duration::from_secs(15);
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
         let response = http(p, op.method, &op.path, &op.headers, &op.body);
         let _ = sender.send(response);
     });
+    let observation = format!(
+        "SET statement_timeout=12000; SET idle_in_transaction_session_timeout=15000; DO $$ BEGIN PERFORM pg_stat_clear_snapshot(); END $$; \
+         WITH tick AS MATERIALIZED (SELECT clock_timestamp() AS started), \
+         blocked AS MATERIALIZED (SELECT w.pid AS waiter,h.pid AS holder FROM pg_stat_activity w \
+         JOIN pg_stat_activity h ON h.pid=ANY(pg_blocking_pids(w.pid)) \
+         WHERE w.datname=current_database() AND h.datname=current_database() \
+         AND w.pid<>pg_backend_pid() AND h.application_name='{label}' AND h.state='idle in transaction' \
+         AND w.state='active' AND w.wait_event_type='Lock' AND w.query LIKE '%{marker}(%') \
+         SELECT jsonb_build_object('native',EXISTS(SELECT 1 FROM pg_stat_activity w WHERE w.datname=current_database() \
+         AND w.pid<>pg_backend_pid() AND w.state='active' AND w.query LIKE '%{marker}(%'), \
+         'blocked',EXISTS(SELECT 1 FROM blocked),'waiter',(SELECT waiter FROM blocked LIMIT 1), \
+         'other_blocked',EXISTS(SELECT 1 FROM pg_stat_activity w JOIN pg_stat_activity h ON h.pid=ANY(pg_blocking_pids(w.pid)) \
+         WHERE w.datname=current_database() AND h.application_name='{label}' AND w.query NOT LIKE '%{marker}(%'), \
+         'observer_blocks_writer',EXISTS(SELECT 1 FROM pg_stat_activity w WHERE w.datname=current_database() \
+         AND pg_backend_pid()=ANY(pg_blocking_pids(w.pid))), \
+         'holder',(SELECT holder FROM blocked LIMIT 1),'live',({session_live}),'expired',({session_expired}), \
+         'sql_ms',extract(epoch FROM clock_timestamp()-tick.started)*1000) FROM tick"
+    );
     // First observe this exact function blocked while its actor is STILL live.
     // For remove/transfer this is after earlier membership/role writes; for
     // retirement entering the function also proves HTTP password/guard checks
     // completed despite an ordinary SELECT on the held zero-failure row.
-    let live_wait = poll_before(
-        db,
-        &format!("SELECT ({waiting}) AND ({session_live})"),
-        deadline,
-    );
     // Only then observe PG's real clock crossing the same session deadline,
     // with that same holder still blocking the formal mutation. No fixed sleep
     // or manual session deletion can satisfy either assertion.
-    let expired_wait = live_wait
-        && poll_before(
-            db,
-            &format!("SELECT ({waiting}) AND ({session_expired})"),
-            deadline,
-        );
+    let (evidence, observer) = observe(db, &observation, marker, deadline);
+    let live_wait = evidence.live.is_some();
+    let expired_wait = evidence.expired;
     held.commit();
     drop(held);
+    drop(observer);
     let (status, reply) = receiver
         .recv_timeout(response_deadline.saturating_duration_since(Instant::now()))
         .expect("late-expiry HTTP response unavailable within 15 seconds");
@@ -194,6 +428,11 @@ fn expired_while_waiting(db: &Database, p: u16, b: &Account, op: Concurrent, loc
     assert_eq!(db.sql(&format!(
         "WITH synthetic AS (UPDATE sessions SET expires_at={original}::timestamptz WHERE id={id} RETURNING id) SELECT count(*) FROM synthetic"
     )), "1", "restore the same synthetic-expiry session");
+    eprintln!("legacy outcomes marker={marker} http_401={} ps024={} rows_xmin_unchanged={} original_deadline_restored=true", status == 401, reply["error"] == "PS024", after == before);
+    assert!(
+        !CLEANUP_FAILED.load(Ordering::SeqCst),
+        "owned expiry observer and holder cleanup must succeed"
+    );
     assert!(
         live_wait,
         "formal SQL must actually wait while initially authorized"
@@ -234,6 +473,37 @@ fn remove(b: &Account, d: &Account) -> Concurrent {
 }
 
 pub(super) fn run(db: &Database, p: u16, b: &Account, d: &Account) {
+    // Independent real-PG control: a warmed observer must not retain a row lock
+    // or stale transaction snapshot that prevents a writer/next sample.
+    db.sql("CREATE TABLE passshare1163_observer_control(value integer); INSERT INTO passshare1163_observer_control VALUES(1)");
+    let observer = Observer::start(db, "ps1163-observer-control");
+    let read = "SELECT jsonb_build_object('pid',pg_backend_pid(),'value',value) FROM passshare1163_observer_control";
+    let first = observer
+        .query(read, Instant::now() + Duration::from_secs(5))
+        .expect("observer control first real read");
+    assert_eq!(first["value"], 1);
+    assert_eq!(
+        db.sql_before(
+            "UPDATE passshare1163_observer_control SET value=2 RETURNING value",
+            Instant::now() + Duration::from_secs(5)
+        ),
+        "2",
+        "observer SELECT permits independent committed writer"
+    );
+    let second = observer
+        .query(read, Instant::now() + Duration::from_secs(5))
+        .expect("observer control second real read");
+    assert!(first["pid"].as_u64().is_some_and(|pid| pid > 0));
+    assert_eq!(second["pid"], first["pid"], "one PG observer backend");
+    assert_eq!(
+        second["value"], 2,
+        "fresh snapshot sees independent writer commit"
+    );
+    drop(observer);
+    db.sql("DROP TABLE passshare1163_observer_control");
+    println!(
+        "legacy observer control passed: one backend, independent writer commit, fresh snapshot"
+    );
     auth_budget(db);
     assert_eq!(
         db.sql("SELECT count(*) FROM users"),
@@ -347,4 +617,74 @@ pub(super) fn run(db: &Database, p: u16, b: &Account, d: &Account) {
         "expired retirement preserves both fixture accounts"
     );
     // Parent's immediately following real retirement is the live 204 control.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(live: bool, waiter: u64, holder: u64) -> Value {
+        json!({"native":true,"blocked":true,"live":live,"expired":!live,
+               "waiter":waiter,"holder":holder,"observer_blocks_writer":false})
+    }
+
+    #[test]
+    fn two_distinct_pg_samples_require_the_same_waiter_and_holder() {
+        let deadline = Instant::now();
+        let early = deadline - Duration::from_nanos(1);
+        let mut evidence = Evidence::default();
+        evidence.record(&sample(false, 11, 22), early, deadline);
+        assert!(evidence.live.is_none() && !evidence.expired);
+        evidence.record(&sample(true, 11, 22), early, deadline);
+        assert_eq!(evidence.live, Some((11, 22)));
+        evidence.record(&sample(false, 12, 22), early, deadline);
+        evidence.record(&sample(false, 11, 23), early, deadline);
+        assert!(!evidence.expired);
+        evidence.record(&sample(false, 11, 22), early, deadline);
+        assert!(evidence.expired);
+    }
+
+    #[test]
+    fn deadline_boundary_rejects_a_queued_live_or_expired_reply() {
+        let deadline = Instant::now();
+        let early = deadline - Duration::from_nanos(1);
+        for received in [deadline, deadline + Duration::from_nanos(1)] {
+            let mut evidence = Evidence::default();
+            evidence.record(&sample(true, 11, 22), received, deadline);
+            assert!(evidence.live.is_none());
+            evidence.record(&sample(true, 11, 22), early, deadline);
+            evidence.record(&sample(false, 11, 22), received, deadline);
+            assert!(!evidence.expired);
+            evidence.record(&sample(false, 11, 22), early, deadline);
+            assert!(evidence.expired);
+        }
+    }
+
+    #[test]
+    fn auth_or_expiry_without_pg_blocker_is_not_evidence() {
+        let deadline = Instant::now();
+        let early = deadline - Duration::from_nanos(1);
+        for field in [
+            "native",
+            "blocked",
+            "waiter",
+            "holder",
+            "observer_blocks_writer",
+        ] {
+            let mut invalid = sample(true, 11, 22);
+            invalid[field] = match field {
+                "waiter" | "holder" => json!(0),
+                "observer_blocks_writer" => json!(true),
+                _ => json!(false),
+            };
+            let mut evidence = Evidence::default();
+            evidence.record(&invalid, early, deadline);
+            assert!(evidence.live.is_none(), "invalid {field}");
+            evidence.record(&sample(true, 11, 22), early, deadline);
+            invalid["live"] = json!(false);
+            invalid["expired"] = json!(true);
+            evidence.record(&invalid, early, deadline);
+            assert!(!evidence.expired, "invalid {field}");
+        }
+    }
 }

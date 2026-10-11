@@ -193,6 +193,28 @@ PostgreSQL fixtureは `postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a
 呼出元が自分のAPIイメージを削除し、toolが自分のコンテナ・ボリューム・networkを回収します。
 `.github/workflows/encrypted-storage.yml` に独立toolの検査とNode／image両モードを登録しました。
 
+### 互換経路の実期限観測
+
+`--legacy-expiry` は設定・HTTP認証・観測を含む10秒以内に、同じセッションについて
+有効時と実PG時計での期限切れ時の2回の観測を得ます。8秒の合成期限、15秒のHTTP期限、
+保持接続の12秒statement timeout／15秒idle transaction timeoutは変更しません。
+観測には所有する単一psql接続を使い、各SELECTを独立して確定し、統計のsnapshotも更新します。
+`clock_timestamp()` と `pg_blocking_pids()`、保持接続のapplication_name、対象関数、
+同じ待機PID・保持PIDを確認します。期限以後に受け取った結果や後片付け中の結果は採用しません。
+観測SELECTは行ロックを取りません。別接続の更新が確定し、同じ観測接続の次の読取りに
+反映されることも独立した実PGの対照試験で確認します。
+
+設定・認証の残時間、起動時間、初回応答時間、SQL往復時間とPG側のSQL時間、観測数、
+対象関数への到達・保持接続による待機・セッションの有効／期限切れを記録します。
+診断にトークン・パスワード・SQL全文を出しません。401/PS024後の全業務行・xminの保持、
+元の期限への復元、親の正常な参加解除・所有権移行・退会の対照試験も維持します。
+
+PR706のrun38101357374は旧処理の第三ケースで観測SQLの期限切れを報告しました。
+旧処理は観測のたびにdocker exec／psqlを起動するため、残時間より起動が長い最後の観測で
+期限切れになり得ます。起動遅延を制御した実Node・PG比較と、元のCI実行原因の確定は
+区別します。Windowsの専用DBでの成功をLinux／配布イメージの成功に読み替えません。
+PG統計snapshotの仕様は[PostgreSQL 16の一次資料](https://www.postgresql.org/docs/16/monitoring-stats.html)を参照します。
+
 ## 確認できたことと残条件
 
 2026-10-08のWindows実受入で、正式index.js経路からCoreの全JSONを暗号化してPUT/GET・DB保存・
