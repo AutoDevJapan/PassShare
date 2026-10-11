@@ -22,7 +22,7 @@ export function createSharingApi(authFetch: CloudFetch) {
   async function request(url: string, signal: AbortSignal, body?: unknown): Promise<any> {
     const response = await authFetch(url, { signal, cache: "no-store", redirect: "error",
       ...(body === undefined ? {} : { method: "PUT", body: JSON.stringify(body) }) });
-    if (response.status !== 200) throw new CloudApiError(response.status);
+    if (response.status !== 200) { await response.body?.cancel().catch(() => {}); throw new CloudApiError(response.status); }
     const reader = response.body?.getReader();
     if (!reader) throw new CloudApiError(502);
     const decoder = new TextDecoder("utf-8", { fatal: true });

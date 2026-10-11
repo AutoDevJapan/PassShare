@@ -17,11 +17,16 @@ type Props = {
 };
 
 export function ItemsPanel(props: Props) {
-  const { cloudSession } = useAuthSession();
+  const { cloudSession, connectClient } = useAuthSession();
+  const metadataProof = useCallback(async (id: string, signal: AbortSignal) => {
+    signal.throwIfAborted();
+    if (!connectClient) throw new Error("Session unavailable");
+    await connectClient.getVault(id); signal.throwIfAborted();
+  }, [connectClient]);
   const { t } = useI18n();
   if (!cloudSession) return <p role="status">{t("session.loading")}</p>;
   return <><button type="button" className="ps-button ps-button--secondary" onClick={props.onBack}>{t("app.vault.back")}</button>
-    <CloudBoxPanel key={`${cloudSession.userId}:${props.vaultId}`} session={cloudSession} boxId={props.vaultId}
+    <CloudBoxPanel key={`${cloudSession.userId}:${props.vaultId}`} session={cloudSession} boxId={props.vaultId} metadataProof={metadataProof}
       compatibility={(ensureCompatibility) => <CompatibilityItemsPanel {...props} ensureCompatibility={ensureCompatibility} />} /></>;
 }
 function CompatibilityItemsPanel({ vaultId, onBack, ensureCompatibility }: Props & { ensureCompatibility: () => Promise<void> }) {

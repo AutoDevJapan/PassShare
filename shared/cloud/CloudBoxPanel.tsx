@@ -7,10 +7,12 @@ import type { CloudSession } from "./session-transport";
 import { EncryptedItems } from "./EncryptedItems";
 import { SharedCloudSharingPanel } from "./CloudSharingPanel";
 import "./client-cloud.css";
+import { readBoxMode, type CompatibilityProof } from "./box-mode";
 
 // Unknown/failed/encrypted state never mounts a legacy item renderer.
-export function CloudBoxPanel({ session, boxId, compatibility, split = false }: {
+export function CloudBoxPanel({ session, boxId, compatibility, metadataProof, split = false }: {
   session: CloudSession; boxId: string; compatibility?: (ensureCompatibility: () => Promise<void>) => ReactNode; split?: boolean;
+  metadataProof?: CompatibilityProof;
 }) {
   const { t } = useI18n();
   const [state, setState] = useState<BoxState | null>(null);
@@ -24,6 +26,7 @@ export function CloudBoxPanel({ session, boxId, compatibility, split = false }: 
   const alive = useRef(false);
   const observedEncrypted = useRef(false);
   const worker = useRef<CloudWorker | null>(null);
+  const heldEpoch = useRef<number | null>(null);
   const operation = useRef<{ controller: AbortController; secret: string } | null>(null);
   const checks = useRef(new Set<AbortController>());
   const checkedBinding = useRef<{ session: CloudSession; boxId: string } | null>(null);
@@ -38,6 +41,7 @@ export function CloudBoxPanel({ session, boxId, compatibility, split = false }: 
     operation.current = null;
     for (const controller of checks.current) controller.abort(); checks.current.clear(); checkedBinding.current = null;
     worker.current?.dispose(); worker.current = null;
+    heldEpoch.current = null;
     if (password.current) password.current.value = "";
     setOpened(false); setScope(null); setRecipient(null); setBusy(false); setError(null); setState(null);
     if (alive.current) setCheck((n) => n + 1);
@@ -62,10 +66,13 @@ export function CloudBoxPanel({ session, boxId, compatibility, split = false }: 
     const generation = lifetime.current;
     const controller = new AbortController();
     checks.current.add(controller);
-    void session.api.getBoxState(boxId, controller.signal).then(async (next) => {
+    void readBoxMode(session.api, boxId, controller.signal, compatibility ? metadataProof : undefined, observedEncrypted.current).then(async (next) => {
       if (!active(generation) || controller.signal.aborted) return;
       if (next.mode === "encrypted") observedEncrypted.current = true;
       else if (observedEncrypted.current) throw new CloudApiError(409, "PS056");
+      if (worker.current && next.mode === "encrypted" && heldEpoch.current !== null && next.keyEpoch !== heldEpoch.current) {
+        lock(); return;
+      }
       if (next.mode === "encrypted") {
         const members = await session.listVaultMembers(boxId, controller.signal);
         if (!active(generation) || controller.signal.aborted) return;
@@ -75,17 +82,20 @@ export function CloudBoxPanel({ session, boxId, compatibility, split = false }: 
       }
       checkedBinding.current = { session, boxId };
       setState(next);
-    }).catch(() => { if (active(generation) && !controller.signal.aborted) setError("cloud.failed"); })
+    }).catch(() => { if (active(generation) && !controller.signal.aborted) {
+      if (worker.current) lock();
+      setError("cloud.failed");
+    } })
       .finally(() => checks.current.delete(controller));
     return () => { controller.abort(); checks.current.delete(controller); };
-  }, [session, boxId, check]);
+  }, [session, boxId, check, metadataProof]);
   async function ensureCompatibility() {
     const generation = lifetime.current;
     if (!active(generation) || observedEncrypted.current) throw new CloudApiError(409);
     const controller = new AbortController();
     checks.current.add(controller);
     try {
-      const next = await session.api.getBoxState(boxId, controller.signal);
+      const next = await readBoxMode(session.api, boxId, controller.signal, metadataProof, observedEncrypted.current);
       if (!active(generation) || controller.signal.aborted) throw new CloudApiError(401);
       if (next.mode !== "compatibility") { observedEncrypted.current = true; setState(next); throw new CloudApiError(409); }
     } finally { checks.current.delete(controller); }
@@ -108,6 +118,7 @@ export function CloudBoxPanel({ session, boxId, compatibility, split = false }: 
       const self = members.find((member) => member.userId === session.userId);
       if (!self || (self.role !== "owner" && self.identityConfirmed !== true)) throw new CloudApiError(403);
       const held = { passwordBoxId: boxId, ownerAccountId: session.userId, keyEpoch: state.keyEpoch };
+      heldEpoch.current = held.keyEpoch;
       const crypto = new CloudWorker(); worker.current = crypto;
       void crypto.closed.then(() => { if (active(generation) && worker.current === crypto) lock(); });
       await crypto.ready;

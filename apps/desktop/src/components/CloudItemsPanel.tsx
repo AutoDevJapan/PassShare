@@ -63,11 +63,13 @@ export function CloudItemsPanel() {
       const auth = await response.json() as { user: { id: string }; refreshToken: string; connectAccessToken: string };
       if (!current()) return;
       next = createCloudSession(url.href, auth.user.id, auth.refreshToken, current);
+      binding.current = next;
       const client = new ConnectClient({ host: url.origin, token: auth.connectAccessToken });
+      auth.refreshToken = ""; auth.connectAccessToken = "";
       const list = await client.listVaults();
       if (!current()) { next.dispose(); return; }
       binding.current = next; setSession(next); setBoxes(list); setBoxId(list[0]?.id ?? "");
-    } catch { next?.dispose(); if (current()) setFailed(true); }
+    } catch { next?.dispose(); if (binding.current === next) binding.current = null; if (current()) setFailed(true); }
     finally { body = ""; if (current()) { request.current = null; setBusy(false); } }
   }
   async function logout() {

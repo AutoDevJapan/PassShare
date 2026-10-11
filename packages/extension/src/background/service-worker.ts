@@ -27,10 +27,11 @@ import { generatePassword } from "../lib/password-generator";
 import {
   clearAllAuthStorage,
   loadRefreshToken,
-  loadStoredConnectToken,
+  loadStoredAuthSession,
   saveConnectToken,
 } from "../lib/storage";
 import { bootstrapConnectSession } from "@shared/lib/connect-session";
+import { readBoxMode } from "@shared/cloud/box-mode";
 import { createCloudSession } from "@shared/cloud/session-transport";
 
 async function getConnectClient() {
@@ -38,21 +39,13 @@ async function getConnectClient() {
   const result = await bootstrapConnectSession(
     {
       async load() {
-        const refreshToken = await loadRefreshToken();
-        heldToken = refreshToken;
-        if (!refreshToken) {
-          return null;
-        }
-        const connect = await loadStoredConnectToken();
-        return {
-          refreshToken,
-          connectAccessToken: connect?.token ?? "",
-          connectExpiresAt: connect?.expiresAt ?? "",
-        };
+        const session = await loadStoredAuthSession();
+        heldToken = session?.refreshToken ?? null;
+        return session;
       },
-      save: (session) => saveConnectToken(session.connectAccessToken, session.connectExpiresAt),
+      save: (session) => saveConnectToken(session.connectAccessToken, session.connectExpiresAt, session.refreshToken),
       async clear() {
-        await clearAllAuthStorage();
+        await clearAllAuthStorage(heldToken ?? undefined);
         // The stored user is gone; drop any cached credential matches too.
 
       },
@@ -60,7 +53,7 @@ async function getConnectClient() {
     { fetchCurrentUser, refreshConnectToken },
   );
 
-  if (!result || !heldToken) {
+  if (!result || !heldToken || await loadRefreshToken() !== heldToken) {
     return null;
   }
 
@@ -82,7 +75,7 @@ async function fetchCredentialMatches(
   const matches: CredentialMatch[] = [];
 
   for (const vault of vaults) {
-    const mode = await cloud.api.getBoxState(vault.id);
+    const mode = await readBoxMode(cloud.api, vault.id, new AbortController().signal, async (id) => { await client.getVault(id); });
     if (mode.mode === "encrypted") continue;
     const items = await client.listItems(vault.id);
     for (const overview of items) {
@@ -134,7 +127,7 @@ async function saveCredential(payload: {
     throw new Error("No password box available");
   }
 
-  const mode = await cloud.api.getBoxState(vault.id);
+  const mode = await readBoxMode(cloud.api, vault.id, new AbortController().signal, async (id) => { await client.getVault(id); });
   if (mode.mode !== "compatibility") throw new Error("Encrypted autofill is unavailable");
   const body = connectItemToCreateBody({
     title: payload.title,
@@ -234,7 +227,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
           const { client, cloud } = auth;
           try {
           if (cloud.userId !== message.accountId) throw new Error("Not authenticated");
-          const mode = await cloud.api.getBoxState(message.vaultId);
+          const mode = await readBoxMode(cloud.api, message.vaultId, new AbortController().signal, async (id) => { await client.getVault(id); });
           if (mode.mode !== "compatibility") throw new Error("Encrypted autofill is unavailable");
           const item = await client.getItem(message.vaultId, message.itemId);
           const mapped = connectItemFromApi(item);

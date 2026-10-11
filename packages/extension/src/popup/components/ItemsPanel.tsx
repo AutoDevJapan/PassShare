@@ -1,6 +1,6 @@
 import { useI18n } from "@shared/i18n/I18nProvider";
 import { CloudBoxPanel } from "@shared/cloud/CloudBoxPanel";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import type { ConnectItem } from "@shared/types/item.js";
 import {
   copyTextWithAutoClear,
@@ -39,6 +39,11 @@ async function copySecretWithAutoClear(value: string): Promise<void> {
 
 export function ItemsPanel() {
   const { cloudSession, connectClient } = useAuthSession();
+  const metadataProof = useCallback(async (id: string, signal: AbortSignal) => {
+    signal.throwIfAborted();
+    if (!connectClient) throw new Error("Session unavailable");
+    await connectClient.getVault(id); signal.throwIfAborted();
+  }, [connectClient]);
   const { t } = useI18n();
   const [boxes, setBoxes] = useState<Array<{ id: string; name: string }>>([]);
   const [selected, setSelected] = useState("");
@@ -57,7 +62,7 @@ export function ItemsPanel() {
       {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
     </select></label>
     {failed && <p role="alert">{t("app.item.loadError")}</p>}
-    {selected && <CloudBoxPanel key={`${cloudSession.userId}:${selected}`} session={cloudSession} boxId={selected}
+    {selected && <CloudBoxPanel key={`${cloudSession.userId}:${selected}`} session={cloudSession} boxId={selected} metadataProof={metadataProof}
       compatibility={(ensureCompatibility) => <CompatibilityItemsPanel boxId={selected} ensureCompatibility={ensureCompatibility} />} />}
   </section>;
 }

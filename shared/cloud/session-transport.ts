@@ -22,6 +22,8 @@ export function createCloudSession(base: string, userId: string, sessionToken: s
     init.signal?.throwIfAborted();
     init.signal?.addEventListener("abort", abort, { once: true });
     requests.add(controller);
+    let bodyOwned = false;
+    const cleanup = () => { requests.delete(controller); init.signal?.removeEventListener("abort", abort); };
     try {
       const headers = new Headers(init.headers);
       headers.set("Authorization", `Bearer ${sessionToken}`);
@@ -31,17 +33,46 @@ export function createCloudSession(base: string, userId: string, sessionToken: s
         await response.body?.cancel().catch(() => {});
         throw new CloudApiError(401);
       }
-      return response;
+      if (!response.body) return response;
+      const reader = response.body.getReader();
+      const cancelBody = () => { void reader.cancel().catch(() => {}); };
+      controller.signal.addEventListener("abort", cancelBody, { once: true });
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true; cleanup(); controller.signal.removeEventListener("abort", cancelBody); reader.releaseLock();
+      };
+      // Keep the account lifetime and caller abort bound through body EOF,
+      // not merely until fetch has returned headers.
+      const body = new ReadableStream<Uint8Array>({
+        async pull(destination) {
+          try {
+            if (!current() || controller.signal.aborted) throw new CloudApiError(401);
+            const part = await reader.read();
+            if (!current() || controller.signal.aborted) { part.value?.fill(0); throw new CloudApiError(401); }
+            if (part.done) { destination.close(); finish(); }
+            else destination.enqueue(part.value);
+          } catch (error) {
+            await reader.cancel().catch(() => {});
+            destination.error(error instanceof CloudApiError ? error : new CloudApiError(0)); finish();
+          }
+        },
+        async cancel() { try { await reader.cancel(); } finally { finish(); } },
+      });
+      try {
+        const result = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+        bodyOwned = true;
+        return result;
+      } catch { await body.cancel().catch(() => {}); finish(); throw new CloudApiError(0); }
     } finally {
-      requests.delete(controller);
-      init.signal?.removeEventListener("abort", abort);
+      if (!bodyOwned) cleanup();
     }
   };
   return Object.freeze({
     userId, api: createCloudApi(transport), sharing: createSharingApi(transport), transport,
     async listVaultMembers(boxId: string, signal: AbortSignal): Promise<VaultMember[]> {
       const response = await transport(`/api/auth/vaults/${encodeURIComponent(boxId)}/members`, { signal });
-      if (response.status !== 200) throw new CloudApiError(response.status);
+      if (response.status !== 200) { await response.body?.cancel().catch(() => {}); throw new CloudApiError(response.status); }
       const body = await response.json() as { members: VaultMember[] };
       if (!Array.isArray(body.members)) throw new CloudApiError(502);
       return body.members;

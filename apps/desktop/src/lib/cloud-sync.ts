@@ -138,25 +138,25 @@ async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient
   });
   assertOk(loginRes, "Login failed");
 
-  // This legacy sync transfers plaintext. Only authoritative compatibility
-  // state permits it; unknown/encrypted/disabled state never reaches Connect.
-  const stateRes = await syncFetch(`${config.apiBaseUrl}/api/encrypted/boxes/${encodeURIComponent(config.vaultId)}`, {
-    credentials: "include", cache: "no-store", redirect: "error",
-  });
-  assertOk(stateRes, "Password box mode unavailable");
-  const state = await stateRes.json() as { mode: string; keyEpoch: number | null };
-  if (state.mode !== "compatibility" || state.keyEpoch !== null) throw new SyncError("unknown", "Encrypted password box requires encrypted item screen");
-
   const tokenRes = await syncFetch(`${config.apiBaseUrl}/api/auth/connect-token`, {
     credentials: "include",
   });
   assertOk(tokenRes, "Connect token fetch failed");
   const tokenBody = (await tokenRes.json()) as { accessToken: string };
 
-  return new ConnectClient({
-    host: config.apiBaseUrl,
-    token: tokenBody.accessToken,
+  const client = new ConnectClient({ host: config.apiBaseUrl, token: tokenBody.accessToken });
+  const stateRes = await syncFetch(`${config.apiBaseUrl}/api/encrypted/boxes/${encodeURIComponent(config.vaultId)}`, {
+    credentials: "include", cache: "no-store", redirect: "error",
   });
+  if (stateRes.status === 404) {
+    // Metadata only: the existing DB plaintext boundary rejects encrypted boxes.
+    await client.getVault(config.vaultId);
+  } else {
+    assertOk(stateRes, "Password box mode unavailable");
+    const state = await stateRes.json() as { mode: string; keyEpoch: number | null };
+    if (state.mode !== "compatibility" || state.keyEpoch !== null) throw new SyncError("unknown", "Encrypted password box requires encrypted item screen");
+  }
+  return client;
 }
 
 async function fetchRemoteItems(client: ConnectClient, vaultId: string): Promise<ConnectItem[]> {

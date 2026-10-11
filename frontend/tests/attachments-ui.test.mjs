@@ -145,6 +145,7 @@ test('new item plus arbitrary binary/empty/259-byte files closes only after all 
   h.form().props.onSubmit({ ...values }); await flush();
   assert.equal(h.calls.create, 1); assert.equal(h.calls.attachment.length, 4); assert.equal(h.form(), undefined);
   assert.deepEqual(h.calls.encrypt.map((r) => r.bytes.length), [2, 0, 259, 1]);
+  assert.deepEqual(h.calls.encrypt.map((r) => r.name), ['日本語.bin', '空', 'same', 'same']);
   assert.deepEqual(h.calls.encrypt[2].bytes, Array.from({ length: 259 }, (_, i) => i % 256));
   assert.deepEqual(h.calls.encrypt[0].bytes, [0, 255]); assert.equal(h.fileInput.value, '');
 });

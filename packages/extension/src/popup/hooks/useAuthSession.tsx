@@ -24,9 +24,8 @@ import {
 import {
   clearAllAuthStorage,
   loadRefreshToken,
-  loadStoredConnectToken,
+  loadStoredAuthSession,
   saveConnectToken,
-  saveRefreshToken,
 } from "../../lib/storage";
 import { bootstrapConnectSession } from "@shared/lib/connect-session";
 import { createCloudSession, type CloudSession } from "@shared/cloud/session-transport";
@@ -43,7 +42,7 @@ type AuthSessionContextValue = {
 
 const AuthSessionContext = createContext<AuthSessionContextValue | null>(null);
 
-async function buildConnectClientFromStorage(): Promise<{
+async function buildConnectClientFromStorage(isCurrent: () => boolean): Promise<{
   user: AuthUser | null;
   client: ConnectClient | null;
   refreshToken: string | null;
@@ -52,25 +51,17 @@ async function buildConnectClientFromStorage(): Promise<{
   const result = await bootstrapConnectSession(
     {
       async load() {
-        const refreshToken = await loadRefreshToken();
-        heldToken = refreshToken;
-        if (!refreshToken) {
-          return null;
-        }
-        const connect = await loadStoredConnectToken();
-        return {
-          refreshToken,
-          connectAccessToken: connect?.token ?? "",
-          connectExpiresAt: connect?.expiresAt ?? "",
-        };
+        const session = await loadStoredAuthSession();
+        heldToken = session?.refreshToken ?? null;
+        return session;
       },
-      save: (session) => saveConnectToken(session.connectAccessToken, session.connectExpiresAt),
-      clear: clearAllAuthStorage,
+      save: (session) => saveConnectToken(session.connectAccessToken, session.connectExpiresAt, session.refreshToken, isCurrent),
+      clear: () => clearAllAuthStorage(heldToken ?? undefined, isCurrent),
     },
     { fetchCurrentUser, refreshConnectToken },
   );
 
-  if (!result) {
+  if (!result || !isCurrent() || await loadRefreshToken() !== heldToken) {
     return { user: null, client: null, refreshToken: null };
   }
 
@@ -88,12 +79,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [cloudSession, setCloudSession] = useState<CloudSession | null>(null);
   const cloudRef = useRef<CloudSession | null>(null);
   const generation = useRef(0);
+  const installedToken = useRef<string | null>(null);
   function clearCloud() {
-    ++generation.current;
+    ++generation.current; installedToken.current = null;
     cloudRef.current?.dispose(); cloudRef.current = null; setCloudSession(null);
     window.dispatchEvent(new Event("passshare:cloud-lock"));
   }
   function bindCloud(id: string, token: string, epoch: number) {
+    installedToken.current = token;
     cloudRef.current = createCloudSession(getApiBaseUrl(), id, token, () => epoch === generation.current);
     setCloudSession(cloudRef.current);
   }
@@ -102,7 +95,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     const epoch = generation.current;
     void (async () => {
       try {
-        const { user: storedUser, client, refreshToken } = await buildConnectClientFromStorage();
+        const { user: storedUser, client, refreshToken } = await buildConnectClientFromStorage(() => epoch === generation.current);
         if (epoch !== generation.current) return;
         if (storedUser && refreshToken) bindCloud(storedUser.id, refreshToken, epoch);
         setUser(storedUser);
@@ -114,10 +107,26 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     return () => { ++generation.current; cloudRef.current?.dispose(); cloudRef.current = null; };
   }, []);
 
+  useEffect(() => {
+    const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "local" && installedToken.current && changes["passshare.refreshToken"] &&
+        changes["passshare.refreshToken"].newValue !== installedToken.current) {
+        clearCloud(); setUser(null); setConnectClient(null);
+      }
+    };
+    chrome.storage.onChanged.addListener(changed);
+    return () => chrome.storage.onChanged.removeListener(changed);
+  }, []);
+
   const applyAuth = useCallback(async (response: TokenAuthResponse, epoch: number) => {
     if (epoch !== generation.current) { await extensionLogout(response.refreshToken).catch(() => {}); return; }
-    await persistAuthSession(response);
-    if (epoch !== generation.current) return;
+    const saved = await persistAuthSession(response, () => epoch === generation.current);
+    if (!saved) { await extensionLogout(response.refreshToken).catch(() => {}); return; }
+    if (epoch !== generation.current) {
+      await clearAllAuthStorage(response.refreshToken);
+      await extensionLogout(response.refreshToken).catch(() => {});
+      return;
+    }
     bindCloud(response.user.id, response.refreshToken, epoch);
     setUser(response.user);
     setConnectClient(
@@ -160,6 +169,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     clearCloud();
     setUser(null); setConnectClient(null);
+    const epoch = generation.current;
     const refreshToken = await loadRefreshToken();
     if (refreshToken) {
       try {
@@ -168,9 +178,8 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
         // Clear local state even if remote logout fails.
       }
     }
-    await clearAllAuthStorage();
-    setUser(null);
-    setConnectClient(null);
+    await clearAllAuthStorage(refreshToken ?? undefined, () => epoch === generation.current);
+    if (epoch === generation.current) { setUser(null); setConnectClient(null); }
   }, []);
 
   const value = useMemo(

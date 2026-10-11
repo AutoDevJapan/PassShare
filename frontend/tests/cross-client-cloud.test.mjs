@@ -18,11 +18,12 @@ function load(name, imports = {}, globals = {}) {
     if (!(id in imports)) throw new Error(`Unmapped import ${id}`);
     return imports[id];
   }, URL, Headers, Response, AbortController, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
-  setTimeout, clearTimeout, atob, btoa, ...globals });
+  ReadableStream, setTimeout, clearTimeout, atob, btoa, ...globals });
   return exports;
 }
 const cloudApi = load('cloud-api.ts');
 const sharingApi = load('sharing-api.ts', { './cloud-api': cloudApi });
+const boxMode = load('box-mode.ts', { './cloud-api': cloudApi });
 const sessionModule = (fetch) => load('session-transport.ts', { './cloud-api': cloudApi, './sharing-api': sharingApi }, { fetch });
 const box = 'a'.repeat(26), owner = '11111111-1111-4111-8111-111111111111';
 const flush = () => renderer.act(async () => { for (let n = 0; n < 10; n++) await new Promise(setImmediate); });
@@ -35,14 +36,14 @@ function events() {
 function host({ mode = 'encrypted', failure = null, delayedUnlock = false, recipient = false } = {}) {
   const window = events(), document = { ...events(), visibilityState: 'visible' };
   const input = { value: 'synthetic-encryption-password' }, workers = [], calls = [], legacy = [], unlocks = [];
-  let release, tree;
+  let release, tree, epoch = 17;
   class Worker {
     constructor() { this.isClosed = false; this.closed = new Promise((resolve) => { this.close = resolve; }); this.ready = Promise.resolve(); workers.push(this); }
     dispose() { this.isClosed = true; this.close(); }
     async unlock(scope, bundle, secret) { unlocks.push({ scope, bundle, secret }); if (delayedUnlock) await new Promise((resolve) => { release = resolve; }); }
   }
   const session = { userId: owner, api: {
-    async getBoxState(id, signal) { calls.push({ id, signal }); if (failure) throw new cloudApi.CloudApiError(failure); return { mode, keyEpoch: mode === 'encrypted' ? 17 : null }; },
+    async getBoxState(id, signal) { calls.push({ id, signal }); if (failure) throw new cloudApi.CloudApiError(failure); return { mode, keyEpoch: mode === 'encrypted' ? epoch : null }; },
     getOwnerBundle: async () => ({ bundle: 'opaque-owner-bundle' }), bundleText: (text) => text,
   }, listVaultMembers: async () => [{ userId: owner, role: recipient ? 'member' : 'owner', identityConfirmed: true }], sharing: {} };
   function Items() { return React.createElement('output', null, 'encrypted-items'); }
@@ -50,12 +51,15 @@ function host({ mode = 'encrypted', failure = null, delayedUnlock = false, recip
   const { CloudBoxPanel } = load('CloudBoxPanel.tsx', {
     react: React, 'react/jsx-runtime': requireApp('react/jsx-runtime'), '@shared/i18n/I18nProvider': { useI18n: () => ({ t: (key) => key }) },
     './cloud-api': cloudApi, './cloud-worker': { CloudWorker: Worker }, './EncryptedItems': { EncryptedItems: Items },
+    './box-mode': boxMode,
     './CloudSharingPanel': { SharedCloudSharingPanel: Sharing }, './client-cloud.css': {},
   }, { window, document });
   const compatibility = (ensure) => { legacy.push(ensure); return React.createElement('output', null, 'compatibility-items'); };
   renderer.act(() => { tree = renderer.create(React.createElement(CloudBoxPanel, { session, boxId: box, compatibility }), { createNodeMock: () => input }); });
   return { tree, input, workers, window, document, legacy, unlocks, calls, session,
     setMode(value) { mode = value; }, release: () => release?.(),
+    setEpoch(value) { epoch = value; }, setFailure(value) { failure = value; },
+    async recheck() { renderer.act(() => tree.update(React.createElement(CloudBoxPanel, { session, boxId: box, compatibility, metadataProof: async () => {} }))); await flush(); },
     async submit() { renderer.act(() => tree.root.findByType('form').props.onSubmit({ preventDefault() {} })); await flush(); },
     async lock() { renderer.act(() => window.dispatchEvent({ type: 'passshare:cloud-lock' })); await flush(); },
     async unmount() { renderer.act(() => tree.unmount()); await flush(); },
@@ -92,6 +96,49 @@ test('dispose aborts a held request and rejects later requests before network ac
   assert.equal(signal.aborted, true); await assert.rejects(pending);
   await assert.rejects(session.api.getBoxState(box), (error) => error.status === 401);
   assert.equal(sends, 1);
+});
+
+for (const end of ['dispose', 'caller-abort']) test(`session owns a delayed response body through ${end}`, async () => {
+  let source, cancelled = false;
+  const { createCloudSession } = sessionModule(async () => new Response(new ReadableStream({
+    start(controller) { source = controller; }, cancel() { cancelled = true; },
+  })));
+  const session = createCloudSession('https://example.invalid', owner, 'synthetic-session');
+  const caller = new AbortController();
+  const pending = session.api.getBoxState(box, caller.signal);
+  await new Promise(setImmediate);
+  if (end === 'dispose') session.dispose(); else caller.abort();
+  if (!cancelled) { source.enqueue(new TextEncoder().encode('{"mode":"encrypted","keyEpoch":17}')); source.close(); }
+  await assert.rejects(pending);
+  assert.equal(cancelled, true); session.dispose();
+});
+
+test('response EOF releases upstream abort listener without requiring caller abort', async () => {
+  const caller = new AbortController(), attached = new Set();
+  const add = caller.signal.addEventListener.bind(caller.signal), remove = caller.signal.removeEventListener.bind(caller.signal);
+  caller.signal.addEventListener = (name, fn, options) => { attached.add(fn); add(name, fn, options); };
+  caller.signal.removeEventListener = (name, fn, options) => { attached.delete(fn); remove(name, fn, options); };
+  const { createCloudSession } = sessionModule(async () => new Response('{"mode":"encrypted","keyEpoch":17}'));
+  const session = createCloudSession('https://example.invalid', owner, 'synthetic-session');
+  await session.api.getBoxState(box, caller.signal);
+  assert.equal(caller.signal.aborted, false); assert.equal(attached.size, 0); session.dispose();
+});
+
+test('a broken successful response body remains an unknown outcome, not an authorization failure', async () => {
+  const { createCloudSession } = sessionModule(async () => new Response(new ReadableStream({
+    start(controller) { controller.error(new TypeError('synthetic connection reset')); },
+  })));
+  const session = createCloudSession('https://example.invalid', owner, 'synthetic-session');
+  const response = await session.transport('/api/encrypted/account-identity', { method: 'PUT', body: '{"opaque":"synthetic"}' });
+  await assert.rejects(response.text(), (error) => error.status === 0); session.dispose();
+});
+
+test('authorization rejection cancels the unread response body rather than retaining its reader', async () => {
+  let cancelled = 0;
+  const { createCloudSession } = sessionModule(async () => new Response(new ReadableStream({ cancel() { cancelled++; } }), { status: 403 }));
+  const session = createCloudSession('https://example.invalid', owner, 'synthetic-session');
+  await assert.rejects(session.sharing.getIdentity(new AbortController().signal), (error) => error.status === 403);
+  assert.equal(cancelled, 1); session.dispose(); assert.equal(cancelled, 1);
 });
 
 test('real redirect response is not followed and cannot transmit the session bearer to its destination', async () => {
@@ -139,6 +186,14 @@ test('recipient enters independent identity/pin flow without an owner password o
   assert.equal(h.unlocks.length, 0); assert.equal(h.legacy.length, 0); await h.unmount();
 });
 
+for (const change of ['epoch', 'authorization']) test(`same-account metadata refresh after ${change} destroys the held worker and decrypted screen`, async () => {
+  const h = host(); await flush(); await h.submit();
+  assert.equal(h.json().includes('"encrypted-items"'), true);
+  if (change === 'epoch') h.setEpoch(18); else h.setFailure(403);
+  await h.recheck(); assert.equal(h.workers[0].isClosed, true);
+  assert.equal(h.json().includes('"encrypted-items"'), false); await h.unmount();
+});
+
 function backgroundHost() {
   let listener, mode = 'compatibility', account = owner, disposed = 0, details = 0, writes = 0;
   const chrome = { runtime: { onMessage: { addListener(fn) { listener = fn; } } }, alarms: { onAlarm: { addListener() {} } } };
@@ -155,9 +210,10 @@ function backgroundHost() {
     './clipboard-clear': { handleClipboardClearAlarm() {}, scheduleClipboardClear() {} },
     '../lib/connect-items': { connectItemFromApi: (item) => item, connectItemToCreateBody: (body) => body, hostnameMatchesItem: () => true },
     '../lib/password-generator': { generatePassword: () => 'synthetic-generated' },
-    '../lib/storage': { clearAllAuthStorage() {}, loadRefreshToken: async () => 'synthetic-session', loadStoredConnectToken: async () => ({ token: 'synthetic-connect' }), saveConnectToken() {} },
+    '../lib/storage': { clearAllAuthStorage() {}, loadRefreshToken: async () => 'synthetic-session', loadStoredAuthSession: async () => ({ refreshToken: 'synthetic-session', connectAccessToken: 'synthetic-connect' }), saveConnectToken() {} },
     '@shared/lib/connect-session': { async bootstrapConnectSession(storage) { await storage.load(); return { user: { id: account }, accessToken: 'synthetic-connect' }; } },
     '@shared/cloud/session-transport': { createCloudSession: () => ({ userId: account, api: { getBoxState: async () => ({ mode }) }, dispose() { disposed++; } }) },
+    '@shared/cloud/box-mode': boxMode,
   }, { chrome });
   return { send: (message) => new Promise((resolve) => listener(message, {}, resolve)),
     setMode(value) { mode = value; }, setAccount(value) { account = value; },
@@ -184,4 +240,73 @@ test('background fill and page save recheck current mode and cannot consume a pr
   assert.equal((await h.send(request)).ok, false); assert.equal(h.details, 1);
   h.setAccount(owner); assert.equal((await h.send(request)).ok, true); assert.equal(h.details, 2);
   assert.equal(h.disposed, 5);
+});
+
+function storedSessionHost() {
+  const keys = { refreshToken: 'refresh', connectToken: 'connect', connectExpiresAt: 'expiry' }, values = new Map();
+  let queue = Promise.resolve(), held = false, release, reads = 0;
+  const navigator = { locks: { request(_name, action) { const result = queue.then(action); queue = result.catch(() => {}); return result; } } };
+  const chrome = { runtime: {}, storage: { local: {
+    get(names, done) { reads++; queueMicrotask(() => done(Object.fromEntries(names.map((key) => [key, values.get(key)])))); },
+    set(entries, done) { const write = () => { for (const [key, value] of Object.entries(entries)) values.set(key, value); done(); };
+      if (held) { held = false; release = write; } else queueMicrotask(write); },
+    remove(names, done) { for (const key of names) values.delete(key); queueMicrotask(done); },
+  } } };
+  const api = load('../../packages/extension/src/lib/storage.ts', { './constants': { STORAGE_KEYS: keys } }, { navigator, chrome });
+  return { api, values, holdNext() { held = true; }, release: () => release(), get reads() { return reads; } };
+}
+
+const authA = { refreshToken: 'session-A', connectAccessToken: 'connect-A', connectExpiresAt: '2040-01-01T00:00:00Z' };
+const authB = { refreshToken: 'session-B', connectAccessToken: 'connect-B', connectExpiresAt: '2041-01-01T00:00:00Z' };
+
+test('a late popup session write is erased before a new account may persist its complete session', async () => {
+  const h = storedSessionHost(); let current = true;
+  h.holdNext(); const old = h.api.saveStoredAuthSession(authA, () => current);
+  await new Promise(setImmediate); current = false;
+  const next = h.api.saveStoredAuthSession(authB); h.release();
+  assert.equal(await old, false); assert.equal(await next, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.loadStoredAuthSession())), authB);
+  assert.equal([...h.values.values()].some((value) => value.includes('session-A') || value.includes('connect-A')), false);
+});
+
+test('old refresh/logout storage callbacks cannot replace or erase a newer account', async () => {
+  const h = storedSessionHost(); await h.api.saveStoredAuthSession(authB);
+  await h.api.saveConnectToken('stale-connect-A', authA.connectExpiresAt, authA.refreshToken);
+  await h.api.clearAllAuthStorage(authA.refreshToken);
+  const before = h.reads;
+  assert.deepEqual(JSON.parse(JSON.stringify(await h.api.loadStoredAuthSession())), authB);
+  assert.equal(h.reads - before, 1);
+  await h.api.clearAllAuthStorage(authB.refreshToken); assert.equal(await h.api.loadStoredAuthSession(), null);
+});
+
+test('flag-off compatibility needs authoritative metadata and is forbidden after observing encrypted mode', async () => {
+  let proofs = 0, denied = false;
+  const api = { getBoxState: async () => { throw new cloudApi.CloudApiError(404); } };
+  const proof = async () => { proofs++; if (denied) throw new cloudApi.CloudApiError(409); };
+  const signal = new AbortController().signal;
+  await assert.rejects(boxMode.readBoxMode(api, box, signal), (error) => error.status === 404);
+  assert.equal(proofs, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(await boxMode.readBoxMode(api, box, signal, proof))), { mode: 'compatibility', keyEpoch: null });
+  denied = true; await assert.rejects(boxMode.readBoxMode(api, box, signal, proof), (error) => error.status === 409);
+  denied = false; await assert.rejects(boxMode.readBoxMode(api, box, signal, proof, true), (error) => error.status === 404);
+  assert.equal(proofs, 2);
+});
+
+test('legacy archive never reads or uploads file bytes for encrypted/rejected modes, while proven compatibility works', async () => {
+  let modeStatus = 200, encrypted = true, metadataStatus = 200, reads = 0, uploads = 0;
+  const imports = load('../../shared/lib/1pux-import.ts', {}, { fetch: async (url, init) => {
+    if (url.endsWith('/csrf')) return new Response('{"csrfToken":"synthetic-csrf"}');
+    if (url.endsWith('/login')) return new Response('{}');
+    if (url.includes('/api/encrypted/')) return new Response(JSON.stringify({ mode: encrypted ? 'encrypted' : 'compatibility', keyEpoch: encrypted ? 17 : null }), { status: modeStatus });
+    if (url.endsWith('/connect-token')) return new Response('{"accessToken":"synthetic-connect"}');
+    if (url.endsWith(`/v1/vaults/${box}`)) return new Response('{}', { status: metadataStatus });
+    if (url.endsWith('/imports/1pux')) { uploads++; assert.equal(atob(JSON.parse(init.body).base64), '\u0000\u00ff'); return new Response('{"imported":1}'); }
+    throw new Error('Unexpected route');
+  } });
+  const file = { arrayBuffer: async () => { reads++; return new Uint8Array([0, 255]).buffer; } };
+  const run = () => imports.import1puxWithSession('https://example.invalid', box, file, 'synthetic@example.invalid', 'synthetic-login');
+  await assert.rejects(run()); assert.equal(reads, 0); assert.equal(uploads, 0);
+  modeStatus = 404; metadataStatus = 409; await assert.rejects(run()); assert.equal(reads, 0); assert.equal(uploads, 0);
+  metadataStatus = 200; await run(); assert.equal(reads, 1); assert.equal(uploads, 1);
+  encrypted = false; modeStatus = 200; await run(); assert.equal(reads, 2); assert.equal(uploads, 2);
 });
