@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   deploy-backend-production:
-    if: github.event.inputs.confirm == 'deploy-prd'
+    if: github.ref == 'refs/heads/main' && github.event.inputs.confirm == 'deploy-prd'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -33,7 +33,12 @@ jobs:
           cache-dependency-path: backend/pnpm-lock.yaml
 
       - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
+          echo '/usr/lib/postgresql/18/bin' >> "$GITHUB_PATH"
 
       - name: Install backend dependencies
         working-directory: backend
@@ -52,8 +57,6 @@ jobs:
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_PRODUCTION_ENV_ID }}
           RAILWAY_PRODUCTION_ENV_ID: ${{ secrets.RAILWAY_PRODUCTION_ENV_ID }}
-          RAILWAY_STAGING_ENV_ID: ${{ secrets.RAILWAY_STAGING_ENV_ID }}
-          RAILWAY_DEVELOPMENT_ENV_ID: ${{ secrets.RAILWAY_DEVELOPMENT_ENV_ID }}
           # Postgres service ID is required (no hardcoded fallback, #325).
           # Snapshot mode reads prd only (no destructive wipe).
           RAILWAY_POSTGRES_PRD_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_PRD_SERVICE_ID }}
@@ -61,11 +64,10 @@ jobs:
         run: bash scripts/railway-deploy-with-replica.sh
 
       # SECURITY: never upload the production DB dump as a GitHub Actions artifact.
-      # Artifacts are downloadable by anyone with repo read access and retained ~90d
-      # unencrypted — that would expose all prod rows on every deploy (#318). The
-      # snapshot is consumed in-job to refresh the dev/stg replica and is discarded
-      # with the ephemeral runner. If a retained backup is ever needed, stream it to
-      # encrypted storage (gpg + short retention), not Actions artifacts.
+      # Repository readers may download artifacts; a DB artifact would expose
+      # production rows on every deploy (#318). The
+      # snapshot reads prd only: it is not restored to another environment. It is
+      # discarded after this job and is not a retained backup or a paid service.
       - name: Remove local prd DB dump
         if: always()
         run: rm -f passshare-snapshot-replica-*.dump

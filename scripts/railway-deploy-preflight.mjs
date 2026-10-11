@@ -4,6 +4,8 @@
  *
  * Required env: RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID, RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID
  */
+import { execFileSync } from "node:child_process";
+
 const API_URL = "https://backboard.railway.com/graphql/v2";
 
 const token =
@@ -21,10 +23,41 @@ function requireEnv(name, value) {
   }
 }
 
-requireEnv("RAILWAY_TOKEN (or RAILWAY_API_TOKEN)", token);
+// These are allowlisted existing production resources, not default IDs.
+// Changing them requires reconciliation with the infrastructure SSOT.
+requireEnv("DEPLOY_TARGET=prd", process.env.DEPLOY_TARGET === "prd");
 requireEnv("RAILWAY_PROJECT_ID", projectId);
 requireEnv("RAILWAY_SERVICE_ID", serviceId);
 requireEnv("RAILWAY_ENVIRONMENT_ID", environmentId);
+requireEnv("RAILWAY_PRODUCTION_ENV_ID", process.env.RAILWAY_PRODUCTION_ENV_ID);
+if (
+  projectId !== "82730a82-b4d4-47d0-b578-f951465465fc" ||
+  serviceId !== "29539998-d8d9-4e41-82a5-f71ca223f96c" ||
+  environmentId !== "c1a3cdfc-9aa3-420d-b101-e6497714ccb9" ||
+  environmentId !== process.env.RAILWAY_PRODUCTION_ENV_ID
+) {
+  console.error("Only the existing PassShare production project/service/environment IDs are allowed.");
+  process.exit(1);
+}
+const branch = execFileSync("git", ["branch", "--show-current"], { encoding: "utf8" }).trim();
+if (
+  (process.env.GITHUB_ACTIONS === "true"
+    ? process.env.GITHUB_REF !== "refs/heads/main" || process.env.GITHUB_SHA !== execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()
+    : branch !== "main") ||
+  execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim()
+) {
+  console.error("Production deploy requires clean source on main (CI must match GITHUB_SHA).");
+  process.exit(1);
+}
+if (process.env.RAILWAY_HEALTH_URL !== "https://pass-share-backend-production.up.railway.app/health/db") {
+  console.error("RAILWAY_HEALTH_URL must be the existing production /health/db URL.");
+  process.exit(1);
+}
+if (process.argv.includes("--offline")) {
+  console.log("Production target and main source guard OK (no provider access).");
+  process.exit(0);
+}
+requireEnv("RAILWAY_TOKEN (or RAILWAY_API_TOKEN)", token);
 
 /** @param {string} query @param {Record<string, unknown>} [variables] */
 async function railwayQuery(query, variables = {}) {
