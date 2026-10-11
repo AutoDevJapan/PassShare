@@ -644,6 +644,8 @@ impl Runner {
             .current_dir("/app")
             .arg("/app/src/index.js")
             .env("DATABASE_URL", database_url(database)?)
+            // The parent owns the unpublished internal Docker network and alias.
+            .env("DATABASE_TRUSTED_PRIVATE_HOSTS", "postgres")
             .env("NODE_ENV", "production")
             .env("APP_ENV", "prd")
             .env("PORT", "8080")
