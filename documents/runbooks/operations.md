@@ -2,7 +2,7 @@
 
 > Issue [#115](https://github.com/AutoDevJapan/PassShare/issues/115)  
 > 親 Epic: [#37](https://github.com/AutoDevJapan/PassShare/issues/37)  
-> 最終更新: 2026-10-06
+> 最終更新: 2026-10-11
 
 ## 目的
 
