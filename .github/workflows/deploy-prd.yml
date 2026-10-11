@@ -42,7 +42,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Railway CLI
-        run: npm install -g @railway/cli
+        run: |
+          npm install -g @railway/cli@5.41.2
+          railway --version
+
+      - name: Configure verified Railway SSH host
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          cat tools/prd-snapshot-go/railway_known_hosts >> "$HOME/.ssh/known_hosts"
+          cat >> "$HOME/.ssh/config" <<'EOF'
+          Host ssh.railway.com
+              StrictHostKeyChecking yes
+              BatchMode yes
+              IdentitiesOnly yes
+          EOF
+          chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+          ssh-keygen -lf tools/prd-snapshot-go/railway_known_hosts
 
       - name: Verify private snapshot helper
         run: |

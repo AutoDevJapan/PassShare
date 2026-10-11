@@ -160,13 +160,9 @@ SSOT: [vulnerability-sla.md](../security/vulnerability-sla.md), [audit-checklist
 docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 ```
 
-### ステージング smoke
+### 旧ステージング smoke
 
-| トリガー | ワークフロー | 動作 |
-|---------|-------------|------|
-| 手動 | `stg-smoke.yml` | `scripts/stg-smoke.mjs` — stg Backend health + Connect |
-
-SSOT: [staging-acceptance.md](../runbooks/staging-acceptance.md)
+稼働stgの配備と`stg-smoke.yml`はPrd統一で廃止した。旧手順は[staging-acceptance.md](../runbooks/staging-acceptance.md)の履歴として残し、実行先に使わない。CIの隔離試験と一時DBは引き続き維持する。
 
 ### Web ドキュメント・法務（Epic #37）
 
@@ -348,6 +344,6 @@ Then provider変更前に失敗する
 
 2026-10-06時点の履歴では本番backendは永続PG18へ切替済み。日次保持6日の設定と手動snapshotの復元は[運用記録](../audits/operations-readiness.md#2026-10-06の再現可能な演習とrailway実検証)へ保存した。元8表の保全と、固定e7の稼働44ファイル・実API15項目は別の確認である。
 
-旧本番DBを参照する履歴やprovision用の例を、現在の稼働先として採用しない。既存GitHub配備・レプリカ用の保存先IDとPostgreSQLクライアントの互換性は、この切替で検証したものではない。ToDo2379のソースguardは現稼働DBのIDとpg_dump 18以上を必須にした。保存済みsecretの実値・runtime接続・件数・スキーマは別途照合する。未確認のジョブ内dumpを永続バックアップと数えない。
+旧本番DBを参照する履歴やprovision用の例を、現在の稼働先として採用しない。ToDo2379のソースguardは現稼働PG18のIDを必須にした。一時snapshotはその既存コンテナの`pg_dump`/`pg_restore`で取得・検査し、取得元と転送後のSHA-256を照合する。runner側のPostgreSQLクライアントや公開TCP proxyは追加しない。保存済みsecretの実値は表示せず、runtime接続・件数・スキーマを別途照合する。未確認のジョブ内dumpを永続バックアップと数えない。
 
 Webの同一サイト経路は[認証経路の仕様](./web-auth-routing.md)を参照する。元のRailway絶対URLをブラウザから使用すると、SameSite=Lax Cookieが別サイト扱いで拒否される。Prdの相対接頭辞とVercel外部rewriteを使用し、本番接頭辞は正式ホストだけへ許可する。ソース設定とVercelの実build値は別々に照合する。

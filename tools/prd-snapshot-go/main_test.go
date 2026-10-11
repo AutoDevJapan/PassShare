@@ -218,3 +218,35 @@ func TestTransportRejectsMissingOrAmbiguousArchives(t *testing.T) {
 		}
 	}
 }
+
+func TestDiagnosticsAreFixedLabelsAndDoNotExposePrivateStderr(t *testing.T) {
+	for _, sample := range []struct{ input, want string }{
+		{"Host key verification failed. private database contents", "host-key-verification"},
+		{"WARNING REMOTE HOST IDENTIFICATION HAS CHANGED! secret connection", "host-key-changed"},
+		{"Permission denied (publickey). token=value", "ssh-identity-rejected"},
+		{"password and database rows", "unclassified"},
+	} {
+		if got := failureClass([]byte(sample.input)); got != sample.want {
+			t.Fatalf("class=%s want=%s", got, sample.want)
+		}
+	}
+}
+
+func TestPinnedRailwayHostMatchesPreviouslyTrustedPublicKey(t *testing.T) {
+	b, err := os.ReadFile("railway_known_hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Fields(string(b))
+	if len(parts) != 3 || parts[0] != "ssh.railway.com" || parts[1] != "ssh-ed25519" {
+		t.Fatal("host trust scope or algorithm changed")
+	}
+	key, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(key)
+	if "SHA256:"+strings.TrimRight(base64.StdEncoding.EncodeToString(digest[:]), "=") != "SHA256:+S1xg92FrnHz6pY3bpkmh1OGtWQGNANXilPzlxA7B1g" {
+		t.Fatal("trusted host key fingerprint changed")
+	}
+}
