@@ -138,6 +138,15 @@ async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient
   });
   assertOk(loginRes, "Login failed");
 
+  // This legacy sync transfers plaintext. Only authoritative compatibility
+  // state permits it; unknown/encrypted/disabled state never reaches Connect.
+  const stateRes = await syncFetch(`${config.apiBaseUrl}/api/encrypted/boxes/${encodeURIComponent(config.vaultId)}`, {
+    credentials: "include", cache: "no-store", redirect: "error",
+  });
+  assertOk(stateRes, "Password box mode unavailable");
+  const state = await stateRes.json() as { mode: string; keyEpoch: number | null };
+  if (state.mode !== "compatibility" || state.keyEpoch !== null) throw new SyncError("unknown", "Encrypted password box requires encrypted item screen");
+
   const tokenRes = await syncFetch(`${config.apiBaseUrl}/api/auth/connect-token`, {
     credentials: "include",
   });

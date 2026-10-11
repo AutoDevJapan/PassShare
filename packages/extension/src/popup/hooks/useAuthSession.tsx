@@ -5,6 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  useRef,
   type ReactNode,
 } from "react";
 import { ConnectClient } from "@passshare/connect";
@@ -28,11 +29,13 @@ import {
   saveRefreshToken,
 } from "../../lib/storage";
 import { bootstrapConnectSession } from "@shared/lib/connect-session";
+import { createCloudSession, type CloudSession } from "@shared/cloud/session-transport";
 
 type AuthSessionContextValue = {
   user: AuthUser | null;
   loading: boolean;
   connectClient: ConnectClient | null;
+  cloudSession: CloudSession | null;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -43,11 +46,14 @@ const AuthSessionContext = createContext<AuthSessionContextValue | null>(null);
 async function buildConnectClientFromStorage(): Promise<{
   user: AuthUser | null;
   client: ConnectClient | null;
+  refreshToken: string | null;
 }> {
+  let heldToken: string | null = null;
   const result = await bootstrapConnectSession(
     {
       async load() {
         const refreshToken = await loadRefreshToken();
+        heldToken = refreshToken;
         if (!refreshToken) {
           return null;
         }
@@ -65,11 +71,12 @@ async function buildConnectClientFromStorage(): Promise<{
   );
 
   if (!result) {
-    return { user: null, client: null };
+    return { user: null, client: null, refreshToken: null };
   }
 
   return {
     user: result.user,
+    refreshToken: heldToken,
     client: new ConnectClient({ host: getApiBaseUrl(), token: result.accessToken }),
   };
 }
@@ -78,21 +85,40 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [connectClient, setConnectClient] = useState<ConnectClient | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cloudSession, setCloudSession] = useState<CloudSession | null>(null);
+  const cloudRef = useRef<CloudSession | null>(null);
+  const generation = useRef(0);
+  function clearCloud() {
+    ++generation.current;
+    cloudRef.current?.dispose(); cloudRef.current = null; setCloudSession(null);
+    window.dispatchEvent(new Event("passshare:cloud-lock"));
+  }
+  function bindCloud(id: string, token: string, epoch: number) {
+    cloudRef.current = createCloudSession(getApiBaseUrl(), id, token, () => epoch === generation.current);
+    setCloudSession(cloudRef.current);
+  }
 
   useEffect(() => {
+    const epoch = generation.current;
     void (async () => {
       try {
-        const { user: storedUser, client } = await buildConnectClientFromStorage();
+        const { user: storedUser, client, refreshToken } = await buildConnectClientFromStorage();
+        if (epoch !== generation.current) return;
+        if (storedUser && refreshToken) bindCloud(storedUser.id, refreshToken, epoch);
         setUser(storedUser);
         setConnectClient(client);
       } finally {
-        setLoading(false);
+        if (epoch === generation.current) setLoading(false);
       }
     })();
+    return () => { ++generation.current; cloudRef.current?.dispose(); cloudRef.current = null; };
   }, []);
 
-  const applyAuth = useCallback(async (response: TokenAuthResponse) => {
+  const applyAuth = useCallback(async (response: TokenAuthResponse, epoch: number) => {
+    if (epoch !== generation.current) { await extensionLogout(response.refreshToken).catch(() => {}); return; }
     await persistAuthSession(response);
+    if (epoch !== generation.current) return;
+    bindCloud(response.user.id, response.refreshToken, epoch);
     setUser(response.user);
     setConnectClient(
       new ConnectClient({ host: getApiBaseUrl(), token: response.connectAccessToken }),
@@ -101,8 +127,10 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
+      clearCloud();
+      const epoch = generation.current;
       try {
-        await applyAuth(await extensionLogin(email, password));
+        await applyAuth(await extensionLogin(email, password), epoch);
       } catch (error) {
         if (error instanceof AuthApiError) {
           throw error;
@@ -115,8 +143,10 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
 
   const signup = useCallback(
     async (email: string, password: string) => {
+      clearCloud();
+      const epoch = generation.current;
       try {
-        await applyAuth(await extensionSignup(email, password));
+        await applyAuth(await extensionSignup(email, password), epoch);
       } catch (error) {
         if (error instanceof AuthApiError) {
           throw error;
@@ -128,6 +158,8 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    clearCloud();
+    setUser(null); setConnectClient(null);
     const refreshToken = await loadRefreshToken();
     if (refreshToken) {
       try {
@@ -142,8 +174,8 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, connectClient, login, signup, logout }),
-    [user, loading, connectClient, login, signup, logout],
+    () => ({ user, loading, connectClient, cloudSession, login, signup, logout }),
+    [user, loading, connectClient, cloudSession, login, signup, logout],
   );
 
   return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;

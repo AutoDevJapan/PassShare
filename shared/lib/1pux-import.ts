@@ -51,6 +51,13 @@ export async function import1puxWithSession(
     throw new Error("Login failed");
   }
 
+  const modeResponse = await fetch(`${apiBaseUrl}/api/encrypted/boxes/${encodeURIComponent(vaultId)}`, {
+    credentials: "include", cache: "no-store", redirect: "error",
+  });
+  if (!modeResponse.ok) throw new Error("Password box mode unavailable");
+  const mode = await modeResponse.json() as { mode: string; keyEpoch: number | null };
+  if (mode.mode !== "compatibility" || mode.keyEpoch !== null) throw new Error("Encrypted password box requires encrypted migration");
+
   const tokenRes = await fetch(`${apiBaseUrl}/api/auth/connect-token`, {
     credentials: "include",
   });

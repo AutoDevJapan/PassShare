@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useI18n } from "@shared/i18n/I18nProvider";
+import { CloudBoxPanel } from "@shared/cloud/CloudBoxPanel";
+import { useEffect, useMemo, useState, useRef } from "react";
 import type { ConnectItem } from "@shared/types/item.js";
 import {
   copyTextWithAutoClear,
@@ -36,8 +38,33 @@ async function copySecretWithAutoClear(value: string): Promise<void> {
 }
 
 export function ItemsPanel() {
+  const { cloudSession, connectClient } = useAuthSession();
+  const { t } = useI18n();
+  const [boxes, setBoxes] = useState<Array<{ id: string; name: string }>>([]);
+  const [selected, setSelected] = useState("");
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setBoxes([]); setSelected(""); setFailed(false);
+    if (connectClient) void connectClient.listVaults().then((list) => {
+      if (active) { setBoxes(list); setSelected(list[0]?.id ?? ""); }
+    }).catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [cloudSession, connectClient]);
+  if (!cloudSession) return <p role="status">{t("session.loading")}</p>;
+  return <section className="ext-panel">
+    <label className="ps-label">{t("app.vault.title")}<select className="ps-input" value={selected} onChange={(event) => setSelected(event.target.value)}>
+      {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
+    </select></label>
+    {failed && <p role="alert">{t("app.item.loadError")}</p>}
+    {selected && <CloudBoxPanel key={`${cloudSession.userId}:${selected}`} session={cloudSession} boxId={selected}
+      compatibility={(ensureCompatibility) => <CompatibilityItemsPanel boxId={selected} ensureCompatibility={ensureCompatibility} />} />}
+  </section>;
+}
+function CompatibilityItemsPanel({ boxId, ensureCompatibility }: { boxId: string; ensureCompatibility: () => Promise<void> }) {
   const labels = useExtensionLabels();
   const { connectClient } = useAuthSession();
+  const alive = useRef(true);
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +72,8 @@ export function ItemsPanel() {
   const [generated, setGenerated] = useState<string | null>(null);
 
   useEffect(() => {
+    alive.current = true;
+    let active = true;
     void (async () => {
       if (!connectClient) {
         setItems([]);
@@ -54,7 +83,8 @@ export function ItemsPanel() {
 
       setLoading(true);
       try {
-        const vaults = await connectClient.listVaults();
+        await ensureCompatibility();
+        const vaults = [{ id: boxId }];
         const allItems: ConnectItem[] = [];
         for (const vault of vaults) {
           const overviews = await connectClient.listItems(vault.id);
@@ -63,12 +93,13 @@ export function ItemsPanel() {
             allItems.push(connectItemFromApi(item));
           }
         }
-        setItems(allItems);
-      } finally {
-        setLoading(false);
+        if (active) setItems(allItems);
+      } catch { if (active) setItems([]); } finally {
+        if (active) setLoading(false);
       }
     })();
-  }, [connectClient]);
+    return () => { active = false; alive.current = false; setItems([]); setGenerated(null); };
+  }, [connectClient, boxId, ensureCompatibility]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -78,7 +109,7 @@ export function ItemsPanel() {
     return items.filter(
       (item) =>
         item.title.toLowerCase().includes(needle) ||
-        item.username.toLowerCase().includes(needle) ||
+        (item.username ?? "").toLowerCase().includes(needle) ||
         (item.url ?? "").toLowerCase().includes(needle),
     );
   }, [items, query]);
@@ -89,6 +120,7 @@ export function ItemsPanel() {
     // instead of lingering indefinitely. The service-worker alarm also covers
     // the popup being closed before the delay elapses.
     await copySecretWithAutoClear(value);
+    if (!alive.current) return;
     setCopied(label);
     window.setTimeout(() => setCopied(null), 1500);
   }
@@ -98,7 +130,7 @@ export function ItemsPanel() {
       type: "GENERATE_PASSWORD",
       length: 20,
     });
-    if (response?.ok && typeof response.password === "string") {
+    if (alive.current && response?.ok && typeof response.password === "string") {
       setGenerated(response.password);
       await copySecretWithAutoClear(response.password);
     }
@@ -142,7 +174,7 @@ export function ItemsPanel() {
                 <button
                   type="button"
                   className="ps-button ps-button--secondary"
-                  onClick={() => void copyValue(`${item.id}-user`, item.username)}
+                  onClick={() => void copyValue(`${item.id}-user`, item.username ?? "")}
                 >
                   {copied === `${item.id}-user` ? labels.copied : labels.copyUsername}
                 </button>
@@ -151,7 +183,7 @@ export function ItemsPanel() {
                 <button
                   type="button"
                   className="ps-button"
-                  onClick={() => void copyValue(`${item.id}-pw`, item.password)}
+                  onClick={() => void copyValue(`${item.id}-pw`, item.password ?? "")}
                 >
                   {copied === `${item.id}-pw` ? labels.copied : labels.copyPassword}
                 </button>

@@ -7,8 +7,12 @@ import { listen } from "@tauri-apps/api/event";
 import { AppHeader } from "./components/AppHeader";
 import { MainPanel } from "./components/MainPanel";
 import { SetupPanel } from "./components/SetupPanel";
+import { CloudItemsPanel } from "./components/CloudItemsPanel";
+import { useI18n } from "@shared/i18n/I18nProvider";
 
 export function App() {
+  const { t } = useI18n();
+  const [cloud, setCloud] = useState(false);
   const [view, setView] = useState<AppView>("setup");
   const [boxPath, setBoxPath] = useState("");
   const [masterPassword, setMasterPassword] = useState("");
@@ -40,6 +44,7 @@ export function App() {
   }, []);
 
   function handleLocked() {
+    window.dispatchEvent(new Event("passshare:cloud-lock"));
     generation.current += 1;
     setLockGeneration(generation.current);
     setMasterPassword("");
@@ -68,7 +73,10 @@ export function App() {
       <MatrixBackground className="matrix-rain--fixed" />
       <main className="ps-app">
         <AppHeader />
-        {view === "setup" ? (
+        <button type="button" className="ps-button ps-button--secondary" onClick={() => setCloud((value) => !value)}>
+          {cloud ? t("app.vault.back") : t("cloud.openSubmit")}
+        </button>
+        {cloud ? <CloudItemsPanel /> : view === "setup" ? (
           <SetupPanel
             key={lockGeneration}
             boxPath={boxPath}

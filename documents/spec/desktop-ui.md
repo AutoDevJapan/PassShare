@@ -148,5 +148,7 @@ cargo tauri build    # 本番ビルド（MSI/DMG/AppImage）
 
 ## 関連
 
+- [承認済み3クライアントの暗号化項目・添付](./cross-client-encrypted-items-ui.md) — 共通Rust/WASM画面への接続と有限検証、native受入の残条件。
+
 - [MVP 仕様](./feature-passshare-mvp.md)
 - [デザインシステム](./design-system.md)

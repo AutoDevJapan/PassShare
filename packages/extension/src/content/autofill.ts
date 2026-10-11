@@ -85,8 +85,10 @@ function sendBackgroundMessage<T extends BackgroundResponse>(
 // Cleanup for listeners bound outside the panel element (e.g. on the password
 // field), invoked when the panel is torn down so nothing leaks between renders.
 let panelCleanup: (() => void) | null = null;
+let panelGeneration = 0;
 
 function removePanel(): void {
+  ++panelGeneration;
   panelCleanup?.();
   panelCleanup = null;
   document.getElementById(PANEL_ID)?.remove();
@@ -110,6 +112,7 @@ function fillInputs(username: string, password: string): void {
 
 function renderPanel(matches: CredentialMatch[]): void {
   removePanel();
+  const generation = panelGeneration;
   if (matches.length === 0) {
     return;
   }
@@ -157,9 +160,19 @@ function renderPanel(matches: CredentialMatch[]): void {
     option.style.cssText =
       "display:block;width:100%;text-align:left;background:#111827;border:1px solid #1f2937;color:inherit;border-radius:8px;padding:8px;margin:0 0 6px;cursor:pointer";
     option.innerHTML = `<strong>${escapeHtml(match.title)}</strong><br><span>${escapeHtml(match.username || t("extension.autofill.noUsername"))}</span>`;
-    const choose = (): void => {
-      fillInputs(match.username, match.password);
-      removePanel();
+    const choose = async (): Promise<void> => {
+      const response = await sendBackgroundMessage<{ ok: boolean; matches?: CredentialMatch[] }>({
+        type: "FILL_CREDENTIAL", accountId: match.accountId, vaultId: match.vaultId, itemId: match.itemId,
+      }).catch(() => ({ ok: false, matches: [] }));
+      const fresh = response.matches?.[0];
+      try {
+        if (response.ok && fresh && fresh.accountId === match.accountId && generation === panelGeneration && !document.hidden) {
+          fillInputs(fresh.username, fresh.password);
+          removePanel();
+        }
+      } finally {
+        for (const entry of response.matches ?? []) { entry.password = ""; entry.username = ""; }
+      }
     };
     option.addEventListener("click", choose);
     options.push(option);
@@ -228,6 +241,7 @@ function escapeHtml(value: string): string {
 }
 
 async function showMatchesForCurrentPage(): Promise<void> {
+  const generation = panelGeneration;
   const hostname = window.location.hostname;
   if (!hostname) {
     return;
@@ -238,12 +252,18 @@ async function showMatchesForCurrentPage(): Promise<void> {
     hostname,
   });
 
-  if (response.ok) {
+  if (response.ok && generation === panelGeneration && !document.hidden) {
     // Ensure the stored locale has resolved before painting localized UI.
     await localeReady;
-    renderPanel(response.matches);
+    if (generation === panelGeneration && !document.hidden) renderPanel(response.matches);
   }
 }
+
+document.addEventListener("visibilitychange", () => { if (document.hidden) removePanel(); });
+window.addEventListener("pagehide", removePanel);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && STORAGE_KEYS.refreshToken in changes) removePanel();
+});
 
 function attachPasswordFocusHandler(): void {
   const requestMatches = debounce(() => {

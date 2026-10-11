@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "types": ["vite/client"],
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
@@ -19,7 +20,10 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../../shared/*"]
+      "@shared/*": ["../../shared/*"],
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "@passshare/connect": ["../../packages/connect-js/dist/client.d.ts"]
     }
   },
   "include": ["src", "../../shared/types", "../../shared/ui"]
