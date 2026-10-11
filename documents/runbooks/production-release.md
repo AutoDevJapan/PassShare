@@ -68,6 +68,8 @@ git pull origin main
 6. Desktop — [desktop-release.md](./desktop-release.md)
 7. CHANGELOG 確定
 
+DesktopのM7-Aには、タグや公開を行わない[手動の署名候補工程](./desktop-release.md#m7-aの手動署名候補工程準備コード実署名は未実施)を先に使う。既存鍵・証明書・公証環境が無ければ失敗させ、候補の実署名と対応OSでの導入・更新・削除を確認する。非公開CI成果物の保存だけでこの本番リリースや販売の完了を判断しない。
+
 ## Rollback
 
 ### Backend（Railway）

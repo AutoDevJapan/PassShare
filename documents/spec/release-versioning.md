@@ -45,6 +45,20 @@ git push origin v2.0.0
 - `apps/desktop/src-tauri/tauri.conf.json` の `version` を tag と一致させる
 - GitHub Releases + `latest.json` — [desktop-release.md](../runbooks/desktop-release.md)
 
+## M7-A: 未公開Desktop候補の検査
+
+`desktop-signed-candidate.yml` は手動起動専用の準備工程であり、タグ・Release・更新用の公開manifestを作らない。現在のソース版を候補版とし、配布の準備のために版や更新用公開鍵を変更しない。
+
+- 起動時の非公開リポジトリのmainに限定し、入力は40桁のSHAだけ。workflowのSHA・checkoutのSHAと一致しなければ失敗する。
+- `package.json`、Tauri設定、Rust workspaceの版を読み取りだけで照合する。追加のOS別Tauri設定は、検査への明示対応まで拒否する。
+- 更新署名の信頼基準は現行Tauri公開鍵。候補や生成manifestから読み込んだ別の公開鍵で成功を自己証明しない。
+- OSの発行元署名と更新署名を別々に検査する。WindowsはAuthenticodeと時刻署名、macOSはDeveloper IDと公証、Linuxは更新パッケージのminisign署名を検査する。
+- 検査成功後に限り、候補の本体・公開署名・証拠JSONを7日間の非公開CI成果物に保存する。証明書、秘密鍵、作業用設定、子プロセスのログは保存しない。
+
+証拠JSONはソースSHA、3種類の版、公開鍵の指紋、実ファイルのサイズ・SHA256・署名の検査結果・アプリ本体のSHA256を記録する。ソースSHAは信頼した実行環境の由来であり、再現ビルドによる同一性の証明ではない。取得する担当はGitHub上の成功したworkflow/runとそのSHAを先に照合する。
+
+署名環境・既存秘密鍵が不足する間は明示的に失敗する。通常の3OS無署名CIには署名秘密を要求しない。候補の署名成功だけでM7-A全体、M7、原22条件を完了としない。対応OSでの導入・起動・実更新・削除と、公開後の実URLから取得したバイトと署名の照合が必要である。
+
 ## 関連
 
 - [production-release.md](../runbooks/production-release.md)

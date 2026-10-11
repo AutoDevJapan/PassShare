@@ -1,0 +1,165 @@
+name: Desktop Signed Candidate (manual, private artifacts only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full SHA of main at dispatch; must equal the workflow SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-signed-candidate
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate dispatch before checkout or any signing secret
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.source_sha }}
+          CANDIDATE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or
+              $env:GITHUB_REPOSITORY -ne 'AutoDevJapan/PassShare' -or
+              $env:GITHUB_REF -ne 'refs/heads/main' -or
+              $env:CANDIDATE_REPOSITORY_PRIVATE -ne 'true' -or
+              $env:CANDIDATE_SHA -cnotmatch '^[0-9a-f]{40}$' -or
+              $env:CANDIDATE_SHA -cne $env:GITHUB_SHA -or
+              $env:CANDIDATE_SHA -cne $env:GITHUB_WORKFLOW_SHA) {
+            throw 'Only the exact private main workflow SHA is accepted'
+          }
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: tools/desktop-release-check/go.mod
+          cache: false
+
+      - name: Verify source and trust anchor without secrets
+        working-directory: tools/desktop-release-check
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.source_sha }}
+          CANDIDATE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          go run -mod=readonly . preflight --repo ../.. --source-sha $env:CANDIDATE_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Require provisioned signing runners without receiving signing secrets
+        shell: pwsh
+        env:
+          WINDOWS_READY: ${{ vars.DESKTOP_WINDOWS_SIGNING_READY }}
+          MACOS_READY: ${{ vars.DESKTOP_MACOS_SIGNING_READY }}
+          LINUX_READY: ${{ vars.DESKTOP_LINUX_SIGNING_READY }}
+        run: |
+          if ($env:WINDOWS_READY -ne 'true' -or $env:MACOS_READY -ne 'true' -or $env:LINUX_READY -ne 'true') {
+            throw 'All three dedicated signing runners must be provisioned; no unsigned fallback'
+          }
+
+  signed:
+    needs: gate
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            runner: [self-hosted, Windows, X64, passshare-windows-signing]
+          - os: macos
+            runner: [self-hosted, macOS, ARM64, passshare-macos-signing]
+          - os: linux
+            runner: [self-hosted, Linux, X64, passshare-linux-signing]
+    runs-on: ${{ matrix.runner }}
+    env:
+      CANDIDATE_SHA: ${{ inputs.source_sha }}
+      CANDIDATE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      # Public policy, NOT credentials. No freely supplied signCommand/provider shell.
+      WINDOWS_CERT_THUMBPRINT: ${{ matrix.os == 'windows' && vars.DESKTOP_WINDOWS_CERT_THUMBPRINT || '' }}
+      WINDOWS_PUBLISHER_SUBJECT: ${{ matrix.os == 'windows' && vars.DESKTOP_WINDOWS_PUBLISHER_SUBJECT || '' }}
+      WINDOWS_TIMESTAMP_URL: ${{ matrix.os == 'windows' && vars.DESKTOP_WINDOWS_TIMESTAMP_URL || '' }}
+      MACOS_NOTARY_PROFILE: ${{ matrix.os == 'macos' && vars.DESKTOP_MACOS_NOTARY_PROFILE || '' }}
+      APPLE_TEAM_ID: ${{ matrix.os == 'macos' && vars.DESKTOP_APPLE_TEAM_ID || '' }}
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: tools/desktop-release-check/go.mod
+          cache: false
+
+      - name: Compile verifier and check pinned source
+        working-directory: tools/desktop-release-check
+        shell: pwsh
+        run: |
+          $tool = Join-Path $env:RUNNER_TEMP 'desktop-release-check.exe'
+          go build -mod=readonly -o $tool .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $tool preflight --repo ../.. --source-sha $env:CANDIDATE_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+
+      - name: Install frontend dependencies without signing secrets
+        shell: pwsh
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir packages/connect-js run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir apps/desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build signed candidates (no publication, no secret child logs)
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.os == 'macos' && vars.DESKTOP_APPLE_SIGNING_IDENTITY || '' }}
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'desktop-release-check.exe') build --repo . --source-sha $env:CANDIDATE_SHA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify actual signatures, versions and stage allowlisted files only
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP ('passshare-candidate-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          & (Join-Path $env:RUNNER_TEMP 'desktop-release-check.exe') verify --repo . --source-sha $env:CANDIDATE_SHA --bundle "$env:GITHUB_WORKSPACE/target/release/bundle" --out $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "CANDIDATE_OUTPUT=$out" >> $env:GITHUB_ENV
+
+      - name: Save verified private candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-signed-candidate-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ env.CANDIDATE_OUTPUT }}/*
+          if-no-files-found: error
+          retention-days: 7
