@@ -1,49 +1,27 @@
-name: Sync Vercel Env
+name: Sync Vercel Production Env
 
 permissions:
   contents: read
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [stg, develop]
   workflow_dispatch:
 
 concurrency:
-  group: sync-vercel-env-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: sync-vercel-production-env
+  cancel-in-progress: false
 
 jobs:
   sync-vercel-env:
-    if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && github.actor != 'dependabot[bot]'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '22'
-
-      - name: Sync Vercel env for current branch
+      - name: Sync existing production project only
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          VERCEL_TEAM_SLUG: ${{ secrets.VERCEL_ORG_ID }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BRANCH="${{ github.head_ref }}"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            node scripts/sync-vercel-env.mjs \
-              --baseline \
-              --all-preview-defaults \
-              --sync-remote-branches
-            exit 0
-          else
-            BRANCH="${{ github.ref_name }}"
-          fi
-          node scripts/sync-vercel-env.mjs --branch "$BRANCH"
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: node scripts/sync-vercel-env.mjs --baseline

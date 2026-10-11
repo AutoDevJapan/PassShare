@@ -2,7 +2,19 @@
 
 ## Status
 
-Amended (2026-05-30) — dev/preview は seed、stg のみ prd レプリカ
+Superseded (2026-10-12, ToDo2379) — [ADR001のPrd-only決定](./001-vercel-railway-environments.md)と[現在のインフラ仕様](../spec/infrastructure.md)へ置換。
+
+## 置き換えた決定
+
+以下のdev-first構成は履歴として保存する。現在の配備手順には使わない。
+
+- 公開dev/stg/previewの作成・配備は廃止し、main/PRから非Prdへ配備するworkflowを削除する。
+- Backendの手動配備は維持するが、対象は既存Prdの明示IDと現在のmainソースだけに限定する。FrontendのGit配備もmainのProductionだけに限定する。
+- DBは現稼働PG18 `passshare-postgres-preserved-1177`を使用する。旧 `postgres-prd-v2`を現在のDBと取り違えない。production snapshotは現Prdだけを読む一時dumpであり、dev/stgへのrefreshや有料backupを必要としない。実dumpをartifactへ保存しない。
+- localhostとPR CIの隔離試験、一時DBは維持する。必要成果の移行とPrd実確認、旧provider資源の廃止確認は別途行う。
+- 人間レビューを求める規則は変更しない。
+
+## 旧決定の履歴（以下は運用しない）
 
 ## Context
 

@@ -1,4 +1,4 @@
-# ステージング受入テスト Runbook
+# 隔離環境の受入テスト Runbook（旧ステージング手順）
 
 > Issue [#106](https://github.com/AutoDevJapan/PassShare/issues/106)  
 > 親 Epic: [#36](https://github.com/AutoDevJapan/PassShare/issues/36)  
@@ -6,29 +6,31 @@
 
 ## 目的
 
-`stg` 環境へ promote する前に、全クライアントの smoke を実施し、本番相当の品質を確認する。
+公開stg/previewの配備は廃止した。従来の受入項目はlocalhostとPR CIの隔離試験で維持する。Prd実確認は[本番リリースRunbook](./production-release.md)で別途行う。
 
 ## 環境 URL（SSOT: [infrastructure.md](../spec/infrastructure.md)）
 
 | コンポーネント | URL |
 |---------------|-----|
-| Backend API | https://pass-share-backend-staging.up.railway.app |
-| Web ポータル | Vercel Preview（`stg` ブランチ） |
+| Backend API | localhost / CI一時DBを使うAPI |
+| Web ポータル | localhost / CIの開発server |
 
 ## 自動 smoke（CLI）
 
 ```powershell
-# Backend + Connect API
+
+# Backend + Connect API（Prdと旧公開環境を指定しない）
+$env:STG_BACKEND_URL = 'http://localhost:3000'
 node scripts/stg-smoke.mjs
 
-# Web UI（Vercel Preview / stg）— Issue #207
-# STG_WEB_URL=https://... node scripts/stg-web-smoke.mjs
+# Web UIは local-dev-web.md のlocalhost E2Eを使用する
 
 # Cross-client（Web API → op-cli → Desktop sync）— Issue #214
+
 # 事前に op-cli をビルド: cargo build -p op-cli --release
 docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 
-# 失敗時は exit 1 — CI workflow_dispatch または手動実行
+# 失敗時は exit 1。stg-smoke workflowは廃止。Quality Gateの隔離試験を使用する
 ```
 
 ## Cross-client 統合 smoke（Issue #214）
@@ -60,10 +62,10 @@ docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 
 ## Web / CLI / Desktop 自動化マトリクス（Issue #205）
 
-| クライアント | ローカル | CI（PR / main） | stg / preview |
+| クライアント | localhost | CI（PR / main） | 受入先 |
 |-------------|---------|----------------|---------------|
-| **Web** | [local-dev-web.md](./local-dev-web.md) — Playwright E2E | Quality Gate `frontend` job | `stg-web-smoke.mjs` + `stg-smoke.yml` |
-| **CLI (op)** | [op-cli.md](./op-cli.md) — `cargo build -p op-cli` | Quality Gate `docker-e2e` — `op-cli-e2e.test.js` | 手動 `op vault list`（stg token） |
+| **Web** | [local-dev-web.md](./local-dev-web.md) — Playwright E2E | Quality Gate `frontend` job | localhostのWeb E2E |
+| **CLI (op)** | [op-cli.md](./op-cli.md) — `cargo build -p op-cli` | Quality Gate `docker-e2e` — `op-cli-e2e.test.js` | 隔離DBのConnectトークン |
 | **Desktop** | [local-dev-desktop.md](./local-dev-desktop.md) | Quality Gate `desktop-smoke` — Rust `smoke_*` + cloud-sync integration | 手動 MVP + クラウド同期 smoke |
 
 ## 受入チェックリスト
@@ -109,12 +111,7 @@ docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 
 ## CI 連携
 
-`.github/workflows/stg-smoke.yml` — `workflow_dispatch` で stg smoke を実行。
-
-| Job | Secrets | 内容 |
-|-----|---------|------|
-| `api-smoke` | `STG_OP_CONNECT_TOKEN`（任意） | `stg-smoke.mjs` — Backend / Connect |
-| `web-ui-smoke` | `STG_WEB_URL` + `run_web_ui: true` | `stg-web-smoke.mjs` — Playwright UI CRUD |
+旧`.github/workflows/stg-smoke.yml`は削除した。Quality Gateのfrontend、docker-e2e、desktop-smokeと他の隔離試験は維持する。旧stg URLを省略時に使う補助を、そのまま実Prdへ向けない。Prd実確認でデータを作成・変更する操作は、対象と必要性を別途確認する。
 
 ## 関連
 

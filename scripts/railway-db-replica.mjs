@@ -1,30 +1,27 @@
 #!/usr/bin/env node
 /**
- * Refresh target Postgres from source (pg_dump → pg_restore) or snapshot source only.
+ * Snapshot existing production Postgres only. Hosted replica refresh is retired.
  * SSOT: documents/spec/infrastructure.md — deploy pipeline DB replica branches.
  *
  * Usage:
- *   node scripts/railway-db-replica.mjs refresh --source prd --target dev|stg
  *   node scripts/railway-db-replica.mjs snapshot --source prd
  *
  * Env: RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID
  *   Railway environment IDs (required — no hardcoded fallback):
- *     RAILWAY_PRODUCTION_ENV_ID, RAILWAY_STAGING_ENV_ID, RAILWAY_DEVELOPMENT_ENV_ID
+ *     RAILWAY_PRODUCTION_ENV_ID
  *   Postgres plugin service IDs (required — no hardcoded fallback):
- *     RAILWAY_POSTGRES_PRD_SERVICE_ID, RAILWAY_POSTGRES_STG_SERVICE_ID,
- *     RAILWAY_POSTGRES_DEV_SERVICE_ID
- * Optional: RAILWAY_DATABASE_PUBLIC_URL_PRD|DEV|STG (CI override)
+ *     RAILWAY_POSTGRES_PRD_SERVICE_ID (current PG18 service, not legacy PG16)
+ * Connection overrides are retired; use the current service variables.
  *
  * SAFETY: environment/service IDs are resolved from env vars only. Hardcoded
  * UUID fallbacks were removed (#325) — a renamed/unset CI variable must fail
  * loudly rather than silently resolve to a stale ID and wipe the wrong Railway
  * environment (max blast-radius: wiping prd, or wiping dev/stg from the wrong
- * source). `refreshTargetFromSource` additionally asserts the resolved target
- * host differs from the source host before any destructive DROP.
+ * source). Refresh is now rejected before connection; the pure legacy identity
+ * and SQL helpers remain available for their existing regression tests.
  */
 
 import { spawnSync } from "node:child_process";
-import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,15 +31,11 @@ const API_URL = "https://backboard.railway.com/graphql/v2";
 /** Env var names for Railway environment IDs — SSOT: documents/spec/infrastructure.md */
 const ENV_ID_VARS = {
   prd: "RAILWAY_PRODUCTION_ENV_ID",
-  stg: "RAILWAY_STAGING_ENV_ID",
-  dev: "RAILWAY_DEVELOPMENT_ENV_ID",
 };
 
 /** Env var names for Postgres plugin service IDs — SSOT: documents/spec/infrastructure.md */
 const POSTGRES_SERVICE_ID_VARS = {
   prd: "RAILWAY_POSTGRES_PRD_SERVICE_ID",
-  stg: "RAILWAY_POSTGRES_STG_SERVICE_ID",
-  dev: "RAILWAY_POSTGRES_DEV_SERVICE_ID",
 };
 
 const POSTGRES_PORT = 5432;
@@ -93,10 +86,8 @@ function buildPostgresUrl(user, password, database, host, port) {
 }
 
 function pickDirectCiDatabaseUrl(variables, logicalEnv) {
-  const overrideKey = `RAILWAY_DATABASE_PUBLIC_URL_${logicalEnv.toUpperCase()}`;
-  const override = process.env[overrideKey];
-  if (override) {
-    return override;
+  if (process.env.RAILWAY_DATABASE_PUBLIC_URL_PRD) {
+    throw new Error("Connection overrides are retired; resolve the current production service variables instead.");
   }
 
   const publicUrl = variables.DATABASE_PUBLIC_URL;
@@ -168,38 +159,16 @@ async function listTcpProxies(environmentId, serviceId) {
   return data?.tcpProxies ?? [];
 }
 
-async function createTcpProxy(environmentId, serviceId, applicationPort) {
-  const mutation = `
-    mutation TcpProxyCreate($input: TCPProxyCreateInput!) {
-      tcpProxyCreate(input: $input) {
-        id
-        domain
-        proxyPort
-        applicationPort
-      }
-    }
-  `;
-
-  const data = await railwayQuery(mutation, {
-    input: { applicationPort, environmentId, serviceId },
-  });
-
-  return data?.tcpProxyCreate;
-}
-
 async function ensureTcpProxy(environmentId, serviceId, logicalEnv) {
   const existing = await listTcpProxies(environmentId, serviceId);
   const postgresProxy =
-    existing.find((proxy) => proxy.applicationPort === POSTGRES_PORT) ?? existing[0];
+    existing.find((proxy) => proxy.applicationPort === POSTGRES_PORT);
 
   if (postgresProxy) {
     return postgresProxy;
   }
 
-  console.log(
-    `No TCP proxy on postgres-${logicalEnv}; creating proxy for port ${POSTGRES_PORT}...`,
-  );
-  return createTcpProxy(environmentId, serviceId, POSTGRES_PORT);
+  throw new Error(`No existing TCP proxy on postgres-${logicalEnv}; snapshot does not provision infrastructure.`);
 }
 
 async function getServiceVariables(environmentId, serviceId) {
@@ -275,7 +244,7 @@ function runCommand(command, args, env = {}) {
   });
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with ${result.status}`);
+    throw new Error(`${command} failed with status ${result.status}; connection arguments omitted.`);
   }
 }
 
@@ -337,69 +306,25 @@ export function buildPublicSchemaWipeSql(dbUser) {
   ].join("\n");
 }
 
-/** @param {string} targetUrl */
-function wipeTargetDatabase(targetUrl) {
-  const dbUser = parsePostgresUser(targetUrl);
-  const wipeSql = buildPublicSchemaWipeSql(dbUser);
-
-  console.log(`Wiping public schema on target before restore (user: ${dbUser})...`);
-  runCommand("psql", [targetUrl, "-v", "ON_ERROR_STOP=1", "-c", wipeSql]);
-}
-
-async function refreshTargetFromSource(sourceEnv, targetEnv) {
-  const label = branchLabel();
-  console.log(`DB replica branch: ${label}`);
-  console.log(`Refreshing ${targetEnv} from ${sourceEnv}...`);
-
-  const sourceUrl = await getDatabaseUrl(sourceEnv);
-  const targetUrl = await getDatabaseUrl(targetEnv);
-
-  // Fail closed before any dump/restore if the target resolves to the source
-  // host — the destructive DROP below must never hit the source (prd) DB (#325).
-  assertDistinctTarget(sourceUrl, targetUrl, { sourceEnv, targetEnv });
-
-  const dumpPath = join(tmpdir(), `passshare-${label}.dump`);
-
-  try {
-    runCommand("pg_dump", [
-      "--format=custom",
-      "--no-owner",
-      "--no-acl",
-      "--file",
-      dumpPath,
-      sourceUrl,
-    ]);
-
-    wipeTargetDatabase(targetUrl);
-
-    runCommand("pg_restore", [
-      "--exit-on-error",
-      "--no-owner",
-      "--no-acl",
-      "--single-transaction",
-      "--dbname",
-      targetUrl,
-      dumpPath,
-    ]);
-
-    console.log(`Replica refresh complete: ${sourceEnv} → ${targetEnv} (${label})`);
-  } finally {
-    try {
-      unlinkSync(dumpPath);
-    } catch {
-      // ignore cleanup errors
-    }
-  }
-}
-
 async function snapshotSource(sourceEnv) {
+  if (
+    sourceEnv !== "prd" ||
+    process.env.RAILWAY_PROJECT_ID !== "82730a82-b4d4-47d0-b578-f951465465fc" ||
+    getEnvironmentId(sourceEnv) !== "c1a3cdfc-9aa3-420d-b101-e6497714ccb9" ||
+    getPostgresServiceId(sourceEnv) !== "4fdfda2d-ed50-4396-9797-25ea7720f720"
+  ) {
+    throw new Error("Snapshot requires the existing production environment and current PG18 service IDs.");
+  }
   const label = branchLabel();
-  const dumpPath = join(process.cwd(), `passshare-snapshot-${label}.dump`);
+  const dumpPath = join(process.env.DB_SNAPSHOT_DIR ?? tmpdir(), `passshare-snapshot-${label}.dump`);
   console.log(`DB snapshot branch: ${label}`);
   console.log(`Snapshotting ${sourceEnv}...`);
 
+  const version = spawnSync("pg_dump", ["--version"], { encoding: "utf8" });
+  if (version.status !== 0 || Number(version.stdout.match(/PostgreSQL\) (\d+)/)?.[1] ?? 0) < 18) {
+    throw new Error("Production snapshot requires pg_dump 18 or newer.");
+  }
   const sourceUrl = await getDatabaseUrl(sourceEnv);
-
   runCommand("pg_dump", [
     "--format=custom",
     "--no-owner",
@@ -415,14 +340,13 @@ async function snapshotSource(sourceEnv) {
 
 function printHelp() {
   console.log(`Usage:
-  node scripts/railway-db-replica.mjs refresh --source prd --target dev|stg
   node scripts/railway-db-replica.mjs snapshot --source prd
 
 Environment (all IDs required — no hardcoded fallback, #325):
   RAILWAY_API_TOKEN, RAILWAY_PROJECT_ID
-  RAILWAY_PRODUCTION_ENV_ID, RAILWAY_STAGING_ENV_ID, RAILWAY_DEVELOPMENT_ENV_ID
-  RAILWAY_POSTGRES_PRD_SERVICE_ID, RAILWAY_POSTGRES_STG_SERVICE_ID, RAILWAY_POSTGRES_DEV_SERVICE_ID
-  RAILWAY_DATABASE_PUBLIC_URL_PRD|DEV|STG (optional CI override)
+  RAILWAY_PRODUCTION_ENV_ID, RAILWAY_POSTGRES_PRD_SERVICE_ID (current PG18)
+  Connection overrides are rejected; existing current service variables are required.
+  refresh is retired; snapshots never restore into dev/stg.
 `);
 }
 
@@ -451,20 +375,13 @@ async function main() {
   const { mode, options } = parseArgs(process.argv.slice(2));
 
   if (mode === "refresh") {
-    if (!options.target) {
-      throw new Error("refresh requires --target dev|stg");
-    }
-    if (!["dev", "stg"].includes(options.target)) {
-      throw new Error("--target must be dev or stg");
-    }
-    if (options.source !== "prd") {
-      throw new Error("refresh currently supports --source prd only");
-    }
-    await refreshTargetFromSource(options.source, options.target);
-    return;
+    throw new Error("Replica refresh is retired; only a prd snapshot is supported.");
   }
 
   if (mode === "snapshot") {
+    if (options.source !== "prd" || options.target !== null) {
+      throw new Error("Snapshot supports --source prd only, without --target.");
+    }
     await snapshotSource(options.source);
     return;
   }

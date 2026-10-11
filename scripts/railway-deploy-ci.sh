@@ -4,10 +4,11 @@ set -euo pipefail
 # Deploy backend via Railway CLI (CI) with retries and post-deploy /health/db smoke.
 #
 # Required env:
-#   RAILWAY_API_TOKEN or RAILWAY_PROJECT_TOKEN, RAILWAY_PROJECT_ID, RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID
+#   DEPLOY_TARGET=prd, RAILWAY_PROJECT_ID, RAILWAY_SERVICE_ID,
+#   RAILWAY_ENVIRONMENT_ID, RAILWAY_PRODUCTION_ENV_ID, RAILWAY_HEALTH_URL
+# Auth: existing CLI OAuth session or RAILWAY_API_TOKEN / RAILWAY_PROJECT_TOKEN
 # Optional env:
 #   RAILWAY_DEPLOY_ATTEMPTS (default 3)
-#   RAILWAY_HEALTH_URL — e.g. https://pass-share-backend-preview.up.railway.app/health/db
 #   RAILWAY_HEALTH_ATTEMPTS (default 18)
 #   RAILWAY_HEALTH_INTERVAL_SEC (default 10)
 
@@ -15,6 +16,9 @@ attempts="${RAILWAY_DEPLOY_ATTEMPTS:-3}"
 health_url="${RAILWAY_HEALTH_URL:-}"
 health_attempts="${RAILWAY_HEALTH_ATTEMPTS:-18}"
 health_interval="${RAILWAY_HEALTH_INTERVAL_SEC:-10}"
+
+# Reject non-production IDs and branches before auth, migrations or uploads.
+node scripts/railway-deploy-preflight.mjs --offline
 
 # CLI auth resolution.
 #
@@ -43,13 +47,15 @@ elif [ -n "${RAILWAY_TOKEN:-}" ]; then
   # Caller supplied a genuine project token directly in RAILWAY_TOKEN.
   :
 else
-  echo "Missing RAILWAY_TOKEN, RAILWAY_PROJECT_TOKEN, or RAILWAY_API_TOKEN"
-  exit 1
+  # Manual deployments may use the existing Railway CLI OAuth session.
+  :
 fi
 
 pnpm --dir backend run migrate:verify
 
-node scripts/railway-deploy-preflight.mjs
+if [ -n "${RAILWAY_API_TOKEN:-}${RAILWAY_TOKEN:-}" ]; then
+  node scripts/railway-deploy-preflight.mjs
+fi
 
 railway_up() {
   if railway up --help 2>&1 | grep -q -- '--project'; then
@@ -59,7 +65,8 @@ railway_up() {
       --environment "${RAILWAY_ENVIRONMENT_ID}" \
       --detach
   else
-    railway up --detach
+    echo "Railway CLI lacks explicit project targeting; upgrade it before deployment."
+    return 1
   fi
 }
 
@@ -79,11 +86,6 @@ done
 if [ "$deploy_ok" -ne 1 ]; then
   echo "Railway deploy failed after ${attempts} attempt(s)."
   exit 1
-fi
-
-if [ -z "$health_url" ]; then
-  echo "RAILWAY_HEALTH_URL not set; skipping post-deploy smoke."
-  exit 0
 fi
 
 echo "Post-deploy smoke: ${health_url}"

@@ -1,6 +1,6 @@
 # PassShare インフラ構成 (SSOT)
 
-> 最終更新: 2026-10-06（prd フロントは custom domain `pass-share.bm1314.net` で配信、[#374](https://github.com/AutoDevJapan/PassShare/issues/374)）
+> 最終更新: 2026-10-12（ToDo2379: 配備先を既存Prdだけへ限定。実providerの廃止・DB照合は別途実測）
 
 ## Railway プロジェクト ID
 
@@ -8,23 +8,22 @@
 |---------|----------|
 | Project | `82730a82-b4d4-47d0-b578-f951465465fc` |
 | Backend Service | `29539998-d8d9-4e41-82a5-f71ca223f96c` |
-| postgres-dev | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
-| postgres-stg | `7234bbc3-c482-4009-9c88-03063521ffd1` |
+| 旧postgres-dev（廃止対象・削除確認前） | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
+| 旧postgres-stg（廃止対象・削除確認前） | `7234bbc3-c482-4009-9c88-03063521ffd1` |
 | 本番の現稼働DB | `4fdfda2d-ed50-4396-9797-25ea7720f720`、passshare-postgres-preserved-1177（PG18、永続volume） |
 | postgres-prd-v2 | `1509c487-cf03-4c50-8c9d-8781d53ee19a`（旧本番、切替後の更新は同期されない） |
 | production env | `c1a3cdfc-9aa3-420d-b101-e6497714ccb9` |
-| staging env | `c807d209-0624-4e13-aff6-61332cd0bb29` |
-| preview env | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
-| development env | `0951c467-6bc3-418f-af75-a96e810f4946` |
+| 旧staging env（廃止対象） | `c807d209-0624-4e13-aff6-61332cd0bb29` |
+| 旧preview env（廃止対象） | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
+| 旧development env（廃止対象） | `0951c467-6bc3-418f-af75-a96e810f4946` |
 
 ### Backend URL
 
 | 環境 | URL |
 |------|-----|
 | prd | https://pass-share-backend-production.up.railway.app |
-| stg | https://pass-share-backend-staging.up.railway.app |
-| preview | https://pass-share-backend-preview.up.railway.app |
-| dev | https://pass-share-backend-development.up.railway.app |
+
+旧stg/preview/devのURLは配備・同期・検査の送り先にしない。上の旧IDは移行と廃止の照合用履歴であり、削除済みという意味ではない。
 
 ## 概要
 
@@ -32,7 +31,7 @@
 |---------|----------------|------|
 | Frontend | Vercel (`pass-share-frontend`) | Web ポータル（Vite） |
 | Backend API | Railway (`pass-share-backend`) | Connect API `/v1` + ヘルスチェック |
-| Database | Railway PostgreSQL | 環境別 DB |
+| Database | Railway PostgreSQL | 既存Prdの永続PG18 |
 
 ## Backend ヘルスチェック / コールドスタート耐性（#368）
 
@@ -61,23 +60,21 @@
 
 | 論理環境 | Vercel | Git ブランチ | Railway Environment | DB | Backend デプロイ |
 |---------|--------|-------------|---------------------|-----|-----------------|
-| **prd** | Production | —（手動 promote） | `production` | `passshare-postgres-preserved-1177`（永続PG18） | 現設定と保全を確認した手動配備 |
-| **stg** | Preview (`stg` ブランチ) | `stg` | `staging` | `postgres-stg`（デプロイ時 prd から refresh） | **手動** `deploy-stg.yml` |
-| **preview** | Preview | PR / feature ブランチ | `preview` | `postgres-dev`（dev と共有） | PR 時 `deploy-preview.yml` |
-| **dev** | Development | **`main`（検知）** | `development` | `postgres-dev`（**seed データ**） | **`main` push 自動** `deploy-dev.yml` |
+| **prd** | Production | `main` | `production` | `passshare-postgres-preserved-1177`（永続PG18） | main限定の手動配備 |
+| 開発・CI | 公開配備なし | PR / 作業ブランチ | 作成しない | localhost / CIの一時DB | 隔離試験のみ |
 
-> SSOT: [ADR 008](../adr/008-deploy-pipeline-dev-first.md) — `main` マージは dev Backend デプロイのみ。prd 自動デプロイは廃止。
+ToDo2379のPrd-only方針が旧ADR008のdev-first配備を置き換える。PRとmainのQuality Gate、Docker隔離試験、一時DBは維持する。稼働dev/stg/previewの作成・配備は廃止する。人間レビューを求める規則は変更しない。
 
-### DB 共有ルール
+### production snapshotの依存
 
-- `preview` と `dev` は **同一 PostgreSQL インスタンス** (`postgres-dev`) を参照する
-- `stg` / `prd` はそれぞれ独立した PostgreSQL インスタンスを使用する
-- **local / preview / dev** は `backend/src/db/dev-seed.js` の **同一 seed データ**（デモユーザー・パスワードボックス・サンプルアイテム）を使用する。Backend 起動時に idempotent に適用
-- **stg デプロイ前**に `scripts/railway-db-replica.mjs` で prd DB を refresh する（レプリカブランチ `replica-{run_id}-{sha}`）
-- **prd配備の開始前**に現稼働DBのバックアップ取得・対象・由来・復元可能範囲を確認する。実dumpをGitHub artifactへ保存しない。旧ジョブ内の一時snapshotを永続保全と数えない
-- CI（GitHub Actions）から stg 向け `pg_dump` / `pg_restore` は **Postgres サービスの TCP proxy** 経由（`DATABASE_PUBLIC_URL` または Railway GraphQL `tcpProxies` + `POSTGRES_*`）。backend の `DATABASE_URL`（`.railway.internal`）は CI から到達不可
-- refresh 手順（stg のみ）: `pg_dump`（prd）→ 対象 DB で `DROP SCHEMA public CASCADE` → `pg_restore`（`--single-transaction --exit-on-error`）
-- 各 Postgres サービス（`postgres-dev` / `postgres-stg` / `postgres-prd-v2`）には **TCP proxy（port 5432）** が stg refresh 用に必要。未設定時は `railway-db-replica.mjs` が Railway API で自動作成する
+- `railway-db-replica.mjs snapshot --source prd` は現Prd DBだけを読み、一時的なcustom-format dumpを作る。dev/stgへの復元も、本番への書込みも行わない。`refresh` と非Prd source/targetは接続前に拒否する。
+- 必須IDはproject、production環境、**現稼働PG18サービス**。旧 `postgres-prd-v2` のIDは拒否する。backendサービスとDBサービスは別IDであり、取り違えない。
+- PostgreSQLクライアントは18以上。ジョブではPGDGのclient-18を使用する。[pg_dump公式資料](https://www.postgresql.org/docs/18/app-pgdump.html)のバージョン制約に従う。
+- 接続は現Prdサービスから取得した既存のpublic URL / TCP proxyだけを使用し、接続overrideは拒否する。proxyやDBを自動作成しない。存在しなければ停止する。秘密値は報告・artifactへ出さない。
+- provider操作を伴わない関連検査: `node --test scripts/railway-db-replica.test.mjs`、`node backend/scripts/verify-schema.mjs`、変更したworkflowのactionlint、配備shellの`bash -n`。最終CIと実配備確認は別途行う。
+- wrapperはアップロード対象の外に専用一時フォルダーを作り、dumpへのアクセスを制限する。成功・失敗のいずれでも終了時にdumpとフォルダーを削除する。runner破棄でも一時資源は残さない。Actions artifactへのアップロードは禁止。
+- このdumpは永続バックアップでも復元成功の証拠でもない。配備のために旧環境や追加の有料バックアップを必要としない。有料利用者がいない製品には新しい永続保全費用を増やさない。
+- 手動OAuth配備で`DB_REPLICA_MODE=skip`を使う場合は、必要な一時保全と現在のDB互換性を確認する。無償・既存資源での保全と、プランに応じた有料保管を区別する。
 
 ### ログイン throttle / lockout ストア（#378）
 
@@ -87,7 +84,7 @@
 - **local / test はインメモリのまま**（依存追加なしで動作）。TTL は `LOGIN_LOCKOUT_MS` / `LOGIN_IP_WINDOW_MS` に対応し、`expires_at` フィルタ＋opportunistic sweep でストア側失効
 - テーブルは `backend/src/db/auth-schema.js`（auth store migration）で作成。実 DB を使う共有検証は `backend/test/login-guard-pg.integration.test.js`（Docker backend-e2e で実行）
 
-### Dev seed（local / preview / dev）
+### 開発用seed（localhost / CIの隔離DBのみ）
 
 | 項目 | 値 |
 |------|-----|
@@ -96,26 +93,22 @@
 | Password box ID | `abcdefghijklmnopqrstuvwxyz` |
 | Password box name | `Demo Password Box` |
 
-手動適用: `APP_ENV=dev DATABASE_URL=... pnpm --dir backend run db:seed`
+手動適用は隔離DBに限る: `APP_ENV=local DATABASE_URL=<isolated-db> pnpm --dir backend run db:seed`。Prdや旧稼働環境を指定しない。
 
 ## Vercel 環境変数
 
-| 変数 | Production | Staging | Preview | Development |
-|------|-----------|---------|---------|-------------|
-| `VITE_APP_ENV` | `prd` | `stg`（stg ブランチ） | `preview` | `dev` |
-| `VITE_API_BASE_URL` | `/backend/prd` | `/backend/stg` | `/backend/dev` | `/backend/dev` |
+| 変数 | Production |
+|------|------------|
+| `VITE_APP_ENV` | `prd` |
+| `VITE_API_BASE_URL` | `/backend/prd` |
 
-### Preview 環境変数の自動同期
+### Prdだけの環境変数同期とGit配備
 
-CLI の Preview 向け `vercel env add` はブランチ指定を要求するため、REST API 経由で同期する。
+`sync-vercel-env.yml` はmain上の手動実行だけ。`scripts/sync-vercel-env.mjs --baseline` は明示した既存projectのProductionへ上の2変数だけをupsertする。旧Preview/Development/remote branch同期の引数は通信前に拒否する。旧変数の削除は実providerの依存照合後に別途行う。
 
-| トリガー | ワークフロー | 動作 |
-|---------|-------------|------|
-| PR 作成 / 更新 | `sync-vercel-env.yml` | head ブランチ向け Preview env を upsert（Dependabot PR は secrets 非注入のため skip） |
-| `stg` / `develop` push | 同上 | 該当ブランチ向け Preview env を upsert |
-| 手動 (`workflow_dispatch`) | 同上 | baseline + 全 Preview デフォルト + 全 remote ブランチ |
+`frontend/vercel.json` の `git.deploymentEnabled` は `*` と `**` をfalse、`main`だけtrueにする。スラッシュを含むfeatureブランチも停止する。[Vercel公式Git設定](https://vercel.com/docs/project-configuration/git-configuration)に従う。実projectのProduction Branchがmainであること、Preview作成停止設定、過去配備の不在はprovider側でも確認する。Git設定だけで手動CLIや過去Previewを削除したとは扱わない。
 
-スクリプト: `scripts/sync-vercel-env.mjs`（`VERCEL_TOKEN` 必須、`upsert=true` + `gitBranch: null` で全 Preview ブランチにも対応）
+`/backend/dev` と `/backend/stg` の外部rewriteは削除する。正式ホストに限定した `/backend/prd` とSPA rewrite、セキュリティheaderは維持する。localhostの開発proxyやCIの隔離DBは本番に置き換えない。
 
 ### Vercel ビルド（monorepo）
 
@@ -227,28 +220,25 @@ SSOT: [extension-store-release.md](../runbooks/extension-store-release.md)
 
 ## Railway 構成
 
-```
-PassShare (project)
+維持する既存稼働先:
+
+```text
+PassShare (existing project)
 ├── pass-share-backend (service)
-│   ├── production  → passshare-postgres-preserved-1177
-│   ├── staging     → postgres-stg
-│   ├── preview     → postgres-dev  (Variable Reference)
-│   └── development → postgres-dev  (Variable Reference)
-├── postgres-dev   (shared by preview + development)
-├── postgres-stg
-├── passshare-postgres-preserved-1177 (current production)
-└── postgres-prd-v2 (old source; no updates synchronized)
+│   └── production → passshare-postgres-preserved-1177
+└── passshare-postgres-preserved-1177 (current production, PG18)
 ```
 
-各 backend 環境の Variables:
+旧staging/preview/development、postgres-dev/stg、旧本番postgres-prd-v2は廃止・必要成果照合用の履歴であり、再作成しない。実削除済みの判断にはprovider証拠を使用する。
+現Prd backendのVariables（旧環境の設定は再作成しない）:
 
 | 変数 | 値 |
 |------|-----|
-| `APP_ENV` | `prd` / `stg` / `preview` / `dev` |
-| `DATABASE_URL` | 対応する Postgres の Variable Reference |
+| `APP_ENV` | `prd` |
+| `DATABASE_URL` | 現稼働PG18のVariable Reference |
 | `WEB_ORIGIN` | カスタムフロントドメイン。**prd はカスタムドメイン `https://pass-share.bm1314.net` を設定して配信**（bare `pass-share-frontend.vercel.app` alias は現状デプロイ未アタッチで 404、[#374](https://github.com/AutoDevJapan/PassShare/issues/374)）。未設定時はプロジェクト prefix に束縛した Vercel オリジン（`pass-share-frontend.vercel.app` と `pass-share-frontend-git-*` プレビュー）のみ CORS 許可。任意の `*.vercel.app` は信頼しない（[#46](https://github.com/AutoDevJapan/PassShare/issues/46), [#315](https://github.com/AutoDevJapan/PassShare/issues/315)） |
-| `VERCEL_TEAM_SLUG` | Vercel スコープ（チーム/ユーザ）スラッグ（例 `masashi-matsumotos-projects-c5830f3d`）。**preview backend にのみ設定**。ブランチ名が長く Vercel がプレビュー URL のプロジェクト prefix を切り詰めた場合（例 `pass-share-fron-git-<hash>-<slug>.vercel.app`）でも当該 origin を CORS 許可する。スラッグ suffix は自スコープ専有のため任意の `*.vercel.app` は信頼せず #315 の境界を維持（[#358](https://github.com/AutoDevJapan/PassShare/issues/358)）。prd では未設定 |
-| `OP_CONNECT_TOKEN` | Connect API Bearer トークン（`/v1/*` 必須） |
+| `VERCEL_TEAM_SLUG` | 旧preview CORS設定。Prdには設定しない。旧稼働環境の作成・配備には使用しない |
+| per-user Connect token | PrdのConnect APIはユーザー単位の資格を使用。旧環境用の共有`OP_CONNECT_TOKEN`を配備しない |
 | `TRUST_PROXY_HOPS` | 信頼するフロントプロキシのホップ数（`req.ip` 算出用）。省略時は `local`=0 / それ以外=1（Railway エッジ 1 段）。生の `X-Forwarded-For` は信頼せず per-IP スロットルのバイパスを防ぐ（[#316](https://github.com/AutoDevJapan/PassShare/issues/316)）。プロキシ段数変更時のみ設定 |
 | `DATABASE_CA_CERT` | DB 接続の TLS 検証に用いる CA 証明書（PEM 文字列）。設定時は `rejectUnauthorized: true` でサーバ証明書を検証。標準 URL のホスト名が `*.railway.internal`（私設ネットワーク）の場合だけ TLS 不要のため無視。CAのない、TLS指定のないループバック接続（`localhost` / `127.0.0.1` / `[::1]`）と、運用者が私設ネットワーク内と宣言した完全一致ホストも TLS 不要。それ以外のホストは Railway の公開/プロキシを含め証明書検証必須。URL の `sslmode=disable` 等ではこの方針を変更できない（[#323](https://github.com/AutoDevJapan/PassShare/issues/323)） |
 | `DATABASE_TRUSTED_PRIVATE_HOSTS` | 運用者が管理する私設ネットワーク内のDBホスト名を、カンマ区切りで明示する。未設定時は追加の信頼なし。例は所有するDockerネットワークの `postgres`。完全一致のみで、サブドメイン・接尾辞・URL内の文字列では一致しない。CA指定またはURLのTLS要求があれば検証付きTLSを優先する。公開・外部DBをここへ登録しない。 |
@@ -264,85 +254,55 @@ DB の接続先は URL のホスト名で判定する。パスワード・パス
 
 `/health/db` と認証成功後の `/metrics` は、それぞれクライアント IP ごと・プロセスごとに60秒で60件まで受け付ける。監視は各経路で1秒に1回以下を目安とし、同じ IP を使う監視元が複数ある場合は合計を調整する。超過時は DB 問い合わせの前に429を返し、`Retry-After` と `RateLimit-*` を付ける。両経路の枠は独立し、再起動・レプリカ間では共有しない。IP は既存の `TRUST_PROXY_HOPS` 方針で求める。`/metrics` の認証失敗は引き続き404となり監視の枠を消費しない。DB に問い合わせない `/health` はこの制限の対象外。
 
-## セットアップ手順
+## 既存Prdへの配備手順
 
-### 1. Railway（DB + API）
+新project・新環境を作るbootstrapは使わない。`setup-railway.ps1` と `provision-railway-api.ps1` は処理の冒頭で停止する。`setup-vercel.ps1` は既存Prdの環境変数を同期するだけで、project作成・link・CLI配備はしない。
 
-```powershell
-# 初回のみログイン
-railway login
-
-# プロジェクト・DB・サービスを作成
-.\scripts\setup-railway.ps1
-```
-
-### 2. Vercel（Frontend）
-
-```powershell
-.\scripts\setup-vercel.ps1
-```
-
-### 3. GitHub Secrets（CI 用）
+### GitHub Secrets（既存Prd用、値は表示しない）
 
 | Secret | 説明 |
 |--------|------|
-| `RAILWAY_API_TOKEN` | Railway アカウント / ワークスペーストークン（GraphQL preflight 等） |
-| `RAILWAY_PROJECT_TOKEN` | （推奨）Preview 環境スコープの **Project Token** — `railway up` 用。未設定時は `RAILWAY_API_TOKEN` + `railway link` にフォールバック |
-| `RAILWAY_PROJECT_ID` | PassShare Railway プロジェクト ID |
-| `RAILWAY_SERVICE_ID` | backend サービス ID |
-| `RAILWAY_PREVIEW_ENV_ID` | preview 環境 ID |
-| `RAILWAY_DEVELOPMENT_ENV_ID` | development 環境 ID（`deploy-dev.yml` 必須） |
-| `RAILWAY_STAGING_ENV_ID` | staging 環境 ID |
-| `RAILWAY_PRODUCTION_ENV_ID` | production 環境 ID |
-| `RAILWAY_DATABASE_PUBLIC_URL_PRD` | （任意）CI 用 prd Postgres TCP proxy URL — API 解決失敗時の override |
-| `RAILWAY_DATABASE_PUBLIC_URL_DEV` | （任意）CI 用 dev Postgres TCP proxy URL |
-| `RAILWAY_DATABASE_PUBLIC_URL_STG` | （任意）CI 用 stg Postgres TCP proxy URL |
-| `VERCEL_TOKEN` | Vercel トークン |
-| `VERCEL_ORG_ID` | `masashi-matsumotos-projects-c5830f3d` |
+| `RAILWAY_API_TOKEN` | 既存GraphQL preflight / snapshotの認証。手動では既存CLI OAuthを使用できる |
+| `RAILWAY_PROJECT_ID` | 上記の既存PassShare project ID |
+| `RAILWAY_SERVICE_ID` | 上記の既存backendサービスID |
+| `RAILWAY_PRODUCTION_ENV_ID` | 上記のproduction環境ID |
+| `RAILWAY_POSTGRES_PRD_SERVICE_ID` | **現稼働PG18** `4fdfda2d-ed50-4396-9797-25ea7720f720`。旧PG16を使わない |
+| `VERCEL_TOKEN` | 既存Vercel同期の認証 |
+| `VERCEL_ORG_ID` | 既存Prd project所有teamのslug（実所有者と照合） |
 | `VERCEL_PROJECT_ID` | `prj_itSKGa2HAEj3UNHnsCdPQEF5nziE` |
-| `STG_OP_CONNECT_TOKEN` | stg Connect API Bearer（`stg-smoke.mjs` 任意） |
-| `STG_WEB_URL` | stg / Preview Web URL（`stg-web-smoke.mjs` — `run_web_ui: true` 時） |
 
-### 秘密情報ローテーション
-
-Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テストは [secret-rotation Runbook](../runbooks/secret-rotation.md)（Issue [#47](https://github.com/AutoDevJapan/PassShare/issues/47)）を参照。
+非Prdの配備用secret参照は廃止した。secretの実削除と現在のPrd用IDのreadbackはprovider担当が行い、ソース変更だけで済んだとは判断しない。
 
 ### GitHub Actions デプロイ
 
 | ワークフロー | トリガー | 先 | DB 前処理 |
 |-------------|---------|-----|----------|
-| `deploy-dev.yml` | `main` push | Railway development | dev seed。本番refreshなし |
-| `deploy-stg.yml` | 手動（`deploy-stg` 入力） | Railway staging | prd → stg refresh |
-| `deploy-prd.yml` | 手動（`deploy-prd` 入力） | Railway production | prd snapshot |
-| `deploy-preview.yml` | PR（Dependabot 除く） | Railway preview | なし（`RAILWAY_PROJECT_TOKEN` 必須 — 未設定時 skip） |
+| `deploy-prd.yml` | main上の手動実行、`deploy-prd` 入力 | 既存Railway production | 現Prdだけの一時snapshot |
+| `sync-vercel-env.yml` | main上の手動実行 | 既存Vercel Production変数 | なし |
+| Quality Gate等 | PR / main（従来どおり） | 公開配備なし | CIの隔離試験を維持 |
 
-- `railway up` は **リポジトリルート** から実行する（`working-directory: backend` 不可）
-- Railway サービスの `rootDirectory` が `backend` のため、`backend/` だけをアップロードするとビルドが失敗する
-- 通常のbackend本番配備は既存手動フローを使用する。2026-10-06の固定mainは、全CI・配備前snapshotを確認し既存OAuth CLIで配備した。必要な現設定・稼働source・資格失効を照合する手順は[本番リリースRunbook](../runbooks/production-release.md#固定ソースの配備記録2026-10-06)を参照する。Railway側のGitHub自動配備は今回有効化していない
-- デプロイ CI は `scripts/railway-deploy-with-replica.sh` → `scripts/railway-deploy-ci.sh`（`railway-deploy-preflight.mjs` + DB replica + `railway up --detach` + 最大 3 回リトライ + デプロイ後 `/health/db` smoke）。`--ci` は Metal builder 上で export 直後に誤 fail するため使わない。
-- Preview配備は現行`deploy-preview.yml`のCLIと対象環境を照合する。古いCLI版の説明をOAuth実証や現在の認証方式の根拠にしない。
-- 既存CIスクリプトではProject tokenは`RAILWAY_TOKEN`、Account/Team tokenは`RAILWAY_API_TOKEN`に分ける。後者を前者へexportしない。今回の手動配備は既存OAuthログインを使い、両環境変数を指定していない。
+`deploy-dev.yml`、`deploy-stg.yml`、`deploy-preview.yml`、`stg-smoke.yml` は削除した。
+
+- `railway up` はリポジトリルートから、project・service・environmentのIDを必ず明示する。リンク先任せの実行は廃止し、明示指定に対応しないCLIでは失敗する。
+- `railway-deploy-ci.sh` とwrapperは配備前に既存Prd ID、`DEPLOY_TARGET=prd`、main、未追跡ファイルもないmainソース（Gitが無視する生成物は除く）、Prd health URLを検査する。CIではcheckoutしたSHAとイベントSHAも照合する。
+- wrapperはsnapshotかskipだけを許可する。`refresh`、非Prd、replica targetを拒否する。旧環境・有料backupサービスに依存しない。
+- `railway-deploy-preflight.mjs --offline` はproviderに接続せず上記を検査する。token使用時は追加のAPI preflightでproject所属も検査し、手動OAuthでは明示IDのCLI配備を使用する。
+- 手順と実配備の記録は[本番リリースRunbook](../runbooks/production-release.md)を参照する。`--detach`の受付と実配備成功・稼働SHA一致を分けて確認する。
 
 ### デプロイ失敗 vs DB 障害の切り分け
 
 | 症状 | 原因 | 確認方法 |
 |------|------|----------|
 | CIのupload認証失敗 | token種別・対象project/service/environment・認証方式を照合 | Account tokenは`RAILWAY_API_TOKEN`のまま使用し、`RAILWAY_TOKEN`を解除。現在のpreflightとCLIを確認する |
-| CI で `Project Token not found` | Account token を `railway up` に使用 | Preview 用 **Project Token** を `RAILWAY_PROJECT_TOKEN` secret に設定（Railway → Project → Settings → Tokens → preview 環境）。未設定時は `deploy-preview.yml` が skip（#208） |
 | CI で `load metadata for docker.io/...` 後に `Deploy failed` | Railway ビルド（Docker Hub メタデータ取得）の一時失敗 | Railway ビルドログ。`/health/db` はデプロイ前の旧リビジョンのまま 200 のことがある |
 | `/health` 200 だが `/health/db` 503 `database: unreachable` | `DATABASE_URL` 未設定・Variable Reference 切れ・Postgres 停止 | Railway Variables + Postgres サービス状態 |
-| `/health/db` 503 `database: not_configured` | backend に `DATABASE_URL` がない | preview/stg/prd 各環境の Variable Reference を確認 |
+| `/health/db` 503 `database: not_configured` | backend に `DATABASE_URL` がない | 現PrdのVariable Referenceを確認 |
 | `migrate:verify` pass だが DB 不通 | **正常** — `migrate:verify` は `schema.js` の静的検証のみ（ live DB 非接続） | デプロイ後 smoke: `curl .../health/db` |
 
-全環境 smoke（手動）:
+Prdの読取りhealth確認（実配備成功や全機能の合格とは別）:
 
 ```powershell
-@(
-  "https://pass-share-backend-production.up.railway.app/health/db",
-  "https://pass-share-backend-staging.up.railway.app/health/db",
-  "https://pass-share-backend-preview.up.railway.app/health/db",
-  "https://pass-share-backend-development.up.railway.app/health/db"
-) | ForEach-Object { Invoke-RestMethod $_ }
+Invoke-RestMethod 'https://pass-share-backend-production.up.railway.app/health/db'
 ```
 
 ### 旧 Railway プロジェクト（profound-growth）
@@ -354,30 +314,27 @@ Railway / Vercel / GitHub Secrets のローテーション手順と Smoke テス
 | 原因 | `rootDirectory` 未設定のままモノレポ全体をビルドしようとする |
 | 対応 | 2026-05-27: サービス `7f409e25-...` の GitHub 連携を `serviceDisconnect` で解除済み |
 
-Railway UI から旧プロジェクト自体を削除してよい（現行は `82730a82-...` の PassShare プロジェクト）。
+旧projectの削除は実所有者・source・consumer・必要成果を照合して判断する。この履歴だけで削除を進めない。
 
 ## 受入基準 (ATDD)
 
 ```gherkin
-Given Vercel プロジェクト pass-share-frontend が GitHub main と連携している
-When main ブランチに push する
-Then frontend/ の Vite ビルドが成功し Production デプロイが完了する
+Given 既存Vercel projectのProduction Branchがmainである
+When mainにpushする
+Then Productionだけを配備し、PRとその他のbranchは公開配備を作成しない
 
-Given Railway に postgres-dev / postgres-stg / postgres-prd-v2 が存在する
-When preview 環境と development 環境の backend を起動する
-Then 両方とも postgres-dev に接続できる
+Given PRとmainのQuality Gateが有効である
+When 隔離試験を実行する
+Then 一時DBを使用し、稼働非Prdや実Prd DBを作成・変更しない
 
-Given stg 受入が完了している
-When GitHub Actions で deploy-stg.yml を手動実行する
-Then postgres-stg が prd レプリカで refresh され staging backend がデプロイされる
+Given main、既存Prd ID、現PG18 DBを指定した手動配備である
+When deploy-prdを確認入力する
+Then 現Prdだけの一時snapshotを取得し既存production backendへ配備する
+And 旧環境へのrefreshと有料backupサービスを必要としない
 
-Given stg 受入と deploy-stg が完了している
-When GitHub Actions で deploy-prd.yml を手動実行する
-Then prd DB snapshot が作成され production backend がデプロイされる
-
-Given main ブランチに push する
-When deploy-dev.yml が実行される
-Then development backend がデプロイされ postgres-dev に dev seed が適用される（production にはデプロイしない、prd レプリカ refresh は行わない）
+Given 非Prd ID、作業branch、旧DB ID、または旧同期引数である
+When 手動の配備・同期・snapshot補助を実行する
+Then provider変更前に失敗する
 ```
 
 ## 関連ドキュメント
@@ -387,8 +344,8 @@ Then development backend がデプロイされ postgres-dev に dev seed が適�
 
 ## 2026-10-06の現設定との照合
 
-本番backendの稼働接続は新しい永続PG18へ切替済み。日次保持6日の設定と手動snapshotの復元は[運用記録](../audits/operations-readiness.md#2026-10-06の再現可能な演習とrailway実検証)へ保存した。元8表の保全と、固定e7の稼働44ファイル・実API15項目は別の確認である。
+2026-10-06時点の履歴では本番backendは永続PG18へ切替済み。日次保持6日の設定と手動snapshotの復元は[運用記録](../audits/operations-readiness.md#2026-10-06の再現可能な演習とrailway実検証)へ保存した。元8表の保全と、固定e7の稼働44ファイル・実API15項目は別の確認である。
 
-旧本番DBを参照する履歴やprovision用の例を、現在の稼働先として採用しない。既存GitHub配備・レプリカ用の保存先IDとPostgreSQLクライアントの互換性は、この切替で検証したものではない。これらの処理を起動する前に、対象IDが現稼働DBであることと、dump取得側のバージョンがPG18を扱えることを確認する。未確認のジョブ内dumpを永続バックアップと数えない。
+旧本番DBを参照する履歴やprovision用の例を、現在の稼働先として採用しない。既存GitHub配備・レプリカ用の保存先IDとPostgreSQLクライアントの互換性は、この切替で検証したものではない。ToDo2379のソースguardは現稼働DBのIDとpg_dump 18以上を必須にした。保存済みsecretの実値・runtime接続・件数・スキーマは別途照合する。未確認のジョブ内dumpを永続バックアップと数えない。
 
-Webの同一サイト経路は[認証経路の仕様](./web-auth-routing.md)を参照する。元のRailway絶対URLをブラウザから使用すると、SameSite=Lax Cookieが別サイト扱いで拒否される。環境別の相対接頭辞とVercel外部rewriteを使用し、本番接頭辞は正式ホストだけへ許可する。ソース設定とVercelの実build値は別々に照合する。
+Webの同一サイト経路は[認証経路の仕様](./web-auth-routing.md)を参照する。元のRailway絶対URLをブラウザから使用すると、SameSite=Lax Cookieが別サイト扱いで拒否される。Prdの相対接頭辞とVercel外部rewriteを使用し、本番接頭辞は正式ホストだけへ許可する。ソース設定とVercelの実build値は別々に照合する。
