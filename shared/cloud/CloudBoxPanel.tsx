@@ -82,8 +82,8 @@ export function CloudBoxPanel({ session, boxId, compatibility, metadataProof, sp
       }
       checkedBinding.current = { session, boxId };
       setState(next);
-    }).catch(() => { if (active(generation) && !controller.signal.aborted) {
-      if (worker.current) lock();
+    }).catch((error: unknown) => { if (active(generation) && !controller.signal.aborted) {
+      if (worker.current && error instanceof CloudApiError && ([401, 403].includes(error.status) || error.code === "PS056")) lock();
       setError("cloud.failed");
     } })
       .finally(() => checks.current.delete(controller));

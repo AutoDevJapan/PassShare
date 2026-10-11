@@ -27,7 +27,7 @@ export function createCloudApi(authFetch: CloudFetch) {
       const reply = await response.json();
       if (!reply || typeof reply !== "object" || Array.isArray(reply)) throw new CloudApiError(502);
       return reply;
-    } catch { throw new CloudApiError(502); }
+    } catch (error) { if (error instanceof CloudApiError) throw error; throw new CloudApiError(502); }
   }
   async function getBoxState(boxId: string, signal?: AbortSignal): Promise<BoxState> {
     const state = await request(path(boxId), { signal });

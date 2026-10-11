@@ -17,7 +17,7 @@ function load(name, imports = {}, globals = {}) {
   }).outputText, { exports, require: (id) => {
     if (!(id in imports)) throw new Error(`Unmapped import ${id}`);
     return imports[id];
-  }, URL, Headers, Response, AbortController, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
+  }, URL, Headers, Response, AbortController, Event, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
   ReadableStream, setTimeout, clearTimeout, atob, btoa, ...globals });
   return exports;
 }
@@ -53,7 +53,7 @@ function host({ mode = 'encrypted', failure = null, delayedUnlock = false, recip
     './cloud-api': cloudApi, './cloud-worker': { CloudWorker: Worker }, './EncryptedItems': { EncryptedItems: Items },
     './box-mode': boxMode,
     './CloudSharingPanel': { SharedCloudSharingPanel: Sharing }, './client-cloud.css': {},
-  }, { window, document });
+  }, { window, document, Event });
   const compatibility = (ensure) => { legacy.push(ensure); return React.createElement('output', null, 'compatibility-items'); };
   renderer.act(() => { tree = renderer.create(React.createElement(CloudBoxPanel, { session, boxId: box, compatibility }), { createNodeMock: () => input }); });
   return { tree, input, workers, window, document, legacy, unlocks, calls, session,
@@ -131,6 +131,8 @@ test('a broken successful response body remains an unknown outcome, not an autho
   const session = createCloudSession('https://example.invalid', owner, 'synthetic-session');
   const response = await session.transport('/api/encrypted/account-identity', { method: 'PUT', body: '{"opaque":"synthetic"}' });
   await assert.rejects(response.text(), (error) => error.status === 0); session.dispose();
+  const metadata = createCloudSession('https://example.invalid', owner, 'synthetic-session');
+  await assert.rejects(metadata.api.getBoxState(box), (error) => error.status === 0); metadata.dispose();
 });
 
 test('authorization rejection cancels the unread response body rather than retaining its reader', async () => {
@@ -192,6 +194,12 @@ for (const change of ['epoch', 'authorization']) test(`same-account metadata ref
   if (change === 'epoch') h.setEpoch(18); else h.setFailure(403);
   await h.recheck(); assert.equal(h.workers[0].isClosed, true);
   assert.equal(h.json().includes('"encrypted-items"'), false); await h.unmount();
+});
+
+for (const status of [0, 502, 503]) test(`same-account metadata failure ${status} preserves the unlocked worker and current item screen`, async () => {
+  const h = host(); await flush(); await h.submit(); h.setFailure(status);
+  await h.recheck(); assert.equal(h.workers[0].isClosed, false);
+  assert.equal(h.json().includes('"encrypted-items"'), true); await h.unmount();
 });
 
 function backgroundHost() {
@@ -309,4 +317,32 @@ test('legacy archive never reads or uploads file bytes for encrypted/rejected mo
   modeStatus = 404; metadataStatus = 409; await assert.rejects(run()); assert.equal(reads, 0); assert.equal(uploads, 0);
   metadataStatus = 200; await run(); assert.equal(reads, 1); assert.equal(uploads, 1);
   encrypted = false; modeStatus = 200; await run(); assert.equal(reads, 2); assert.equal(uploads, 2);
+});
+
+test('desktop cloud entry locks an open .pbox before another account may be shown', async () => {
+  let unlocked = true, fileLocks = 0, tree;
+  const window = events(), document = { hidden: false };
+  const node = (text) => () => React.createElement('output', null, text);
+  const { App } = load('../../apps/desktop/src/App.tsx', {
+    react: React, 'react/jsx-runtime': requireApp('react/jsx-runtime'),
+    '../../../shared/ui/MatrixBackground': { MatrixBackground: () => null },
+    '../../../shared/lib/native-lock': { bindNativeLock: () => ({ accept() {}, dispose() {} }) },
+    '@tauri-apps/api/core': { isTauri: () => true, async invoke(name) {
+      if (name === 'lock_password_box') { unlocked = false; fileLocks++; return; }
+      return { unlocked, epoch: 1 };
+    } },
+    '@tauri-apps/api/event': { listen() {} }, './components/AppHeader': { AppHeader: () => null },
+    './components/MainPanel': { MainPanel: node('local-secret-items') }, './components/SetupPanel': { SetupPanel: node('local-locked') },
+    './components/CloudItemsPanel': { CloudItemsPanel: node('cloud-panel') },
+    '@shared/i18n/I18nProvider': { useI18n: () => ({ t: (key) => key }) },
+  }, { window, document });
+  renderer.act(() => { tree = renderer.create(React.createElement(App)); }); await flush();
+  assert.equal(JSON.stringify(tree.toJSON()).includes('local-secret-items'), true, JSON.stringify(tree.toJSON()));
+  await renderer.act(async () => tree.root.findByType('button').props.onClick()); await flush();
+  assert.equal(fileLocks, 1); assert.equal(unlocked, false);
+  assert.equal(JSON.stringify(tree.toJSON()).includes('cloud-panel'), true);
+  await renderer.act(async () => tree.root.findByType('button').props.onClick()); await flush();
+  assert.equal(JSON.stringify(tree.toJSON()).includes('local-secret-items'), false);
+  assert.equal(JSON.stringify(tree.toJSON()).includes('local-locked'), true);
+  renderer.act(() => tree.unmount());
 });
