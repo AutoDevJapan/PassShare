@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -159,7 +161,7 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 		} `json:"project"`
 	}
 	if err = c.query(ctx, `query($id:String!){project(id:$id){id workspaceId}}`, map[string]string{"id": projectID}, &scope); err != nil {
-		return err
+		return errors.New("production project scope verification failed")
 	}
 	if scope.Project.ID != projectID || scope.Project.WorkspaceID != workspaceID {
 		return errors.New("production project owner differs from the reconciled workspace")
@@ -176,34 +178,72 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 		if err != nil {
 			return errors.New("temporary public identity is absent")
 		}
+		pubDigest := sha256.Sum256(bytes.TrimSpace(pub))
+		recovery := struct {
+			Workspace    string `json:"workspace_id"`
+			Name         string `json:"registration_name"`
+			PublicDigest string `json:"public_key_sha256"`
+			KeyID        string `json:"key_id,omitempty"`
+		}{Workspace: workspaceID, Name: name, PublicDigest: hex.EncodeToString(pubDigest[:])}
+		recoveryPath := output + ".ssh-key-recovery.json"
+		info, _ := json.Marshal(recovery)
+		journal, err := os.OpenFile(recoveryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return errors.New("cannot create exclusive non-secret key recovery record")
+		}
+		_, journalErr := journal.Write(info)
+		closeErr := journal.Close()
+		if journalErr != nil || closeErr != nil {
+			return errors.New("cannot persist key recovery record before registration")
+		}
+		// Register the failure handler before the mutation: a lost reply does not
+		// mean registration failed. Never guess an ID or delete unrelated keys.
+		defer func() {
+			recovery.KeyID = keyID
+			info, _ := json.Marshal(recovery)
+			if keyID != "" {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+				defer cancel()
+				var deleted struct {
+					Deleted bool `json:"sshPublicKeyDelete"`
+				}
+				cleanupErr := c.query(cleanupCtx, `mutation($id:String!){sshPublicKeyDelete(id:$id)}`, map[string]string{"id": keyID}, &deleted)
+				if cleanupErr == nil && deleted.Deleted {
+					if err := os.Remove(recoveryPath); err != nil {
+						returnErr = errors.New("revoked key recovery record could not be removed")
+					}
+					return
+				}
+			}
+			// This descriptor contains no credential or DB data. Retain it on disk
+			// and in the failure log, including when an ephemeral CI runner is lost.
+			persistErr := os.WriteFile(recoveryPath, info, 0600)
+			returnErr = fmt.Errorf("temporary key recovery unconfirmed; descriptor=%s; previous failure=%v", info, returnErr)
+			if persistErr != nil {
+				returnErr = fmt.Errorf("%w; descriptor persistence failed", returnErr)
+			}
+		}()
 		var created struct {
 			Key struct {
 				ID string `json:"id"`
 			} `json:"sshPublicKeyCreate"`
 		}
 		if err = c.query(ctx, `mutation($input:SshPublicKeyCreateInput!){sshPublicKeyCreate(input:$input){id}}`, map[string]any{"input": map[string]string{"workspaceId": workspaceID, "name": name, "publicKey": strings.TrimSpace(string(pub))}}, &created); err != nil {
-			return err
+			return errors.New("temporary key registration reply failed")
 		}
 		keyID = created.Key.ID
 		if keyID == "" {
 			return errors.New("temporary snapshot key creation returned no identifier")
 		}
-		// This exact identifier is created by this call. Never list/delete other keys.
-		defer func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			defer cancel()
-			var deleted struct {
-				Deleted bool `json:"sshPublicKeyDelete"`
-			}
-			err := c.query(cleanupCtx, `mutation($id:String!){sshPublicKeyDelete(id:$id)}`, map[string]string{"id": keyID}, &deleted)
-			if err != nil || !deleted.Deleted {
-				returnErr = fmt.Errorf("temporary snapshot key cleanup failed; retain identifier %s for cleanup", keyID)
-			}
-		}()
+		recovery.KeyID = keyID
+		info, _ = json.Marshal(recovery)
+		if err := os.WriteFile(recoveryPath, info, 0600); err != nil {
+			return errors.New("cannot persist registered key identifier before capture")
+		}
 	}
 	// Credentials are consumed inside the database's container only. No public
 	// proxy, DB variables API, new service, or retained backup is provisioned.
-	remote := `set -eu; umask 077; dump=$(mktemp /tmp/passshare-prd-dump.XXXXXX); trap 'rm -f -- "$dump"' EXIT; export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -Fc --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" --file "$dump"; pg_restore --list "$dump" >/dev/null; sha256sum "$dump"; base64 -w 0 "$dump"; printf '\n'; rm -f -- "$dump"; test ! -e "$dump"; trap - EXIT`
+	remote := `set -eu; umask 077; dump=$(mktemp /tmp/passshare-prd-dump.XXXXXX); trap 'rm -f -- "$dump"' EXIT; trap 'exit 1' HUP INT TERM; export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -Fc --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" --file "$dump"; pg_restore --list "$dump" >/dev/null; sha256sum "$dump"; base64 -w 0 "$dump"; printf '\n'; rm -f -- "$dump"; test ! -e "$dump"; trap - EXIT HUP INT TERM`
 	data, err := run(ctx, "railway", "ssh", "--project", projectID, "--environment", environmentID, "--service", databaseID, "--identity-file", identity, "--", "sh", "-lc", remote)
 	if err != nil {
 		return errors.New("private production archive capture failed")
@@ -225,6 +265,10 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 	return nil
 }
 
+func terminationContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
+
 func main() {
 	output := flag.String("output", "", "existing private temporary directory, outside the upload tree")
 	identity := flag.String("identity-file", "", "existing registered identity for manual OAuth use; never copied")
@@ -233,7 +277,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "--output is required")
 		os.Exit(2)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	requestCtx, stop := terminationContext()
+	defer stop()
+	ctx, cancel := context.WithTimeout(requestCtx, 4*time.Minute)
 	defer cancel()
 	if err := snapshot(ctx, *output, execute, *identity); err != nil {
 		fmt.Fprintln(os.Stderr, err)

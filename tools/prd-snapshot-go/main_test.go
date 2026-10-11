@@ -16,6 +16,7 @@ import (
 type fake struct {
 	root                                             string
 	failCapture, failDigest, failCleanup, wrongOwner bool
+	lostCreateReply, emptyCreateID                   bool
 	created, revoked, captures                       int
 }
 
@@ -49,6 +50,12 @@ func (f *fake) run(_ context.Context, name string, args ...string) ([]byte, erro
 		}
 		if strings.Contains(string(query), "sshPublicKeyCreate") {
 			f.created++
+			if f.lostCreateReply {
+				return nil, errors.New("registration succeeded but reply was lost")
+			}
+			if f.emptyCreateID {
+				return []byte(`{"data":{"sshPublicKeyCreate":{"id":""}}}`), nil
+			}
 			return []byte(`{"data":{"sshPublicKeyCreate":{"id":"this-run-only-key"}}}`), nil
 		}
 		if strings.Contains(string(query), "sshPublicKeyDelete") {
@@ -76,6 +83,57 @@ func (f *fake) run(_ context.Context, name string, args ...string) ([]byte, erro
 	return nil, errors.New("unexpected command")
 }
 
+func TestUnconfirmedRegistrationRetainsOnlyNonSecretRecoveryInformation(t *testing.T) {
+	for _, lostReply := range []bool{true, false} {
+		f := &fake{root: t.TempDir(), lostCreateReply: lostReply, emptyCreateID: !lostReply}
+		out := filepath.Join(t.TempDir(), "snapshot.dump")
+		err := snapshot(context.Background(), out, f.run, "")
+		if err == nil || f.created != 1 || f.revoked != 0 || f.captures != 0 {
+			t.Fatal("unknown registration outcome was treated as success or guessed for deletion")
+		}
+		info, readErr := os.ReadFile(out + ".ssh-key-recovery.json")
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var record map[string]string
+		if json.Unmarshal(info, &record) != nil || record["workspace_id"] != workspaceID || !strings.HasPrefix(record["registration_name"], "PassShare-prd-snapshot-") || len(record["public_key_sha256"]) != 64 || record["key_id"] != "" {
+			t.Fatal("recovery descriptor is incomplete")
+		}
+		if !strings.Contains(err.Error(), string(info)) || strings.Contains(string(info), "synthetic-private-key") || strings.Contains(string(info), "synthetic-public-key") {
+			t.Fatal("recovery descriptor was lost from failure log or exposed key bytes")
+		}
+		dirs, _ := filepath.Glob(filepath.Join(filepath.Dir(out), "passshare-prd-ssh-*"))
+		if len(dirs) != 0 {
+			t.Fatal("private identity directory was retained")
+		}
+	}
+}
+
+func TestCancellationStillRevokesUsingIndependentCleanupContext(t *testing.T) {
+	f := &fake{root: t.TempDir()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "railway" && args[0] == "ssh" {
+			cancel()
+			return nil, ctx.Err()
+		}
+		if name == "railway" && args[0] == "api" {
+			if ctx.Err() != nil {
+				t.Fatal("cleanup reused cancelled context")
+			}
+		}
+		return f.run(ctx, name, args...)
+	}
+	out := filepath.Join(t.TempDir(), "snapshot.dump")
+	if snapshot(ctx, out, run, "") == nil || f.created != 1 || f.revoked != 1 {
+		t.Fatal("cancelled capture skipped key cleanup")
+	}
+	if _, err := os.Stat(out + ".ssh-key-recovery.json"); !os.IsNotExist(err) {
+		t.Fatal("revoked key left a recovery descriptor")
+	}
+}
+
 func TestPrivateCaptureRevokesOnlyItsKeyAndValidatesArchive(t *testing.T) {
 	f := &fake{root: t.TempDir()}
 	out := filepath.Join(t.TempDir(), "snapshot.dump")
@@ -95,11 +153,19 @@ func TestFailuresStillRevokeTheNewKey(t *testing.T) {
 	for _, phase := range []string{"capture", "digest", "cleanup"} {
 		t.Run(phase, func(t *testing.T) {
 			f := &fake{root: t.TempDir(), failCapture: phase == "capture", failDigest: phase == "digest", failCleanup: phase == "cleanup"}
-			if snapshot(context.Background(), filepath.Join(t.TempDir(), "snapshot.dump"), f.run, "") == nil {
+			out := filepath.Join(t.TempDir(), "snapshot.dump")
+			failure := snapshot(context.Background(), out, f.run, "")
+			if failure == nil {
 				t.Fatal("failure passed")
 			}
 			if f.created != 1 || f.revoked != 1 {
 				t.Fatalf("temporary identity not cleaned: %+v", f)
+			}
+			if phase == "cleanup" {
+				info, err := os.ReadFile(out + ".ssh-key-recovery.json")
+				if err != nil || !strings.Contains(string(info), `"key_id":"this-run-only-key"`) || !strings.Contains(failure.Error(), string(info)) {
+					t.Fatal("failed revocation lost its exact key recovery record")
+				}
 			}
 		})
 	}
