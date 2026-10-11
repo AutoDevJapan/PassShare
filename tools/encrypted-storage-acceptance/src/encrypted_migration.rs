@@ -4,7 +4,7 @@ use passshare_connect::{MigrationSourceFile, MigrationState, MigrationTransportP
 use passshare_core::cloud_crypto::{
     migration::{
         prepare_migration, MigrationAttachmentBinding, MigrationAttachmentSource,
-        MigrationItemBinding, MigrationItemPlaintext, MigrationItemSource, TrustedOwnerKeyContext,
+        MigrationItemBinding, MigrationItemSource, TrustedOwnerKeyContext,
     },
     AttachmentContext, AttachmentPlaintext, EncryptedAttachment, EncryptedItem,
 };
@@ -112,10 +112,6 @@ fn replay(db: &Database, p: u16, a: &Account, method: &str, path: &str, body: &V
 fn source_path(a: &Account) -> String {
     format!("/api/encrypted/boxes/{}/migration-source", a.box_id)
 }
-fn snapshot(p: u16, a: &Account) -> Value {
-    request(p, a, "GET", &source_path(a), &Value::Null, 200)
-}
-
 struct Original {
     item: Value,
     files: Vec<(AttachmentContext, String, Vec<u8>, bool)>,
