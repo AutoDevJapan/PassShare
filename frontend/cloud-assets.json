@@ -1,6 +1,6 @@
 {
-  "sourceCommit": "f5a7c3ee6718f4aa7b4d55ff5092004e45754d4a",
-  "run": 38094751592,
+  "sourceCommit": "d5cd7d79666d023b7baeeb582835892e84f387da",
+  "run": 38103572958,
   "buildKind": "github-actions-tested",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
@@ -32,22 +32,22 @@
     "crates/passshare-core/src/domain/mod.rs": "e13146bdcd180e2adc9fc27c8fbf294502f6d19c3dd235b7c65d22e106353f7a",
     "crates/passshare-core/src/domain/vault.rs": "ee0a12702ae14b48ecb5cb07d9593b7f3a14c36ef3ec4f6582df09cc974b4e2a",
     "crates/passshare-core/src/domain/payload.rs": "30904f6ed16dc1e1f73dcda8b899bc688934153d5516b5029ba64917239e9280",
-    "packages/cloud-wasm/src/worker.rs": "2d99227317437cbb53de7bfe706e3b5ee9e87707d9a48e7bbf41646ad8a5defd",
+    "packages/cloud-wasm/src/worker.rs": "5449c45cfe2e9c4bcff8f7d9a900adbe84647ab34f9cf140524c73543416e588",
     "packages/cloud-wasm/src/lib.rs": "6b1e45c0c5f1bd96b181b65bf993d7018c76c233702b4af7e0a9dac422176616",
     "packages/cloud-wasm/src/shared.rs": "a27319208df22eea8c59be243fe2dbc5da58d3b105c0fcae2af7aa91e2eef484",
-    "packages/cloud-wasm/src/item_edit.rs": "4373427b6397c1f2d2de8dd69df96419f67c7c7be03eaa3207e0a7bbaf3de97e",
+    "packages/cloud-wasm/src/item_edit.rs": "083ea83e8cd0ed96c5c332d5f96f47393812ec13743297b19f39d6b9898db8ac",
     "backend/native/src/edit.rs": "d8e39b54705e65aa82cab651ca6604e087b9b219bc7c290cce4b8e728e29f89e",
     "packages/cloud-wasm/src/recovery.rs": "50cc8af8b7663dc46cf5cdc667a871df569da9587043853dbd3665dfd4a1e997",
     "crates/passshare-core/src/password_box_recovery_tests.rs": "508ba3a1a92579562f6ae62b83ae4d0983a94e20aaaa5b9bbb9a170d36284e79",
     "crates/passshare-core/src/cloud_crypto/attachments.rs": "6882b86d444c88ba061a55dbd3d281ffbb41172ed05b7d5c953ffbe0169668f3",
-    "packages/cloud-wasm/src/attachment.rs": "e0aa890e9e260a7ae5b0931229a15b4b82734f6467fee71df9ac4f3b17f64c6a",
+    "packages/cloud-wasm/src/attachment.rs": "b6a79f0d4a893346b3be35c84841cc2d8686bc01e5bc5d3ecdf4fa4fe2081e8f",
     "crates/passshare-core/src/cloud_crypto/migration.rs": "cd92097c4f6010cd51c1adeaf5261294e50ae6d5321200407fedb846ed7ff091",
     "crates/passshare-core/src/cloud_crypto/migration/tests.rs": "a11888c9dbfda103b74aceeb82f9134898304c29e3de12f9b7552f3552a9df91"
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
-    "passshare_cloud_wasm.js": "81c58deba14bcda1a2854e50626af1d34057bf614460a6d19806c67559332a29",
-    "passshare_cloud_wasm_bg.wasm": "1ea8f81fbe1fbf6842a13bd33570ac2ed41664616e30cacfd212bb5bcda84156"
+    "passshare_cloud_wasm.js": "2bf8a12228f7d672a8ddad3e6f91f53aacc8441363f872e5b03243e2df95ee1f",
+    "passshare_cloud_wasm_bg.wasm": "3fa9f313b167ae795c33b34517fba75e48fae3794dd4d091aee1403c1df83461"
   },
   "artifact": "passshare-cloud-wasm"
 }

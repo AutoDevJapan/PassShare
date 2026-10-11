@@ -24,6 +24,14 @@
 .encrypted-items__eye { justify-self: end; }
 .encrypted-items__form .ps-card { min-width: 0; }
 .encrypted-items__list > p { padding: var(--ps-space-3, .75rem); }
+.encrypted-attachments { min-width: 0; line-break: strict; word-break: normal; }
+.encrypted-attachments ul { list-style: none; padding: 0; margin: 0 0 .75rem; }
+.encrypted-attachments__row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; border: 1px solid var(--ps-border); border-radius: var(--ps-radius-md); padding: .75rem; }
+.encrypted-attachments__name { display: grid; gap: .25rem; flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+.encrypted-attachments__name small { color: var(--ps-text-muted); }
+.encrypted-attachments__actions { display: flex; flex-wrap: wrap; gap: .5rem; min-width: 0; }
+.encrypted-attachments__heading:focus { outline: 2px solid var(--ps-border); outline-offset: 4px; }
+.encrypted-attachments p { overflow-wrap: anywhere; }
 @media (max-width: 680px) {
   .encrypted-items__head { display: none; }
   .encrypted-items__row { grid-template-columns: minmax(0, 1fr); }

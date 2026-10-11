@@ -465,5 +465,19 @@
   "sharing.complete": "共享密钥连接已完成。",
   "sharing.irrevocable": "已共享的内容无法从对方设备删除。",
   "sharing.rotationPending": "加密密码盒的成员移除暂不可用：包含附件的密钥轮换尚未连接。",
-  "sharing.failed": "核对或连接失败。如果代码或密钥有变，请重新核对。"
+  "sharing.failed": "核对或连接失败。如果代码或密钥有变，请重新核对。",
+  "attachments.heading": "附件",
+  "attachments.add": "添加文件",
+  "attachments.download": "下载",
+  "attachments.delete": "删除",
+  "attachments.cancel": "取消",
+  "attachments.replace": "替换",
+  "attachments.undoDelete": "撤销删除",
+  "attachments.undoReplace": "撤销替换",
+  "attachments.pending": "等待保存",
+  "attachments.pendingDelete": "保存时执行删除",
+  "attachments.limit": "每个文件最多1MiB（1,048,576字节）。支持空文件。",
+  "attachments.encrypted": "文件名和内容在此设备上加密。",
+  "attachments.tooLarge": "文件超过1MiB。所选文件未添加。",
+  "attachments.unavailable": "共享附件连接正在准备中。输入内容已保留。"
 }

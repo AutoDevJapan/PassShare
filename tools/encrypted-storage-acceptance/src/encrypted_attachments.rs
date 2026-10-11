@@ -43,6 +43,358 @@ fn revision(db: &Database, a: &Account) -> u64 {
     .parse()
     .unwrap()
 }
+fn public_state(db: &Database, p: u16, actor: &Account, owner: &Account, epoch: u64) -> u64 {
+    let before = state_hash(db, true);
+    let reply = send(
+        p,
+        actor,
+        "GET",
+        &format!("{}/attachment-state", root(owner)),
+        &Value::Null,
+        200,
+    );
+    check(
+        reply == json!({"stateRevision":revision(db,owner),"keyEpoch":epoch}),
+        "strict two-field public selector, no bundle, members, grants or item body",
+    );
+    check(
+        state_hash(db, true) == before,
+        "state GET preserves all rows and xmin",
+    );
+    number(&reply, "stateRevision")
+}
+
+// The selector is only a CAS input. Crypto context and pins remain independently
+// held by the recipient; never derive an authenticated context from this reply.
+#[allow(clippy::too_many_arguments)]
+fn recipient_files(
+    db: &Database,
+    p: u16,
+    a: &Account,
+    b: &Account,
+    key: &PasswordBoxKey,
+    item: &str,
+    dto: &Value,
+    item_v: &mut u64,
+) {
+    let mut file = File::new(
+        key,
+        a,
+        item,
+        "受信者\0éЖ🦀.bin",
+        (0..=255).chain((0..=255).rev()).collect(),
+    );
+    let mut next = dto.clone();
+    next["attachments"]
+        .as_array_mut()
+        .unwrap()
+        .insert(1, next_ref(&file, 1));
+    let state = public_state(db, p, b, a, 1);
+    let put = json!({"expectedStateRevision":state,"item":{"expectedVersion":*item_v,
+        "envelope":item_body(key,a,item,&next,*item_v+1,1)},"expectedVersion":0,"envelope":file.sealed});
+    let endpoint = path(a, item, &file.id);
+    let before = state_hash(db, true);
+    check(
+        http(
+            p,
+            "PUT",
+            &endpoint,
+            &format!(
+                "Cookie: passshare_session={}\r\nx-passshare-client: mobile\r\n",
+                b.session
+            ),
+            &put,
+        )
+        .0 == 403
+            && state_hash(db, true) == before,
+        "recipient cookie attachment mutation retains CSRF guard",
+    );
+    let reply = send(p, b, "PUT", &endpoint, &put, 200);
+    check(
+        reply
+            == json!({"stateRevision":state+2,"itemVersion":*item_v+1,"attachmentVersion":1,"keyEpoch":1}),
+        "recipient public state drives real atomic PUT CAS",
+    );
+    *item_v += 1;
+    let state = public_state(db, p, b, a, 1);
+    let cipher = replay(
+        db,
+        p,
+        b,
+        "GET",
+        &format!("{endpoint}?revision={state}"),
+        &Value::Null,
+    );
+    file.verify(key, a, item, &cipher, 1);
+    references(&next, key, a, item, *item_v, 1, p);
+    let body = send(
+        p,
+        b,
+        "GET",
+        &format!(
+            "{}/items/{item}/attachment-snapshot?revision={state}",
+            root(a)
+        ),
+        &Value::Null,
+        200,
+    );
+    let opened = checked(
+        key.decrypt_item(
+            &checked(serde_json::from_value(body), "recipient item envelope"),
+            &context(a, item, *item_v, 1),
+        ),
+        "recipient independent item context",
+    );
+    check(
+        opened == client_dto(&next, a, item, *item_v),
+        "recipient full ordered JSON comparison",
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!(
+            "{}/items/{item}/attachment-snapshot?revision={}",
+            root(a),
+            state - 1
+        ),
+        &Value::Null,
+        409,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!("{}/items/{item}/attachment-snapshot?revision=0", root(a)),
+        &Value::Null,
+        400,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!(
+            "{}/items/{item}/attachment-snapshot?revision={state}&extra=1",
+            root(a)
+        ),
+        &Value::Null,
+        400,
+    );
+    let mut conflict = put.clone();
+    conflict["expectedStateRevision"] = json!(state);
+    reject(db, p, b, "PUT", &endpoint, &conflict, 409);
+    // Updating the same file exercises independent item/file versions.
+    file.version = 2;
+    file.name = "更新\0.bin".to_owned();
+    file.bytes.reverse();
+    file.sealed = seal(key, a, item, &file.id, &file.name, &file.bytes, 2, 1);
+    next["attachments"][1] = next_ref(&file, 1);
+    let put = json!({"expectedStateRevision":state,"item":{"expectedVersion":*item_v,
+        "envelope":item_body(key,a,item,&next,*item_v+1,1)},"expectedVersion":1,"envelope":file.sealed});
+    send(p, b, "PUT", &endpoint, &put, 200);
+    *item_v += 1;
+    let state = public_state(db, p, b, a, 1);
+    let cipher = replay(
+        db,
+        p,
+        b,
+        "GET",
+        &format!("{endpoint}?revision={state}"),
+        &Value::Null,
+    );
+    file.verify(key, a, item, &cipher, 1);
+    references(&next, key, a, item, *item_v, 1, p);
+    let delete = json!({"expectedStateRevision":state,"item":{"expectedVersion":*item_v,
+        "envelope":item_body(key,a,item,dto,*item_v+1,1)},"expectedVersion":2,"keyEpoch":1});
+    send(p, b, "DELETE", &endpoint, &delete, 200);
+    *item_v += 1;
+    references(dto, key, a, item, *item_v, 1, p);
+    let state = public_state(db, p, b, a, 1);
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!("{endpoint}?revision={state}"),
+        &Value::Null,
+        404,
+    );
+}
+
+fn state_guards(db: &Database, p: u16, a: &Account, b: &Account) {
+    let endpoint = format!("{}/attachment-state", root(a));
+    for query in [
+        "?revision=1",
+        "?after=",
+        "?stateRevision=1",
+        "?keyEpoch=1",
+        "?x=1&x=2",
+        "?revision[]=1",
+    ] {
+        reject(
+            db,
+            p,
+            b,
+            "GET",
+            &format!("{endpoint}{query}"),
+            &Value::Null,
+            400,
+        );
+    }
+    for (method, expected) in [
+        ("HEAD", 400),
+        ("POST", 404),
+        ("PUT", 404),
+        ("PATCH", 404),
+        ("DELETE", 404),
+    ] {
+        let before = state_hash(db, true);
+        check(
+            http_bytes(p, method, &endpoint, &b.headers(), &Value::Null).0 == expected
+                && state_hash(db, true) == before,
+            "strict method guard preserves rows/xmin",
+        );
+    }
+    for raw in ["{}", "null", "{\"revision\":1}"] {
+        let before = state_hash(db, true);
+        check(
+            http_payload(p, "GET", &endpoint, &b.headers(), raw).0 == 400
+                && state_hash(db, true) == before,
+            "body rejected without mutation",
+        );
+    }
+    for headers in [
+        String::new(),
+        format!("Authorization: Bearer {}\r\n", b.connect),
+        format!(
+            "Authorization: Basic invalid\r\nCookie: passshare_session={}\r\n",
+            b.session
+        ),
+        "Authorization: Bearer old-synthetic-token\r\n".to_owned(),
+    ] {
+        let before = state_hash(db, true);
+        check(
+            http(p, "GET", &endpoint, &headers, &Value::Null).0 == 401
+                && state_hash(db, true) == before,
+            "no-session, Connect, malformed and old tokens rejected",
+        );
+    }
+    let before = state_hash(db, true);
+    let cookie = format!("Cookie: passshare_session={}\r\n", b.session);
+    let (status, reply) = http(p, "GET", &endpoint, &cookie, &Value::Null);
+    check(
+        status == 200
+            && reply == json!({"stateRevision":revision(db,a),"keyEpoch":1})
+            && state_hash(db, true) == before,
+        "recipient cookie GET retains existing authentication",
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!(
+            "/api/encrypted/boxes/{}/attachment-state",
+            a.box_id.to_ascii_uppercase()
+        ),
+        &Value::Null,
+        400,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        "/api/encrypted/boxes/invalid/attachment-state",
+        &Value::Null,
+        400,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!(
+            "/api/encrypted/boxes/{}/attachment-state",
+            ConnectId::generate().unwrap()
+        ),
+        &Value::Null,
+        404,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!("{}/sharing-snapshot", root(a)),
+        &Value::Null,
+        403,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!("{}/owner-key", root(a)),
+        &Value::Null,
+        403,
+    );
+    for alias in [
+        format!("{endpoint}/"),
+        endpoint.replace("/attachment-state", "/ATTACHMENT-STATE"),
+    ] {
+        replay(db, p, b, "GET", &alias, &Value::Null);
+    }
+    for (origin, allowed) in [
+        ("https://pass-share.bm1314.net", true),
+        ("https://example.invalid", false),
+    ] {
+        let before = state_hash(db, true);
+        let reply = state_wire(
+            p,
+            &endpoint,
+            &format!("{}Origin: {origin}\r\n", b.headers()),
+            "",
+        );
+        let lower = reply.to_ascii_lowercase();
+        check(
+            reply.starts_with("HTTP/1.1 200 ")
+                && lower.contains("\r\ncache-control: no-store\r\n")
+                && lower.contains("\r\naccess-control-allow-origin:") == allowed
+                && lower.contains("\r\naccess-control-allow-credentials: true\r\n") == allowed
+                && state_hash(db, true) == before,
+            "state inherits no-store and existing credentialed CORS allowlist",
+        );
+    }
+    let before = state_hash(db, true);
+    let reply = state_wire(
+        p,
+        &endpoint,
+        &format!("{}Transfer-Encoding: chunked\r\n", b.headers()),
+        "0\r\n\r\n",
+    );
+    check(
+        reply.starts_with("HTTP/1.1 400 ") && state_hash(db, true) == before,
+        "chunked empty body rejected without mutation",
+    );
+}
+
+fn state_wire(p: u16, endpoint: &str, headers: &str, payload: &str) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", p)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .unwrap();
+    write!(stream,"GET {endpoint} HTTP/1.1\r\nHost: 127.0.0.1:{p}\r\nConnection: close\r\n{headers}\r\n{payload}").unwrap();
+    let mut reply = String::new();
+    stream
+        .take(4 * 1024 * 1024)
+        .read_to_string(&mut reply)
+        .unwrap();
+    reply
+}
 fn attach_context(a: &Account, item: &str, id: &str, v: u64, epoch: u64) -> AttachmentContext {
     checked(
         serde_json::from_value(
@@ -173,7 +525,7 @@ fn references(
     );
 }
 fn get_file(
-    db: &Database,
+    _db: &Database,
     p: u16,
     a: &Account,
     item: &str,
@@ -181,11 +533,29 @@ fn get_file(
     key: &PasswordBoxKey,
     epoch: u64,
 ) -> Value {
+    // Use the client-visible selector, never a fixture-only SQL revision lookup.
+    // The independently held epoch/context below remains the crypto authority.
+    let state = send(
+        p,
+        a,
+        "GET",
+        &format!("{}/attachment-state", root(a)),
+        &Value::Null,
+        200,
+    );
+    let state_revision = number(&state, "stateRevision");
+    check(
+        state.as_object().is_some_and(|o| {
+            o.len() == 2 && o.contains_key("keyEpoch") && o.contains_key("stateRevision")
+        }) && state["keyEpoch"] == epoch
+            && (1..=9_007_199_254_740_991).contains(&state_revision),
+        "file read uses only strict public CAS state, with an independently held epoch",
+    );
     let body = send(
         p,
         a,
         "GET",
-        &format!("{}?revision={}", path(a, item, &file.id), revision(db, a)),
+        &format!("{}?revision={state_revision}", path(a, item, &file.id)),
         &Value::Null,
         200,
     );
@@ -789,6 +1159,36 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     // Explicit synthetic unconfirmed membership exercises the DB's CURRENT
     // confirmation contract, independently of the HTTP invite adapter.
     db.sql(&format!("INSERT INTO vault_memberships(user_id,vault_id,role,confirmed_at) VALUES('{}','{}','member',NULL)",d.id,a.box_id));
+    public_state(db, p, &a, &a, 1);
+    for actor in [&b, &c, &d] {
+        reject(
+            db,
+            p,
+            actor,
+            "GET",
+            &format!("{}/attachment-state", root(&a)),
+            &Value::Null,
+            403,
+        );
+    }
+    reject(
+        db,
+        p,
+        &a,
+        "GET",
+        &format!("{}/attachment-state", root(&b)),
+        &Value::Null,
+        403,
+    );
+    reject(
+        db,
+        p,
+        &b,
+        "GET",
+        &format!("{}/attachment-state", root(&b)),
+        &Value::Null,
+        409,
+    );
     for recipient in [&b, &c] {
         send(
             p,
@@ -798,7 +1198,27 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
             &json!({"expectedStateRevision":revision(db,&a),"keyEpoch":1,"expectedVersion":0,"envelope":grant(&old,&a,recipient,1)}),
             200,
         );
+        public_state(db, p, recipient, &a, 1);
     }
+    state_guards(db, p, &a, &b);
+    // Confirmation remains necessary even when a current grant already exists.
+    db.sql(&format!(
+        "UPDATE vault_memberships SET confirmed_at=NULL WHERE vault_id='{}' AND user_id='{}'",
+        a.box_id, c.id
+    ));
+    reject(
+        db,
+        p,
+        &c,
+        "GET",
+        &format!("{}/attachment-state", root(&a)),
+        &Value::Null,
+        403,
+    );
+    db.sql(&format!("UPDATE vault_memberships SET confirmed_at=clock_timestamp() WHERE vault_id='{}' AND user_id='{}'",a.box_id,c.id));
+    public_state(db, p, &c, &a, 1);
+    waiting_state_session(db, p, &a, &b);
+    println!("attachment state: strict selectors/transport and post-lock expired/revoked sessions passed");
     let item = ConnectId::generate().unwrap().to_string();
     let mut item_v = 1;
     let mut dto = json!({"title":"synthetic attachment item","attachments":[],"unknown":{"ordered":[3,1,2],"nested":{"null":null,"flag":true,"unicode":"\0Ж🦀","bytes":(0..=255).collect::<Vec<u8>>() }},"fields":[{"id":"password","type":"CONCEALED","value":"synthetic-only\0éЖ🦀","unknown":[false,17,null]},{"id":"notes","value":"line1\nline2"}],"tags":["z","a","z"],"urls":[{"href":"https://example.invalid/","primary":true}],"notesPlain":"\0synthetic","category":"LOGIN"});
@@ -843,6 +1263,9 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         files.push(f);
     }
     references(&dto, &old, &a, &item, item_v, 1, p);
+    let recipient_key = own_grant(&rt, &b.sdk(p), &a, &b, 1);
+    recipient_files(db, p, &a, &b, &recipient_key, &item, &dto, &mut item_v);
+    println!("attachment state: recipient GET/PUT/DELETE CAS and complete JSON/name/bytes passed");
     sdk_mutations(db, p, &rt, &a, &d, &old, &item, &dto, &mut item_v);
     let attachment_rows=db.sql("SELECT md5(string_agg(to_jsonb(a)::text||a.xmin::text,'|' ORDER BY box_id,item_id,attachment_id)) FROM encrypted_attachments a");
     dto["title"] = json!("synthetic title edit");
@@ -896,6 +1319,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         "UPDATE vault_memberships SET role='readonly' WHERE vault_id='{}' AND user_id='{}'",
         a.box_id, c.id
     ));
+    public_state(db, p, &c, &a, 1);
     let mut current = good.clone();
     current["expectedStateRevision"] = json!(revision(db, &a));
     reject(db, p, &c, "PUT", &endpoint, &current, 403);
@@ -1387,6 +1811,16 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     // tombstones and pending ciphertext stages, into another OWNED database.
     let restored = encrypted_restore::attachment_roundtrip(db, network);
     let restore_host = Host::start(&restored, network, mode);
+    public_state(&restored, restore_host.port, &b, &a, 1);
+    reject(
+        &restored,
+        restore_host.port,
+        &d,
+        "GET",
+        &format!("{}/attachment-state", root(&a)),
+        &Value::Null,
+        403,
+    );
     references(&dto, &old, &a, &item, item_v, 1, restore_host.port);
     for file in &files {
         get_file(&restored, restore_host.port, &a, &item, file, &old, 1);
@@ -1431,6 +1865,34 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     }
     sdk_reads(db, p, &rt, &a, &new, &item, &next_dto, item_v, &files, 2);
     let member_key = own_grant(&rt, &c.sdk(p), &a, &c, 2);
+    public_state(db, p, &a, &a, 2);
+    public_state(db, p, &c, &a, 2);
+    // Deliberate old-epoch fixture after a verified current-grant positive.
+    db.sql(&format!("UPDATE encrypted_key_grants SET key_epoch=1,envelope='{}'::jsonb WHERE box_id='{}' AND recipient_id='{}'",sql_json(&grant(&old,&a,&c,1)),a.box_id,c.id));
+    reject(
+        db,
+        p,
+        &c,
+        "GET",
+        &format!("{}/attachment-state", root(&a)),
+        &Value::Null,
+        403,
+    );
+    reject(
+        db,
+        p,
+        &c,
+        "GET",
+        &format!(
+            "{}?revision={}",
+            path(&a, &item, &files[0].id),
+            revision(db, &a)
+        ),
+        &Value::Null,
+        403,
+    );
+    db.sql(&format!("UPDATE encrypted_key_grants SET key_epoch=2,envelope='{}'::jsonb WHERE box_id='{}' AND recipient_id='{}'",sql_json(&grant(&new,&a,&c,2)),a.box_id,c.id));
+    public_state(db, p, &c, &a, 2);
     for file in &files {
         let cipher = get_file(db, p, &a, &item, file, &new, 2);
         file.verify(&member_key, &a, &item, &cipher, 2);
@@ -1464,7 +1926,9 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         (&b.connect[..], 401),
         (login["connectAccessToken"].as_str().unwrap(), 401),
     ] {
+        let before = state_hash(db, true);
         for endpoint in [
+            format!("{}/attachment-state", root(&a)),
             format!("{}/items/{item}", root(&a)),
             format!("{}/grants/me", root(&a)),
             format!("{}/owner-key", root(&a)),
@@ -1486,7 +1950,14 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
                 "removed old/new session and Connect tokens cannot read future item/key/attachment",
             );
         }
+        check(
+            state_hash(db, true) == before,
+            "removed old/new tokens preserve all full rows and xmin",
+        );
     }
+    println!(
+        "attachment state: current epoch, stale grants and removed old/new credentials passed"
+    );
     let dead = File::new(&new, &a, &item, "reserved", vec![]);
     let mut dead_body = mutation(db, &new, &a, &item, &next_dto, item_v, &dead, 0);
     dead_body["envelope"] = seal(
@@ -1603,7 +2074,113 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         )) == "accepted",
         "unrelated invitation retained",
     );
+    let disabled = Host::with_storage(db, network, mode, false);
+    let before = state_hash(db, true);
+    check(
+        http_bytes(
+            disabled.port,
+            "GET",
+            &format!("{}/attachment-state", root(&a)),
+            &a.headers(),
+            &Value::Null,
+        )
+        .0 == 404
+            && state_hash(db, true) == before,
+        "flag-off route absent, including its non-JSON 404, with rows/xmin unchanged",
+    );
+    drop(disabled);
+    println!("attachment state: feature-off 404 and unchanged rows/xmin passed");
+    // Retired credentials remain unusable, including after formal restoration.
+    send(
+        p,
+        &b,
+        "DELETE",
+        "/api/auth/account",
+        &json!({"currentPassword":b.login_password,"confirmationEmail":b.email}),
+        204,
+    );
+    reject(
+        db,
+        p,
+        &b,
+        "GET",
+        &format!("{}/attachment-state", root(&a)),
+        &Value::Null,
+        401,
+    );
+    let restored = encrypted_restore::attachment_roundtrip(db, network);
+    let restored_host = Host::start(&restored, network, mode);
+    reject(
+        &restored,
+        restored_host.port,
+        &b,
+        "GET",
+        &format!("{}/attachment-state", root(&a)),
+        &Value::Null,
+        401,
+    );
+    public_state(&restored, restored_host.port, &a, &a, 3);
+    reject(
+        &restored,
+        restored_host.port,
+        &d,
+        "GET",
+        &format!("{}/attachment-state", root(&a)),
+        &Value::Null,
+        403,
+    );
+    drop(restored_host);
+    drop(restored);
     println!("encrypted attachment acceptance: {} measured HTTP/SDK/Core/PG assertions passed; {} observed real SDK requests; 101-entry pagination; all-field/all-name/all-byte comparisons; no skipped cases",CHECKS.load(Ordering::Relaxed),SDK_REQUESTS.load(Ordering::Relaxed));
+}
+
+fn waiting_state_session(db: &Database, p: u16, a: &Account, b: &Account) {
+    for revoke in [false, true] {
+        let (status, login) = http(
+            p,
+            "POST",
+            "/api/auth/login",
+            "x-passshare-client: mobile\r\n",
+            &json!({"email":b.email,"password":b.login_password}),
+        );
+        check(status == 200, "fresh recipient state wait session");
+        let token = text_field(&login, "refreshToken");
+        let session = db.sql(&format!(
+            "SELECT id::text FROM sessions WHERE user_id='{}' ORDER BY created_at DESC LIMIT 1",
+            b.id
+        ));
+        let label = format!("passshare1163-state-{}", ConnectId::generate().unwrap());
+        let mut held = HeldBox::start(db, &a.box_id, &label);
+        check(wait_db(db,&format!("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='{label}' AND state='idle in transaction')")),"state test box lock held");
+        let endpoint = format!("{}/attachment-state", root(a));
+        let worker = thread::spawn(move || {
+            http(
+                p,
+                "GET",
+                &endpoint,
+                &format!("Authorization: Bearer {token}\r\n"),
+                &Value::Null,
+            )
+        });
+        let waiting = wait_db(db,&format!("SELECT EXISTS(SELECT 1 FROM pg_stat_activity w JOIN pg_stat_activity h ON h.pid=ANY(pg_blocking_pids(w.pid)) WHERE h.application_name='{label}' AND w.query LIKE '%passshare_attachment_operation(%')"));
+        if !waiting {
+            held.commit();
+            let _ = worker.join();
+            panic!("state GET must actually wait before session fault");
+        }
+        if revoke {
+            db.sql(&format!("DELETE FROM sessions WHERE id='{session}'"));
+        } else {
+            db.sql(&format!("UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE id='{session}'"));
+        }
+        let before = state_hash(db, true);
+        held.commit();
+        let (status, reply) = worker.join().unwrap();
+        check(
+            status == 401 && reply["error"] == "PS024" && state_hash(db, true) == before,
+            "expired or revoked during lock wait denied with rows/xmin unchanged",
+        );
+    }
 }
 
 fn waiting_attachment_session(db: &Database, p: u16, a: &Account, endpoint: &str, request: &Value) {

@@ -465,5 +465,19 @@
   "sharing.complete": "共有鍵の接続が完了しました。",
   "sharing.irrevocable": "以前共有した内容は、相手の端末から消せません。",
   "sharing.rotationPending": "暗号化したパスワードボックスの参加解除は、添付を含む鍵更新の接続が未完了です。ここからは解除できません。",
-  "sharing.failed": "確認または接続に失敗しました。コードや鍵が変わった場合は再確認してください。"
+  "sharing.failed": "確認または接続に失敗しました。コードや鍵が変わった場合は再確認してください。",
+  "attachments.heading": "添付ファイル",
+  "attachments.add": "ファイルを追加",
+  "attachments.download": "ダウンロード",
+  "attachments.delete": "削除",
+  "attachments.cancel": "取消",
+  "attachments.replace": "取替",
+  "attachments.undoDelete": "削除を取り消す",
+  "attachments.undoReplace": "取替を取り消す",
+  "attachments.pending": "保存待ち",
+  "attachments.pendingDelete": "削除は保存時に確定します",
+  "attachments.limit": "1ファイル1MiB（1,048,576バイト）まで。空のファイルも追加できます。",
+  "attachments.encrypted": "ファイル名と内容は、この端末で暗号化します。",
+  "attachments.tooLarge": "ファイルが1MiBを超えています。選択したファイルは追加されていません。",
+  "attachments.unavailable": "共有された添付を扱う接続は準備中です。入力内容は保持されています。"
 }

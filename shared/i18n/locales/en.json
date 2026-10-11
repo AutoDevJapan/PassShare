@@ -465,5 +465,19 @@
   "sharing.complete": "Shared key connection completed.",
   "sharing.irrevocable": "Previously shared content cannot be erased from the other person's device.",
   "sharing.rotationPending": "Removing a person from an encrypted password box awaits the key rotation connection, including attachments. Removal is unavailable here.",
-  "sharing.failed": "Verification or connection failed. Verify again if the code or key has changed."
+  "sharing.failed": "Verification or connection failed. Verify again if the code or key has changed.",
+  "attachments.heading": "Attachments",
+  "attachments.add": "Add files",
+  "attachments.download": "Download",
+  "attachments.delete": "Delete",
+  "attachments.cancel": "Cancel",
+  "attachments.replace": "Replace",
+  "attachments.undoDelete": "Undo deletion",
+  "attachments.undoReplace": "Undo replacement",
+  "attachments.pending": "Pending save",
+  "attachments.pendingDelete": "Deletion takes effect when saved",
+  "attachments.limit": "Up to 1MiB (1,048,576 bytes) per file. Empty files are supported.",
+  "attachments.encrypted": "File names and contents are encrypted on this device.",
+  "attachments.tooLarge": "A file exceeds 1MiB. The selected files were not added.",
+  "attachments.unavailable": "Shared attachment access is being prepared. Your input is retained."
 }

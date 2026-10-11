@@ -465,5 +465,19 @@
   "sharing.complete": "Connexion à la clé partagée terminée.",
   "sharing.irrevocable": "Les contenus déjà partagés ne peuvent pas être effacés de l’autre appareil.",
   "sharing.rotationPending": "Le retrait d’une boîte chiffrée est indisponible tant que la rotation des clés, pièces jointes comprises, n’est pas connectée.",
-  "sharing.failed": "Échec de la vérification ou de la connexion. Vérifiez de nouveau si le code ou la clé a changé."
+  "sharing.failed": "Échec de la vérification ou de la connexion. Vérifiez de nouveau si le code ou la clé a changé.",
+  "attachments.heading": "Pièces jointes",
+  "attachments.add": "Ajouter des fichiers",
+  "attachments.download": "Télécharger",
+  "attachments.delete": "Supprimer",
+  "attachments.cancel": "Annuler",
+  "attachments.replace": "Remplacer",
+  "attachments.undoDelete": "Annuler la suppression",
+  "attachments.undoReplace": "Annuler le remplacement",
+  "attachments.pending": "En attente de sauvegarde",
+  "attachments.pendingDelete": "La suppression prend effet à la sauvegarde",
+  "attachments.limit": "Jusqu’à 1MiB (1 048 576 octets) par fichier. Les fichiers vides sont acceptés.",
+  "attachments.encrypted": "Les noms et contenus sont chiffrés sur cet appareil.",
+  "attachments.tooLarge": "Un fichier dépasse 1MiB. Les fichiers sélectionnés n’ont pas été ajoutés.",
+  "attachments.unavailable": "L’accès aux pièces jointes partagées est en préparation. Votre saisie est conservée."
 }

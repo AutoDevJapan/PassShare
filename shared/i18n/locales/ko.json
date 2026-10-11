@@ -465,5 +465,19 @@
   "sharing.complete": "공유 키 연결이 완료되었습니다.",
   "sharing.irrevocable": "이미 공유한 내용은 상대 기기에서 삭제할 수 없습니다.",
   "sharing.rotationPending": "암호화된 비밀번호 상자의 참여 해제는 첨부 파일을 포함한 키 교체 연결이 완료될 때까지 사용할 수 없습니다.",
-  "sharing.failed": "확인 또는 연결에 실패했습니다. 코드나 키가 바뀌면 다시 확인하세요."
+  "sharing.failed": "확인 또는 연결에 실패했습니다. 코드나 키가 바뀌면 다시 확인하세요.",
+  "attachments.heading": "첨부 파일",
+  "attachments.add": "파일 추가",
+  "attachments.download": "다운로드",
+  "attachments.delete": "삭제",
+  "attachments.cancel": "취소",
+  "attachments.replace": "교체",
+  "attachments.undoDelete": "삭제 취소",
+  "attachments.undoReplace": "교체 취소",
+  "attachments.pending": "저장 대기",
+  "attachments.pendingDelete": "저장 시 삭제됩니다",
+  "attachments.limit": "파일당 최대 1MiB(1,048,576바이트). 빈 파일도 추가할 수 있습니다.",
+  "attachments.encrypted": "파일 이름과 내용은 이 기기에서 암호화됩니다.",
+  "attachments.tooLarge": "파일이 1MiB를 초과합니다. 선택한 파일은 추가되지 않았습니다.",
+  "attachments.unavailable": "공유 첨부 파일 연결을 준비 중입니다. 입력 내용은 유지됩니다."
 }

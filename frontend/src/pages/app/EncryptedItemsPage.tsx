@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Item } from "@passshare/connect";
 import { ItemForm } from "@shared/ui/ItemForm.js";
 import { categoryLabel, emptyFormValues, formValuesFromItem, ITEM_CATEGORIES,
@@ -9,29 +9,43 @@ import { useAuthSession } from "../../hooks/useAuthSession";
 import { useItemLabels } from "../../hooks/useItemLabels";
 import { connectItemFromApi } from "../../lib/connect-items";
 import { CloudApiError, deleteEncryptedItem, getBoxState, getEncryptedItem,
-  listEncryptedItems, putEncryptedItem, readItemEnvelope, validateItemContext } from "../../lib/cloud-api";
-import type { CloudWorker, ItemContext, OwnerContext } from "../../lib/cloud-worker";
+  listEncryptedItems, putEncryptedItem, readItemEnvelope, validateItemContext,
+  getAttachmentState, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment, type AttachmentWrite } from "../../lib/cloud-api";
+import type { AttachmentContext, CloudWorker, ItemContext, OwnerContext } from "../../lib/cloud-worker";
 import "./encrypted-items.css";
 
 type Row = { context: ItemContext; originalJSON: string; display: ConnectItem };
-type Draft = { original: Row | null; values: ItemFormValues };
+type FileDraft = { key: number; context: AttachmentContext | null; name: string; size: number; file: File | null; removed: boolean; savedName: string; savedSize: number };
+type Draft = { original: Row | null; values: ItemFormValues; files: FileDraft[]; attachmentReady: boolean };
 type Prepared = { kind: "put"; context: ItemContext; expectedVersion: number; envelopeJSON: string } |
-  { kind: "delete"; context: ItemContext };
+  { kind: "delete"; context: ItemContext } |
+  { kind: "attachment"; write: AttachmentWrite; fileKey: number };
 type Runtime = { alive: boolean; busy: boolean; ready: boolean; rows: Row[]; draft: Draft | null;
   prepared: Prepared | null; deleting: Row | null; outcome: "none" | "unknown" | "conflict" | "rejected";
   error: MessageKey | null; query: string; category: ItemCategory; revealed: boolean;
-  controllers: Set<AbortController> };
+  controllers: Set<AbortController>; buffers: Set<Uint8Array>; urls: Set<string>; fileKey: number };
 function runtime(): Runtime {
   return { alive: true, busy: false, ready: false, rows: [], draft: null, prepared: null, deleting: null,
-    outcome: "none", error: null, query: "", category: "LOGIN", revealed: false, controllers: new Set() };
+    outcome: "none", error: null, query: "", category: "LOGIN", revealed: false, controllers: new Set(),
+    buffers: new Set(), urls: new Set(), fileKey: 0 };
+}
+function clearFiles(draft: Draft | null) {
+  if (!draft) return;
+  for (const file of draft.files) { file.file = null; file.name = ""; file.savedName = ""; }
+  draft.files = [];
 }
 function clear(runtime: Runtime) {
   runtime.alive = false;
   for (const controller of runtime.controllers) controller.abort();
   runtime.controllers.clear();
+  for (const bytes of runtime.buffers) if (bytes.byteLength) bytes.fill(0);
+  runtime.buffers.clear();
+  for (const url of runtime.urls) URL.revokeObjectURL(url);
+  runtime.urls.clear();
   for (const row of runtime.rows) { row.originalJSON = ""; row.display = { ...row.display, title: "", tags: [],
     username: null, password: null, body: null, notes: null, url: null }; }
   if (runtime.draft) runtime.draft.values = emptyFormValues();
+  clearFiles(runtime.draft);
   runtime.rows = []; runtime.draft = null; runtime.prepared = null; runtime.deleting = null;
   runtime.query = ""; runtime.revealed = false; runtime.busy = false; runtime.ready = false; runtime.error = null;
 }
@@ -45,17 +59,33 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
   const { t } = useI18n();
   const labels = useItemLabels();
   const { passwordBoxId, ownerAccountId, keyEpoch } = scope;
-  const session = useMemo(runtime, [worker, passwordBoxId, ownerAccountId, keyEpoch]);
+  const session = useMemo(runtime, [worker, passwordBoxId, ownerAccountId, keyEpoch, user?.id]);
   const [, redraw] = useState(0);
   const current = useRef({ session, userId: user?.id });
   current.current = { session, userId: user?.id };
   const lockRef = useRef(onLock);
   lockRef.current = onLock;
   const formHost = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const fileTarget = useRef<number | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const restoreFocus = useRef(false);
+  const bindFileInput = useCallback((input: HTMLInputElement | null) => {
+    const previous = fileInput.current;
+    if (previous && previous !== input) { previous.value = ""; previous.oncancel = null; fileTarget.current = null; }
+    fileInput.current = input;
+    if (input) input.oncancel = () => { input.value = ""; fileTarget.current = null; };
+  }, []);
   const changed = () => redraw((revision) => revision + 1);
   const active = (controller?: AbortController) => session.alive && !worker.isClosed && current.current.session === session &&
     current.current.userId === ownerAccountId && !controller?.signal.aborted && document.visibilityState !== "hidden";
-  function revoke() { clear(session); changed(); lockRef.current(); }
+  useLayoutEffect(() => {
+    if (restoreFocus.current && active() && !session.draft && !session.busy) {
+      restoreFocus.current = false; returnFocus.current?.focus();
+    }
+  }, [session.draft, session.busy]);
+  function clearInput() { if (fileInput.current) fileInput.current.value = ""; fileTarget.current = null; }
+  function revoke() { clearInput(); clear(session); worker.dispose(); changed(); lockRef.current(); }
 
   function rowFromJSON(originalJSON: string, context: ItemContext): Row {
     // This is a display adapter only. The original worker-validated full JSON is
@@ -165,6 +195,7 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
     });
     if (active()) void oneFlight(load);
     return () => {
+      clearInput();
       clear(session);
       window.removeEventListener("passshare:cloud-lock", stop);
       window.removeEventListener("pagehide", stop);
@@ -172,6 +203,63 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
       document.removeEventListener("visibilitychange", background);
     };
   }, [session]);
+
+  function installRow(row: Row) {
+    session.rows = [...session.rows.filter((prior) => prior.context.itemId !== row.context.itemId), row]
+      .sort((left, right) => left.context.itemId.localeCompare(right.context.itemId));
+  }
+  function finishDraft() {
+    clearInput(); clearFiles(session.draft); session.draft = null;
+    session.revealed = false;
+    restoreFocus.current = true;
+  }
+  function references(row: Row): AttachmentContext[] {
+    // Display/transport projection only. Rust authenticates and validates these
+    // references again against the independent item context and held revision.
+    const item = JSON.parse(row.originalJSON);
+    return (item.attachments ?? []).map((reference: { attachmentId: string; attachmentVersion: number; keyEpoch: number }) =>
+      ({ passwordBoxId, itemId: row.context.itemId, attachmentId: reference.attachmentId,
+        attachmentVersion: reference.attachmentVersion, keyEpoch: reference.keyEpoch }));
+  }
+  async function attachmentSnapshot(row: Row | null, controller: AbortController) {
+    const snapshot = await getAttachmentState(passwordBoxId, controller.signal);
+    if (!active(controller)) return null;
+    if (snapshot.keyEpoch !== keyEpoch) throw new CloudApiError(409, "PS056");
+    const envelope = row ? await getAttachmentItemSnapshot(row.context, snapshot.stateRevision, controller.signal) : null;
+    if (!active(controller)) return null;
+    return { revision: snapshot.stateRevision, envelope };
+  }
+  async function readFile(row: Row, context: AttachmentContext, controller: AbortController) {
+    const snapshot = await attachmentSnapshot(row, controller);
+    if (!snapshot || !snapshot.envelope) return null;
+    const envelope = await getEncryptedAttachment(context, snapshot.revision, controller.signal);
+    if (!active(controller)) return null;
+    const plaintext = await worker.decryptAttachment(envelope, context, { itemEnvelope: snapshot.envelope,
+      expectedItemContext: row.context, itemSnapshotRevision: snapshot.revision, attachmentSnapshotRevision: snapshot.revision });
+    if (!active(controller)) { worker.releaseAttachment(plaintext); return null; }
+    return plaintext;
+  }
+  async function loadFiles(draft: Draft, controller: AbortController) {
+    // Rejected attachment access must not discard the current item form.
+    try {
+      const snapshot = await attachmentSnapshot(draft.original, controller);
+      if (!snapshot || !active(controller) || session.draft !== draft) return;
+      if (draft.original) for (const context of references(draft.original)) {
+        const plaintext = await readFile(draft.original, context, controller);
+        if (!plaintext) return;
+        try {
+          if (!active(controller) || session.draft !== draft) return;
+          draft.files.push({ key: ++session.fileKey, context, name: plaintext.name, size: plaintext.bytes.byteLength,
+            savedName: plaintext.name, savedSize: plaintext.bytes.byteLength, file: null, removed: false });
+        } finally { worker.releaseAttachment(plaintext); }
+      }
+      if (active(controller) && session.draft === draft) draft.attachmentReady = true;
+    } catch (error) {
+      clearFiles(draft);
+      if (error instanceof CloudApiError && error.status === 403 && active(controller)) session.error = "attachments.unavailable";
+      else throw error;
+    }
+  }
 
   async function sendPrepared(controller: AbortController) {
     const prepared = session.prepared;
@@ -181,21 +269,78 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
       if (!active(controller)) return;
       session.rows = session.rows.filter((row) => row.context.itemId !== prepared.context.itemId);
       session.deleting = null;
+    } else if (prepared.kind === "attachment") {
+      await writeEncryptedAttachment(prepared.write, controller.signal);
+      if (!active(controller)) return;
+      const originalJSON = await worker.decrypt(prepared.write.itemEnvelope, prepared.write.itemContext);
+      if (!active(controller)) return;
+      const draft = session.draft;
+      const row = rowFromJSON(originalJSON, prepared.write.itemContext);
+      installRow(row);
+      if (draft) {
+        draft.original = row;
+        const file = draft.files.find((file) => file.key === prepared.fileKey);
+        if (file) {
+          if (prepared.write.envelope === null) {
+            file.file = null; file.name = ""; file.savedName = "";
+            draft.files = draft.files.filter((entry) => entry !== file);
+          }
+          else { file.context = prepared.write.context; file.file = null; file.removed = false; file.savedName = file.name; file.savedSize = file.size; }
+        }
+      }
     } else {
       const stored = await putEncryptedItem(prepared.context, prepared.expectedVersion, prepared.envelopeJSON, controller.signal);
       if (!active(controller)) return;
       const originalJSON = await worker.decrypt(stored, prepared.context);
       if (!active(controller)) return;
       const row = rowFromJSON(originalJSON, prepared.context);
-      session.rows = [...session.rows.filter((prior) => prior.context.itemId !== row.context.itemId), row]
-        .sort((left, right) => left.context.itemId.localeCompare(right.context.itemId));
-      session.draft = null;
+      installRow(row);
+      if (session.draft) session.draft.original = row;
     }
     session.prepared = null; session.outcome = "none"; session.error = null; session.revealed = false;
     changed();
   }
+  async function saveRemaining(controller: AbortController) {
+    await sendPrepared(controller);
+    if (!active(controller) || session.prepared || !session.draft) return;
+    const draft = session.draft;
+    while (active(controller) && session.draft === draft) {
+      const file = draft.files.find((file) => file.file !== null || file.removed);
+      if (!file) { finishDraft(); changed(); return; }
+      const original = draft.original;
+      if (!original) throw new CloudApiError(502);
+      const snapshot = await attachmentSnapshot(original, controller);
+      if (!snapshot || !active(controller)) return;
+      const context = { ...original.context, itemVersion: original.context.itemVersion + 1 };
+      const action = file.removed ? "remove" : file.context ? "replace" : "add";
+      const itemEnvelope = await worker.editAttachmentItem(original.originalJSON, JSON.stringify({ form: draft.values, action,
+        ...(file.context ? { attachmentId: file.context.attachmentId } : {}) }), context);
+      if (!active(controller)) return;
+      const originalJSON = await worker.decrypt(itemEnvelope, context);
+      if (!active(controller)) return;
+      const nextRow = rowFromJSON(originalJSON, context);
+      const refs = references(nextRow);
+      const attachmentContext = action === "remove" ? file.context! : action === "add" ? refs[refs.length - 1] :
+        refs.find((ref) => ref.attachmentId === file.context!.attachmentId)!;
+      let envelope: string | null = null;
+      if (!file.removed) {
+        const bytes = new Uint8Array(await file.file!.arrayBuffer());
+        session.buffers.add(bytes);
+        try {
+          if (!active(controller) || session.draft !== draft) return;
+          envelope = await worker.encryptAttachment(file.name, bytes, attachmentContext);
+          if (!active(controller)) return;
+        } finally { if (bytes.byteLength) bytes.fill(0); session.buffers.delete(bytes); }
+      }
+      session.prepared = { kind: "attachment", fileKey: file.key, write: { context: attachmentContext,
+        itemContext: context, revision: snapshot.revision, itemEnvelope, expectedVersion: file.context?.attachmentVersion ?? 0, envelope } };
+      await sendPrepared(controller);
+      if (session.prepared || !active(controller)) return;
+    }
+  }
   function save(values: ItemFormValues) {
-    if (!session.ready || !session.draft || session.outcome === "conflict" || session.outcome === "rejected") return;
+    if (!active() || session.busy || !session.ready || !session.draft || session.prepared || session.outcome !== "none") return;
+    session.draft.values = values;
     void oneFlight(async (controller) => {
       if (!session.prepared) {
         const original = session.draft?.original;
@@ -218,12 +363,13 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
         readItemEnvelope(envelopeJSON, context);
         session.prepared = { kind: "put", context, expectedVersion: context.itemVersion - 1, envelopeJSON };
       }
-      await sendPrepared(controller);
+      await saveRemaining(controller);
     });
   }
   function cancel() {
-    if (!active() || session.busy) return;
-    session.draft = null; session.deleting = null; session.revealed = false;
+    if (!active()) return;
+    if (session.busy) { revoke(); return; }
+    finishDraft(); session.deleting = null;
     if (session.outcome === "unknown") {
       // Discard plaintext draft explicitly, but reconcile the outstanding exact
       // operation before allowing another payload or another creation ID.
@@ -237,8 +383,11 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
   function startDraft(row: Row | null) {
     if (!active() || session.busy || !session.ready || session.prepared || session.draft || session.deleting) return;
     session.error = null; session.revealed = false;
-    session.draft = { original: row, values: row ? formValuesFromItem(row.display) : emptyFormValues(session.category) };
+    returnFocus.current = document.activeElement as HTMLElement;
+    const draft: Draft = { original: row, values: row ? formValuesFromItem(row.display) : emptyFormValues(session.category), files: [], attachmentReady: false };
+    session.draft = draft;
     changed();
+    void oneFlight(async (controller) => { await loadFiles(draft, controller); if (active(controller)) formHost.current?.querySelector<HTMLInputElement>("input")?.focus(); });
   }
   function remove(row: Row) {
     if (!active() || session.busy || !session.ready || session.draft || session.prepared || session.deleting) return;
@@ -249,6 +398,56 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
     void oneFlight(async (controller) => {
       session.prepared ??= { kind: "delete", context: { ...session.deleting!.context } };
       await sendPrepared(controller);
+    });
+  }
+  function chooseFile(target: number | null = null) {
+    if (!active() || session.busy || session.prepared || session.outcome !== "none" || !session.draft?.attachmentReady) return;
+    clearInput(); fileTarget.current = target;
+    if (fileInput.current) { fileInput.current.multiple = target === null; fileInput.current.click(); }
+  }
+  function selectedFiles(input: HTMLInputElement) {
+    const selected = Array.from(input.files ?? []);
+    const target = fileTarget.current;
+    clearInput();
+    const draft = session.draft;
+    if (!active() || session.busy || session.prepared || session.outcome !== "none" || !draft?.attachmentReady) return;
+    if (selected.some((file) => file.size > 1048576)) { session.error = "attachments.tooLarge"; changed(); return; }
+    if (target !== null) {
+      const file = draft.files.find((file) => file.key === target);
+      if (file && selected.length === 1) { file.file = selected[0]; file.name = selected[0].name; file.size = selected[0].size; file.removed = false; }
+    } else for (const file of selected) draft.files.push({ key: ++session.fileKey, context: null, name: file.name, size: file.size,
+      savedName: "", savedSize: 0, file, removed: false });
+    session.error = null; changed();
+    formHost.current?.querySelector<HTMLElement>(".encrypted-attachments__heading")?.focus();
+  }
+  function discardFile(file: FileDraft) {
+    const draft = session.draft;
+    if (!active() || session.busy || session.prepared || session.outcome !== "none" || !draft?.files.includes(file)) return;
+    if (!file.context) { file.file = null; file.name = ""; draft.files = draft.files.filter((entry) => entry !== file); }
+    else { file.removed = !file.removed; }
+    changed(); formHost.current?.querySelector<HTMLElement>(".encrypted-attachments__heading")?.focus();
+  }
+  function undoReplace(file: FileDraft) {
+    if (!active() || session.busy || session.prepared || session.outcome !== "none" || !session.draft?.files.includes(file)) return;
+    file.file = null; file.name = file.savedName; file.size = file.savedSize;
+    changed(); formHost.current?.querySelector<HTMLElement>(".encrypted-attachments__heading")?.focus();
+  }
+  function download(file: FileDraft) {
+    const draft = session.draft;
+    if (!draft?.original || !draft.files.includes(file) || !file.context || file.removed || file.file) return;
+    const row = draft.original, context = file.context;
+    void oneFlight(async (controller) => {
+      const plaintext = await readFile(row, context, controller);
+      if (!plaintext) return;
+      try {
+        if (!active(controller) || session.draft !== draft) return;
+        const blob = new Blob([plaintext.bytes.buffer as ArrayBuffer], { type: "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        session.urls.add(url);
+        const anchor = document.createElement("a");
+        anchor.href = url; anchor.download = plaintext.name; document.body.append(anchor);
+        try { anchor.click(); } finally { anchor.remove(); URL.revokeObjectURL(url); session.urls.delete(url); }
+      } finally { worker.releaseAttachment(plaintext); }
     });
   }
   // Ref scope guard applies during render, before layout effects can run.
@@ -274,7 +473,7 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
     </div>
     {session.busy && <p role="status">{t("cloud.working")}</p>}
     {session.outcome === "unknown" && <button type="button" className="ps-button ps-button--secondary" disabled={session.busy}
-      onClick={() => void oneFlight(sendPrepared)}>{t("encryptedItems.retrySame")}</button>}
+      onClick={() => void oneFlight(session.draft ? saveRemaining : sendPrepared)}>{t("encryptedItems.retrySame")}</button>}
     {session.prepared && !session.draft && !session.deleting &&
       (session.outcome === "conflict" || session.outcome === "rejected") &&
       <button type="button" className="ps-button ps-button--secondary" disabled={session.busy}
@@ -297,6 +496,29 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
           session.draft.values = values; changed();
         } }}
         onSubmit={save} onCancel={cancel} />
+      <section className="ps-card encrypted-attachments" aria-labelledby="encrypted-attachments-heading"
+        aria-describedby="encrypted-attachments-limit encrypted-attachments-security">
+        <h3 id="encrypted-attachments-heading" className="ps-heading-3 encrypted-attachments__heading" tabIndex={-1}>{t("attachments.heading")}</h3>
+        <ul>{session.draft.files.map((file) => <li key={file.key} className="encrypted-attachments__row">
+          <div className="encrypted-attachments__name"><span>{file.name}</span><small>{file.size} B</small>
+            {(file.file || file.removed) && <span role="status">{t(file.removed ? "attachments.pendingDelete" : "attachments.pending")}</span>}</div>
+          <div className="encrypted-attachments__actions" role="group" aria-label={file.name}>
+            {file.context && !file.file && !file.removed && <button type="button" className="ps-button ps-button--secondary" disabled={session.busy || !!session.prepared}
+              onClick={() => download(file)}>{t("attachments.download")}</button>}
+            {!file.removed && <button type="button" className="ps-button ps-button--secondary" disabled={session.busy || !!session.prepared || session.outcome !== "none"}
+              onClick={() => chooseFile(file.key)}>{t("attachments.replace")}</button>}
+            {file.context && file.file && <button type="button" className="ps-button ps-button--secondary" disabled={session.busy || !!session.prepared || session.outcome !== "none"}
+              onClick={() => undoReplace(file)}>{t("attachments.undoReplace")}</button>}
+            <button type="button" className="ps-button ps-button--secondary" disabled={session.busy || !!session.prepared || session.outcome !== "none"}
+              onClick={() => discardFile(file)}>{t(file.context ? file.removed ? "attachments.undoDelete" : "attachments.delete" : "attachments.cancel")}</button>
+          </div>
+        </li>)}</ul>
+        <input ref={bindFileInput} type="file" hidden multiple onChange={(event) => selectedFiles(event.currentTarget)} />
+        <button type="button" className="ps-button ps-button--secondary" disabled={session.busy || !!session.prepared || !session.draft.attachmentReady || session.outcome !== "none"}
+          onClick={() => chooseFile()}>{t("attachments.add")}</button>
+        <p id="encrypted-attachments-limit">{t("attachments.limit")}</p>
+        <p id="encrypted-attachments-security">{t("attachments.encrypted")}</p>
+      </section>
       {(session.draft.values.category === "LOGIN" || session.draft.values.category === "PASSWORD") &&
         <button type="button" className="ps-button ps-button--secondary encrypted-items__eye" disabled={session.busy}
           aria-pressed={session.revealed} aria-label={t(session.revealed ? "encryptedItems.hidePassword" : "encryptedItems.showPassword")}
@@ -307,7 +529,7 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
       <div className="encrypted-items__footer">
         <button type="button" className="ps-button ps-button--primary" disabled={session.busy || !!session.prepared || session.outcome !== "none"}
           onClick={() => { if (active()) formHost.current?.querySelector("form")?.requestSubmit(); }}>{labels.submitSave}</button>
-        <button type="button" className="ps-button ps-button--secondary" disabled={session.busy} onClick={cancel}>{labels.cancelEdit}</button>
+        <button type="button" className="ps-button ps-button--secondary" onClick={cancel}>{labels.cancelEdit}</button>
       </div>
     </div> : session.ready && <div className="encrypted-items__list">
       <div className="encrypted-items__row encrypted-items__head" aria-hidden="true">

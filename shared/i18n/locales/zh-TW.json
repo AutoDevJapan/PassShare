@@ -465,5 +465,19 @@
   "sharing.complete": "共享金鑰連線已完成。",
   "sharing.irrevocable": "已共享的內容無法從對方裝置刪除。",
   "sharing.rotationPending": "加密密碼盒的成員移除暫不可用：包含附件的金鑰輪替尚未連接。",
-  "sharing.failed": "核對或連線失敗。如果代碼或金鑰變更，請重新核對。"
+  "sharing.failed": "核對或連線失敗。如果代碼或金鑰變更，請重新核對。",
+  "attachments.heading": "附件",
+  "attachments.add": "新增檔案",
+  "attachments.download": "下載",
+  "attachments.delete": "刪除",
+  "attachments.cancel": "取消",
+  "attachments.replace": "替換",
+  "attachments.undoDelete": "取消刪除",
+  "attachments.undoReplace": "取消替換",
+  "attachments.pending": "等待儲存",
+  "attachments.pendingDelete": "儲存時執行刪除",
+  "attachments.limit": "每個檔案最多1MiB（1,048,576位元組）。支援空檔案。",
+  "attachments.encrypted": "檔案名稱與內容在此裝置上加密。",
+  "attachments.tooLarge": "檔案超過1MiB。所選檔案未新增。",
+  "attachments.unavailable": "共用附件連線正在準備中。輸入內容已保留。"
 }

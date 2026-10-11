@@ -465,5 +465,19 @@
   "sharing.complete": "Verbindung mit dem gemeinsamen Schlüssel abgeschlossen.",
   "sharing.irrevocable": "Bereits geteilte Inhalte können nicht vom anderen Gerät gelöscht werden.",
   "sharing.rotationPending": "Das Entfernen aus einer verschlüsselten Passwortbox ist noch nicht verfügbar, da die Schlüsselrotation einschließlich Anhängen noch nicht verbunden ist.",
-  "sharing.failed": "Prüfung oder Verbindung fehlgeschlagen. Bei geändertem Code oder Schlüssel erneut prüfen."
+  "sharing.failed": "Prüfung oder Verbindung fehlgeschlagen. Bei geändertem Code oder Schlüssel erneut prüfen.",
+  "attachments.heading": "Anhänge",
+  "attachments.add": "Dateien hinzufügen",
+  "attachments.download": "Herunterladen",
+  "attachments.delete": "Löschen",
+  "attachments.cancel": "Abbrechen",
+  "attachments.replace": "Ersetzen",
+  "attachments.undoDelete": "Löschen rückgängig machen",
+  "attachments.undoReplace": "Ersetzen rückgängig machen",
+  "attachments.pending": "Speichern ausstehend",
+  "attachments.pendingDelete": "Löschung wird beim Speichern wirksam",
+  "attachments.limit": "Bis zu 1MiB (1.048.576 Bytes) pro Datei. Leere Dateien werden unterstützt.",
+  "attachments.encrypted": "Dateinamen und Inhalte werden auf diesem Gerät verschlüsselt.",
+  "attachments.tooLarge": "Eine Datei überschreitet 1MiB. Die ausgewählten Dateien wurden nicht hinzugefügt.",
+  "attachments.unavailable": "Der Zugriff auf geteilte Anhänge wird vorbereitet. Ihre Eingaben bleiben erhalten."
 }

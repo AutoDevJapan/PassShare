@@ -120,6 +120,36 @@ pub fn plan(input: &Value) -> Value {
     let Some((actor, session, box_id)) = credentials(input) else {
         return failure();
     };
+    // The public CAS selector uses the very same live authorization as files.
+    // It has no item, attachment, key material or client-supplied selector.
+    if input["operation"] == "state" {
+        if !input["request"].is_null()
+            || !input["itemId"].is_null()
+            || !input["attachmentId"].is_null()
+        {
+            return failure();
+        }
+        return json!({"status":200,"body":{
+            "sql":"SELECT passshare_attachment_operation($1::uuid,$2::uuid,$3::varchar,$4::text,$5::varchar,$6::varchar,$7::jsonb) AS reply",
+            "params":[actor,session,box_id,"state",null,null,null]
+        }});
+    }
+    if input["operation"] == "item" {
+        let Some(item) = id(&input["itemId"]) else {
+            return failure();
+        };
+        let request = &input["request"];
+        if !input["attachmentId"].is_null()
+            || !exact_fields(request, &["revision"])
+            || number(&request["revision"], false).is_none()
+        {
+            return failure();
+        }
+        return json!({"status":200,"body":{
+            "sql":"SELECT passshare_attachment_operation($1::uuid,$2::uuid,$3::varchar,$4::text,$5::varchar,$6::varchar,$7::jsonb) AS reply",
+            "params":[actor,session,box_id,"item",item,null,request]
+        }});
+    }
     let (Some(item), Some(attachment)) = (id(&input["itemId"]), id(&input["attachmentId"])) else {
         return failure();
     };
@@ -188,6 +218,64 @@ mod tests {
             "boxId":b,"itemId":i,"attachmentId":a,"operation":"put","request":{"expectedStateRevision":1,"expectedVersion":0,
             "item":{"expectedVersion":1,"envelope":{"format":1,"context":{"passwordBoxId":b,"itemId":i,"itemVersion":2,"keyEpoch":1},"nonce":BASE64.encode([0u8;24]),"ciphertext":BASE64.encode([0u8;16])}},
             "envelope":{"format":1,"context":{"passwordBoxId":b,"itemId":i,"attachmentId":a,"attachmentVersion":1,"keyEpoch":1},"contentBytes":0,"nonce":BASE64.encode([0u8;24]),"ciphertext":BASE64.encode([0u8;20])}}})
+    }
+    #[test]
+    fn state_uses_attachment_authorization_without_item_or_request() {
+        let mut v = input();
+        v["command"] = json!("encrypted-attachment-plan");
+        v["operation"] = json!("state");
+        for field in ["request", "itemId", "attachmentId"] {
+            v.as_object_mut().unwrap().remove(field);
+        }
+        let plan = crate::dispatch(&v);
+        assert_eq!(plan["status"], 200);
+        assert_eq!(
+            plan["body"]["params"],
+            json!([
+                v["actor"],
+                v["session"],
+                v["boxId"],
+                "state",
+                null,
+                null,
+                null
+            ])
+        );
+        for field in ["request", "itemId", "attachmentId"] {
+            let mut bad = v.clone();
+            bad[field] = json!({});
+            assert_eq!(crate::dispatch(&bad)["status"], 400);
+        }
+        for field in ["actor", "session", "boxId"] {
+            let mut bad = v.clone();
+            bad[field] = json!("invalid");
+            assert_eq!(crate::dispatch(&bad)["status"], 400);
+        }
+    }
+    #[test]
+    fn item_snapshot_requires_independent_revision_and_no_attachment_selector() {
+        let mut v = input();
+        v["operation"] = json!("item");
+        v.as_object_mut().unwrap().remove("attachmentId");
+        v["request"] = json!({"revision":17});
+        let result = plan(&v);
+        assert_eq!(result["status"], 200);
+        assert_eq!(result["body"]["params"][4], v["itemId"]);
+        assert!(result["body"]["params"][5].is_null());
+        assert_eq!(result["body"]["params"][6], v["request"]);
+        for request in [
+            json!({}),
+            json!({"revision":0}),
+            json!({"revision":"17"}),
+            json!({"revision":9007199254740992u64}),
+            json!({"revision":17,"keyEpoch":1}),
+        ] {
+            let mut bad = v.clone();
+            bad["request"] = request;
+            assert_eq!(plan(&bad)["status"], 400);
+        }
+        v["attachmentId"] = json!("a".repeat(26));
+        assert_eq!(plan(&v)["status"], 400);
     }
     #[test]
     fn headers_plan_one_atomic_statement_and_independent_versions() {

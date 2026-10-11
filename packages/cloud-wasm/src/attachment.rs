@@ -20,7 +20,7 @@ impl Session {
             attachment_snapshot_revision: u64,
         }
         #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        #[serde(rename_all = "camelCase")]
         struct Reference {
             attachment_id: passshare_core::ConnectId,
             attachment_version: u64,
@@ -282,7 +282,6 @@ mod tests {
             ("attachmentVersion", json!(2)),
             ("keyEpoch", json!(2)),
             ("attachmentVersion", Value::Null),
-            ("unknown", json!("private-copy-must-not-escape")),
         ] {
             let mut bad = item.clone();
             bad["attachments"][0][field] = value;
@@ -294,6 +293,15 @@ mod tests {
                 .verify_attachment_source(&context, &bad_source.to_string())
                 .is_err());
         }
+        let mut extended = item.clone();
+        extended["attachments"][0]["unknown"] = json!({"keep":[null,17]});
+        let mut extended_source = source.clone();
+        extended_source["itemEnvelope"] = json!(session
+            .encrypt(extended.to_string(), &item_context.to_string())
+            .unwrap());
+        assert!(session
+            .verify_attachment_source(&context, &extended_source.to_string())
+            .is_ok());
         let mut duplicate = item.clone();
         duplicate["attachments"]
             .as_array_mut()
