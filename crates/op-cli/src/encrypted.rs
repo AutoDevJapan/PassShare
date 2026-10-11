@@ -813,10 +813,13 @@ impl SharedReceive {
 }
 
 struct RecipientSession {
-    sdk: EncryptedSessionClient,
-    box_route: ConnectId,
     key: PasswordBoxKey,
-    trust: SharedReceive,
+}
+// Public inputs and transport are held independently of the private capability.
+struct RecipientRead<'a> {
+    sdk: &'a EncryptedSessionClient,
+    box_route: &'a ConnectId,
+    trust: &'a SharedReceive,
 }
 impl RecipientSession {
     async fn open(
@@ -824,10 +827,9 @@ impl RecipientSession {
         token: &str,
         password: &str,
         box_id: &str,
-        trust: SharedReceive,
+        trust: &SharedReceive,
+        sdk: &EncryptedSessionClient,
     ) -> Result<Self> {
-        let box_route = box_id.parse().map_err(|_| INPUT)?;
-        let sdk = EncryptedSessionClient::new(host, token)?;
         let subject_id = live_subject(host, token).await?;
         if subject_id != trust.recipient.account_id {
             return Err(CONTEXT);
@@ -877,7 +879,7 @@ impl RecipientSession {
             return Err(CONTEXT);
         }
         let expected = trust.expectation();
-        let grant = SharingRotationClient::new(&sdk)
+        let grant = SharingRotationClient::new(sdk)
             .get_self_grant(box_id, &expected)
             .await?;
         let key = PasswordBoxKey::unwrap_for_recipient(
@@ -887,50 +889,56 @@ impl RecipientSession {
             &trust.context,
         )
         .map_err(|_| CRYPTO)?;
-        Ok(Self {
-            sdk,
-            box_route,
-            key,
-            trust,
-        })
+        // A private key capability never carries an HTTP client or route.
+        // Public transport and independently supplied expectations stay in the
+        // caller, separate from restored identity and decrypted key material.
+        Ok(Self { key })
     }
-    async fn item_at(&self, revision: u64, expected: &ItemContext) -> Result<Plaintext> {
-        let envelope = self.sdk.get_attachment_snapshot(revision, expected).await?;
+    async fn item_at(
+        &self,
+        sdk: &EncryptedSessionClient,
+        revision: u64,
+        expected: &ItemContext,
+    ) -> Result<Plaintext> {
+        let envelope = sdk.get_attachment_snapshot(revision, expected).await?;
         Ok(Plaintext(
             self.key
                 .decrypt_item(&envelope, expected)
                 .map_err(|_| CRYPTO)?,
         ))
     }
-    async fn get(&self, id: &str) -> Result<Plaintext> {
-        let expected = self.trust.item(id)?;
-        let state = self
+    async fn get(&self, read: &RecipientRead<'_>, id: &str) -> Result<Plaintext> {
+        let expected = read.trust.item(id)?;
+        let state = read
             .sdk
-            .get_attachment_state(self.box_route.as_str(), self.trust.context.key_epoch)
+            .get_attachment_state(read.box_route.as_str(), read.trust.context.key_epoch)
             .await?;
-        self.item_at(state.state_revision, expected).await
+        self.item_at(read.sdk, state.state_revision, expected).await
     }
     async fn download(
         &self,
+        read: &RecipientRead<'_>,
         item: &str,
         attachment: &str,
         out: &std::path::Path,
         print_name: bool,
     ) -> Result<()> {
-        let expected_item = self.trust.item(item)?;
-        let expected = self
+        let expected_item = read.trust.item(item)?;
+        let expected = read
             .trust
             .attachment_context
             .as_ref()
             .filter(|c| c.attachment_id.as_str() == attachment)
             .ok_or(INPUT)?;
-        let state = self
+        let state = read
             .sdk
-            .get_attachment_state(self.box_route.as_str(), self.trust.context.key_epoch)
+            .get_attachment_state(read.box_route.as_str(), read.trust.context.key_epoch)
             .await?;
-        let dto = self.item_at(state.state_revision, expected_item).await?;
+        let dto = self
+            .item_at(read.sdk, state.state_revision, expected_item)
+            .await?;
         authenticated_reference(&dto.0, expected)?;
-        let envelope = self
+        let envelope = read
             .sdk
             .get_attachment(state.state_revision, expected)
             .await?;
@@ -1071,10 +1079,17 @@ async fn run_recipient(cli: Cli, mut input: Plaintext) -> Result<()> {
         .passshare_host
         .or_else(|| std::env::var("PASSSHARE_HOST").ok())
         .ok_or(INPUT)?;
-    let session = RecipientSession::open(&host, &token, &password, &box_id, trust).await?;
+    let box_route: ConnectId = box_id.parse().map_err(|_| INPUT)?;
+    let sdk = EncryptedSessionClient::new(&host, &token)?;
+    let session = RecipientSession::open(&host, &token, &password, &box_id, &trust, &sdk).await?;
     drop(token);
     drop(password);
     erase(&mut input.0);
+    let read = RecipientRead {
+        sdk: &sdk,
+        box_route: &box_route,
+        trust: &trust,
+    };
     match cli.command {
         Commands::Item {
             command: ItemCommands::List { .. },
@@ -1082,11 +1097,11 @@ async fn run_recipient(cli: Cli, mut input: Plaintext) -> Result<()> {
             let mut cursor = None;
             let mut items = Vec::new();
             loop {
-                let page = session.sdk.list(&box_id, cursor.as_deref()).await?;
+                let page = sdk.list(box_route.as_str(), cursor.as_deref()).await?;
                 if page
                     .items
                     .iter()
-                    .any(|i| i.key_epoch != session.trust.context.key_epoch)
+                    .any(|i| i.key_epoch != trust.context.key_epoch)
                 {
                     return Err(CONTEXT);
                 }
@@ -1104,7 +1119,7 @@ async fn run_recipient(cli: Cli, mut input: Plaintext) -> Result<()> {
         Commands::Item {
             command: ItemCommands::Get { item, fields, .. },
         } => {
-            let dto = session.get(&item).await?;
+            let dto = session.get(&read, &item).await?;
             if let Some(name) = fields {
                 println!("{}", selected_value(&dto.0, &name)?);
             } else {
@@ -1117,7 +1132,7 @@ async fn run_recipient(cli: Cli, mut input: Plaintext) -> Result<()> {
         }
         Commands::Read { reference } => {
             let r = passshare_connect::parse_op_reference(&reference).ok_or(INPUT)?;
-            let dto = session.get(&r.item).await?;
+            let dto = session.get(&read, &r.item).await?;
             println!("{}", selected_value(&dto.0, &r.field)?);
         }
         Commands::Attachment {
@@ -1131,7 +1146,7 @@ async fn run_recipient(cli: Cli, mut input: Plaintext) -> Result<()> {
                 },
         } => {
             session
-                .download(&item, &attachment, &out, print_name)
+                .download(&read, &item, &attachment, &out, print_name)
                 .await?
         }
         _ => return Err(INPUT),
