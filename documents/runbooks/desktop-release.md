@@ -105,3 +105,13 @@ go vet ./...
 ```
 
 既存の公開署名vectorを使い、実minisign署名の成功、改ざん・unsigned・別公開鍵の拒否、版・checkout SHA・信頼できないrefの拒否を確認する。Windowsでは生成された未署名Goテスト実行ファイルを実Authenticode検査で拒否する。これらは製品の実署名成功ではない。macOS/Linuxのネイティブ署名候補検査は、対応OSで実行して初めて成功として記録する。
+
+### macOS archiveの展開境界（PR706）
+
+展開処理は空の専用ディレクトリに、新しい1個の `.app` だけを作る。全書き込みはそのappの `os.Root` を使い、文字列の正規化と親の事前検査だけに依存しない。既存の展開先やrootのsymlink、絶対パス・volume構文・親への移動を含むmember名、hard link、複数app、8GiB/100,000 memberを超えるarchiveを拒否する。
+
+通常のファイルとディレクトリを先に展開し、symlinkは保留する。前方参照するFrameworkの `Versions/Current` なども、対象が存在し、appのrootから実解決できた後に相対リンクを保持して作る。リンク先を `Clean` / `Join` で消し込まず、symlinkと `..` の実際の順序で解決する。app外への参照、dangling、リンク解決の循環は拒否し、解決試行にも上限を設ける。全展開後にも実リンクをappのrootで検査してから、実パスをcodesign/spctlへ渡す。専用展開先はこの工程だけが使い、外部の書き手と共有しない。
+
+ツールの最小Go版は1.25。[公式API](https://pkg.go.dev/os#Root.Symlink)では `Root.Symlink` のリンク先そのものは検証されないため、rooted書き込みだけで外部readerを安全と判断しない。`Root.MkdirAll` / `Root.Symlink` の利用に合わせてツールのgo.modを上げる。CodeQLと候補workflowは同じgo.modを参照し、CodeQLにはSDKと検査ツールの両moduleを残す。SDKのGo1.22や通常のSDK CIは変更しない。
+
+新しい回帰検査は、正常なFrameworkの前方参照・リンク先読取を正対照とし、リンクと `..` を組み合わせた脱出、既存parent link、root link、不正なmember/target、dangling・循環・複数appを拒否する。展開先の外側に置いたsentinelの存在を先に確かめ、拒否後も内容とmtimeが不変であることを検査する。これはarchive処理の検査であり、製品の実署名・公証・導入・更新・削除やCodeQLの再実行成功とは区別する。

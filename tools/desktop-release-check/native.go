@@ -9,9 +9,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -364,8 +366,31 @@ func fileHash(path string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Extract a single .app without allowing archive paths/links to escape scratch.
+// Extract into caller-owned, empty scratch. Rooted operations confine writes;
+// links are resolved within the app before creation and before external readers.
 func extractApp(archive, root string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", fail("invalid Mac inspection root")
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fail("Mac inspection root must be a real directory")
+	}
+	scratchRoot, err := os.OpenRoot(root)
+	if err != nil {
+		return "", fail("cannot open Mac inspection root")
+	}
+	defer scratchRoot.Close()
+	dir, err := scratchRoot.Open(".")
+	if err != nil {
+		return "", fail("cannot inspect Mac root")
+	}
+	entries, readErr := dir.ReadDir(1)
+	closeErr := dir.Close()
+	if len(entries) != 0 || (readErr != nil && readErr != io.EOF) || closeErr != nil {
+		return "", fail("Mac inspection root must be empty")
+	}
 	f, err := os.Open(archive)
 	if err != nil {
 		return "", fail("cannot read Mac archive")
@@ -378,6 +403,13 @@ func extractApp(archive, root string) (string, error) {
 	defer g.Close()
 	t := tar.NewReader(g)
 	app := ""
+	var appRoot *os.Root
+	defer func() {
+		if appRoot != nil {
+			_ = appRoot.Close()
+		}
+	}()
+	links := make(map[string]string)
 	var size int64
 	count := 0
 	for {
@@ -388,43 +420,51 @@ func extractApp(archive, root string) (string, error) {
 		if e != nil {
 			return "", fail("invalid Mac archive member")
 		}
-		name := filepath.Clean(h.Name)
+		count++
+		if count > 100000 || h.Size < 0 || h.Size > 8*1024*1024*1024-size {
+			return "", fail("Mac archive exceeds inspection limit")
+		}
+		size += h.Size
+		name, err := macArchiveName(h.Name)
+		if err != nil {
+			return "", err
+		}
 		if name == "." && h.Typeflag == tar.TypeDir {
 			continue
 		}
-		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(filepath.Separator)) {
-			return "", fail("unsafe Mac archive path")
-		}
-		top := strings.Split(name, string(filepath.Separator))[0]
-		if !strings.HasSuffix(top, ".app") || (app != "" && app != top) {
+		top, local, hasChild := strings.Cut(name, "/")
+		if top == ".app" || !strings.HasSuffix(top, ".app") || (app != "" && app != top) {
 			return "", fail("Mac archive must contain exactly one app")
 		}
-		app = top
-		count++
-		size += h.Size
-		if count > 100000 || h.Size < 0 || size > 8*1024*1024*1024 {
-			return "", fail("Mac archive exceeds inspection limit")
-		}
-		p := filepath.Join(root, name)
-		for parent := filepath.Dir(p); parent != root; parent = filepath.Dir(parent) {
-			info, e := os.Lstat(parent)
-			if e == nil && !info.IsDir() {
-				return "", fail("Mac archive writes through a link")
-			}
-			if e != nil && !os.IsNotExist(e) {
-				return "", fail("cannot inspect archive parent")
+		if !hasChild {
+			local = "."
+			if h.Typeflag != tar.TypeDir {
+				return "", fail("Mac app root must be a directory")
 			}
 		}
-		if os.MkdirAll(filepath.Dir(p), 0700) != nil {
+		if appRoot == nil {
+			if scratchRoot.Mkdir(top, 0700) != nil {
+				return "", fail("cannot create new Mac app root")
+			}
+			appRoot, err = scratchRoot.OpenRoot(top)
+			if err != nil {
+				return "", fail("cannot open Mac app root")
+			}
+			app = top
+		}
+		if _, exists := links[local]; exists {
+			return "", fail("duplicate Mac archive link")
+		}
+		if appRoot.MkdirAll(filepath.FromSlash(path.Dir(local)), 0700) != nil {
 			return "", fail("cannot create archive directory")
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:
-			if os.MkdirAll(p, os.FileMode(h.Mode)&0777) != nil {
+			if appRoot.MkdirAll(filepath.FromSlash(local), os.FileMode(h.Mode)&0777) != nil {
 				return "", fail("cannot extract archive directory")
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			w, e := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, os.FileMode(h.Mode)&0777)
+			w, e := appRoot.OpenFile(filepath.FromSlash(local), os.O_WRONLY|os.O_CREATE|os.O_EXCL, os.FileMode(h.Mode)&0777)
 			if e != nil {
 				return "", fail("cannot extract archive file")
 			}
@@ -434,13 +474,14 @@ func extractApp(archive, root string) (string, error) {
 				return "", fail("cannot extract archive bytes")
 			}
 		case tar.TypeSymlink:
-			target := filepath.Clean(filepath.Join(filepath.Dir(name), h.Linkname))
-			if filepath.IsAbs(h.Linkname) || target == ".." || strings.HasPrefix(target, ".."+string(filepath.Separator)) {
+			if h.Linkname == "" || strings.HasPrefix(h.Linkname, "/") || strings.ContainsAny(h.Linkname, "\\:\x00") {
 				return "", fail("unsafe archive symlink")
 			}
-			if os.Symlink(h.Linkname, p) != nil {
-				return "", fail("cannot extract archive symlink")
+			if _, e := appRoot.Lstat(filepath.FromSlash(local)); !os.IsNotExist(e) {
+				return "", fail("Mac link destination already exists or cannot be inspected")
 			}
+			// Defer until all regular targets exist; preserve the raw relative target.
+			links[local] = h.Linkname
 		default:
 			return "", fail("unsupported archive member")
 		}
@@ -448,5 +489,86 @@ func extractApp(archive, root string) (string, error) {
 	if app == "" {
 		return "", fail("empty Mac archive")
 	}
+	if err = materializeMacLinks(appRoot, links); err != nil {
+		return "", err
+	}
+	// Root.Symlink bounds the destination, NOT the target. Check every actual
+	// link with the app root (not scratch) before codesign/spctl see real paths.
+	if err = fs.WalkDir(appRoot.FS(), ".", func(name string, d fs.DirEntry, e error) error {
+		if e != nil {
+			return fail("cannot inspect extracted Mac tree")
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			if _, e = appRoot.Stat(filepath.FromSlash(name)); e != nil {
+				return fail("Mac link must resolve inside app")
+			}
+		}
+		return nil
+	}); err != nil {
+		return "", err
+	}
 	return filepath.Join(root, app), nil
+}
+
+// Tar member names use slash separators. Reject traversal/volume syntax on
+// every host instead of cleaning away meaningful symlink/.. components.
+func macArchiveName(raw string) (string, error) {
+	if raw == "" || strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, "\\:\x00") {
+		return "", fail("unsafe Mac archive path")
+	}
+	for strings.HasPrefix(raw, "./") {
+		raw = strings.TrimPrefix(raw, "./")
+	}
+	raw = strings.TrimRight(raw, "/")
+	if raw == "" {
+		raw = "."
+	}
+	if !fs.ValidPath(raw) {
+		return "", fail("unsafe Mac archive path")
+	}
+	return raw, nil
+}
+
+func materializeMacLinks(root *os.Root, links map[string]string) error {
+	var names []string
+	for name := range links {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	remaining := len(names)
+	budget := 40 * remaining
+	for remaining > 0 {
+		progress := false
+		for _, name := range names {
+			target, waiting := links[name]
+			if !waiting {
+				continue
+			}
+			budget--
+			if budget < 0 {
+				return fail("Mac link resolution exceeds inspection limit")
+			}
+			// Do NOT path.Join/Clean this expression: resolve symlinks before .. .
+			targetPath := target
+			if parent := path.Dir(name); parent != "." {
+				targetPath = parent + "/" + target
+			}
+			if _, err := root.Stat(filepath.FromSlash(targetPath)); err != nil {
+				continue
+			}
+			if err := root.Symlink(filepath.FromSlash(target), filepath.FromSlash(name)); err != nil {
+				return fail("cannot create internal Mac link")
+			}
+			if _, err := root.Stat(filepath.FromSlash(name)); err != nil {
+				return fail("Mac link must resolve inside app")
+			}
+			delete(links, name)
+			remaining--
+			progress = true
+		}
+		if !progress {
+			return fail("Mac links are outside app, dangling or cyclic")
+		}
+	}
+	return nil
 }
