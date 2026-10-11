@@ -58,7 +58,7 @@ jobs:
         if: matrix.language == 'go'
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: packages/connect-go/go.mod
+          go-version-file: tools/desktop-release-check/go.mod
           cache: false
 
       - name: Set up pnpm
@@ -117,6 +117,13 @@ jobs:
         if: matrix.language == 'go'
         working-directory: packages/connect-go
         run: go build ./...
+
+      - name: Build desktop release verifier
+        if: matrix.language == 'go'
+        working-directory: tools/desktop-release-check
+        env:
+          GOTOOLCHAIN: local
+        run: go build -mod=readonly ./...
 
       - name: Initialize Android project for this runner
         if: matrix.language == 'java-kotlin'
