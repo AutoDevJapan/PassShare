@@ -12,7 +12,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const root = new URL('../../shared/cloud/', import.meta.url);
 function load(name, imports = {}, globals = {}) {
   const exports = {};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(name, root), 'utf8'), {
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(name, root), 'utf8').replaceAll('import.meta.env', '({})'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
   }).outputText, { exports, require: (id) => {
     if (!(id in imports)) throw new Error(`Unmapped import ${id}`);
@@ -345,4 +345,79 @@ test('desktop cloud entry locks an open .pbox before another account may be show
   assert.equal(JSON.stringify(tree.toJSON()).includes('local-secret-items'), false);
   assert.equal(JSON.stringify(tree.toJSON()).includes('local-locked'), true);
   renderer.act(() => tree.unmount());
+});
+
+function desktopCloudHost({ heldSnapshot = false, heldLogin = false, failFocusListen = false, heldListen = false } = {}) {
+  const window = events(), document = { ...events(), visibilityState: 'visible' }, native = new Map();
+  const inputs = [{ value: 'https://example.invalid' }, { value: 'synthetic@example.invalid' }, { value: 'synthetic-login' }];
+  let tree, inputIndex = 0, releaseSnapshot, releaseLogin, releaseListen, sends = 0, disposed = 0, stops = 0, signal;
+  const { CloudItemsPanel } = load('../../apps/desktop/src/components/CloudItemsPanel.tsx', {
+    react: React, 'react/jsx-runtime': requireApp('react/jsx-runtime'),
+    '@shared/i18n/I18nProvider': { useI18n: () => ({ t: (key) => key }) },
+    '../hooks/useDesktopLabels': { useDesktopLabels: () => ({ sync: {} }) },
+    '@shared/cloud/cloud-api': cloudApi,
+    '@passshare/connect': { ConnectClient: class { async listVaults() { return [{ id: box, name: 'Synthetic' }]; } } },
+    '@shared/cloud/session-transport': { createCloudSession: (_url, user) => ({ userId: user, dispose() { if (user) disposed++; } }) },
+    '@shared/cloud/CloudBoxPanel': { CloudBoxPanel: () => React.createElement('output', null, 'cloud-secret-screen') },
+    '@tauri-apps/api/window': { getCurrentWindow: () => ({
+      async listen(name, callback) {
+        if (failFocusListen && name === 'tauri://focus') throw new Error('synthetic listen failure');
+        if (heldListen) await new Promise((resolve) => { releaseListen = resolve; });
+        native.set(name, callback);
+        return () => { native.delete(name); stops++; };
+      },
+      isFocused: () => heldSnapshot ? new Promise((resolve) => { releaseSnapshot = resolve; }) : Promise.resolve(true),
+    }) },
+  }, { window, document, fetch: async (_url, init) => {
+    sends++; signal = init.signal;
+    if (heldLogin) await new Promise((resolve) => { releaseLogin = resolve; });
+    return new Response(JSON.stringify({ user: { id: owner }, refreshToken: 'synthetic-session', connectAccessToken: 'synthetic-connect' }));
+  } });
+  renderer.act(() => { tree = renderer.create(React.createElement(CloudItemsPanel), { createNodeMock: (element) => element.type === 'input' ? inputs[inputIndex++] : null }); });
+  return { tree, window, document, inputs, native,
+    get sends() { return sends; }, get disposed() { return disposed; }, get stops() { return stops; }, get signal() { return signal; },
+    json: () => JSON.stringify(tree.toJSON()),
+    async submit() { renderer.act(() => tree.root.findByType('form').props.onSubmit({ preventDefault() {} })); await flush(); },
+    async focus(value) { renderer.act(() => native.get(value ? 'tauri://focus' : 'tauri://blur')?.({})); await flush(); },
+    async snapshot(value) { releaseSnapshot(value); await flush(); }, async loginReply() { releaseLogin(); await flush(); },
+    async listenReply() { releaseListen(); await flush(); },
+    async unmount() { renderer.act(() => tree.unmount()); await flush(); },
+  };
+}
+
+test('desktop native blur closes a cloud session even while the WebView stays visible', async () => {
+  const h = desktopCloudHost(); await flush(); await h.submit();
+  assert.equal(h.sends, 1); assert.equal(h.json().includes('cloud-secret-screen'), true);
+  await h.focus(false);
+  assert.equal(h.document.visibilityState, 'visible'); assert.equal(h.disposed, 1);
+  assert.equal(h.inputs[2].value, ''); assert.equal(h.json().includes('cloud-secret-screen'), false);
+  await h.focus(true); assert.equal(h.json().includes('cloud-secret-screen'), false);
+  await h.unmount(); assert.equal(h.stops, 2); assert.equal(h.window.count(), 0);
+});
+
+test('desktop delayed initial focus snapshot cannot override native blur or allow login', async () => {
+  const h = desktopCloudHost({ heldSnapshot: true }); await flush();
+  await h.submit(); assert.equal(h.sends, 0);
+  await h.focus(false); await h.snapshot(true); await h.submit(); assert.equal(h.sends, 0);
+  assert.equal(h.tree.root.findByType('button').props.disabled, true);
+  await h.focus(true); await h.submit(); assert.equal(h.sends, 1); await h.unmount();
+});
+
+test('desktop late login after native blur cannot restore an account or item screen', async () => {
+  const h = desktopCloudHost({ heldLogin: true }); await flush(); await h.submit();
+  await h.focus(false); assert.equal(h.signal.aborted, true);
+  await h.focus(true); await h.loginReply();
+  assert.equal(h.disposed, 0); assert.equal(h.json().includes('cloud-secret-screen'), false);
+  await h.unmount();
+});
+
+test('desktop partial native listener failure detaches the installed listener and prevents login', async () => {
+  const h = desktopCloudHost({ failFocusListen: true }); await flush(); await h.submit();
+  assert.equal(h.sends, 0); assert.equal(h.native.size, 0); assert.equal(h.stops, 1);
+  assert.equal(h.json().includes('cloud.failed'), true); await h.unmount();
+});
+
+test('desktop pending listener registration after unmount detaches without querying or installing another listener', async () => {
+  const h = desktopCloudHost({ heldListen: true }); await flush(); await h.unmount(); await h.listenReply();
+  assert.equal(h.native.size, 0); assert.equal(h.stops, 1); assert.equal(h.sends, 0);
 });

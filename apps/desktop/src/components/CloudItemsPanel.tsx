@@ -4,6 +4,7 @@ import { useI18n } from "@shared/i18n/I18nProvider";
 import { CloudBoxPanel } from "@shared/cloud/CloudBoxPanel";
 import { createCloudSession, type CloudSession } from "@shared/cloud/session-transport";
 import { CloudApiError } from "@shared/cloud/cloud-api";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useDesktopLabels } from "../hooks/useDesktopLabels";
 
 // Desktop uses the existing token-session login response (mobile transport).
@@ -16,6 +17,8 @@ export function CloudItemsPanel() {
   const [boxId, setBoxId] = useState("");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const nativeFocused = useRef(false);
   const lifetime = useRef(0);
   const alive = useRef(true);
   const binding = useRef<CloudSession | null>(null);
@@ -31,11 +34,39 @@ export function CloudItemsPanel() {
   }
   useLayoutEffect(() => {
     alive.current = true;
+    let disposed = false, focusRevision = 0;
+    const stops: Array<() => void> = [];
+    const acceptFocus = (value: boolean) => {
+      if (disposed) return;
+      nativeFocused.current = value; setFocused(value);
+      if (!value) window.dispatchEvent(new Event("passshare:cloud-lock"));
+    };
+    // Native blur can leave the WebView document visible. Subscribe before the
+    // initial snapshot, and never let a delayed snapshot overwrite an event.
+    void (async () => {
+      try {
+        const nativeWindow = getCurrentWindow();
+        for (const [event, value] of [["tauri://blur", false], ["tauri://focus", true]] as const) {
+          const stop = await nativeWindow.listen(event, () => { ++focusRevision; acceptFocus(value); });
+          if (disposed) { stop(); return; }
+          stops.push(stop);
+        }
+        const revision = focusRevision;
+        const value = await nativeWindow.isFocused();
+        if (revision === focusRevision) acceptFocus(value);
+      } catch {
+        for (const stop of stops.splice(0)) stop();
+        acceptFocus(false);
+        if (!disposed) setFailed(true);
+      }
+    })();
     const background = () => { if (document.visibilityState === "hidden") clear(); };
     window.addEventListener("pagehide", clear);
     window.addEventListener("passshare:cloud-lock", clear);
     document.addEventListener("visibilitychange", background);
     return () => {
+      disposed = true; nativeFocused.current = false;
+      for (const stop of stops.splice(0)) stop();
       alive.current = false; clear();
       window.removeEventListener("pagehide", clear);
       window.removeEventListener("passshare:cloud-lock", clear);
@@ -44,10 +75,10 @@ export function CloudItemsPanel() {
   }, []);
   async function login(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || !nativeFocused.current) return;
     const generation = ++lifetime.current;
     const controller = new AbortController(); request.current = controller;
-    const current = () => alive.current && generation === lifetime.current && !controller.signal.aborted && document.visibilityState !== "hidden";
+    const current = () => alive.current && nativeFocused.current && generation === lifetime.current && !controller.signal.aborted && document.visibilityState !== "hidden";
     let body = JSON.stringify({ email: email.current?.value, password: password.current?.value });
     if (password.current) password.current.value = "";
     setBusy(true); setFailed(false);
@@ -86,7 +117,7 @@ export function CloudItemsPanel() {
       <label className="ps-label">{labels.apiUrl}<input className="ps-input" ref={base} type="url" required defaultValue={import.meta.env.VITE_API_BASE_URL ?? ""} disabled={busy} /></label>
       <label className="ps-label">{labels.email}<input className="ps-input" ref={email} type="email" required autoComplete="username" autoCapitalize="none" spellCheck={false} disabled={busy} /></label>
       <label className="ps-label">{labels.password}<input className="ps-input" ref={password} type="password" required autoComplete="current-password" disabled={busy} /></label>
-      <button className="ps-button" disabled={busy}>{t("cloud.openSubmit")}</button>
+      <button className="ps-button" disabled={busy || !focused}>{t("cloud.openSubmit")}</button>
     </form> : <>
       <label className="ps-label">{labels.vaultId}<select className="ps-input" value={boxId} onChange={(event) => setBoxId(event.target.value)}>
         {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
