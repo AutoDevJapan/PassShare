@@ -29,6 +29,13 @@ export async function getBoxState(boxId: string, signal?: AbortSignal): Promise<
   if (state.mode === "encrypted" && Number.isSafeInteger(state.keyEpoch) && state.keyEpoch > 0) return state;
   throw new CloudApiError(502);
 }
+export async function getAttachmentState(boxId: string, signal: AbortSignal): Promise<{ stateRevision: number; keyEpoch: number }> {
+  const state = await request(`${path(boxId)}/attachment-state`, { signal });
+  if (!fields(state, ["stateRevision", "keyEpoch"]) ||
+    !Number.isSafeInteger(state.stateRevision) || state.stateRevision < 1 ||
+    !Number.isSafeInteger(state.keyEpoch) || state.keyEpoch < 1) throw new CloudApiError(502);
+  return state;
+}
 export async function getOwnerBundle(boxId: string, signal?: AbortSignal): Promise<{ bundleVersion: number; bundle: OwnerBundle }> {
   const reply = await request(`${path(boxId)}/owner-key`, { signal });
   if (!fields(reply, ["bundleVersion", "bundle"]) || !Number.isSafeInteger(reply.bundleVersion) || reply.bundleVersion < 1) throw new CloudApiError(502);
@@ -240,11 +247,11 @@ export async function deleteEncryptedItem(expected: ItemContext, signal: AbortSi
     body: JSON.stringify({ expectedVersion: expected.itemVersion, keyEpoch: expected.keyEpoch }), signal }, 204);
 }
 
-// Existing owner snapshot transport. It does not grant snapshot access to members.
+// The item and file reads hold the same independently obtained public revision.
 export async function getAttachmentItemSnapshot(expected: ItemContext, revision: number, signal: AbortSignal): Promise<string> {
   validateItemContext(expected);
   if (!positiveInteger(revision)) throw new CloudApiError(502);
-  const text = await itemRequest(`${path(expected.passwordBoxId)}/sharing-snapshot/items/${expected.itemId}?revision=${revision}`, { signal });
+  const text = await itemRequest(`${itemsPath(expected.passwordBoxId, expected.itemId)}/attachment-snapshot?revision=${revision}`, { signal });
   readItemEnvelope(text, expected);
   return text;
 }

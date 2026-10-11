@@ -134,6 +134,22 @@ pub fn plan(input: &Value) -> Value {
             "params":[actor,session,box_id,"state",null,null,null]
         }});
     }
+    if input["operation"] == "item" {
+        let Some(item) = id(&input["itemId"]) else {
+            return failure();
+        };
+        let request = &input["request"];
+        if !input["attachmentId"].is_null()
+            || !exact_fields(request, &["revision"])
+            || number(&request["revision"], false).is_none()
+        {
+            return failure();
+        }
+        return json!({"status":200,"body":{
+            "sql":"SELECT passshare_attachment_operation($1::uuid,$2::uuid,$3::varchar,$4::text,$5::varchar,$6::varchar,$7::jsonb) AS reply",
+            "params":[actor,session,box_id,"item",item,null,request]
+        }});
+    }
     let (Some(item), Some(attachment)) = (id(&input["itemId"]), id(&input["attachmentId"])) else {
         return failure();
     };
@@ -235,6 +251,31 @@ mod tests {
             bad[field] = json!("invalid");
             assert_eq!(crate::dispatch(&bad)["status"], 400);
         }
+    }
+    #[test]
+    fn item_snapshot_requires_independent_revision_and_no_attachment_selector() {
+        let mut v = input();
+        v["operation"] = json!("item");
+        v.as_object_mut().unwrap().remove("attachmentId");
+        v["request"] = json!({"revision":17});
+        let result = plan(&v);
+        assert_eq!(result["status"], 200);
+        assert_eq!(result["body"]["params"][4], v["itemId"]);
+        assert!(result["body"]["params"][5].is_null());
+        assert_eq!(result["body"]["params"][6], v["request"]);
+        for request in [
+            json!({}),
+            json!({"revision":0}),
+            json!({"revision":"17"}),
+            json!({"revision":9007199254740992u64}),
+            json!({"revision":17,"keyEpoch":1}),
+        ] {
+            let mut bad = v.clone();
+            bad["request"] = request;
+            assert_eq!(plan(&bad)["status"], 400);
+        }
+        v["attachmentId"] = json!("a".repeat(26));
+        assert_eq!(plan(&v)["status"], 400);
     }
     #[test]
     fn headers_plan_one_atomic_statement_and_independent_versions() {

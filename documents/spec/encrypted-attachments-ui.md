@@ -42,19 +42,19 @@ logout・user/box/epoch切替ではFile参照とfile入力を解除し、mutable
 取消が処理中ならworkerを終了してロックする。遅着結果から下書きを復元しない。
 JS文字列、File/Blob自体、強制終了時の全メモリーの消去は保証しない。
 
-## 親が解決する既存APIの不足
+## 共有受信者の状態と項目取得
 
-`sharing-snapshot`とその項目取得は`passshare_sharing_operation`で所有者専用。
-通常の添付GET/PUT/DELETEは共有メンバーにも認可されるが、通常のbox state応答には
-stateRevisionがなく、共有メンバーが必要な状態版と同revisionの項目を取得できない。
-架空のルート・推測した状態版・暗号文由来の期待値は使わない。
-所有者専用snapshotの403は、添付操作を無効にして案内し、既存項目の編集入力を保持する。
+親の統合では`GET /api/encrypted/boxes/:boxId/attachment-state`から
+`{stateRevision,keyEpoch}`だけを取得する。独立して保持した世代と一致を確認し、
+その状態版を`GET /api/encrypted/boxes/:boxId/items/:itemId/attachment-snapshot?revision=...`
+と添付GETへ渡す。項目snapshotもRustの同じ添付認可処理を使い、ボックスのロックを
+保持した状態で現在の確認済み所属・共有鍵・sessionと状態版を確認する。
+状態版が変わった場合は409で拒否し、画面の下書きを保持する。
 
-最小の親担当修正案は、現在の共有鍵と確認済み所属を持つsession向けのRust APIで
-`{stateRevision,keyEpoch}`を取得できるようにし、通常の項目GETにもrevisionを照合する
-取得経路を加えること。owner-onlyの共有メンバー一覧や鍵管理情報を公開しない。
-既存のbox-firstロックと取引内の現在認可・世代・session再検査を使う。
-Core/nativeSQL/APIはこの子では変更しない。共有受信者の添付は未達として親へ返す。
+所有者専用の`sharing-snapshot`とメンバー一覧・鍵管理情報は変更しない。
+API応答の世代は既存の鍵や期待contextを書き換える根拠にしない。
+添付権限の403では既存項目の編集入力を保持して添付操作を無効にする。
+共有受信者の正式API・画面の成功は最終検査で確認するまで未達である。
 
 ## 検査と配布
 

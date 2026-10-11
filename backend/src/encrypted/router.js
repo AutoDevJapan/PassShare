@@ -48,7 +48,7 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
           attachmentId: req.params.attachmentId,
           operationId: req.params.operationId,
           requestJson: ["encrypted-attachment-plan", "encrypted-migration-plan"].includes(command) ? req.encryptedAttachmentJson : undefined,
-          request: command === "encrypted-attachment-plan" && name === "get" ? { revision: Number(req.query.revision) }
+          request: command === "encrypted-attachment-plan" && ["get", "item"].includes(name) ? { revision: Number(req.query.revision) }
             : ["encrypted-attachment-plan", "encrypted-migration-plan"].includes(command) && req.encryptedAttachmentJson !== undefined ? undefined
             : command === "encrypted-migration-plan" ? ["items", "item", "file"].includes(name)
               ? { revision: Number(req.query.revision), ...(name === "items" ? { after: req.query.after ?? null } : {}) }
@@ -144,6 +144,14 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
     }
     next();
   }, operation("state", "encrypted-attachment-plan"));
+  router.get("/boxes/:boxId/items/:itemId/attachment-snapshot", (req,res,next) => {
+    if (req.method !== "GET" || Object.keys(req.query).length !== 1 || typeof req.query.revision !== "string"
+        || !/^[1-9][0-9]*$/.test(req.query.revision) || !Number.isSafeInteger(Number(req.query.revision))
+        || Number(req.headers["content-length"] ?? 0) !== 0 || req.headers["transfer-encoding"] !== undefined) {
+      sendAuthError(res, authHttpError(400,"PS051","Invalid attachment snapshot selector")); return;
+    }
+    next();
+  }, operation("item", "encrypted-attachment-plan"));
   router.get("/boxes/:boxId/items/:itemId/attachments/:attachmentId", (req,res,next) => {
     if (Object.keys(req.query).length !== 1 || typeof req.query.revision !== "string"
         || !/^[1-9][0-9]*$/.test(req.query.revision) || !Number.isSafeInteger(Number(req.query.revision))

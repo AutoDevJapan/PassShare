@@ -131,7 +131,10 @@ fn recipient_files(
         p,
         b,
         "GET",
-        &format!("{}/items/{item}", root(a)),
+        &format!(
+            "{}/items/{item}/attachment-snapshot?revision={state}",
+            root(a)
+        ),
         &Value::Null,
         200,
     );
@@ -145,6 +148,40 @@ fn recipient_files(
     check(
         opened == client_dto(&next, a, item, *item_v),
         "recipient full ordered JSON comparison",
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!(
+            "{}/items/{item}/attachment-snapshot?revision={}",
+            root(a),
+            state - 1
+        ),
+        &Value::Null,
+        409,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!("{}/items/{item}/attachment-snapshot?revision=0", root(a)),
+        &Value::Null,
+        400,
+    );
+    reject(
+        db,
+        p,
+        b,
+        "GET",
+        &format!(
+            "{}/items/{item}/attachment-snapshot?revision={state}&extra=1",
+            root(a)
+        ),
+        &Value::Null,
+        400,
     );
     let mut conflict = put.clone();
     conflict["expectedStateRevision"] = json!(state);

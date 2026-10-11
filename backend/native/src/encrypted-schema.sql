@@ -674,7 +674,8 @@ DECLARE state encrypted_box_state%ROWTYPE; live_item encrypted_items%ROWTYPE; li
 BEGIN
   IF box IS NULL OR box !~ '^[a-z0-9]{26}$'
     OR (operation='state' AND (item IS NOT NULL OR attachment IS NOT NULL OR request IS NOT NULL))
-    OR (operation IS DISTINCT FROM 'state' AND (item IS NULL OR item !~ '^[a-z0-9]{26}$'
+    OR (operation='item' AND (item IS NULL OR item !~ '^[a-z0-9]{26}$' OR attachment IS NOT NULL))
+    OR (operation NOT IN ('state','item') AND (item IS NULL OR item !~ '^[a-z0-9]{26}$'
       OR attachment IS NULL OR attachment !~ '^[a-z0-9]{26}$')) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid attachment selector'); END IF;
   PERFORM id FROM connect_vaults WHERE id=box FOR UPDATE;
   IF NOT FOUND THEN RETURN passshare_encrypted_error(404,'PS044','Password box not found'); END IF;
@@ -697,9 +698,14 @@ BEGIN
     RETURN jsonb_build_object('status',200,'body',jsonb_build_object('stateRevision',state.state_revision,'keyEpoch',state.key_epoch));
   END IF;
   IF live_item.item_id IS NULL THEN RETURN passshare_encrypted_error(409,'PS015','Current parent item required'); END IF;
-  IF operation='get' THEN
+  IF operation IN ('get','item') THEN
     IF NOT passshare_exact_object(request,ARRAY['revision']) OR NOT passshare_safe_number(request->'revision',1) THEN RETURN passshare_encrypted_error(400,'PS051','Invalid attachment selector'); END IF;
     IF (request->>'revision')::bigint<>state.state_revision THEN RETURN passshare_encrypted_error(409,'PS015','Attachment snapshot changed'); END IF;
+    IF operation='item' THEN
+      IF live_item.key_epoch<>state.key_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
+      PERFORM passshare_require_live_session(actor,session_id);
+      RETURN jsonb_build_object('status',200,'body',live_item.envelope);
+    END IF;
     IF live.attachment_id IS NULL THEN RETURN passshare_encrypted_error(404,'PS012','Attachment not found'); END IF;
     IF live.key_epoch<>state.key_epoch THEN RETURN passshare_encrypted_error(409,'PS056','Key epoch changed'); END IF;
     PERFORM passshare_require_live_session(actor,session_id);

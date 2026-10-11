@@ -10,8 +10,7 @@ import { useItemLabels } from "../../hooks/useItemLabels";
 import { connectItemFromApi } from "../../lib/connect-items";
 import { CloudApiError, deleteEncryptedItem, getBoxState, getEncryptedItem,
   listEncryptedItems, putEncryptedItem, readItemEnvelope, validateItemContext,
-  getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment, type AttachmentWrite } from "../../lib/cloud-api";
-import { getSnapshot } from "../../lib/sharing-api";
+  getAttachmentState, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment, type AttachmentWrite } from "../../lib/cloud-api";
 import type { AttachmentContext, CloudWorker, ItemContext, OwnerContext } from "../../lib/cloud-worker";
 import "./encrypted-items.css";
 
@@ -223,7 +222,7 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
         attachmentVersion: reference.attachmentVersion, keyEpoch: reference.keyEpoch }));
   }
   async function attachmentSnapshot(row: Row | null, controller: AbortController) {
-    const snapshot = await getSnapshot(passwordBoxId, controller.signal);
+    const snapshot = await getAttachmentState(passwordBoxId, controller.signal);
     if (!active(controller)) return null;
     if (snapshot.keyEpoch !== keyEpoch) throw new CloudApiError(409, "PS056");
     const envelope = row ? await getAttachmentItemSnapshot(row.context, snapshot.stateRevision, controller.signal) : null;
@@ -241,8 +240,7 @@ export function EncryptedItemsPage({ worker, scope, onLock }: {
     return plaintext;
   }
   async function loadFiles(draft: Draft, controller: AbortController) {
-    // A 403 on the owner-only snapshot is an existing API limitation, not a
-    // reason to discard an otherwise valid member's item form.
+    // Rejected attachment access must not discard the current item form.
     try {
       const snapshot = await attachmentSnapshot(draft.original, controller);
       if (!snapshot || !active(controller) || session.draft !== draft) return;

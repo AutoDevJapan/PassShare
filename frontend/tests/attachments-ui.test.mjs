@@ -75,6 +75,7 @@ function host({ empty = false, attachmentFailure = null, itemFailure = null, hol
   };
   class ApiError extends Error { constructor(status, code) { super('Fixed error'); this.status = status; this.code = code; } }
   const api = { CloudApiError: ApiError, getBoxState: async () => ({ mode: 'encrypted', keyEpoch: 1 }),
+    getAttachmentState: async () => { if (unavailable) throw new ApiError(403); return { stateRevision: revision, keyEpoch: 1 }; },
     listEncryptedItems: async () => ({ items: empty ? [] : [{ itemId, itemVersion: 17, keyEpoch: 1 }], nextCursor: null }),
     getEncryptedItem: async () => initial, validateItemContext() {}, readItemEnvelope: JSON.parse,
     getAttachmentItemSnapshot: async () => initial, getEncryptedAttachment: async () => 'opaque-file', deleteEncryptedItem: async () => {},
@@ -91,7 +92,7 @@ function host({ empty = false, attachmentFailure = null, itemFailure = null, hol
       ITEM_CATEGORIES: ['LOGIN'], categoryLabel: () => 'LOGIN' },
     '@shared/i18n/I18nProvider': { useI18n: () => ({ t: (key) => key }) }, '../../hooks/useAuthSession': { useAuthSession: () => ({ user: { id: userId } }) },
     '../../hooks/useItemLabels': { useItemLabels: () => labels }, '../../lib/connect-items': { connectItemFromApi: (item) => ({ ...item, tags: [] }) },
-    '../../lib/cloud-api': api, '../../lib/sharing-api': { getSnapshot: async () => { if (unavailable) throw new ApiError(403); return { stateRevision: revision, keyEpoch: 1 }; } }, './encrypted-items.css': {},
+    '../../lib/cloud-api': api, './encrypted-items.css': {},
   };
   if (realReact) { imports.react = React; imports['react/jsx-runtime'] = reactRequire('react/jsx-runtime'); }
   const URLFixture = { createObjectURL: () => 'blob:fixture', revokeObjectURL: (url) => calls.revoked.push(url) };
@@ -202,7 +203,7 @@ for (const boundary of ['cancel', 'unmount', 'background', 'logout', 'account', 
   assert.equal(h.fileInput.value, '');
   if (boundary === 'unmount') assert.equal(h.window.count() + h.document.count(), 0);
 });
-test('owner-only snapshot rejection keeps shared item form and disables attachment add', async () => {
+test('attachment access rejection keeps item form and disables attachment add', async () => {
   const h = host({ unavailable: true }); await h.open(); assert.ok(h.form()); assert.equal(h.locked, 0);
   assert.equal(h.button('attachments.add').props.disabled, true);
 });
@@ -273,4 +274,22 @@ test('actual HTTP attachment transport embeds opaque envelopes and validates com
   reply = { stateRevision: 19, itemVersion: 18, deleted: true, keyEpoch: 1 };
   assert.equal(await api.writeEncryptedAttachment({ ...prepared, context: { ...context, attachmentVersion: 17 }, envelope: null }, new AbortController().signal), 19);
   assert.equal(seen.init.method, 'DELETE'); assert.equal(JSON.parse(seen.init.body).keyEpoch, 1);
+});
+
+test('public attachment state and item snapshot use recipient routes and reject malformed metadata', async () => {
+  let reply = { stateRevision: 17, keyEpoch: 1 }, seen;
+  const api = moduleAt('src/lib/cloud-api.ts', { './auth-api': { authFetch: async (url, init) => {
+    seen = { url, init }; return new Response(JSON.stringify(reply), { status: 200 });
+  } } }, { Response, atob, btoa });
+  const signal = new AbortController().signal;
+  assert.deepEqual(JSON.parse(JSON.stringify(await api.getAttachmentState(box, signal))), reply);
+  assert.equal(seen.url, `/api/encrypted/boxes/${box}/attachment-state`);
+  assert.equal(seen.init.signal, signal);
+  for (const bad of [{ stateRevision: 0, keyEpoch: 1 }, { stateRevision: 17, keyEpoch: '1' },
+    { stateRevision: 17, keyEpoch: 1, members: [] }]) {
+    reply = bad; await assert.rejects(api.getAttachmentState(box, signal), (error) => error.status === 502);
+  }
+  reply = { format: 1, context: itemContext, nonce: btoa('\0'.repeat(24)), ciphertext: btoa('\0'.repeat(16)) };
+  await api.getAttachmentItemSnapshot(itemContext, 17, signal);
+  assert.equal(seen.url, `/api/encrypted/boxes/${box}/items/${itemId}/attachment-snapshot?revision=17`);
 });

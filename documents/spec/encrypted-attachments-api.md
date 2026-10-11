@@ -85,3 +85,13 @@ GPT-5.5の独立レビューはMust 0件。除名後の旧・新Connectトーク
 Dockerの `version` は30秒で応答せず、自分の診断クライアントだけを終了した。配布イメージ受入とCIは未実行である。親で正式イメージを用意し、既存ツールの `--encrypted-attachments --image <owned-image>` でも同じ追加検査を実行する。原1259/2300判定の成功を今回のAPIの成功には数えない。元22条件全体は未完、達成率は未確定である。
 
 検査は親PG68512/50196の実プロセス・所有nonceを照合し、毎回用途印付きの自分専用DBだけを作った。最初の2回と復元先は正式ツールで回収した。3回目の残存DBも、所有・用途印の再照合と接続0件を確認して通常DROPで回収した。親DB・サーバーを停止していない。C1/peerの画面用fixtureは使わず、正式ツールの合成利用者だけを使用した。新ToDo・push・PR・merge・GH設定・Discord送信・本人への質問は行っていない。
+
+## 2026-10-11 親の項目snapshot接続
+
+受信者の公開状態APIだけでは、画面が使う所有者専用の項目snapshotを取得できなかった。
+GET /api/encrypted/boxes/:boxId/items/:itemId/attachment-snapshot?revision=... を同じRust添付認可処理へ追加した。
+取引内の現在の確認済み所属・自身grant・session・世代と、ボックスロック中の状態版を照合し、項目envelopeだけを返す。
+所有者sharing-snapshotと鍵管理の応答は変更しない。画面は公開状態→項目snapshot→添付GETを同じ版で取得し、鍵の期待contextは独立保持する。
+最新Web25件/native83件（省略0）、型・Webビルド・native Clippy、受入toolのnextest/Clippy/buildが成功。
+Backendは最初に依存未導入で失敗した。固定lockから導入後125件が省略0で成功。
+正式Node/専用PGの全件、配布image/Linux CI、Chromeの最終受入は進行中で、成功とは記録しない。
