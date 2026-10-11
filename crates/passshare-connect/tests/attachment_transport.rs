@@ -585,3 +585,272 @@ async fn pending_empty_attachment_stage_keeps_legacy_status_shape_and_final_coun
     assert!(sdk.rotation_status_with_attachments(&r, 101).await.is_err());
     assert!(server.finish().len() == 2);
 }
+
+const MAX_READ: u64 = 9_007_199_254_740_991;
+#[tokio::test]
+async fn recipient_reads_exact_routes_independent_context_and_max_safe_integers() {
+    let c = context(1, 1);
+    let e = item(&c).envelope;
+    let mut max = e.clone();
+    max.context.item_version = MAX_READ;
+    max.context.key_epoch = MAX_READ;
+    let server = Server::json(vec![
+        json!({"stateRevision":7,"keyEpoch":1}),
+        json!(e),
+        json!({"stateRevision":MAX_READ,"keyEpoch":MAX_READ}),
+        json!(max),
+    ]);
+    let client = server.client();
+    let expected = e.context.clone();
+    let state = client
+        .get_attachment_state(c.password_box_id.as_str(), 1)
+        .await
+        .unwrap();
+    assert_eq!(state.state_revision, 7);
+    assert_eq!(
+        client
+            .get_attachment_snapshot(state.state_revision, &expected)
+            .await
+            .unwrap(),
+        e
+    );
+    assert_eq!(expected, e.context);
+    let state = client
+        .get_attachment_state(c.password_box_id.as_str(), MAX_READ)
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .get_attachment_snapshot(state.state_revision, &max.context)
+            .await
+            .unwrap(),
+        max
+    );
+    let seen = server.finish();
+    assert_eq!(seen.len(), 4);
+    for (index, revision) in [(0, 7), (2, MAX_READ)] {
+        assert!(seen[index].0.starts_with(&format!(
+            "GET /api/encrypted/boxes/{}/attachment-state HTTP/1.1\r\n",
+            c.password_box_id
+        )));
+        assert!(seen[index+1].0.starts_with(&format!("GET /api/encrypted/boxes/{}/items/{}/attachment-snapshot?revision={revision} HTTP/1.1\r\n",c.password_box_id,c.item_id)));
+    }
+    for (head, body) in seen {
+        assert!(head
+            .to_lowercase()
+            .contains("authorization: bearer synthetic-session\r\n"));
+        assert!(head.to_lowercase().contains("accept: application/json\r\n"));
+        assert_eq!(body, Value::Null);
+    }
+}
+
+#[tokio::test]
+async fn recipient_read_strict_fields_duplicates_and_context_never_supply_expectations() {
+    let c = context(1, 1);
+    let e = item(&c).envelope;
+    let state = json!({"stateRevision":7,"keyEpoch":1});
+    let mut states = Vec::new();
+    for field in ["stateRevision", "keyEpoch"] {
+        for value in [
+            Value::Null,
+            json!(0),
+            json!(-1),
+            json!(1.0),
+            json!("1"),
+            json!(MAX_READ + 1),
+        ] {
+            let mut bad = state.clone();
+            bad[field] = value;
+            states.push(bad.to_string());
+        }
+        let mut bad = state.clone();
+        bad.as_object_mut().unwrap().remove(field);
+        states.push(bad.to_string());
+        states.push(state.to_string().replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":1,\"{field}\":"),
+            1,
+        ));
+    }
+    let mut bad = state.clone();
+    bad["unknown"] = json!("diagnostic-secret");
+    states.push(bad.to_string());
+    bad = state.clone();
+    bad["keyEpoch"] = json!(2);
+    states.push(bad.to_string());
+    let mut items = Vec::new();
+    for field in ["format", "context", "nonce", "ciphertext"] {
+        let mut bad = json!(e);
+        bad.as_object_mut().unwrap().remove(field);
+        items.push(bad.to_string());
+        let mut bad = json!(e);
+        bad[field] = Value::Null;
+        items.push(bad.to_string());
+        let value = json!(e)[field].to_string();
+        items.push(json!(e).to_string().replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":{value},\"{field}\":"),
+            1,
+        ));
+    }
+    for field in ["passwordBoxId", "itemId", "itemVersion", "keyEpoch"] {
+        let mut bad = json!(e);
+        bad["context"].as_object_mut().unwrap().remove(field);
+        items.push(bad.to_string());
+        let value = json!(e)["context"][field].to_string();
+        items.push(json!(e).to_string().replacen(
+            &format!("\"{field}\":"),
+            &format!("\"{field}\":{value},\"{field}\":"),
+            1,
+        ));
+        let values = if field.ends_with("Id") {
+            vec![Value::Null, json!("d".repeat(26)), json!("../secret")]
+        } else {
+            vec![
+                Value::Null,
+                json!(0),
+                json!(1.0),
+                json!(MAX_READ + 1),
+                json!(99),
+            ]
+        };
+        for value in values {
+            let mut bad = json!(e);
+            bad["context"][field] = value;
+            items.push(bad.to_string());
+        }
+    }
+    for path in ["", "context"] {
+        let mut bad = json!(e);
+        if path.is_empty() {
+            bad["unknown"] = json!("diagnostic-secret");
+        } else {
+            bad[path]["unknown"] = json!("diagnostic-secret");
+        }
+        items.push(bad.to_string());
+    }
+    for (field, value) in [
+        ("format", json!(2)),
+        ("nonce", json!("diagnostic-secret")),
+        ("ciphertext", json!("diagnostic-secret")),
+    ] {
+        let mut bad = json!(e);
+        bad[field] = value;
+        items.push(bad.to_string());
+    }
+    let replies = states
+        .iter()
+        .chain(&items)
+        .map(|b| (200, b.clone(), String::new()))
+        .collect();
+    let server = Server::new(replies);
+    let client = server.client();
+    for _ in &states {
+        let error = client
+            .get_attachment_state(c.password_box_id.as_str(), 1)
+            .await
+            .unwrap_err();
+        assert!(!format!("{error} {error:?}").contains("diagnostic-secret"));
+    }
+    for _ in &items {
+        let error = client
+            .get_attachment_snapshot(7, &e.context)
+            .await
+            .unwrap_err();
+        assert!(!format!("{error} {error:?}").contains("diagnostic-secret"));
+    }
+    assert_eq!(server.finish().len(), states.len() + items.len());
+}
+
+#[tokio::test]
+async fn recipient_invalid_arguments_emit_no_http_after_valid_positive_control() {
+    let c = context(1, 1);
+    let e = item(&c).envelope;
+    let server = Server::json(vec![json!({"stateRevision":7,"keyEpoch":1}), json!(e)]);
+    let client = server.client();
+    client
+        .get_attachment_state(c.password_box_id.as_str(), 1)
+        .await
+        .unwrap();
+    client.get_attachment_snapshot(7, &e.context).await.unwrap();
+    for n in [0, MAX_READ + 1, u64::MAX] {
+        assert!(client
+            .get_attachment_state(c.password_box_id.as_str(), n)
+            .await
+            .is_err());
+        assert!(client.get_attachment_snapshot(n, &e.context).await.is_err());
+        for field in ["itemVersion", "keyEpoch"] {
+            let mut ctx = e.context.clone();
+            if field == "itemVersion" {
+                ctx.item_version = n;
+            } else {
+                ctx.key_epoch = n;
+            }
+            assert!(client.get_attachment_snapshot(7, &ctx).await.is_err());
+        }
+    }
+    for id in ["", "../secret", "ＡAAAAAAAAAAAAAAAAAAAAAAAAA"] {
+        assert!(client.get_attachment_state(id, 1).await.is_err());
+    }
+    assert_eq!(server.finish().len(), 2);
+}
+
+#[tokio::test]
+async fn recipient_read_errors_and_redirects_preserve_status_without_retry_or_forwarding() {
+    let c = context(1, 1);
+    let e = item(&c).envelope;
+    for status in [401, 403, 409] {
+        let server = Server::new(vec![
+            (
+                status,
+                json!({"error":"PS015","message":"diagnostic-secret"}).to_string(),
+                String::new()
+            );
+            2
+        ]);
+        let client = server.client();
+        for error in [
+            client
+                .get_attachment_state(c.password_box_id.as_str(), 1)
+                .await
+                .unwrap_err(),
+            client
+                .get_attachment_snapshot(7, &e.context)
+                .await
+                .unwrap_err(),
+        ] {
+            assert_eq!(error.status(), Some(status));
+            assert_eq!(error.code(), Some("PS015"));
+            assert!(!format!("{error} {error:?}").contains("diagnostic-secret"));
+        }
+        assert_eq!(server.finish().len(), 2);
+    }
+    let target = Server::json(vec![json!(e)]);
+    let origin = Server::new(vec![
+        (
+            307,
+            String::new(),
+            format!("Location: {}/diagnostic-secret\r\n", target.url)
+        );
+        2
+    ]);
+    let client = origin.client();
+    assert_eq!(
+        client
+            .get_attachment_state(c.password_box_id.as_str(), 1)
+            .await
+            .unwrap_err()
+            .status(),
+        Some(307)
+    );
+    assert_eq!(
+        client
+            .get_attachment_snapshot(7, &e.context)
+            .await
+            .unwrap_err()
+            .status(),
+        Some(307)
+    );
+    assert_eq!(origin.finish().len(), 2);
+    assert!(target.finish().is_empty());
+}

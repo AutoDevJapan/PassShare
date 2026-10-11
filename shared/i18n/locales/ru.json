@@ -369,7 +369,7 @@
   "cloud.setupSubmit": "Начать шифрование",
   "cloud.openSubmit": "Открыть ящик паролей",
   "cloud.neverSent": "Пароль шифрования и ключи расшифровки не отправляются на сервер.",
-  "cloud.recovery": "Resetting the login password does not recover encrypted items. Recovery requires a backup file and code stored beforehand.",
+  "cloud.recovery": "Сброс пароля для входа не восстанавливает зашифрованные записи. Для восстановления нужны заранее сохранённые файл резервной копии и код восстановления.",
   "cloud.crudPending": "Здесь доступны только настройка и открытие. Просмотр, добавление, изменение и удаление зашифрованных записей пока недоступны.",
   "cloud.opened": "Ящик паролей открыт на этом устройстве.",
   "cloud.lock": "Заблокировать ящик паролей",

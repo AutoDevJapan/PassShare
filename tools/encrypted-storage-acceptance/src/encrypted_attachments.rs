@@ -77,6 +77,9 @@ fn recipient_files(
     dto: &Value,
     item_v: &mut u64,
 ) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tap = SdkTap::start(p);
+    let session = b.sdk(tap.port);
     let mut file = File::new(
         key,
         a,
@@ -89,7 +92,17 @@ fn recipient_files(
         .as_array_mut()
         .unwrap()
         .insert(1, next_ref(&file, 1));
-    let state = public_state(db, p, b, a, 1);
+    let state = recipient_state(db, &rt, &tap, &session, a, 1);
+    recipient_item(
+        db,
+        &rt,
+        &tap,
+        &session,
+        key,
+        &context(a, item, *item_v, 1),
+        state,
+        &client_dto(dto, a, item, *item_v),
+    );
     let put = json!({"expectedStateRevision":state,"item":{"expectedVersion":*item_v,
         "envelope":item_body(key,a,item,&next,*item_v+1,1)},"expectedVersion":0,"envelope":file.sealed});
     let endpoint = path(a, item, &file.id);
@@ -109,45 +122,89 @@ fn recipient_files(
             && state_hash(db, true) == before,
         "recipient cookie attachment mutation retains CSRF guard",
     );
-    let reply = send(p, b, "PUT", &endpoint, &put, 200);
+    let write: AttachmentItemWrite = checked(
+        serde_json::from_value(put["item"].clone()),
+        "recipient SDK item write",
+    );
+    let sealed: EncryptedAttachment = checked(
+        serde_json::from_value(file.sealed.clone()),
+        "recipient SDK typed attachment",
+    );
+    let reply = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.put_attachment(
+                state,
+                &write,
+                0,
+                &sealed,
+                &attach_context(a, item, &file.id, 1, 1),
+            ))
+        }),
+        "recipient SDK PUT",
+    );
     check(
-        reply
-            == json!({"stateRevision":state+2,"itemVersion":*item_v+1,"attachmentVersion":1,"keyEpoch":1}),
+        reply.state_revision == state + 2
+            && reply.item_version == *item_v + 1
+            && reply.attachment_version == 1
+            && reply.key_epoch == 1,
         "recipient public state drives real atomic PUT CAS",
     );
+    let before = state_hash(db, true);
+    let repeated = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.put_attachment(
+                state,
+                &write,
+                0,
+                &sealed,
+                &attach_context(a, item, &file.id, 1, 1),
+            ))
+        }),
+        "recipient SDK exact PUT replay",
+    );
+    check(
+        repeated == reply && state_hash(db, true) == before,
+        "recipient SDK exact PUT replay preserves full rows and xmin",
+    );
     *item_v += 1;
-    let state = public_state(db, p, b, a, 1);
-    let cipher = replay(
-        db,
-        p,
-        b,
-        "GET",
-        &format!("{endpoint}?revision={state}"),
-        &Value::Null,
+    let state = recipient_state(db, &rt, &tap, &session, a, 1);
+    let before = state_hash(db, true);
+    let cipher = json!(checked(
+        sdk_once(&tap, || rt.block_on(session.get_attachment(
+            state,
+            &attach_context(a, item, &file.id, file.version, 1)
+        ))),
+        "recipient SDK GET"
+    ));
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK GET preserves full rows and xmin",
     );
     file.verify(key, a, item, &cipher, 1);
     references(&next, key, a, item, *item_v, 1, p);
-    let body = send(
-        p,
-        b,
-        "GET",
-        &format!(
-            "{}/items/{item}/attachment-snapshot?revision={state}",
-            root(a)
-        ),
-        &Value::Null,
-        200,
+    recipient_item(
+        db,
+        &rt,
+        &tap,
+        &session,
+        key,
+        &context(a, item, *item_v, 1),
+        state,
+        &client_dto(&next, a, item, *item_v),
     );
-    let opened = checked(
-        key.decrypt_item(
-            &checked(serde_json::from_value(body), "recipient item envelope"),
-            &context(a, item, *item_v, 1),
-        ),
-        "recipient independent item context",
+    let before = state_hash(db, true);
+    check(
+        sdk_once(&tap, || {
+            rt.block_on(session.get_attachment_snapshot(state - 1, &context(a, item, *item_v, 1)))
+        })
+        .err()
+        .and_then(|e| e.status())
+            == Some(409),
+        "recipient SDK stale item snapshot 409",
     );
     check(
-        opened == client_dto(&next, a, item, *item_v),
-        "recipient full ordered JSON comparison",
+        state_hash(db, true) == before,
+        "recipient SDK stale snapshot preserves full rows and xmin",
     );
     reject(
         db,
@@ -186,6 +243,26 @@ fn recipient_files(
     let mut conflict = put.clone();
     conflict["expectedStateRevision"] = json!(state);
     reject(db, p, b, "PUT", &endpoint, &conflict, 409);
+    let before = state_hash(db, true);
+    check(
+        sdk_once(&tap, || {
+            rt.block_on(session.put_attachment(
+                state,
+                &write,
+                0,
+                &sealed,
+                &attach_context(a, item, &file.id, 1, 1),
+            ))
+        })
+        .err()
+        .and_then(|e| e.status())
+            == Some(409),
+        "recipient SDK stale CAS rejected without retry",
+    );
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK stale CAS preserves all rows/xmin",
+    );
     // Updating the same file exercises independent item/file versions.
     file.version = 2;
     file.name = "更新\0.bin".to_owned();
@@ -194,25 +271,124 @@ fn recipient_files(
     next["attachments"][1] = next_ref(&file, 1);
     let put = json!({"expectedStateRevision":state,"item":{"expectedVersion":*item_v,
         "envelope":item_body(key,a,item,&next,*item_v+1,1)},"expectedVersion":1,"envelope":file.sealed});
-    send(p, b, "PUT", &endpoint, &put, 200);
+    let write: AttachmentItemWrite = checked(
+        serde_json::from_value(put["item"].clone()),
+        "recipient SDK updated item write",
+    );
+    let sealed: EncryptedAttachment = checked(
+        serde_json::from_value(file.sealed.clone()),
+        "recipient SDK updated typed attachment",
+    );
+    let reply = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.put_attachment(
+                state,
+                &write,
+                1,
+                &sealed,
+                &attach_context(a, item, &file.id, 2, 1),
+            ))
+        }),
+        "recipient SDK update PUT",
+    );
+    check(
+        reply.state_revision == state + 2
+            && reply.item_version == *item_v + 1
+            && reply.attachment_version == 2
+            && reply.key_epoch == 1,
+        "recipient SDK updated CAS result",
+    );
     *item_v += 1;
-    let state = public_state(db, p, b, a, 1);
-    let cipher = replay(
-        db,
-        p,
-        b,
-        "GET",
-        &format!("{endpoint}?revision={state}"),
-        &Value::Null,
+    let state = recipient_state(db, &rt, &tap, &session, a, 1);
+    let before = state_hash(db, true);
+    let cipher = json!(checked(
+        sdk_once(&tap, || rt.block_on(session.get_attachment(
+            state,
+            &attach_context(a, item, &file.id, file.version, 1)
+        ))),
+        "recipient SDK GET"
+    ));
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK GET preserves full rows and xmin",
     );
     file.verify(key, a, item, &cipher, 1);
     references(&next, key, a, item, *item_v, 1, p);
     let delete = json!({"expectedStateRevision":state,"item":{"expectedVersion":*item_v,
         "envelope":item_body(key,a,item,dto,*item_v+1,1)},"expectedVersion":2,"keyEpoch":1});
-    send(p, b, "DELETE", &endpoint, &delete, 200);
+    recipient_item(
+        db,
+        &rt,
+        &tap,
+        &session,
+        key,
+        &context(a, item, *item_v, 1),
+        state,
+        &client_dto(&next, a, item, *item_v),
+    );
+    let write: AttachmentItemWrite = checked(
+        serde_json::from_value(delete["item"].clone()),
+        "recipient SDK delete item write",
+    );
+    let reply = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.delete_attachment(
+                state,
+                &write,
+                &attach_context(a, item, &file.id, 2, 1),
+            ))
+        }),
+        "recipient SDK DELETE",
+    );
+    check(
+        reply.state_revision == state + 2
+            && reply.item_version == *item_v + 1
+            && reply.deleted
+            && reply.key_epoch == 1,
+        "recipient SDK delete CAS result",
+    );
+    let before = state_hash(db, true);
+    let repeated = checked(
+        sdk_once(&tap, || {
+            rt.block_on(session.delete_attachment(
+                state,
+                &write,
+                &attach_context(a, item, &file.id, 2, 1),
+            ))
+        }),
+        "recipient SDK exact DELETE replay",
+    );
+    check(
+        repeated == reply && state_hash(db, true) == before,
+        "recipient SDK exact DELETE replay preserves full rows and xmin",
+    );
     *item_v += 1;
     references(dto, key, a, item, *item_v, 1, p);
-    let state = public_state(db, p, b, a, 1);
+    let state = recipient_state(db, &rt, &tap, &session, a, 1);
+    recipient_item(
+        db,
+        &rt,
+        &tap,
+        &session,
+        key,
+        &context(a, item, *item_v, 1),
+        state,
+        &client_dto(dto, a, item, *item_v),
+    );
+    let before = state_hash(db, true);
+    check(
+        sdk_once(&tap, || {
+            rt.block_on(session.get_attachment(state, &attach_context(a, item, &file.id, 2, 1)))
+        })
+        .err()
+        .and_then(|e| e.status())
+            == Some(404),
+        "recipient SDK deleted attachment 404",
+    );
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK deleted GET preserves full rows/xmin",
+    );
     reject(
         db,
         p,
@@ -753,6 +929,106 @@ fn sdk_once<T>(tap: &SdkTap, operation: impl FnOnce() -> T) -> T {
     );
     SDK_REQUESTS.fetch_add(1, Ordering::Relaxed);
     result
+}
+
+fn recipient_state(
+    db: &Database,
+    rt: &tokio::runtime::Runtime,
+    tap: &SdkTap,
+    client: &EncryptedSessionClient,
+    a: &Account,
+    epoch: u64,
+) -> u64 {
+    let before = state_hash(db, true);
+    let state = checked(
+        sdk_once(tap, || {
+            rt.block_on(client.get_attachment_state(&a.box_id, epoch))
+        }),
+        "recipient SDK public state",
+    );
+    check(
+        state.state_revision == revision(db, a) && state.key_epoch == epoch,
+        "recipient SDK selector matches independently held epoch and DB revision",
+    );
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK state preserves full rows and xmin",
+    );
+    state.state_revision
+}
+#[allow(clippy::too_many_arguments)]
+fn recipient_item(
+    db: &Database,
+    rt: &tokio::runtime::Runtime,
+    tap: &SdkTap,
+    client: &EncryptedSessionClient,
+    key: &PasswordBoxKey,
+    expected: &ItemContext,
+    state: u64,
+    dto: &Value,
+) {
+    let before = state_hash(db, true);
+    let envelope = checked(
+        sdk_once(tap, || {
+            rt.block_on(client.get_attachment_snapshot(state, expected))
+        }),
+        "recipient SDK item snapshot",
+    );
+    let opened = checked(
+        key.decrypt_item(&envelope, expected),
+        "recipient Core independent item context",
+    );
+    check(opened == *dto, "recipient SDK full ordered JSON comparison");
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK item read preserves full rows and xmin",
+    );
+}
+#[allow(clippy::too_many_arguments)]
+fn recipient_read_denied(
+    db: &Database,
+    rt: &tokio::runtime::Runtime,
+    tap: &SdkTap,
+    client: &EncryptedSessionClient,
+    expected: &ItemContext,
+    attachment: &AttachmentContext,
+    state: u64,
+    status: u16,
+) {
+    let before = state_hash(db, true);
+    check(
+        sdk_once(tap, || {
+            rt.block_on(
+                client.get_attachment_state(expected.password_box_id.as_str(), expected.key_epoch),
+            )
+        })
+        .err()
+        .and_then(|e| e.status())
+            == Some(status),
+        "recipient SDK state denial preserves HTTP status",
+    );
+    check(
+        sdk_once(tap, || {
+            rt.block_on(client.get_attachment_snapshot(state, expected))
+        })
+        .err()
+        .and_then(|e| e.status())
+            == Some(status),
+        "recipient SDK item denial preserves HTTP status",
+    );
+    check(
+        sdk_once(tap, || {
+            rt.block_on(client.get_attachment(state, attachment))
+        })
+        .err()
+        .and_then(|e| e.status())
+            == Some(status),
+        "recipient SDK attachment denial preserves HTTP status",
+    );
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK denied reads preserve all rows and xmin",
+    );
 }
 
 fn sdk_rotation(a: &Account, path: &str, original: &Value) -> RotationExpectation {
@@ -1867,6 +2143,40 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     let member_key = own_grant(&rt, &c.sdk(p), &a, &c, 2);
     public_state(db, p, &a, &a, 2);
     public_state(db, p, &c, &a, 2);
+    let recipient_tap = SdkTap::start(p);
+    let recipient_session = c.sdk(recipient_tap.port);
+    let recipient_revision = recipient_state(db, &rt, &recipient_tap, &recipient_session, &a, 2);
+    recipient_item(
+        db,
+        &rt,
+        &recipient_tap,
+        &recipient_session,
+        &member_key,
+        &context(&a, &item, item_v, 2),
+        recipient_revision,
+        &client_dto(&next_dto, &a, &item, item_v),
+    );
+    let before = state_hash(db, true);
+    for file in &files {
+        let cipher = json!(checked(
+            sdk_once(&recipient_tap, || rt.block_on(
+                recipient_session.get_attachment(
+                    recipient_revision,
+                    &attach_context(&a, &item, &file.id, file.version, 2)
+                )
+            )),
+            "recipient SDK current epoch GET"
+        ));
+        check(
+            cipher == file.sealed,
+            "recipient SDK complete stored ciphertext comparison",
+        );
+        file.verify(&member_key, &a, &item, &cipher, 2);
+    }
+    check(
+        state_hash(db, true) == before,
+        "recipient SDK all names/bytes reads preserve rows/xmin",
+    );
     // Deliberate old-epoch fixture after a verified current-grant positive.
     db.sql(&format!("UPDATE encrypted_key_grants SET key_epoch=1,envelope='{}'::jsonb WHERE box_id='{}' AND recipient_id='{}'",sql_json(&grant(&old,&a,&c,1)),a.box_id,c.id));
     reject(
@@ -1889,6 +2199,16 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
             revision(db, &a)
         ),
         &Value::Null,
+        403,
+    );
+    recipient_read_denied(
+        db,
+        &rt,
+        &recipient_tap,
+        &recipient_session,
+        &context(&a, &item, item_v, 2),
+        &attach_context(&a, &item, &files[0].id, files[0].version, 2),
+        recipient_revision,
         403,
     );
     db.sql(&format!("UPDATE encrypted_key_grants SET key_epoch=2,envelope='{}'::jsonb WHERE box_id='{}' AND recipient_id='{}'",sql_json(&grant(&new,&a,&c,2)),a.box_id,c.id));
@@ -1926,6 +2246,23 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         (&b.connect[..], 401),
         (login["connectAccessToken"].as_str().unwrap(), 401),
     ] {
+        let rejected_client = checked(
+            EncryptedSessionClient::new(
+                &format!("http://127.0.0.1:{}", recipient_tap.port),
+                session,
+            ),
+            "removed member SDK session",
+        );
+        recipient_read_denied(
+            db,
+            &rt,
+            &recipient_tap,
+            &rejected_client,
+            &context(&a, &item, item_v, 2),
+            &attach_context(&a, &item, &files[0].id, files[0].version, 2),
+            recipient_revision,
+            expected,
+        );
         let before = state_hash(db, true);
         for endpoint in [
             format!("{}/attachment-state", root(&a)),

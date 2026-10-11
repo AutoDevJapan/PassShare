@@ -2,13 +2,33 @@
 use crate::encrypted_client::{decode, envelope_problem};
 use crate::{
     AttachmentContext, EncryptedAttachment, EncryptedItem, EncryptedSessionClient,
-    EncryptedSessionError as Error, EncryptedSessionResult as Result,
+    EncryptedSessionError as Error, EncryptedSessionResult as Result, ItemContext,
 };
 use reqwest::Method;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 
 const MAX_SAFE: u64 = 9_007_199_254_740_991;
+/// Public CAS selector only. This does not authenticate or replace a key pin.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttachmentState {
+    #[serde(deserialize_with = "positive")]
+    pub state_revision: u64,
+    #[serde(deserialize_with = "positive")]
+    pub key_epoch: u64,
+}
+
+fn read_id(id: &str) -> Result<()> {
+    passshare_core::ConnectId::validate(id).map_err(|_| Error::InvalidArgument("invalid id"))
+}
+fn read_integer(n: u64) -> Result<()> {
+    if (1..=MAX_SAFE).contains(&n) {
+        Ok(())
+    } else {
+        Err(Error::InvalidArgument("invalid attachment read integer"))
+    }
+}
 pub(crate) fn positive<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
     let n = u64::deserialize(d)?;
     if (1..=MAX_SAFE).contains(&n) {
@@ -93,6 +113,66 @@ fn item_write(item: &AttachmentItemWrite, context: &AttachmentContext) -> Result
     Ok(())
 }
 impl EncryptedSessionClient {
+    /// Read the recipient-visible selector using an independently held key epoch.
+    /// The reply is a CAS input, never a source for the expected epoch or key pin.
+    pub async fn get_attachment_state(
+        &self,
+        box_id: &str,
+        expected_key_epoch: u64,
+    ) -> Result<AttachmentState> {
+        read_id(box_id)?;
+        read_integer(expected_key_epoch)?;
+        let state: AttachmentState = decode(
+            &self
+                .send(
+                    Method::GET,
+                    self.endpoint(&["boxes", box_id, "attachment-state"])?,
+                    None,
+                )
+                .await?,
+        )?;
+        if state.key_epoch != expected_key_epoch {
+            return Err(Error::ContextMismatch);
+        }
+        Ok(state)
+    }
+
+    /// Read an opaque item at the same public revision used for attachment GET.
+    /// All expected item context comes from the caller, not the state/envelope.
+    /// The caller must authenticate the returned item with Core before using its references.
+    pub async fn get_attachment_snapshot(
+        &self,
+        state_revision: u64,
+        expected: &ItemContext,
+    ) -> Result<EncryptedItem> {
+        read_integer(state_revision)?;
+        read_id(expected.password_box_id.as_str())?;
+        read_id(expected.item_id.as_str())?;
+        read_integer(expected.item_version)?;
+        read_integer(expected.key_epoch)?;
+        let mut url = self.endpoint(&[
+            "boxes",
+            expected.password_box_id.as_str(),
+            "items",
+            expected.item_id.as_str(),
+            "attachment-snapshot",
+        ])?;
+        url.query_pairs_mut()
+            .append_pair("revision", &state_revision.to_string());
+        let item: EncryptedItem = decode(&self.send(Method::GET, url, None).await?)?;
+        if let Some(problem) = envelope_problem(
+            &item,
+            expected.password_box_id.as_str(),
+            expected.item_id.as_str(),
+        ) {
+            return Err(Error::InvalidResponse(problem));
+        }
+        if item.context != *expected {
+            return Err(Error::ContextMismatch);
+        }
+        Ok(item)
+    }
+
     fn attachment_url(&self, c: &AttachmentContext) -> Result<reqwest::Url> {
         expected(c)?;
         self.endpoint(&[
