@@ -1,13 +1,61 @@
 //! Independent client Core -> formal Node -> fresh owned PostgreSQL acceptance.
 use super::*;
+use passshare_connect::{MigrationSourceFile, MigrationState, MigrationTransportPlan};
 use passshare_core::cloud_crypto::{
     migration::{
         prepare_migration, MigrationAttachmentBinding, MigrationAttachmentSource,
-        MigrationItemBinding, MigrationItemPlaintext, MigrationItemSource, TrustedOwnerKeyContext,
+        MigrationItemBinding, MigrationItemSource, TrustedOwnerKeyContext,
     },
     AttachmentContext, AttachmentPlaintext, EncryptedAttachment, EncryptedItem,
 };
 use std::sync::atomic::AtomicUsize;
+
+fn sdk(p: u16, a: &Account) -> passshare_connect::EncryptedSessionClient {
+    checked(
+        passshare_connect::EncryptedSessionClient::new(
+            &format!("http://127.0.0.1:{p}"),
+            &a.session,
+        ),
+        "migration session SDK",
+    )
+}
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+fn sdk_ok<T>(result: passshare_connect::EncryptedSessionResult<T>) -> T {
+    let result = checked(result, "migration SDK request");
+    SDK_READS.fetch_add(1, Ordering::Relaxed);
+    CHECKS.fetch_add(1, Ordering::Relaxed);
+    result
+}
+fn sdk_reject<T>(
+    db: &Database,
+    expected_status: u16,
+    expected_code: &str,
+    request: impl std::future::Future<Output = passshare_connect::EncryptedSessionResult<T>>,
+) {
+    let before = acceptance_state_hash(db);
+    let error = runtime()
+        .block_on(request)
+        .err()
+        .expect("SDK should preserve formal server rejection");
+    verify(
+        error.status() == Some(expected_status),
+        "SDK preserves formal server rejection status",
+    );
+    verify(
+        error.code() == Some(expected_code),
+        "SDK preserves formal server rejection code",
+    );
+    verify(
+        acceptance_state_hash(db) == before,
+        "SDK rejection retains all original/staged rows and xmin",
+    );
+    REJECTIONS.fetch_add(1, Ordering::Relaxed);
+}
 
 static CHECKS: AtomicUsize = AtomicUsize::new(0);
 static REPLAYS: AtomicUsize = AtomicUsize::new(0);
@@ -64,10 +112,6 @@ fn replay(db: &Database, p: u16, a: &Account, method: &str, path: &str, body: &V
 fn source_path(a: &Account) -> String {
     format!("/api/encrypted/boxes/{}/migration-source", a.box_id)
 }
-fn snapshot(p: u16, a: &Account) -> Value {
-    request(p, a, "GET", &source_path(a), &Value::Null, 200)
-}
-
 struct Original {
     item: Value,
     files: Vec<(AttachmentContext, String, Vec<u8>, bool)>,
@@ -138,43 +182,27 @@ struct Plan {
     stable: Vec<u8>,
     key: PasswordBoxKey,
     bindings: Vec<MigrationItemBinding>,
+    sdk: MigrationTransportPlan,
 }
 fn prepare(p: u16, a: &Account, originals: &[Original]) -> Plan {
     prepare_routes(p, a, originals, false)
 }
 fn prepare_routes(p: u16, a: &Account, originals: &[Original], remap: bool) -> Plan {
-    let snapshot = snapshot(p, a);
-    let revision = snapshot["sourceRevision"].as_u64().unwrap();
+    let client = sdk(p, a);
+    let rt = runtime();
+    let snapshot = sdk_ok(rt.block_on(client.migration_source(&a.box_id)));
+    let revision = snapshot.source_revision;
     let mut after: Option<String> = None;
     let mut ids = Vec::new();
     loop {
-        let page = request(
-            p,
-            a,
-            "GET",
-            &format!(
-                "{}/items?revision={revision}{}",
-                source_path(a),
-                after
-                    .as_ref()
-                    .map(|s| format!("&after={s}"))
-                    .unwrap_or_default()
-            ),
-            &Value::Null,
-            200,
-        );
-        verify(
-            page["items"].as_array().unwrap().len() <= 100,
-            "source page limit",
-        );
-        ids.extend(
-            page["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|i| i["id"].as_str().unwrap().to_owned()),
-        );
-        after = page["after"].as_str().map(str::to_owned);
+        let page = sdk_ok(rt.block_on(client.migration_source_items(
+            &a.box_id,
+            revision,
+            after.as_deref(),
+        )));
+        verify(page.items.len() <= 100, "source page limit");
+        ids.extend(page.items.iter().map(|i| i.id.to_string()));
+        after = page.after.map(|c| c.to_string());
         if after.is_none() {
             break;
         }
@@ -192,23 +220,16 @@ fn prepare_routes(p: u16, a: &Account, originals: &[Original], remap: bool) -> P
     let mut bindings = Vec::new();
     for original in originals {
         let id = original.item["id"].as_str().unwrap();
-        let fetched = request(
-            p,
-            a,
-            "GET",
-            &format!("{}/items/{id}?revision={revision}", source_path(a)),
-            &Value::Null,
-            200,
-        );
-        verify(
-            fetched == original.item,
-            "every original DTO field, null, unknown attribute and order",
-        );
         let context: ItemContext = checked(
             serde_json::from_value(
                 json!({"passwordBoxId":a.box_id,"itemId":id,"itemVersion":17,"keyEpoch":1}),
             ),
             "independent item context",
+        );
+        let fetched = sdk_ok(rt.block_on(client.migration_source_item(revision, &context)));
+        verify(
+            fetched.json() == &original.item,
+            "SDK complete original JSON and numeric values",
         );
         let mut attachments = Vec::new();
         let mut target = context.clone();
@@ -217,32 +238,19 @@ fn prepare_routes(p: u16, a: &Account, originals: &[Original], remap: bool) -> P
         }
         let mut file_bindings = Vec::new();
         for (c, name, bytes, available) in &original.files {
-            let meta = request(
-                p,
-                a,
-                "GET",
-                &format!(
-                    "{}/items/{id}/files/{}?revision={revision}",
-                    source_path(a),
-                    c.attachment_id
+            let file = sdk_ok(rt.block_on(client.migration_source_file(revision, c)));
+            match &file {
+                MigrationSourceFile::Available(file) => verify(
+                    *available && file.name() == name && file.content() == bytes,
+                    "SDK actual source filename and all bytes including empty",
                 ),
-                &Value::Null,
-                200,
-            );
-            verify(
-                meta["available"] == *available && meta["contentBytes"] == bytes.len(),
-                "explicit binary availability and byte length",
-            );
-            if *available {
-                verify(
-                    BASE64.decode(meta["content"].as_str().unwrap()).unwrap() == *bytes,
-                    "actual owner-read source binary",
-                );
-            } else {
-                verify(
-                    meta["content"].is_null(),
-                    "missing legacy bytes never fabricated as empty",
-                );
+                MigrationSourceFile::Missing { metadata } => verify(
+                    !available
+                        && metadata.json()["content"].is_null()
+                        && metadata.json()["contentBytes"] == bytes.len()
+                        && metadata.json()["name"] == *name,
+                    "SDK missing source content remains distinct from empty",
+                ),
             }
             attachments.push(MigrationAttachmentSource {
                 context: c.clone(),
@@ -262,7 +270,7 @@ fn prepare_routes(p: u16, a: &Account, originals: &[Original], remap: bool) -> P
             });
         }
         sources.push(MigrationItemSource {
-            item: checked(MigrationItemPlaintext::new(fetched), "complete source JSON"),
+            item: fetched,
             attachments,
         });
         bindings.push(MigrationItemBinding {
@@ -308,9 +316,27 @@ fn prepare_routes(p: u16, a: &Account, originals: &[Original], remap: bool) -> P
     let wire: Value = checked(serde_json::from_slice(&stable), "Core ciphertext wire");
     let mut header = wire.clone();
     header.as_object_mut().unwrap().remove("items");
-    header["itemCount"] = snapshot["itemCount"].clone();
-    header["attachmentCount"] = snapshot["attachmentCount"].clone();
+    header["itemCount"] = json!(snapshot.item_count);
+    header["attachmentCount"] = json!(snapshot.attachment_count);
     header["ownerBundle"] = owner_bundle(&key, &a.master, a.salt, &owner);
+    let sdk = checked(
+        MigrationTransportPlan::new(
+            &prepared,
+            checked(
+                serde_json::from_value(header["ownerBundle"].clone()),
+                "SDK opaque owner bundle",
+            ),
+        ),
+        "SDK frozen Core transport plan",
+    );
+    verify(
+        serde_json::from_slice::<Value>(sdk.header_request_bytes()).unwrap() == header,
+        "SDK header keeps Core operation and owner bindings",
+    );
+    verify(
+        sdk.core_replay_bytes() == stable,
+        "SDK retains exact original Core replay bytes",
+    );
     let path = format!(
         "/api/encrypted/boxes/{}/migrations/{}",
         a.box_id,
@@ -323,6 +349,7 @@ fn prepare_routes(p: u16, a: &Account, originals: &[Original], remap: bool) -> P
         stable,
         key,
         bindings,
+        sdk,
     }
 }
 fn hex_entropy(n: usize) -> String {
@@ -334,33 +361,21 @@ fn hex_entropy(n: usize) -> String {
         .to_owned()
 }
 fn stage(p: u16, a: &Account, plan: &Plan, files: bool) {
-    request(p, a, "PUT", &plan.path, &plan.header, 200);
-    for item in plan.wire["items"].as_array().unwrap() {
-        let id = item["binding"]["target"]["itemId"].as_str().unwrap();
-        request(
-            p,
-            a,
-            "PUT",
-            &format!("{}/items/{id}", plan.path),
-            &json!({"binding":item["binding"],"envelope":item["envelope"]}),
-            200,
-        );
+    let client = sdk(p, a);
+    let rt = runtime();
+    sdk_ok(rt.block_on(client.stage_migration_header(&plan.sdk)));
+    for (index, item) in plan.wire["items"].as_array().unwrap().iter().enumerate() {
+        sdk_ok(rt.block_on(client.stage_migration_item(&plan.sdk, index)));
         if files {
-            for file in item["attachments"].as_array().unwrap() {
-                let fid = file["context"]["attachmentId"].as_str().unwrap();
-                request(
-                    p,
-                    a,
-                    "PUT",
-                    &format!("{}/items/{id}/files/{fid}", plan.path),
-                    &json!({"envelope":file}),
-                    200,
-                );
+            for (file, _) in item["attachments"].as_array().unwrap().iter().enumerate() {
+                sdk_ok(rt.block_on(client.stage_migration_file(&plan.sdk, index, file)));
             }
         }
     }
 }
 fn readback(p: u16, a: &Account, plan: &Plan, originals: &[Original], committed: bool) {
+    let client = sdk(p, a);
+    let rt = runtime();
     let bundle = if committed {
         request(
             p,
@@ -372,7 +387,11 @@ fn readback(p: u16, a: &Account, plan: &Plan, originals: &[Original], committed:
         )["bundle"]
             .clone()
     } else {
-        request(p, a, "GET", &plan.path, &Value::Null, 200)["header"]["ownerBundle"].clone()
+        json!(
+            sdk_ok(rt.block_on(client.migration_status(&plan.sdk)))
+                .header
+                .owner_bundle
+        )
     };
     let key = checked(
         unwrap_bundle(
@@ -396,11 +415,10 @@ fn readback(p: u16, a: &Account, plan: &Plan, originals: &[Original], committed:
         } else {
             format!("{}/items/{}", plan.path, ctx.item_id)
         };
-        let returned = request(p, a, "GET", &path, &Value::Null, 200);
         let wire = if committed {
-            returned
+            request(p, a, "GET", &path, &Value::Null, 200)
         } else {
-            returned["envelope"].clone()
+            json!(sdk_ok(rt.block_on(client.staged_migration_item(&plan.sdk, index))).envelope)
         };
         verify(
             wire == prepared["envelope"],
@@ -427,8 +445,11 @@ fn readback(p: u16, a: &Account, plan: &Plan, originals: &[Original], committed:
             key.decrypt_item(&envelope, &bad).is_err(),
             "Core independent wrong context rejected",
         );
-        for ((_, name, bytes, _), binding) in
-            original.files.iter().zip(&plan.bindings[index].attachments)
+        for (file_index, ((_, name, bytes, _), binding)) in original
+            .files
+            .iter()
+            .zip(&plan.bindings[index].attachments)
+            .enumerate()
         {
             let c = &binding.target;
             let path = if committed {
@@ -450,7 +471,13 @@ fn readback(p: u16, a: &Account, plan: &Plan, originals: &[Original], committed:
                     plan.path, c.item_id, c.attachment_id
                 )
             };
-            let returned = request(p, a, "GET", &path, &Value::Null, 200);
+            let returned = if committed {
+                request(p, a, "GET", &path, &Value::Null, 200)
+            } else {
+                json!(sdk_ok(rt.block_on(
+                    client.staged_migration_file(&plan.sdk, index, file_index)
+                )))
+            };
             let prepared_file = prepared["attachments"]
                 .as_array()
                 .unwrap()
@@ -587,6 +614,20 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     ));
     println!("migration phase=full_source_prepare item_inventory=101");
     let plan = prepare(p, &a, &originals);
+    let client = sdk(p, &a);
+    let other = sdk(p, &outsider);
+    sdk_reject(db, 403, "PS016", other.migration_source(&a.box_id));
+    let absent = ConnectId::generate().unwrap();
+    sdk_reject(
+        db,
+        409,
+        "PS015",
+        client.migration_source_items(
+            &a.box_id,
+            plan.sdk.header().source_revision,
+            Some(absent.as_str()),
+        ),
+    );
     let bad_selector = format!(
         "{}/items?revision={}&after={}",
         source_path(&a),
@@ -596,6 +637,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     reject(db, p, &a, "GET", &bad_selector, &Value::Null, 409);
     let before = original_rows(db, &a.box_id);
     stage(p, &a, &plan, false);
+    sdk_reject(db, 409, "PS015", client.commit_migration(&plan.sdk));
     verify(
         original_rows(db, &a.box_id) == before,
         "prepare/stage retains full original rows and xmin",
@@ -740,7 +782,11 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         &Value::Null,
         409,
     );
-    request(p, &a, "DELETE", &plan.path, &Value::Null, 200);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).cancel_migration(&plan.sdk)))
+            == MigrationState::Aborted,
+        "SDK explicit cancellation",
+    );
     db.sql(&format!(
         "UPDATE connect_items SET document='{}'::jsonb WHERE id='{source_id}'",
         sql_json(&originals[1].item)
@@ -769,7 +815,11 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         &Value::Null,
         409,
     );
-    request(p, &a, "DELETE", &plan.path, &Value::Null, 200);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).cancel_migration(&plan.sdk)))
+            == MigrationState::Aborted,
+        "SDK explicit cancellation",
+    );
     db.sql(&format!(
         "INSERT INTO connect_items(id,vault_id,document) VALUES('{source_id}','{}','{}'::jsonb)",
         a.box_id,
@@ -793,7 +843,11 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         &Value::Null,
         409,
     );
-    request(p, &a, "DELETE", &plan.path, &Value::Null, 200);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).cancel_migration(&plan.sdk)))
+            == MigrationState::Aborted,
+        "SDK explicit cancellation",
+    );
     let plan = prepare(p, &a, &originals);
     stage(p, &a, &plan, true);
     db.sql(&format!(
@@ -813,7 +867,11 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         "UPDATE vault_memberships SET role='owner' WHERE vault_id='{}'",
         a.box_id
     ));
-    request(p, &a, "DELETE", &plan.path, &Value::Null, 200);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).cancel_migration(&plan.sdk)))
+            == MigrationState::Aborted,
+        "SDK explicit cancellation",
+    );
     let plan = prepare(p, &a, &originals);
     stage(p, &a, &plan, true);
     db.sql(&format!("UPDATE encrypted_migrations SET expires_at=clock_timestamp()-interval '1 second' WHERE box_id='{}' AND status='pending'",a.box_id));
@@ -826,7 +884,11 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         &Value::Null,
         409,
     );
-    request(p, &a, "DELETE", &plan.path, &Value::Null, 200);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).cancel_migration(&plan.sdk)))
+            == MigrationState::Aborted,
+        "SDK explicit cancellation",
+    );
     let plan = prepare(p, &a, &originals);
     stage(p, &a, &plan, true);
     db.sql(&format!(
@@ -843,7 +905,11 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         &Value::Null,
         409,
     );
-    request(p, &a, "DELETE", &plan.path, &Value::Null, 200);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).cancel_migration(&plan.sdk)))
+            == MigrationState::Aborted,
+        "SDK explicit cancellation",
+    );
     let plan = prepare(p, &a, &originals);
     stage(p, &a, &plan, true);
     // Expiry during an observed parent-lock wait, after middleware admitted it.
@@ -884,7 +950,11 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         "UPDATE sessions SET expires_at=clock_timestamp()+interval '1 hour' WHERE user_id='{}'",
         a.id
     ));
-    request(p, &a, "DELETE", &plan.path, &Value::Null, 200);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).cancel_migration(&plan.sdk)))
+            == MigrationState::Aborted,
+        "SDK explicit cancellation",
+    );
     // Explicit no-token and foreign account tests on final prepared plan.
     let plan = prepare_routes(p, &a, &originals, true);
     request(p, &a, "PUT", &plan.path, &plan.header, 200);
@@ -952,17 +1022,21 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     drop(stream);
     verify(wait_db(db,&format!("SELECT count(*)>0 FROM encrypted_migrations WHERE box_id='{}' AND status='committed'",a.box_id)),"commit response loss independently observed committed state");
     verify(
-        request(p, &a, "GET", &plan.path, &Value::Null, 200)["status"] == "committed",
+        sdk_ok(runtime().block_on(sdk(p, &a).migration_status(&plan.sdk))).status
+            == MigrationState::Committed,
         "explicit status before replay",
     );
-    replay(
-        db,
-        p,
-        &a,
-        "POST",
-        &format!("{}/commit", plan.path),
-        &Value::Null,
+    let before = acceptance_state_hash(db);
+    verify(
+        sdk_ok(runtime().block_on(sdk(p, &a).commit_migration(&plan.sdk)))
+            == MigrationState::Committed,
+        "explicit SDK commit retry after authenticated status",
     );
+    verify(
+        acceptance_state_hash(db) == before,
+        "SDK explicit committed retry preserves every row and xmin",
+    );
+    REPLAYS.fetch_add(1, Ordering::Relaxed);
     replay(db, p, &a, "PUT", &plan.path, &plan.header);
     let item = &plan.wire["items"][0];
     let id = item["binding"]["target"]["itemId"].as_str().unwrap();
@@ -1021,5 +1095,5 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     drop(restored);
     drop(off);
     drop(host);
-    println!("migration acceptance checks={} rejected_unchanged={} exact_replays={} existing_sdk_reads={} source_pagination_items=101 committed_items=2 files=3 preserved_item_version=17 preserved_file_version=17 response_loss=1 source_archive_missing_binary=1; pending+committed restore full public equality; Core client staged+active readback; no parsers/UI/all-client claim",CHECKS.load(Ordering::Relaxed),REJECTIONS.load(Ordering::Relaxed),REPLAYS.load(Ordering::Relaxed),SDK_READS.load(Ordering::Relaxed));
+    println!("migration acceptance checks={} rejected_unchanged={} exact_replays={} sdk_successful_requests={} source_pagination_items=101 committed_items=2 files=3 preserved_item_version=17 preserved_file_version=17 response_loss=1 source_archive_missing_binary=1; pending+committed restore full public equality; Core client staged+active readback; no parsers/UI/all-client claim",CHECKS.load(Ordering::Relaxed),REJECTIONS.load(Ordering::Relaxed),REPLAYS.load(Ordering::Relaxed),SDK_READS.load(Ordering::Relaxed));
 }
