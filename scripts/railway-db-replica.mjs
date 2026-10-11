@@ -320,19 +320,9 @@ async function snapshotSource(sourceEnv) {
   console.log(`DB snapshot branch: ${label}`);
   console.log(`Snapshotting ${sourceEnv}...`);
 
-  const version = spawnSync("pg_dump", ["--version"], { encoding: "utf8" });
-  if (version.status !== 0 || Number(version.stdout.match(/PostgreSQL\) (\d+)/)?.[1] ?? 0) < 18) {
-    throw new Error("Production snapshot requires pg_dump 18 or newer.");
-  }
-  const sourceUrl = await getDatabaseUrl(sourceEnv);
-  runCommand("pg_dump", [
-    "--format=custom",
-    "--no-owner",
-    "--no-acl",
-    "--file",
-    dumpPath,
-    sourceUrl,
-  ]);
+  // Capture inside the existing PG18 service. No public DB proxy or connection
+  // values are required in the runner. The helper revokes its temporary key.
+  runCommand("go", ["-C", "tools/prd-snapshot-go", "run", ".", "--output", dumpPath]);
 
   console.log(`Snapshot written: ${dumpPath}`);
   console.log(`Snapshot branch label: ${label}`);

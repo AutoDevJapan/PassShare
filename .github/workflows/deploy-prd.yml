@@ -32,13 +32,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
 
-      - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-common
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y postgresql-client-18
-          echo '/usr/lib/postgresql/18/bin' >> "$GITHUB_PATH"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.0'
+          cache: false
 
       - name: Install backend dependencies
         working-directory: backend
@@ -47,7 +44,12 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Snapshot prd DB, then deploy
+      - name: Verify private snapshot helper
+        run: |
+          go version
+          go -C tools/prd-snapshot-go test ./...
+
+      - name: Snapshot prd DB over private SSH, then deploy
         env:
           DEPLOY_TARGET: prd
           DB_REPLICA_MODE: snapshot
