@@ -69,8 +69,10 @@ ToDo2379のPrd-only方針が旧ADR008のdev-first配備を置き換える。PR�
 
 - `railway-db-replica.mjs snapshot --source prd` は現Prd DBだけを読み、一時的なcustom-format dumpを作る。dev/stgへの復元も、本番への書込みも行わない。`refresh` と非Prd source/targetは接続前に拒否する。
 - 必須IDはproject、production環境、**現稼働PG18サービス**。旧 `postgres-prd-v2` のIDは拒否する。backendサービスとDBサービスは別IDであり、取り違えない。
-- PostgreSQLクライアントは18以上。ジョブではPGDGのclient-18を使用する。[pg_dump公式資料](https://www.postgresql.org/docs/18/app-pgdump.html)のバージョン制約に従う。
-- 接続は現Prdサービスから取得した既存のpublic URL / TCP proxyだけを使用し、接続overrideは拒否する。proxyやDBを自動作成しない。存在しなければ停止する。秘密値は報告・artifactへ出さない。
+- `tools/prd-snapshot-go`は既存CLIの認証で現PG18サービスへSSH接続し、コンテナ内の`pg_dump`と`pg_restore --list`を使用する。クライアントとサーバーの版を同じ既存サービスでそろえる。
+- 公開DB接続は使わない。最初の配備は現PG18にTCP proxyがなく保全段階で停止したため、公開ポートを追加せず非公開経路へ修正した。DBの接続値をrunnerへ取得せず、proxyやDBを新しく作らない。
+- SSH用の認証は一時ディレクトリに生成し、照合済みworkspaceへ登録する。この呼出しが作ったIDだけを終了時に解除する。解除が失敗すると配備へ進まない。手動の既存認証はコピー・登録・解除しない。
+- コンテナ内の一時dumpはアクセスを制限し、検査・SHA-256取得・転送後に不在を確認する。runnerは転送後の全byteの指紋を取得元と比較し、sourceのアップロード範囲外へ排他的に保存する。保全失敗・指紋不一致・認証回収失敗では配備を停止する。
 - provider操作を伴わない関連検査: `node --test scripts/railway-db-replica.test.mjs`、`node backend/scripts/verify-schema.mjs`、変更したworkflowのactionlint、配備shellの`bash -n`。最終CIと実配備確認は別途行う。
 - wrapperはアップロード対象の外に専用一時フォルダーを作り、dumpへのアクセスを制限する。成功・失敗のいずれでも終了時にdumpとフォルダーを削除する。runner破棄でも一時資源は残さない。Actions artifactへのアップロードは禁止。
 - このdumpは永続バックアップでも復元成功の証拠でもない。配備のために旧環境や追加の有料バックアップを必要としない。有料利用者がいない製品には新しい永続保全費用を増やさない。
