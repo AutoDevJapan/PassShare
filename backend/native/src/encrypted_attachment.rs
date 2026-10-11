@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 pub fn dispatch_raw(input: &Value) -> Value {
     if !matches!(
         input["command"].as_str(),
-        Some("encrypted-attachment-plan" | "encrypted-rotation-plan")
+        Some("encrypted-attachment-plan" | "encrypted-rotation-plan" | "encrypted-migration-plan")
     ) {
         return failure();
     }

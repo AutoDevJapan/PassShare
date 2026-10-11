@@ -15,6 +15,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use crate::{crypto::MasterKey, ConnectId};
 
 mod attachments;
+pub mod migration;
 pub use attachments::{
     AttachmentContext, AttachmentPlaintext, EncryptedAttachment, MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENT_NAME_BYTES,

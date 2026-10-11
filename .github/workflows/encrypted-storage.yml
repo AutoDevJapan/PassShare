@@ -41,6 +41,11 @@ jobs:
           cargo build --manifest-path backend/native/Cargo.toml --locked --bin passshare-mutations
       - name: Load the pinned PostgreSQL fixture
         run: docker pull mirror.gcr.io/library/postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+      - name: Verify repeated restore ownership and rejection invariants
+        env:
+          PASSSHARE_ACCEPTANCE_NATIVE: ${{ github.workspace }}/backend/native/target/debug/passshare-mutations
+        run: |
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked encrypted_restore::tests:: -- --ignored --test-threads=1
       - name: Verify the formal Node entrypoint with PostgreSQL and Core encryption
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance backend/native/target/debug/passshare-mutations
       - name: Verify Go SDK with formal Node and Rust Core
@@ -49,6 +54,8 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --account-identity backend/native/target/debug/passshare-mutations
       - name: Verify atomic encrypted attachment storage and rotation with formal Node
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments backend/native/target/debug/passshare-mutations
+      - name: Verify complete owner migration with the formal Node API
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-migration backend/native/target/debug/passshare-mutations
       - name: Verify sharing and atomic revocation with formal Node and Rust Core
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --sharing-rotation backend/native/target/debug/passshare-mutations
       - name: Verify legacy deadline rollback with isolated Node and PostgreSQL
@@ -65,6 +72,8 @@ jobs:
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --account-identity --image passshare-todo1163-encrypted-api
       - name: Verify atomic encrypted attachment storage and rotation with the distribution image
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments --image passshare-todo1163-encrypted-api
+      - name: Verify complete owner migration with the distribution image
+        run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-migration --image passshare-todo1163-encrypted-api
       - name: Verify sharing and atomic revocation with the distribution image and Rust Core
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --sharing-rotation --image passshare-todo1163-encrypted-api
       - name: Verify legacy deadline rollback with the distribution image

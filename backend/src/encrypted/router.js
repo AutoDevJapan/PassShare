@@ -46,9 +46,13 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
           actor: req.auth.userId, session: req.auth.sessionId,
           boxId: req.params.boxId, itemId: req.params.itemId,
           attachmentId: req.params.attachmentId,
-          requestJson: command === "encrypted-attachment-plan" ? req.encryptedAttachmentJson : undefined,
+          operationId: req.params.operationId,
+          requestJson: ["encrypted-attachment-plan", "encrypted-migration-plan"].includes(command) ? req.encryptedAttachmentJson : undefined,
           request: command === "encrypted-attachment-plan" && name === "get" ? { revision: Number(req.query.revision) }
-            : command === "encrypted-attachment-plan" && req.encryptedAttachmentJson !== undefined ? undefined
+            : ["encrypted-attachment-plan", "encrypted-migration-plan"].includes(command) && req.encryptedAttachmentJson !== undefined ? undefined
+            : command === "encrypted-migration-plan" ? ["items", "item", "file"].includes(name)
+              ? { revision: Number(req.query.revision), ...(name === "items" ? { after: req.query.after ?? null } : {}) }
+              : ["start", "stage-item", "stage-file"].includes(name) ? publicRequest : null
             : name === "list" ? { after: req.query.after ?? null } : ["enable", "put", "setup", "delete"].includes(name) ? publicRequest : null });
         if (ownerPut && !plan.requiresReauthentication && Object.hasOwn(req.body,"currentPassword")) {
           throw authHttpError(400,"PS051","Unexpected authentication field on initial key creation");
@@ -71,6 +75,17 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
         }
         const { rows } = await pool.query(plan.sql, plan.params.map((value) =>
           value !== null && typeof value === "object" ? JSON.stringify(value) : value));
+        if (plan.replyEncoding === "json-text") {
+          const row = rows[0];
+          if (Number(row?.migration_status) !== 200) {
+            if (!row?.migration_code || !row?.migration_message) throw new Error("Invalid migration reply");
+            sendAuthError(res, {status:Number(row.migration_status),code:row.migration_code,message:row.migration_message}); return;
+          }
+          if (typeof row.migration_body !== "string") throw new Error("Invalid migration body");
+          // Relay PostgreSQL JSON text without JSON.parse/stringify: complete
+          // legacy DTOs may contain numeric values beyond JS safe integers.
+          res.type("application/json").send(row.migration_body); return;
+        }
         const reply = rows[0].reply;
         if (reply.status === 204) { res.status(204).end(); return; }
         if (reply.status !== 200) { sendAuthError(res, reply); return; }
@@ -83,6 +98,38 @@ export async function createEncryptedRouter({ pool, authStore, loginGuardStore }
     };
   }
   router.get("/boxes/:boxId", operation("state"));
+  // Selector/HTTP adaptation only; Rust and PostgreSQL own all migration decisions.
+  function migrationRead(req, res, next) {
+    const page = req.route.path.endsWith("/items");
+    const allowed = page ? ["revision", "after"] : ["revision"];
+    if (Object.keys(req.query).some(k => !allowed.includes(k))
+        || typeof req.query.revision !== "string" || !/^[1-9][0-9]*$/.test(req.query.revision)
+        || !Number.isSafeInteger(Number(req.query.revision))
+        || (req.query.after !== undefined && typeof req.query.after !== "string")
+        || Number(req.headers["content-length"] ?? 0) !== 0 || req.headers["transfer-encoding"] !== undefined) {
+      sendAuthError(res, authHttpError(400,"PS051","Invalid migration source selector")); return;
+    }
+    next();
+  }
+  function migrationEmpty(req, res, next) {
+    if (Object.keys(req.query).length || Number(req.headers["content-length"] ?? 0) !== 0 || req.headers["transfer-encoding"] !== undefined) {
+      sendAuthError(res, authHttpError(400,"PS051","Unexpected migration selector or body")); return;
+    }
+    next();
+  }
+  const migration = name => operation(name, "encrypted-migration-plan");
+  router.get("/boxes/:boxId/migration-source", migrationEmpty, migration("snapshot"));
+  router.get("/boxes/:boxId/migration-source/items", migrationRead, migration("items"));
+  router.get("/boxes/:boxId/migration-source/items/:itemId", migrationRead, migration("item"));
+  router.get("/boxes/:boxId/migration-source/items/:itemId/files/:attachmentId", migrationRead, migration("file"));
+  router.put("/boxes/:boxId/migrations/:operationId", csrf, migration("start"));
+  router.put("/boxes/:boxId/migrations/:operationId/items/:itemId", csrf, migration("stage-item"));
+  router.get("/boxes/:boxId/migrations/:operationId/items/:itemId", migrationEmpty, migration("staged-item"));
+  router.put("/boxes/:boxId/migrations/:operationId/items/:itemId/files/:attachmentId", csrf, migration("stage-file"));
+  router.get("/boxes/:boxId/migrations/:operationId/items/:itemId/files/:attachmentId", migrationEmpty, migration("staged-file"));
+  router.get("/boxes/:boxId/migrations/:operationId", migrationEmpty, migration("status"));
+  router.delete("/boxes/:boxId/migrations/:operationId", csrf, migrationEmpty, migration("abort"));
+  router.post("/boxes/:boxId/migrations/:operationId/commit", csrf, migrationEmpty, migration("commit"));
   router.post("/boxes/:boxId/enable", csrf, operation("enable"));
   router.post("/boxes/:boxId/setup", csrf, operation("setup", "encrypted-setup-plan"));
   router.get("/boxes/:boxId/items", operation("list"));
