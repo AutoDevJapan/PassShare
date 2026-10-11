@@ -44,7 +44,8 @@ jobs:
       - name: Verify repeated restore ownership and rejection invariants
         env:
           PASSSHARE_ACCEPTANCE_NATIVE: ${{ github.workspace }}/backend/native/target/debug/passshare-mutations
-        run: cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked encrypted_restore::tests:: -- --ignored --test-threads=1
+        run: |
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked encrypted_restore::tests:: -- --ignored --test-threads=1
       - name: Verify the formal Node entrypoint with PostgreSQL and Core encryption
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance backend/native/target/debug/passshare-mutations
       - name: Verify Go SDK with formal Node and Rust Core

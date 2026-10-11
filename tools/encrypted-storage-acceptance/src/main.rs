@@ -158,7 +158,7 @@ impl Database {
     }
     fn start_owned(network: &Network, purpose: &'static str) -> Self {
         assert!(matches!(purpose, "source" | "restore"));
-        let random = checked(MasterKey::generate(), "fixture owner entropy");
+        let random = MasterKey::generate().unwrap_or_else(|_| panic!("fixture owner entropy"));
         let owner = random.as_bytes()[..16]
             .iter()
             .map(|byte| format!("{byte:02x}"))
