@@ -578,7 +578,7 @@ fn formal_cli_recipient() {
         !CLEANUP_FAILED.load(Ordering::SeqCst),
         "owned backend/DB/network cleanup completed"
     );
-    println!("formal CLI recipient passed: complete DTO/list/get/read; 2 names and all bytes including empty; exact single SDK requests; no overwrite; wrong pin/old item/Connect/unconfirmed/stale grant and actual removal old/new session refusals; all CLI reads preserve full rows/xmin; owned Node and DB removed");
+    println!("formal CLI recipient passed: complete DTO/list/get/read; 2 names and all bytes including empty; exact single SDK requests; no overwrite; wrong pin/old item/Connect/unconfirmed/stale grant and actual removal old/new session refusals; all CLI reads preserve full rows/xmin; owned backend, DB and network removed");
     println!(
         "CLI_INVOCATIONS={} SDK_GETS={}",
         CLI_INVOCATIONS.load(Ordering::SeqCst),
