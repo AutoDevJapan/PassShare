@@ -61,7 +61,7 @@ jobs:
           PASSSHARE_CLI_OUTPUT_DIR: ${{ runner.temp }}/passshare1163-cli-node
         run: |
           mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
-          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1 --nocapture
       - name: Verify atomic encrypted attachment storage and rotation with formal Node
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments backend/native/target/debug/passshare-mutations
       - name: Verify complete owner migration with the formal Node API
@@ -88,7 +88,7 @@ jobs:
           PASSSHARE_CLI_OUTPUT_DIR: ${{ runner.temp }}/passshare1163-cli-image
         run: |
           mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
-          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1 --nocapture
       - name: Verify atomic encrypted attachment storage and rotation with the distribution image
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments --image passshare-todo1163-encrypted-api
       - name: Verify complete owner migration with the distribution image
