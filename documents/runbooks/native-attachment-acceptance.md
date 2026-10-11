@@ -26,7 +26,7 @@ native pipeを用意するためのhelper独自起動も行っていない。
 
 `git archive HEAD`で所有記録付きの隔離コピーを作り、4パッケージの依存を
 `--frozen-lockfile --ignore-scripts`で用意した。Desktop入口・共有添付画面・
-worker輸送・寿命処理・検査の計7ファイルは改行を正規化して元ソースと一致を確認した。
+worker輸送・寿命処理・検査の計7ファイルは、`results.json`に元ソースとの不一致0件を記録した。
 
 | 検査 | 実結果 | 証拠の範囲 |
 |---|---|---|
@@ -71,7 +71,8 @@ Rust入力・生成WASM・manifest・アプリ実装は変更していない。
 D:/CC/Evidence/passshare-1163-native-attachments-20261012/run-20261011T171327Z-015f78df/
 ```
 
-`capability.json`、`results.json`、`build-results.json`、`cleanup.json`と各検査のログを保持する。
+文書との独立照合には`capability.json`、`results.json`、`cleanup.json`を使う。
+補足として`build-results.json`と各検査のログも保持する。
 検査コピーの所有IDは`8db0884837ba258cb48b8a885f2119a5`。
 safe-deleteの`plan`と指定された`quarantine --reason policy`は、両方とも
 `LINK_OR_REPARSE_POINT`で拒否した。依存のreparse pointは179件、
