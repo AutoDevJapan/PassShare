@@ -73,9 +73,9 @@ PR715は候補`f059dfa5`の同head CI（47成功、任意Cursor3件はNEUTRAL）
 | preview保全 | 利用者・項目は0で空ボックス1件がPrdと異なるため追加保全。17,613byteのcustom archiveをDPAPI暗号化し、全8表の実復元一致と一時DB不在を確認。`preview-snapshot-preservation.json`、`preview-preservation-restoration.json` |
 | stgの内容 | 利用者・項目・添付は0。既存ボックスの全文digestが保持するPrdと一致。`db-before-retirement-stg.json` |
 | Railway廃止 | 上のpreview/dev/stg環境と非Prd専用DB2サービスを正式APIで削除。環境はPrdだけ、サービスはbackend/PG18/旧Prd PG16だけとなった。Prd backendは同IDのSUCCESSを維持。`railway-after-nonprd-services-retirement.json`と各retirement receipt |
-| 旧失敗配備 | `123ba0fb-eac6-479e-bd7e-79210bfbd968`は実deployment metadataが現repoと一致する旧失敗配備。履歴6件すべてFAILED、DB/volume/bucket/URL/変数/triggerなしを再確認し、上の既存Prdへの復旧後に廃止。完全なworkspace一覧で不在と現Prd保持を確認 |
+| 旧失敗配備 | `123ba0fb-eac6-479e-bd7e-79210bfbd968`は実deployment metadataが現repoと一致する旧失敗配備。履歴6件すべてFAILED、DB/volume/bucket/URL/変数/triggerなしを再確認し、上の既存Prdへの復旧後に廃止。完全なworkspace一覧で不在と現Prd保持を確認。`railway-legacyA-retirement-receipt.json`、`railway-after-legacyA-workspace.json` |
 | Vercelの変数 | 非Prdだけを対象とする346件を正式APIで削除。Prd用2件のIDとtargetを保持。値は取得・記録しない。`vercel-env-after-retirement-metadata.json` |
-| GitHub設定 | 実廃止済みの環境ラベル6件と非Prd配備IDのsecret名参照3件を削除。Railwayが削除時に追加したラベルはinactive statusのURLに旧project/env IDがあることを確認して整理。Prd用環境と配布用OAuth・認証tokenを保持 |
+| GitHub設定 | 実廃止済みの環境ラベル6件と非Prd配備IDのsecret名参照3件を削除。Railwayが削除時に追加したラベルはinactive statusのURLに旧project/env IDがあることを確認して整理。Prd用環境と配布用OAuth・認証tokenを保持。`github-environments-after-retirement.json` |
 
 現workspaceの完全一覧にない旧project `4b00f947-b267-42c8-98ae-b7cfb4951e49`は、見えない資源を名称で推測して操作しない。対応するGitHub productionラベルを保持し、一覧の不在と取得不能を記録する。全providerを横断して物理削除済みとは断定しない。
 
