@@ -1,6 +1,7 @@
 pub mod account;
 pub mod account_identity;
 pub mod account_page;
+pub mod commercial_lifecycle;
 pub mod create;
 pub mod edit;
 pub mod encrypted;
@@ -24,6 +25,8 @@ pub fn dispatch(input: &Value) -> Value {
     match input.get("command").and_then(Value::as_str) {
         Some("account-lifecycle-page") => lifecycle_page::render(input),
         Some("account-lifecycle-form") => lifecycle_page::validate_form(input),
+        Some("commercial-quote") => commercial_lifecycle::quote(input),
+        Some("commercial-lifecycle-decision") => commercial_lifecycle::lifecycle(input),
         Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),
         Some("encrypted-plan") => encrypted::plan(input),
         Some("encrypted-attachment-plan") => encrypted_attachment::plan(input),
