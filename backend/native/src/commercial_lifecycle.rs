@@ -124,8 +124,10 @@ impl std::fmt::Display for Date {
 
 fn parse_digits(bytes: &[u8]) -> Option<u32> {
     bytes.iter().try_fold(0u32, |acc, byte| {
-        byte.is_ascii_digit()
-            .then_some(acc.checked_mul(10)?.checked_add(u32::from(byte - b'0'))?)
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        acc.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
     })
 }
 
@@ -178,7 +180,9 @@ fn plan_price(value: &Value) -> Option<PlanPrice> {
     match kind {
         "personal" if exact_fields(value, &["type", "users"]) => {
             let users = amount(&value["users"], false)?;
-            let monthly_jpy = users.checked_mul(PERSONAL_USER_MONTHLY_JPY)?;
+            let monthly_jpy = users
+                .checked_mul(PERSONAL_USER_MONTHLY_JPY)
+                .filter(|n| *n <= MAX_SAFE_INTEGER)?;
             Some(PlanPrice {
                 kind: PlanKind::Personal,
                 monthly_jpy,
@@ -194,7 +198,9 @@ fn plan_price(value: &Value) -> Option<PlanPrice> {
             let members = amount(&value["members"], false)?;
             let admin_total = administrators.checked_mul(TEAM_ADMIN_MONTHLY_JPY)?;
             let member_total = members.checked_mul(TEAM_MEMBER_MONTHLY_JPY)?;
-            let monthly_jpy = admin_total.checked_add(member_total)?;
+            let monthly_jpy = admin_total
+                .checked_add(member_total)
+                .filter(|n| *n <= MAX_SAFE_INTEGER)?;
             Some(PlanPrice {
                 kind: PlanKind::Team,
                 monthly_jpy,
@@ -226,7 +232,10 @@ fn actor_authority(
             "membershipActive",
             "hasExportScope",
         ],
-    ) {
+    ) || input
+        .as_object()
+        .is_some_and(|fields| fields.values().any(|value| !value.is_boolean()))
+    {
         return Err(invalid());
     }
     if input["sessionValid"] != true {
@@ -305,19 +314,32 @@ pub fn quote(input: &Value) -> Value {
             None => return invalid(),
         },
     };
-    let installation_total = match installation_companies.checked_mul(INSTALLATION_COMPANY_JPY) {
+    let installation_total = match installation_companies
+        .checked_mul(INSTALLATION_COMPANY_JPY)
+        .filter(|n| *n <= MAX_SAFE_INTEGER)
+    {
         Some(value) => value,
         None => return invalid(),
     };
-    let support_total = match support_hours.checked_mul(SUPPORT_HOUR_JPY) {
+    let support_total = match support_hours
+        .checked_mul(SUPPORT_HOUR_JPY)
+        .filter(|n| *n <= MAX_SAFE_INTEGER)
+    {
         Some(value) => value,
         None => return invalid(),
     };
-    let monthly_total = match plan.monthly_jpy.checked_add(maintenance.unwrap_or(0)) {
+    let monthly_total = match plan
+        .monthly_jpy
+        .checked_add(maintenance.unwrap_or(0))
+        .filter(|n| *n <= MAX_SAFE_INTEGER)
+    {
         Some(value) => value,
         None => return invalid(),
     };
-    let one_time_total = match installation_total.checked_add(support_total) {
+    let one_time_total = match installation_total
+        .checked_add(support_total)
+        .filter(|n| *n <= MAX_SAFE_INTEGER)
+    {
         Some(value) => value,
         None => return invalid(),
     };
@@ -453,7 +475,10 @@ fn seat_increase(input: &Value) -> Value {
     let Some(delta_monthly) = requested.monthly_jpy.checked_sub(current.monthly_jpy) else {
         return invalid();
     };
-    let Some(exact_numerator_jpy) = delta_monthly.checked_mul(numerator) else {
+    let Some(exact_numerator_jpy) = delta_monthly
+        .checked_mul(numerator)
+        .filter(|n| *n <= MAX_SAFE_INTEGER)
+    else {
         return invalid();
     };
     let rounded = match input["roundingPolicy"].as_str() {
@@ -642,7 +667,7 @@ fn post_end_export(input: &Value) -> Value {
     let Some(export_until) = contract_end.add_days(30) else {
         return invalid();
     };
-    if request_date < contract_end || request_date > export_until {
+    if request_date < contract_end || request_date >= export_until {
         return error(403, "PS065", "Post-end export window has expired");
     }
     json!({"status":200,"body":{
@@ -651,7 +676,7 @@ fn post_end_export(input: &Value) -> Value {
         "decision":"allow-export-proposal-only",
         "contractEnd":contract_end.to_string(),
         "requestDate":request_date.to_string(),
-        "exportWindowEndInclusive":export_until.to_string(),
+        "exportWindowEndExclusive":export_until.to_string(),
         "notRenewedIdentityMembershipOrKeyPermission":true,
         "requiresCurrentIdentityMembershipAndKeyScope":true,
         "paymentAdapterExecuted":false,
@@ -886,7 +911,7 @@ mod tests {
             "command":"commercial-lifecycle-decision",
             "operation":"post-end-export",
             "contractEnd":"2026-03-31",
-            "requestDate":"2026-04-30",
+            "requestDate":"2026-04-29",
             "actor":actor()
         }));
         assert_eq!(result["status"], 200);
@@ -903,7 +928,7 @@ mod tests {
             "command":"commercial-lifecycle-decision",
             "operation":"post-end-export",
             "contractEnd":"2026-03-31",
-            "requestDate":"2026-05-01",
+            "requestDate":"2026-04-30",
             "actor":actor()
         }));
         assert_eq!(expired["status"], 403);
