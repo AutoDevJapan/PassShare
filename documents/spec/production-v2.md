@@ -389,7 +389,7 @@ Epic [#33](https://github.com/AutoDevJapan/PassShare/issues/33)（スマホア�
 
 ### 後続（Epic 外）
 
-- App Store / Google Play 審査提出 — 人間操作（[#85](https://github.com/AutoDevJapan/PassShare/issues/85) runbook）
+- App Store / Google Play 審査提出 — AI担当（新規公開・費用・権利は本人判断）（[#85](https://github.com/AutoDevJapan/PassShare/issues/85) runbook）
 - OS オートフィル / 共有シート native 拡張 — Phase 2 ([#83](https://github.com/AutoDevJapan/PassShare/issues/83), [#84](https://github.com/AutoDevJapan/PassShare/issues/84))
 
 ---
@@ -415,11 +415,11 @@ Epic [#34](https://github.com/AutoDevJapan/PassShare/issues/34)（ブラウザ�
 |------|------|
 | MV3 ビルド + shared/ui | ✅ `packages/extension` |
 | オートフィル smoke | ✅ unit + E2E popup |
-| 4 ブラウザストア提出 | ⏳ runbook 整備済み（人間操作） |
+| 4 ブラウザストア提出 | ⏳ runbook 整備済み（提出はAI担当、新規公開・費用・権利は本人判断） |
 
 ### 後続（Epic 外）
 
-- Chrome / Edge / Firefox / Safari ストア審査提出 — 人間操作（[#92](https://github.com/AutoDevJapan/PassShare/issues/92)–[#95](https://github.com/AutoDevJapan/PassShare/issues/95) runbook）
+- Chrome / Edge / Firefox / Safari ストア審査提出 — AI担当（新規公開・費用・権利は本人判断）（[#92](https://github.com/AutoDevJapan/PassShare/issues/92)–[#95](https://github.com/AutoDevJapan/PassShare/issues/95) runbook）
 - Desktop Native Messaging 実装 — Phase 2 ([#96](https://github.com/AutoDevJapan/PassShare/issues/96))
 
 ---

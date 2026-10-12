@@ -9,7 +9,7 @@
 - 既存URLは`https://pass-share.bm1314.net/`。Prdのfrontend sourceは`2f57263558c8b483288d389d5f74223a4fc0b688`でREADYだった。
 - Railwayのproject、backend、production環境と現PG18 DBは[インフラ仕様](../spec/infrastructure.md)のIDと照合した。backend内の接続先hostと現DBのprivate domainを、秘密値を出力せずSHA-256で比較し一致した。
 - 現Prd DB `4fdfda2d-ed50-4396-9797-25ea7720f720`とvolume `70b71256-4c1d-4ffa-bb8e-3e3e5a310d37`を保持する。旧PG16 DBは現Prdへの接続先ではない。旧環境の廃止前に内容とconsumerを照合する。
-- CIのDocker、一時DB、localhostの開発は維持する。新しいサイト・project・有料保管を作成しない。人間レビューを求める規則を書き換えない。
+- CIのDocker、一時DB、localhostの開発は維持する。新しいサイト・project・有料保管を作成しない。ToDo2379ではレビュー規則を対象外とした。現在の開発PRは2026-10-12の直接委任に従い、AIが別モデルレビュー・Must解消・CI確認後にマージする。顧客契約の人レビューは維持する。
 
 ## 実確認済みの範囲
 

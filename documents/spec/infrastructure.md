@@ -63,7 +63,7 @@
 | **prd** | Production | `main` | `production` | `passshare-postgres-preserved-1177`（永続PG18） | main限定の手動配備 |
 | 開発・CI | 公開配備なし | PR / 作業ブランチ | 作成しない | localhost / CIの一時DB | 隔離試験のみ |
 
-ToDo2379のPrd-only方針が旧ADR008のdev-first配備を置き換える。PRとmainのQuality Gate、Docker隔離試験、一時DBは維持する。稼働dev/stg/previewの作成・配備は廃止する。人間レビューを求める規則は変更しない。
+ToDo2379のPrd-only方針が旧ADR008のdev-first配備を置き換える。PRとmainのQuality Gate、Docker隔離試験、一時DBは維持する。稼働dev/stg/previewの作成・配備は廃止する。開発PRはAIが別モデルレビューでMustを解消し、必須CI成功後にマージする。顧客契約で必要な人レビューは維持する。
 
 ### production snapshotの依存
 

@@ -37,7 +37,7 @@ Set `VITE_API_BASE_URL` to production API before release builds.
 
 ## CI
 
-`mobile-build.yml` runs smoke tests on every PR. Signed store uploads are manual until release signing secrets are configured.
+`mobile-build.yml` runs smoke tests on every PR. AI performs signed store uploads within the approved publication scope using existing signing material and authentication. Missing signing material, new expense, rights, or new publication remains an unmet prerequisite for owner decision; no new API key is introduced.
 
 ## Review notes template
 

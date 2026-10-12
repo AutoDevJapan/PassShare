@@ -48,7 +48,7 @@ Output: `packages/extension/dist/` (load unpacked in Chrome for QA).
 
 ## CI
 
-`extension-build.yml` runs unit tests + production build on every PR. Store uploads remain manual until publisher API keys are configured.
+`extension-build.yml` runs unit tests + production build on every PR. AI performs dashboard uploads within the approved publication scope using existing authentication; no new publisher API key or expense is introduced. New publication, rights, or cost decisions remain with the owner; only an identity step that AI cannot perform is requested from the owner.
 
 ## Review notes template
 

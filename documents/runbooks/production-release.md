@@ -5,7 +5,7 @@
 
 ## 概要
 
-既存Prdだけへ配備する。PRは従来のQuality Gateと隔離DBで検査し、mainをdevへ配備する経路と、stg/previewの作成・配備は廃止した。人間レビューを求める規則は変更しない。
+既存Prdだけへ配備する。PRは従来のQuality Gateと隔離DBで検査し、mainをdevへ配備する経路と、stg/previewの作成・配備は廃止した。開発PRはAIが別モデルレビューでMustを解消し、必須CI成功後にマージする。顧客契約で必要な人レビューは維持する。
 
 SSOT: [ADR001](../adr/001-vercel-railway-environments.md), [infrastructure.md](../spec/infrastructure.md)。旧ADR008のdev-first手順は使用しない。
 
