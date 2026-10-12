@@ -1,6 +1,6 @@
 # PassShare インフラ構成 (SSOT)
 
-> 最終更新: 2026-10-12（ToDo2379: 既存Prdの実動作とDBを照合し、Railwayの旧環境を廃止。Vercelの過去Preview履歴削除は進行中）
+> 最終更新: 2026-10-12（ToDo2379: 既存Prdの実動作とDBを照合し、Railwayの旧環境とVercelの過去Preview履歴を廃止。実main/作業branchの更新後も非Prdの再生成なしを確認）
 
 ## Railway プロジェクト ID
 
