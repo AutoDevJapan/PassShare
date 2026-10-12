@@ -1,6 +1,6 @@
 # PassShare インフラ構成 (SSOT)
 
-> 最終更新: 2026-10-12（ToDo2379: 配備先を既存Prdだけへ限定。実providerの廃止・DB照合は別途実測）
+> 最終更新: 2026-10-12（ToDo2379: 既存Prdの実動作とDBを照合し、Railwayの旧環境を廃止。Vercelの過去Preview履歴削除は進行中）
 
 ## Railway プロジェクト ID
 
@@ -8,14 +8,14 @@
 |---------|----------|
 | Project | `82730a82-b4d4-47d0-b578-f951465465fc` |
 | Backend Service | `29539998-d8d9-4e41-82a5-f71ca223f96c` |
-| 旧postgres-dev（廃止対象・削除確認前） | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
-| 旧postgres-stg（廃止対象・削除確認前） | `7234bbc3-c482-4009-9c88-03063521ffd1` |
+| 旧postgres-dev（廃止済み・履歴） | `43bc8dc5-c9c9-4fa3-9b7e-fd9079fd5c0a` |
+| 旧postgres-stg（廃止済み・履歴） | `7234bbc3-c482-4009-9c88-03063521ffd1` |
 | 本番の現稼働DB | `4fdfda2d-ed50-4396-9797-25ea7720f720`、passshare-postgres-preserved-1177（PG18、永続volume） |
 | postgres-prd-v2 | `1509c487-cf03-4c50-8c9d-8781d53ee19a`（旧本番、切替後の更新は同期されない） |
 | production env | `c1a3cdfc-9aa3-420d-b101-e6497714ccb9` |
-| 旧staging env（廃止対象） | `c807d209-0624-4e13-aff6-61332cd0bb29` |
-| 旧preview env（廃止対象） | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
-| 旧development env（廃止対象） | `0951c467-6bc3-418f-af75-a96e810f4946` |
+| 旧staging env（廃止済み・履歴） | `c807d209-0624-4e13-aff6-61332cd0bb29` |
+| 旧preview env（廃止済み・履歴） | `9bed9d58-203f-4bb5-bb17-858bcb3e2513` |
+| 旧development env（廃止済み・履歴） | `0951c467-6bc3-418f-af75-a96e810f4946` |
 
 ### Backend URL
 
@@ -23,7 +23,7 @@
 |------|-----|
 | prd | https://pass-share-backend-production.up.railway.app |
 
-旧stg/preview/devのURLは配備・同期・検査の送り先にしない。上の旧IDは移行と廃止の照合用履歴であり、削除済みという意味ではない。
+旧stg/preview/devのURLは配備・同期・検査の送り先にしない。上の旧環境と非Prd専用DBサービスは正式APIで廃止し、全環境・サービス一覧の取得で不在を確認した。PrdのPG18、旧PrdのPG16と2つのPrd volumeは保持する。[実測記録](../audits/prd-only-2379.md)に保全と検査の範囲を残す。
 
 ## 概要
 
