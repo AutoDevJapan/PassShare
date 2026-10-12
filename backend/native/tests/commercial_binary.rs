@@ -98,7 +98,11 @@ fn every_actor_assertion_must_be_a_boolean() {
 fn thirty_calendar_days_do_not_become_thirty_one() {
     let mut request = json!({"command":"commercial-lifecycle-decision","operation":"post-end-export",
         "contractEnd":"2026-03-01","requestDate":"2026-03-30","actor":actor()});
-    assert_eq!(invoke(&request)["status"], 200);
+    let result = invoke(&request);
+    assert_eq!(result["status"], 200);
+    assert_eq!(result["body"]["dateSource"], "provided_calendar_dates");
+    assert_eq!(result["body"]["independentlyCheckedContractState"], false);
+    assert_eq!(result["body"]["independentlyCheckedRequestDate"], false);
     request["requestDate"] = json!("2026-03-31");
     assert_eq!(invoke(&request)["status"], 403);
     request["requestDate"] = json!("2026-02-28");
