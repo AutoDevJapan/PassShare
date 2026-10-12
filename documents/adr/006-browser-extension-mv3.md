@@ -73,7 +73,7 @@ Content scripts never persist secrets; they request fill data from the service w
 | Firefox | [#94](https://github.com/AutoDevJapan/PassShare/issues/94) | MV3 → AMO (review notes for data collection) |
 | Safari | [#95](https://github.com/AutoDevJapan/PassShare/issues/95) | Safari Web Extension wrapper |
 
-Store uploads are manual per [extension-store-release.md](../runbooks/extension-store-release.md) until signing automation is configured.
+AI performs dashboard uploads per [extension-store-release.md](../runbooks/extension-store-release.md) only after matching the existing owner-approval record to the target app, version, artifact, destination, and approved update scope. Missing or mismatched evidence stops submission; a new publication scope remains an owner decision. Existing signing and authentication prerequisites remain required.
 
 ## Consequences
 

@@ -12,7 +12,7 @@ Superseded (2026-10-12, ToDo2379) — [ADR001のPrd-only決定](./001-vercel-rai
 - Backendの手動配備は維持するが、対象は既存Prdの明示IDと現在のmainソースだけに限定する。FrontendのGit配備もmainのProductionだけに限定する。
 - DBは現稼働PG18 `passshare-postgres-preserved-1177`を使用する。旧 `postgres-prd-v2`を現在のDBと取り違えない。production snapshotは現Prdだけを読む一時dumpであり、dev/stgへのrefreshや有料backupを必要としない。実dumpをartifactへ保存しない。
 - localhostとPR CIの隔離試験、一時DBは維持する。必要成果の移行とPrd実確認、旧provider資源の廃止確認は別途行う。
-- 人間レビューを求める規則は変更しない。
+- 開発PRはAIが別モデルレビューでMustを解消し、必須CI成功後にマージする。顧客契約で必要な人レビューは維持する。
 
 ## 旧決定の履歴（以下は運用しない）
 

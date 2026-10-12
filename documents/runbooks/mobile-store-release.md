@@ -37,7 +37,7 @@ Set `VITE_API_BASE_URL` to production API before release builds.
 
 ## CI
 
-`mobile-build.yml` runs smoke tests on every PR. Signed store uploads are manual until release signing secrets are configured.
+`mobile-build.yml` runs smoke tests on every PR. Before signed upload or review submission, AI matches the existing owner-approval record to the target app, version, artifact, destination, and approved update scope. Missing or mismatched evidence stops submission; a new publication scope remains an owner decision. AI performs signed store uploads only within that verified scope using existing signing material and authentication. Missing signing material, new expense, rights, or new publication remains an unmet prerequisite for owner decision; no new API key is introduced.
 
 ## Review notes template
 

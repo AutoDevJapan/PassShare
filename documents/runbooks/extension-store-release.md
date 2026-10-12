@@ -48,7 +48,7 @@ Output: `packages/extension/dist/` (load unpacked in Chrome for QA).
 
 ## CI
 
-`extension-build.yml` runs unit tests + production build on every PR. Store uploads remain manual until publisher API keys are configured.
+`extension-build.yml` runs unit tests + production build on every PR. Before any upload or review submission, AI matches the existing owner-approval record to the target app, version, artifact, destination, and approved update scope. Missing or mismatched evidence stops submission; only a new owner-only decision is asked, and existing decisions are not re-asked. AI performs dashboard uploads only within that verified scope using existing authentication; no new publisher API key or expense is introduced. New publication, rights, or cost decisions remain with the owner; only an identity step that AI cannot perform is requested from the owner.
 
 ## Review notes template
 

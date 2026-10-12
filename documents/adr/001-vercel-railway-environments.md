@@ -15,7 +15,7 @@ Vercelの既存frontend projectはRoot Directory `frontend`を使用する。従
 3. Databaseは**現稼働** `passshare-postgres-preserved-1177`（PG18、service `4fdfda2d-ed50-4396-9797-25ea7720f720`）。旧 `postgres-prd-v2`（`1509c487-cf03-4c50-8c9d-8781d53ee19a`）は切替後の更新を持たないため、復元元・現在のdump先として使わない。
 4. production snapshotは現Prdだけを読む一時dumpで、非Prd replicaへのrestoreは行わない。PG18クライアントと既存接続を使用し、追加DB・proxy・永久有料backupを自動作成しない。終了時にdumpを削除し、Actions artifactには保存しない。
 5. 手動補助もmainと既存Prd IDを検査する。旧bootstrap/provisioningは停止する。リンク先任せのCLI配備、Preview/Development同期、prd→stg/dev refreshは拒否する。
-6. localhost開発、PR CIの隔離試験、一時DBを維持する。公開された非Prdの運用と区別し、試験を実Prdへの破壊操作にしない。人間レビューを求める規則は変更しない。
+6. localhost開発、PR CIの隔離試験、一時DBを維持する。公開された非Prdの運用と区別し、試験を実Prdへの破壊操作にしない。開発PRはAIが別モデルレビューでMustを解消し、必須CI成功後にマージする。顧客契約で必要な人レビューは維持する。
 
 ## Consequences
 
