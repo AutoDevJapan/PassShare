@@ -1,6 +1,6 @@
 # PassShareのPrd統一（ToDo2379）
 
-2026-10-12時点で配備処理を既存Prdだけへ限定する変更を準備した。実環境の廃止と最終配備は未完であり、この文書を完了報告として扱わない。
+2026-10-12時点で既存Prdの復旧・実動作を確認し、Railwayの旧環境と復旧先へ統合した旧失敗配備を廃止した。Vercelの過去Preview履歴削除と、その後の再生成なしの検査は進行中であり、全完了として扱わない。以下の初回棚卸し・統合記録は履歴で、現在の状態は末尾を参照する。
 
 ## 対象と保持対象
 
@@ -56,3 +56,27 @@ PR714は`61521aa2`の全CI（47成功、任意Cursor3件は利用枠による省
 新しいrunnerのSSHホスト信頼を検証した。信頼先が空の対照では終了255で接続が拒否され、既存の信頼済み公開ホスト鍵を指定した対照では、厳密な鍵検証を維持したまま現PG18への読み取り専用markerが返った。オーナーのSSH設定と秘密鍵は変更・コピーしていない。CIにはこの公開鍵、batch mode、厳密な検証を設定し、検証済みRailway CLI 5.41.2へ固定する。raw stderrを出さず、固定した原因分類と終了コードを記録する。新修正のCI・レビュー・CI用認証での再配備は引き続き確認する。SSHの検証を無効にする代替は使わない。
 
 恒久証跡は`D:/CC/Tools/prd-only-2344/remaining-products/results/PassShare-evidence/`、製品台帳は同じresultsの`PassShare.json`へ保存する。親2344と元製品の受入全体は、この有限作業だけでは完了しない。
+
+## 既存Prdの復旧・機能確認・実廃止（2026-10-12）
+
+PR715は候補`f059dfa5`の同head CI（47成功、任意Cursor3件はNEUTRAL）と別モデルのMust0を確認し、`aa17875813883b82d9e530a49b9fd5db96cf6d0e`へ統合した。候補と統合後のtreeは一致する。配備run38183753475は非公開DB保全・一時SSH認証解除・配備・DB readinessまで成功した。最初の2回の配備失敗も上記履歴へ残し、成功と区別する。
+
+| 項目 | 実測と証拠ファイル |
+|---|---|
+| Prd frontend | `dpl_7xEKiTHN9AFd4E5F6Z3NNjECYfoy`は上の統合sourceでREADY。`current-vercel-production.json` |
+| Prd backend | `f8d79218-4d06-4268-aca1-4b962e350063`はSUCCESS。50個のruntimeソース・package・lockfileをGit blobと照合。Prd環境、native実行物とPG18接続先も確認。`current-production-runtime-and-db.json` |
+| 現DB | 必要な27表があり、元の利用者・項目・添付は0。既存ボックスの主キー・行のdigestは保持。検査用利用者と2項目だけを後で回収し、不在と元のdigestを確認。`ui-accepted-fixture-cleanup.json` |
+| 既存URLのAPI | 最新sourceの同一originで合成利用者による14操作が成功。再ログイン、保存、保持、書き出したJSONを用いた変更と復元を確認。`prd-api-acceptance-after-aa178758.json` |
+| オーナーChrome | 合成利用者の登録、ログアウト、再ログイン、LOGIN項目保存、再読み込み後の保持、CSV復元と復元後の保持を実確認。認証パスワードはメモリーだけで扱う。`prd-browser-fixture.json`、`prd-browser-save-restore.png` |
+| CSV書き出しの限界 | 確認ダイアログでChrome操作の焦点制御が停止。生のCDPの許可要求も判断前に閉じられ、迂回せず担当タブを閉じた。UI書き出し成功とは記録しない。CSV取込とAPIの書出しJSON復元は別々に成功している |
+| dev保全 | 廃止直前も全27表が保全archiveの件数・主キー・内容と完全一致。`db-before-retirement-dev.json`、`dev-preservation-restoration.json` |
+| preview保全 | 利用者・項目は0で空ボックス1件がPrdと異なるため追加保全。17,613byteのcustom archiveをDPAPI暗号化し、全8表の実復元一致と一時DB不在を確認。`preview-snapshot-preservation.json`、`preview-preservation-restoration.json` |
+| stgの内容 | 利用者・項目・添付は0。既存ボックスの全文digestが保持するPrdと一致。`db-before-retirement-stg.json` |
+| Railway廃止 | 上のpreview/dev/stg環境と非Prd専用DB2サービスを正式APIで削除。環境はPrdだけ、サービスはbackend/PG18/旧Prd PG16だけとなった。Prd backendは同IDのSUCCESSを維持。`railway-after-nonprd-services-retirement.json`と各retirement receipt |
+| 旧失敗配備 | `123ba0fb-eac6-479e-bd7e-79210bfbd968`は実deployment metadataが現repoと一致する旧失敗配備。履歴6件すべてFAILED、DB/volume/bucket/URL/変数/triggerなしを再確認し、上の既存Prdへの復旧後に廃止。完全なworkspace一覧で不在と現Prd保持を確認 |
+| Vercelの変数 | 非Prdだけを対象とする346件を正式APIで削除。Prd用2件のIDとtargetを保持。値は取得・記録しない。`vercel-env-after-retirement-metadata.json` |
+| GitHub設定 | 実廃止済みの環境ラベル6件と非Prd配備IDのsecret名参照3件を削除。Railwayが削除時に追加したラベルはinactive statusのURLに旧project/env IDがあることを確認して整理。Prd用環境と配布用OAuth・認証tokenを保持 |
+
+現workspaceの完全一覧にない旧project `4b00f947-b267-42c8-98ae-b7cfb4951e49`は、見えない資源を名称で推測して操作しない。対応するGitHub productionラベルを保持し、一覧の不在と取得不能を記録する。全providerを横断して物理削除済みとは断定しない。
+
+Vercelの旧非Prd deployment 879件は実project/sourceを照合した有限の対象で、全Production履歴は保持する。まず1件を削除し直接GETの明示404とPrd保持を確認した後、重ならない4範囲で履歴を廃止している。完了判定には全ページの削除後一覧と、main/作業branchの実push後に非Prdが作成されない観測が必要で、ソースの設定だけで代用しない。結果は製品台帳と各retirement journalへ保存する。
