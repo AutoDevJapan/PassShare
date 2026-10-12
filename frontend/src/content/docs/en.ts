@@ -131,7 +131,7 @@ export const docsEn: LocaleDocs = {
   },
   terms: {
     title: "Terms of service",
-    lead: "Terms for PassShare (web portal, desktop, mobile, extension, Connect API). Operated by AutoDevJapan. Contact: contact@autodevjapan.com.",
+    lead: "Draft before sales begin. Pricing, billing and cancellation conditions are approved, but legal review and acceptance of actual payment, refund, cancellation, export and deletion operations remain incomplete. Payment methods and the service start date will be specified before orders are accepted. This page does not accept purchases or payments. Operated by AutoDevJapan. Contact: contact@autodevjapan.com.",
     sections: [
       {
         id: "acceptance",
@@ -146,7 +146,8 @@ export const docsEn: LocaleDocs = {
         title: "2. Service",
         paragraphs: [
           "PassShare provides encrypted password box storage and sync.",
-          "Desktop .pbox files are encrypted on the device and the master password is not sent to the server. Web, cloud sync, and the Connect API send item contents to the server and database. The current cloud service is not end-to-end encrypted: the server can read item secrets.",
+          "Device .pbox files are encrypted on the device; their master password is not sent to the server. Cloud storage has owner-encrypted and Connect-compatible modes. Owner-encrypted mode uses a separate encryption password from your sign-in password and encrypts items and attachments on the device. The server cannot read their contents. In Connect-compatible mode, the server and database handle item contents and the server can read them.",
+          "Encrypted mode requires an enabled API and a compatible client. Implementation or a successful build does not establish acceptance on every device or signed distribution. Revocation cannot recall plaintext or keys that a recipient already obtained.",
         ],
       },
       {
@@ -172,7 +173,8 @@ export const docsEn: LocaleDocs = {
         id: "disclaimer",
         title: "5. Disclaimer",
         paragraphs: [
-          "The service is provided as-is. We are not liable for data loss if you lose your master password.",
+          "Recovery-capable .pbox versions require a recovery-enabled file and its emergency kit code. Web owner-encrypted recovery is separate: it requires a currently authorized owner sign-in, and a backup file and code for the current key epoch. A code alone cannot replace a lost file, and resetting a sign-in password alone cannot recover encrypted data.",
+          "Disclaimers and refund conditions do not limit rights granted to users by applicable law.",
           "We may suspend service for maintenance or force majeure.",
         ],
       },
@@ -184,17 +186,49 @@ export const docsEn: LocaleDocs = {
           "Continued use after changes constitutes acceptance.",
         ],
       },
+      {
+        id: "billing",
+        title: "7. Pricing and billing",
+        paragraphs: [
+          "All prices are final amounts in Japanese yen including tax. The individual subscription is JPY 980 per person per month. Teams cost JPY 1,980 per administrator and JPY 500 per regular member per month, with at least one of each. The minimum monthly total is JPY 2,480.",
+          "Initial setup costs JPY 10,000 per company and setup assistance JPY 10,000 per hour. Maintenance starts from JPY 10,000 per month, up to JPY 200,000 with options. Scope, hours and options are stated in the quotation and individual agreement; additional implementation is quoted separately.",
+          "Subscriptions are monthly and prepaid, renewing on the same day of the month as the contract date. Before adding seats, the price for the remaining period is shown and the user must consent. Seat reductions change the price and seat count at the next renewal.",
+        ],
+      },
+      {
+        id: "cancellation",
+        title: "8. Cancellation and refunds",
+        paragraphs: [
+          "You may request cancellation at any time and use the service through the end of the paid period. There is no cancellation penalty. Requests are accepted at contact@autodevjapan.com.",
+          "Voluntary cancellation during a month does not receive a prorated refund. Duplicate charges and periods of service not provided because of our defects receive an appropriate refund. Statutory rights take precedence.",
+        ],
+      },
+      {
+        id: "contract-data",
+        title: "9. Data after the contract ends",
+        paragraphs: [
+          "The approved conditions allow exports for 30 days after the contract ends, within currently valid user permissions, followed by deletion of solely owned data. Shared data is protected through identity verification and ownership transfer during account retirement. Being a billing administrator alone does not authorize password box ownership or key transfer.",
+          "The export period does not reactivate retired or revoked users or expired credentials. Current identity verification, membership, ownership and key requirements must still be met. Acceptance of these actual operations remains incomplete.",
+        ],
+      },
+      {
+        id: "support",
+        title: "10. Support",
+        paragraphs: [
+          "AutoDevJapan accepts inquiries at contact@autodevjapan.com at any time. The target for an initial response is two business days.",
+        ],
+      },
     ],
     legalReview: [
-      { label: "Document version", value: "0.2.0-draft" },
-      { label: "Last updated", value: "2026-10-04" },
+      { label: "Document version", value: "0.3.0-draft" },
+      { label: "Last updated", value: "2026-10-12" },
       { label: "Legal review", value: "Not completed (draft)" },
       { label: "Approval", value: "⏳ Legal sign-off required before production" },
     ],
   },
   privacy: {
     title: "Privacy policy",
-    lead: "What we collect, why, and your rights.",
+    lead: "Draft before sales begin. Legal review and operational acceptance of export, deletion and backup retention after the contract ends remain incomplete. This policy describes what we collect, why, and your rights.",
     sections: [
       {
         id: "controller",
@@ -207,7 +241,8 @@ export const docsEn: LocaleDocs = {
         list: [
           "Account data (email, display name)",
           "Auth/session metadata (HttpOnly cookies, Connect token identifiers)",
-          "Connect API item contents, including titles, categories, usernames, passwords and notes. The current cloud server and database handle these contents.",
+          "Ciphertext for items and attachments in owner-encrypted mode. Compatible clients encrypt on the device; the server cannot read the contents.",
+          "Connect-compatible item contents, including titles, categories, usernames, passwords and notes. In this mode, the server and database handle these contents.",
           "Access logs (IP, User-Agent, timestamps — no secrets logged)",
         ],
         paragraphs: [],
@@ -227,8 +262,9 @@ export const docsEn: LocaleDocs = {
         id: "storage",
         title: "4. Storage and retention",
         paragraphs: [
-          "Data is stored on Railway (PostgreSQL) and Vercel (frontend hosting).",
-          "After account deletion requests, we delete related data within a reasonable period (except backup retention).",
+          "Cloud data is handled on Railway (PostgreSQL); web pages are served by Vercel. Users keep device .pbox files on their own devices.",
+          "The approved contract conditions allow exports for 30 days after the contract ends within currently valid user permissions, followed by deletion of solely owned data. Shared data is protected through identity verification and ownership transfer during retirement. This period does not reactivate retired or revoked users or expired credentials. Acceptance of actual operations remains incomplete.",
+          "Free and trial backup is absent or minimal. Paid plan frequency and retained generations will be set within what plan fees cover and shown before contracting. Uniform backups or unspecified retention periods are not guaranteed.",
         ],
       },
       {
@@ -244,13 +280,13 @@ export const docsEn: LocaleDocs = {
         title: "6. Your rights",
         paragraphs: [
           "You may request access, correction, or deletion of your personal data.",
-          "Contact: contact@autodevjapan.com.",
+          "Contact: contact@autodevjapan.com. Inquiries are accepted at any time; the target for an initial response is two business days.",
         ],
       },
     ],
     legalReview: [
-      { label: "Document version", value: "0.2.0-draft" },
-      { label: "Last updated", value: "2026-10-04" },
+      { label: "Document version", value: "0.3.0-draft" },
+      { label: "Last updated", value: "2026-10-12" },
       { label: "Legal review", value: "Not completed (draft)" },
       { label: "Approval", value: "⏳ Legal sign-off required before production" },
     ],
