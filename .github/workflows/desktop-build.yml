@@ -1,84 +1,107 @@
 name: Desktop Build
-
 # This workflow saves unsigned CI artifacts; it does not publish releases.
+# Windows first. macOS follows Windows completion; Linux packages are deferred.
 permissions:
   contents: read
-
 on:
   pull_request:
   push:
     branches: [main]
-
 concurrency:
   group: desktop-build-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        id: scope
+        name: Determine affected desktop inputs
+        run: |
+          set -euo pipefail
+          desktop=false
+          mobile=false
+          if [[ "${EVENT_NAME:-pull_request}" == push || ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || "$BASE_SHA" =~ ^0+$ ]]; then
+            desktop=true
+            mobile=true
+          else
+            git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/passshare-paths"
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                frontend/cloud-assets.json|frontend/public/cloud-crypto/*) desktop=true; mobile=true ;;
+                apps/desktop/*) desktop=true ;;
+                apps/mobile/*) mobile=true ;;
+                frontend/*|packages/extension/*|e2e/web/*|e2e/extension/*) ;;
+                *) desktop=true; mobile=true ;;
+              esac
+            done < "$RUNNER_TEMP/passshare-paths"
+          fi
+          printf 'desktop=%s\nmobile=%s\n' "$desktop" "$mobile" >> "$GITHUB_OUTPUT"
+          printf 'Desktop tests: %s; mobile tests: %s\n' "$desktop" "$mobile" >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: tools/desktop-release-check/go.mod
           cache: false
-
+        if: steps.scope.outputs.desktop == 'true'
       - name: Test candidate verifier without signing secrets
         working-directory: tools/desktop-release-check
         env:
           TEST_SCRATCH: ${{ runner.temp }}
         run: go test -mod=readonly ./...
-
+        if: steps.scope.outputs.desktop == 'true'
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Run desktop smoke tests
-        run: |
-          cargo test -p passshare-desktop smoke_
-          cargo test -p passshare-desktop native_lock::tests
-
+        if: steps.scope.outputs.desktop == 'true'
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 10.11.0
-
+        if: steps.scope.outputs.desktop == 'true'
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
-
+        if: steps.scope.outputs.desktop == 'true'
       - name: Run cloud sync unit tests
         run: |
           pnpm --dir packages/connect-js install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir packages/connect-js run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop exec tsc --noEmit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop run test
-
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if: steps.scope.outputs.desktop == 'true'
+      - name: Run desktop smoke tests
+        run: |
+          cargo test -p passshare-desktop smoke_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p passshare-desktop native_lock::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if: steps.scope.outputs.desktop == 'true'
+    outputs:
+      desktop: ${{ steps.scope.outputs.desktop }}
   build:
     needs: smoke
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - platform: ubuntu-22.04
-            args: ""
           - platform: windows-latest
             args: ""
-
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 10.11.0
-
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
@@ -86,40 +109,28 @@ jobs:
           cache-dependency-path: |
             apps/desktop/pnpm-lock.yaml
             packages/connect-js/pnpm-lock.yaml
-
-      - name: Use isolated Rust toolchain storage on macOS
-        if: matrix.platform == 'macos-latest'
-        shell: bash
-        run: echo "RUSTUP_HOME=$RUNNER_TEMP/passshare-1197-rustup" >> "$GITHUB_ENV"
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
       - name: Install frontend dependencies
         run: |
           pnpm --dir packages/connect-js install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir packages/connect-js run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop install --frozen-lockfile
-
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
           args: ${{ matrix.args }}
-
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-${{ matrix.platform }}
           path: |
             target/release/bundle/**/*
-            target/aarch64-apple-darwin/release/bundle/**/*
           if-no-files-found: error
           retention-days: 7
+    if: needs.smoke.outputs.desktop == 'true'
