@@ -1,6 +1,7 @@
 name: Desktop Build
 
 # This workflow saves unsigned CI artifacts; it does not publish releases.
+# Windows first. macOS follows Windows completion; Linux packages are deferred.
 permissions:
   contents: read
 
@@ -15,7 +16,7 @@ concurrency:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -32,15 +33,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
       - name: Run desktop smoke tests
         run: |
           cargo test -p passshare-desktop smoke_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test -p passshare-desktop native_lock::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
@@ -53,10 +51,15 @@ jobs:
       - name: Run cloud sync unit tests
         run: |
           pnpm --dir packages/connect-js install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir packages/connect-js run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop exec tsc --noEmit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop run test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   build:
     needs: smoke
@@ -64,10 +67,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - platform: ubuntu-22.04
-            args: ""
           - platform: windows-latest
             args: ""
 
@@ -87,25 +86,17 @@ jobs:
             apps/desktop/pnpm-lock.yaml
             packages/connect-js/pnpm-lock.yaml
 
-      - name: Use isolated Rust toolchain storage on macOS
-        if: matrix.platform == 'macos-latest'
-        shell: bash
-        run: echo "RUSTUP_HOME=$RUNNER_TEMP/passshare-1197-rustup" >> "$GITHUB_ENV"
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install frontend dependencies
         run: |
           pnpm --dir packages/connect-js install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir packages/connect-js run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir apps/desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
@@ -120,6 +111,5 @@ jobs:
           name: desktop-${{ matrix.platform }}
           path: |
             target/release/bundle/**/*
-            target/aarch64-apple-darwin/release/bundle/**/*
           if-no-files-found: error
           retention-days: 7
