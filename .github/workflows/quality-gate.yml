@@ -1,35 +1,69 @@
+name: Quality Gate
+permissions:
+  contents: read
+on:
+  pull_request:
+  push:
+    branches: [main]
 concurrency:
-  cancel-in-progress: true
   group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  backend:
-    env:
-      PASSSHARE_MUTATIONS_BIN: ${{ github.workspace }}/backend/native/target/release/passshare-mutations
-    name: Backend
-    needs: preflight
+  rust-docker:
+    name: Rust (Docker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Run Rust tests in Docker
+        run: docker compose -f docker/docker-compose.test.yml run --rm --build test
+    needs: preflight
+  docker-e2e:
+    name: Docker E2E (API + PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # op-cli is built inside the backend-e2e container (same rust:1.86-bookworm
+      # base that runs it) so the binary's glibc matches the runtime. Building on
+      # the host (newer ubuntu glibc) risked GLIBC_x.xx-not-found at runtime and
+      # made the job non-hermetic (#320).
+      - name: Run PostgreSQL integration tests
+        run: |
+          set -euo pipefail
+          config="$(docker compose -f docker/docker-compose.test.yml config --format json)"
+          command="$(jq -er '.services["backend-e2e"].command | if type == "array" and length == 3 and .[0] == "sh" and .[1] == "-c" then .[2] else error("unsupported backend-e2e command") end' <<< "$config")"
+          [[ "$command" == *"node --test "* ]] || { echo 'backend-e2e no longer contains the expected test command' >&2; exit 1; }
+          [[ "$command" != *'$'* ]] || { echo 'backend-e2e shell interpolation requires review' >&2; exit 1; }
+          command="${command//node --test /node --test --test-concurrency=1 }"
+          docker compose -f docker/docker-compose.test.yml run --rm backend-e2e sh -c "$command"
+    needs: preflight
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    env:
+      PASSSHARE_MUTATIONS_BIN: ${{ github.workspace }}/backend/native/target/release/passshare-mutations
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
       - name: Build native invitation verification
         run: cargo build --manifest-path backend/native/Cargo.toml --release --locked --bin passshare-mutations
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 10.11.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
+          node-version: "22"
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
-          node-version: "22"
       - name: Install backend dependencies
+        working-directory: backend
         run: pnpm install --frozen-lockfile
-        working-directory: backend
       - name: Verify DB migration script
+        working-directory: backend
         run: pnpm run migrate:verify
-        working-directory: backend
       - name: Run backend tests
-        run: pnpm test
         working-directory: backend
+        run: pnpm test
       - name: Verify production backend image
         run: |
           docker build --tag passshare-backend-ci:verify backend
@@ -40,53 +74,74 @@ jobs:
             test/extension-auth.test.js test/connect-api.test.js \
             test/connect-api-extended.test.js test/security-headers.test.js \
             test/web-session.test.js
-      - if: always()
-        name: Remove verification image
+      - name: Remove verification image
+        if: always()
         run: |
           if docker image inspect passshare-backend-ci:verify >/dev/null 2>&1; then
             docker image rm passshare-backend-ci:verify
           fi
-  benchmark:
-    name: Performance benchmarks
     needs: preflight
+  connect-types:
+    name: Connect API types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 10.11.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
+          node-version: "22"
           cache: pnpm
           cache-dependency-path: backend/pnpm-lock.yaml
-          node-version: "22"
       - name: Install backend dependencies
-        run: pnpm install --frozen-lockfile
         working-directory: backend
-      - name: Run benchmark suite
-        run: node scripts/bench/run.mjs
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        run: pnpm install --frozen-lockfile
+      - name: Generate Connect API types
+        working-directory: backend
+        run: pnpm run generate:types
+      - name: Fail on generated type drift
+        run: git diff --exit-code packages/connect-js/src/generated/connect-api.ts
+    needs: preflight
+  connect-js:
+    name: Connect SDK (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
-          if-no-files-found: error
-          name: benchmark-results
-          path: bench-results.json
+          version: 10.11.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: packages/connect-js/pnpm-lock.yaml
+      - name: Install connect-js dependencies
+        working-directory: packages/connect-js
+        run: pnpm install --frozen-lockfile
+      - name: Run connect-js tests
+        working-directory: packages/connect-js
+        run: pnpm test
+    needs: preflight
   connect-go:
+    name: Connect SDK (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.22.x', 'stable']
+    env:
+      GOTOOLCHAIN: local
     defaults:
       run:
         working-directory: packages/connect-go
-    env:
-      GOTOOLCHAIN: local
-    name: Connect SDK (Go ${{ matrix.go }})
-    needs: preflight
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          cache: false
           go-version: ${{ matrix.go }}
+          cache: false
       - run: go version
       - name: Check Go formatting
         run: test -z "$(gofmt -l *.go)"
@@ -94,154 +149,44 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Check SDK with go vet
         run: go vet ./...
-    strategy:
-      fail-fast: false
-      matrix:
-        go:
-          - 1.22.x
-          - stable
-    timeout-minutes: 10
-  connect-js:
-    name: Connect SDK (TypeScript)
     needs: preflight
+  i18n:
+    name: i18n key parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
-        with:
-          version: 10.11.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          cache: pnpm
-          cache-dependency-path: packages/connect-js/pnpm-lock.yaml
-          node-version: "22"
-      - name: Install connect-js dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: packages/connect-js
-      - name: Run connect-js tests
-        run: pnpm test
-        working-directory: packages/connect-js
-  connect-types:
-    name: Connect API types
-    needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
-        with:
-          version: 10.11.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          cache: pnpm
-          cache-dependency-path: backend/pnpm-lock.yaml
-          node-version: "22"
-      - name: Install backend dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: backend
-      - name: Generate Connect API types
-        run: pnpm run generate:types
-        working-directory: backend
-      - name: Fail on generated type drift
-        run: git diff --exit-code packages/connect-js/src/generated/connect-api.ts
-  desktop-smoke:
-    if: needs.preflight.outputs.desktop == 'true'
-    name: Desktop smoke
-    needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
-        with:
-          version: 10.11.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
-      - name: Run cloud sync unit tests
-        run: |
-          pnpm --dir packages/connect-js install --frozen-lockfile
-          pnpm --dir packages/connect-js run build
-          pnpm --dir apps/desktop install --frozen-lockfile
-          pnpm --dir apps/desktop exec tsc --noEmit
-          pnpm --dir apps/desktop run test
-      - name: Run desktop smoke tests
-        run: |
-          cargo test -p passshare-desktop smoke_
-          cargo test -p passshare-desktop native_lock::tests
-  docker-e2e:
-    name: Docker E2E (API + PostgreSQL)
+      - name: Check locale key parity
+        run: node scripts/i18n-check.mjs
+      - name: Check jp-ui-contracts (Issue #130)
+        run: node scripts/jp-ui-contracts-check.mjs
+      - name: Export i18n design copy (drift check)
+        run: node scripts/export-i18n-design-copy.mjs
     needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - name: Run PostgreSQL integration tests
-        run: docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
-    timeout-minutes: 45
-  extension:
-    name: Extension (unit + E2E smoke)
-    needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
-        with:
-          version: 10.11.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          cache: pnpm
-          cache-dependency-path: |
-            packages/extension/pnpm-lock.yaml
-            packages/connect-js/pnpm-lock.yaml
-            backend/pnpm-lock.yaml
-          node-version: "22"
-      - name: Install dependencies
-        run: |
-          pnpm --dir packages/connect-js install --frozen-lockfile
-          pnpm --dir packages/connect-js run build
-          pnpm --dir packages/extension install --frozen-lockfile
-          pnpm --dir backend install --frozen-lockfile
-          pnpm install --frozen-lockfile
-      - name: Run extension unit tests
-        run: pnpm --dir packages/extension test
-      - name: Build extension
-        run: pnpm --dir packages/extension run build
-      - name: Run extension auth API tests
-        run: node --test test/extension-auth.test.js
-        working-directory: backend
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium --with-deps
-      - env:
-          PLAYWRIGHT_SKIP_WEBSERVER: "true"
-          USE_XVFB: "1"
-        name: Run extension E2E smoke
-        run: xvfb-run -a pnpm exec playwright test -c playwright.extension.config.ts
   frontend:
+    name: Web (Playwright + build)
+    runs-on: ubuntu-latest
     env:
       PASSSHARE_MUTATIONS_BIN: ${{ github.workspace }}/backend/native/target/release/passshare-mutations
-    name: Web (Playwright + build)
-    needs: preflight
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
       - name: Build native mutation service
         run: cargo build --manifest-path backend/native/Cargo.toml --release --locked --bin passshare-mutations
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 10.11.0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
+          node-version: "22"
           cache: pnpm
           cache-dependency-path: |
             pnpm-lock.yaml
             backend/pnpm-lock.yaml
             frontend/pnpm-lock.yaml
             packages/connect-js/pnpm-lock.yaml
-          node-version: "22"
       - name: Install dependencies
         run: |
           pnpm install --frozen-lockfile
@@ -255,17 +200,117 @@ jobs:
         run: pnpm --dir frontend run build
       - name: Install Playwright browsers
         run: pnpm exec playwright install chromium --with-deps
-      - env:
+      - name: Run Playwright E2E
+        env:
           CI: "true"
-        name: Run Playwright E2E
         run: pnpm exec playwright test --project=chromium
-      - env:
+      - name: Run i18n visual regression
+        env:
           CI: "true"
-        name: Run i18n visual regression
         run: pnpm exec playwright test --project=i18n-visual
+    needs: preflight
+  extension:
+    name: Extension (unit + E2E smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            packages/extension/pnpm-lock.yaml
+            packages/connect-js/pnpm-lock.yaml
+            backend/pnpm-lock.yaml
+      - name: Install dependencies
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir packages/extension install --frozen-lockfile
+          pnpm --dir backend install --frozen-lockfile
+          pnpm install --frozen-lockfile
+      - name: Run extension unit tests
+        run: pnpm --dir packages/extension test
+      - name: Build extension
+        run: pnpm --dir packages/extension run build
+      - name: Run extension auth API tests
+        working-directory: backend
+        run: node --test test/extension-auth.test.js
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install chromium --with-deps
+      - name: Run extension E2E smoke
+        env:
+          PLAYWRIGHT_SKIP_WEBSERVER: "true"
+          USE_XVFB: "1"
+        run: xvfb-run -a pnpm exec playwright test -c playwright.extension.config.ts
+    needs: preflight
+  desktop-smoke:
+    name: Desktop smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Run cloud sync unit tests
+        run: |
+          pnpm --dir packages/connect-js install --frozen-lockfile
+          pnpm --dir packages/connect-js run build
+          pnpm --dir apps/desktop install --frozen-lockfile
+          pnpm --dir apps/desktop exec tsc --noEmit
+          pnpm --dir apps/desktop run test
+      - name: Run desktop smoke tests
+        run: |
+          cargo test -p passshare-desktop smoke_
+          cargo test -p passshare-desktop native_lock::tests
+    if: needs.preflight.outputs.desktop == 'true'
+    needs: preflight
+  mobile-smoke:
+    if: needs.preflight.outputs.mobile == 'true'
+    needs: preflight
+    uses: ./.github/workflows/mobile-build.yml
+  # Dependency audits remain blocking in security-audit.yml for PRs, main
+  # and the nightly schedule. They are separate from this aggregation.
+  benchmark:
+    name: Performance benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10.11.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+      - name: Run benchmark suite
+        run: node scripts/bench/run.mjs
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-results
+          path: bench-results.json
+          if-no-files-found: error
+    needs: preflight
   gate:
-    if: ${{ !cancelled() }}
     name: Quality gate
+    runs-on: ubuntu-latest
     needs:
       - preflight
       - rust-docker
@@ -280,7 +325,6 @@ jobs:
       - desktop-smoke
       - mobile-smoke
       - benchmark
-    runs-on: ubuntu-latest
     steps:
       - env:
           DESKTOP: ${{ needs.preflight.outputs.desktop }}
@@ -288,25 +332,7 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         name: Require successful checks or an explicitly unaffected client
         run: echo "$RESULTS" | jq -e --arg desktop "$DESKTOP" --arg mobile "$MOBILE" 'to_entries | all(if .key == "desktop-smoke" then (.value.result == "success" or (.value.result == "skipped" and $desktop == "false")) elif .key == "mobile-smoke" then (.value.result == "success" or (.value.result == "skipped" and $mobile == "false")) else .value.result == "success" end)'
-  i18n:
-    name: i18n key parity
-    needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          node-version: "22"
-      - name: Check locale key parity
-        run: node scripts/i18n-check.mjs
-      - name: Check jp-ui-contracts (Issue
-        run: node scripts/jp-ui-contracts-check.mjs
-      - name: Export i18n design copy (drift check)
-        run: node scripts/export-i18n-design-copy.mjs
-  mobile-smoke:
-    if: needs.preflight.outputs.mobile == 'true'
-    needs: preflight
-    uses: ./.github/workflows/mobile-build.yml
+    if: ${{ !cancelled() }}
   preflight:
     name: Change scope and inexpensive checks
     outputs:
@@ -320,19 +346,21 @@ jobs:
           persist-credentials: false
       - env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
         id: scope
         name: Determine affected native clients
         run: |
           set -euo pipefail
           desktop=false
           mobile=false
-          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || "$BASE_SHA" =~ ^0+$ ]]; then
+          if [[ "${EVENT_NAME:-pull_request}" == push || ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || "$BASE_SHA" =~ ^0+$ ]]; then
             desktop=true
             mobile=true
           else
             git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/passshare-paths"
             while IFS= read -r -d '' path; do
               case "$path" in
+                frontend/cloud-assets.json|frontend/public/cloud-crypto/*) desktop=true; mobile=true ;;
                 apps/desktop/*) desktop=true ;;
                 apps/mobile/*) mobile=true ;;
                 frontend/*|packages/extension/*|e2e/web/*|e2e/extension/*) ;;
@@ -356,19 +384,3 @@ jobs:
         run: go test -mod=readonly ./...
         working-directory: tools/desktop-release-check
     timeout-minutes: 10
-  rust-docker:
-    name: Rust (Docker)
-    needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - name: Run Rust tests in Docker
-        run: docker compose -f docker/docker-compose.test.yml run --rm --build test
-name: Quality Gate
-"on":
-  pull_request: null
-  push:
-    branches:
-      - main
-permissions:
-  contents: read

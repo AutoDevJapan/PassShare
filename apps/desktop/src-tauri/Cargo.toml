@@ -17,7 +17,8 @@ tauri-build = { version = "2", features = [] }
 passshare-core = { path = "../../../crates/passshare-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-biometry = "0.2"
-tauri-plugin-updater = "2"
+# Pin the upstream zip 9 security update until a fixed crate release is available.
+tauri-plugin-updater = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "ba98bfadc4c868c9a7e1a226c83af528e1f11b89" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
