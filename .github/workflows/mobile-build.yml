@@ -1,59 +1,48 @@
-name: Mobile Build
-
-permissions:
-  contents: read
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-concurrency:
-  group: mobile-build-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   smoke:
+    name: Mobile smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
         with:
           version: 10.11.0
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: "22"
           cache: pnpm
           cache-dependency-path: |
             apps/mobile/pnpm-lock.yaml
             packages/connect-js/pnpm-lock.yaml
             backend/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
+          node-version: "22"
+      - name: Install dependencies
         run: |
           pnpm --dir packages/connect-js install --frozen-lockfile
           pnpm --dir packages/connect-js run build
           pnpm --dir apps/mobile install --frozen-lockfile
-          pnpm --dir apps/mobile run build
-
+          pnpm --dir backend install --frozen-lockfile
+      - name: Build mobile frontend
+        run: pnpm --dir apps/mobile run build
       - name: Run mobile unit tests
         run: pnpm --dir apps/mobile run test
-
-      - name: Install backend dependencies
-        run: pnpm --dir backend install --frozen-lockfile
-
       - name: Run mobile smoke tests
-        run: cargo test -p passshare-mobile smoke_
-
+        run: |
+          cargo test -p passshare-mobile --locked
+          cargo clippy -p passshare-mobile --all-targets --locked -- -D warnings
+      - name: Verify actual React auth against delayed logout and lifecycle results
+        run: |
+          cargo run -p passshare-core --locked --example mobile_auth_acceptance -- apps/mobile
       - name: Run mobile auth API tests
-        working-directory: backend
         run: node --test test/mobile-auth.test.js
+        working-directory: backend
+    timeout-minutes: 30
+name: Mobile Build
+"on":
+  workflow_call: null
+permissions:
+  contents: read
