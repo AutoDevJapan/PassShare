@@ -1,5 +1,7 @@
 name: op-cli Build
 
+# Windows first. macOS follows Windows completion; Linux packages are deferred.
+
 permissions:
   contents: read
 
@@ -18,15 +20,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-latest
-            artifact: op-cli-linux
-            bin_path: target/release/op
           - platform: windows-latest
             artifact: op-cli-windows
             bin_path: target/release/op.exe
-          - platform: macos-latest
-            artifact: op-cli-macos
-            bin_path: target/release/op
 
     runs-on: ${{ matrix.platform }}
     steps:
