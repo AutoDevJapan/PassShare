@@ -553,7 +553,7 @@ function __wbg_get_imports() {
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 52, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_befb22075f8b174___MessageEvent______true_);
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen_42715ac5533a5c27___convert__closures_____invoke___passshare_cloud_wasm_e22f18a458607454___MessageEvent______true_);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
@@ -577,8 +577,8 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_befb22075f8b174___MessageEvent______true_(arg0, arg1, arg2) {
-    wasm.wasm_bindgen_88face89696bb2f3___convert__closures_____invoke___passshare_cloud_wasm_befb22075f8b174___MessageEvent______true_(arg0, arg1, arg2);
+function wasm_bindgen_42715ac5533a5c27___convert__closures_____invoke___passshare_cloud_wasm_e22f18a458607454___MessageEvent______true_(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_42715ac5533a5c27___convert__closures_____invoke___passshare_cloud_wasm_e22f18a458607454___MessageEvent______true_(arg0, arg1, arg2);
 }
 
 const CloudAccountIdentityFinalization = (typeof FinalizationRegistry === 'undefined')

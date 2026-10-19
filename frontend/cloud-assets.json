@@ -1,10 +1,10 @@
 {
-  "sourceCommit": "d5cd7d79666d023b7baeeb582835892e84f387da",
-  "run": 38103572958,
+  "sourceCommit": "2decea3d655e3a244f2b3ddb8019c516dbe5516c",
+  "run": 39260197802,
   "buildKind": "github-actions-tested",
   "inputs": {
     "Cargo.toml": "f3a088bb1e72f919cbc8d485f97e87a377f5be619993b485b70fa30b01f83012",
-    "Cargo.lock": "e3ca83a3d9ed868d8e186668f20056ecb70eba77ec9016742d0317173534aa2f",
+    "Cargo.lock": "539d9ca113cb5c7a6a06186f073023cc06101a5b810ad07a8c3d51b95ade2ef8",
     "crates/passshare-core/Cargo.toml": "bb07748d5f01016a45e10850418cc6ba75ecf55161e7759390e1f7ca3e81c8d2",
     "packages/cloud-wasm/Cargo.toml": "2b6e3d1e88d816db9cd98eb5cf560d17823909e9f1d94ec7a7286b8cb4e362c7",
     "packages/cloud-wasm/Cargo.lock": "126e33fbfea3ceb4c80df837633f5762fc67d9f910335660dc88b256586cc727",
@@ -46,8 +46,8 @@
   },
   "assets": {
     "boot.mjs": "d084febcad89252109d54221eb6d10b5934e9c8cd83f4aa5e59f311c888befc7",
-    "passshare_cloud_wasm.js": "2bf8a12228f7d672a8ddad3e6f91f53aacc8441363f872e5b03243e2df95ee1f",
-    "passshare_cloud_wasm_bg.wasm": "3fa9f313b167ae795c33b34517fba75e48fae3794dd4d091aee1403c1df83461"
+    "passshare_cloud_wasm.js": "5ca87bb0e7a3af1a1ac53a01cfb1eed737e87103879fb3ad302abc588df73203",
+    "passshare_cloud_wasm_bg.wasm": "0f64f943cff45e5f17faf3354dafef384e1b346ccc52fb70b6201bae80be5f20"
   },
   "artifact": "passshare-cloud-wasm"
 }

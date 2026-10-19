@@ -270,10 +270,9 @@ jobs:
           pnpm --dir apps/desktop install --frozen-lockfile
           pnpm --dir apps/desktop exec tsc --noEmit
           pnpm --dir apps/desktop run test
-      - name: Run desktop smoke tests
+      - name: Run desktop tests and doctests
         run: |
-          cargo test -p passshare-desktop smoke_
-          cargo test -p passshare-desktop native_lock::tests
+          cargo test --locked -p passshare-desktop
     if: needs.preflight.outputs.desktop == 'true'
     needs: preflight
   mobile-smoke:
