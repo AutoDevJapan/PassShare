@@ -79,4 +79,8 @@ scripts/                 — Vercel / Railway セットアップ
 
 ## ライセンス
 
-MIT
+PassShareのオリジナルコードは [GNU AGPL version 3 only](LICENSE)（`AGPL-3.0-only`）で提供します。AGPLの条件を満たす商用利用も可能で、商用利用という理由だけで支払いは必要ありません。
+
+AGPLの条件によらず利用したい場合は、別途有料の商用ライセンスを契約できます。条件・対象範囲は個別契約で定めます。お問い合わせ: contact@autodevjapan.com（AutoDevJapan）。詳細は [商用ライセンスの案内](COMMERCIAL-LICENSE.md) を参照してください。
+
+第三者の依存ライブラリ・素材・同梱コードには各権利者のライセンスが適用され、その表示と条件を保持します。別途の商用契約によって第三者の条件が免除されるものではありません。
