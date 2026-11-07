@@ -1,4 +1,5 @@
 [project]
+license = "AGPL-3.0-only"
 name = "passshare-connect"
 version = "0.1.0"
 description = "1Password Connect API compatible Python client for PassShare"
