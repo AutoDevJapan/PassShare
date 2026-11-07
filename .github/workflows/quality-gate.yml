@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      # op-cli is built inside the backend-e2e container (same rust:1.86-bookworm
+      # op-cli is built inside the backend-e2e container (same pinned rust:1-bookworm
       # base that runs it) so the binary's glibc matches the runtime. Building on
       # the host (newer ubuntu glibc) risked GLIBC_x.xx-not-found at runtime and
       # made the job non-hermetic (#320).
