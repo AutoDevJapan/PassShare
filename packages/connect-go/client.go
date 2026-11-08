@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -44,24 +45,24 @@ func (c *Client) ListVaults() ([]map[string]any, error) {
 
 func (c *Client) GetVault(vaultID string) (map[string]any, error) {
 	var out map[string]any
-	err := c.request("GET", "/vaults/"+vaultID, nil, "", &out)
+	err := c.request("GET", "/vaults/"+url.PathEscape(vaultID), nil, "", &out)
 	return out, err
 }
 
 func (c *Client) ListItems(vaultID string) ([]map[string]any, error) {
 	var out []map[string]any
-	err := c.request("GET", "/vaults/"+vaultID+"/items", nil, "", &out)
+	err := c.request("GET", "/vaults/"+url.PathEscape(vaultID)+"/items", nil, "", &out)
 	return out, err
 }
 
 func (c *Client) GetItem(vaultID, itemID string) (map[string]any, error) {
 	var out map[string]any
-	err := c.request("GET", "/vaults/"+vaultID+"/items/"+itemID, nil, "", &out)
+	err := c.request("GET", "/vaults/"+url.PathEscape(vaultID)+"/items/"+url.PathEscape(itemID), nil, "", &out)
 	return out, err
 }
 
 func (c *Client) DeleteItem(vaultID, itemID string) error {
-	return c.request("DELETE", "/vaults/"+vaultID+"/items/"+itemID, nil, "", nil)
+	return c.request("DELETE", "/vaults/"+url.PathEscape(vaultID)+"/items/"+url.PathEscape(itemID), nil, "", nil)
 }
 
 func (c *Client) request(method, path string, body any, contentType string, out any) error {
