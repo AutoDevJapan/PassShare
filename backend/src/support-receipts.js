@@ -6,18 +6,23 @@ import { requireCsrf } from "./auth/csrf.js";
 import { nativeMutation } from "./lib/native-mutations.js";
 import { authHttpError, sendAuthError } from "./auth/errors.js";
 import { applySchemaWithAdvisoryLock } from "./db/migration-lock.js";
+import { installSupportOperatorRoutes } from './support-operator.js';
 
 const SCHEMA = `CREATE TABLE IF NOT EXISTS support_receipts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  request_id UUID NOT NULL, fingerprint TEXT NOT NULL, metadata JSONB NOT NULL,
  status TEXT NOT NULL DEFAULT 'received' CHECK(status IN ('received','in_progress','resolved')),
- created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(user_id,request_id));`;
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(user_id,request_id));
+ ALTER TABLE support_receipts ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 0;
+ ALTER TABLE support_receipts ADD COLUMN IF NOT EXISTS operator_consent JSONB;
+ ALTER TABLE support_receipts ADD COLUMN IF NOT EXISTS history JSONB NOT NULL DEFAULT '[]'::jsonb;`;
 export async function migrateSupportReceipts(pool) { await applySchemaWithAdvisoryLock(pool,4820127,SCHEMA); }
-export async function createSupportReceiptRouter({pool,authStore}) {
+export async function createSupportReceiptRouter({pool,authStore,operatorIds=(process.env.PASSSHARE_SUPPORT_OPERATOR_IDS??'').split(',')}) {
 
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:"draft-6",legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
- const publicRow=r=>({id:r.id,status:r.status,createdAt:r.created_at,request:r.metadata,meaning:'request_received_not_contract_or_payment_confirmation'});
+ const publicRow=r=>({id:r.id,status:r.status,revision:r.revision??0,history:(r.history??[]).map(({status,at})=>({status,at})),createdAt:r.created_at,request:r.metadata,meaning:'request_received_not_contract_or_payment_confirmation'});
+ installSupportOperatorRoutes(router,{pool,operatorIds});
  router.post('/',requireCsrf,async(req,res)=>{
   try {
    const metadata=await nativeMutation({command:'support-receipt-validate',request:req.body});
