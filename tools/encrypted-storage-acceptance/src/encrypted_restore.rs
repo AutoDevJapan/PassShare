@@ -580,9 +580,23 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
     // Signature intake is exercised by backend HTTP tests, not claimed here.
     let mut export_contracts = Vec::new();
     for account in [&a, &c, &b] {
-        let quote = call(p,account,"POST","/api/commercial-contracts",&json!({"requestId":operation_id(db),"currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}}),201);
+        let quote = call(
+            p,
+            account,
+            "POST",
+            "/api/commercial-contracts",
+            &json!({"requestId":operation_id(db),"currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}}),
+            201,
+        );
         let cid = quote["id"].as_str().expect("contract id").to_owned();
-        call(p,account,"POST",&format!("/api/commercial-contracts/{cid}/accept"),&json!({"quoteHash":quote["quoteHash"]}),200);
+        call(
+            p,
+            account,
+            "POST",
+            &format!("/api/commercial-contracts/{cid}/accept"),
+            &json!({"quoteHash":quote["quoteHash"]}),
+            200,
+        );
         db.sql(&format!("INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES('{cid}',CURRENT_DATE-35); INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_restore_export','evt_{cid}','{cid}',1,CURRENT_DATE-35,CURRENT_DATE-5,980,'pi_{cid}','synthetic-export-window-fixture','provider_live')"));
         export_contracts.push(cid);
     }
@@ -681,10 +695,19 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
         "UPDATE passshare_acceptance_control.binding SET owner_id='{owner}'"
     ));
     assert!(may_resume(db, &restored, &owner));
-    restored.sql(&format!("UPDATE commercial_live_periods SET period_end=period_end+1 WHERE contract_id='{}'",export_contracts[0]));
-    assert!(!may_resume(db,&restored,&owner),"stale billing window authority cannot resume export");
-    restored.sql(&format!("UPDATE commercial_live_periods SET period_end=period_end-1 WHERE contract_id='{}'",export_contracts[0]));
-    assert!(may_resume(db,&restored,&owner));
+    restored.sql(&format!(
+        "UPDATE commercial_live_periods SET period_end=period_end+1 WHERE contract_id='{}'",
+        export_contracts[0]
+    ));
+    assert!(
+        !may_resume(db, &restored, &owner),
+        "stale billing window authority cannot resume export"
+    );
+    restored.sql(&format!(
+        "UPDATE commercial_live_periods SET period_end=period_end-1 WHERE contract_id='{}'",
+        export_contracts[0]
+    ));
+    assert!(may_resume(db, &restored, &owner));
     restored.sql(&format!(
         "UPDATE encrypted_box_state SET key_epoch=3 WHERE box_id='{}'",
         a.box_id
@@ -792,25 +815,72 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
     }
     // Actual new export API after pg_dump/pg_restore: current owner and retained
     // recipient can export all ciphertext, while the removed recipient cannot.
-    for (account,cid,key) in [(&a,&export_contracts[0],&a_key),(&c,&export_contracts[1],&c_key)] {
-        let path=format!("/api/commercial-contracts/{cid}/export/boxes/{}",a.box_id);
-        let selector=call(rp,account,"GET",&format!("{path}/state"),&Value::Null,200);
-        let revision=selector["snapshotRevision"].as_u64().expect("export revision");
-        let mut after=String::new();let mut seen=std::collections::BTreeSet::new();
+    for (account, cid, key) in [
+        (&a, &export_contracts[0], &a_key),
+        (&c, &export_contracts[1], &c_key),
+    ] {
+        let path = format!("/api/commercial-contracts/{cid}/export/boxes/{}", a.box_id);
+        let selector = call(
+            rp,
+            account,
+            "GET",
+            &format!("{path}/state"),
+            &Value::Null,
+            200,
+        );
+        let revision = selector["snapshotRevision"]
+            .as_u64()
+            .expect("export revision");
+        let mut after = String::new();
+        let mut seen = std::collections::BTreeSet::new();
         loop {
-            let reply=call(rp,account,"GET",&format!("{path}/items?epoch=2&revision={revision}{after}"),&Value::Null,200);
+            let reply = call(
+                rp,
+                account,
+                "GET",
+                &format!("{path}/items?epoch=2&revision={revision}{after}"),
+                &Value::Null,
+                200,
+            );
             for envelope in reply["data"]["envelopes"].as_array().expect("export page") {
-                let id=envelope["context"]["itemId"].as_str().expect("export item id");
-                assert!(seen.insert(id.to_owned()),"export page must advance");
-                let candidate=&rotation.candidates[id];
-                let sealed=checked(serde_json::from_value(envelope.clone()),"restored export envelope");
-                assert!(checked(key.decrypt_item(&sealed,&context(&a,id,candidate.previous+1,2)),"restored exported plaintext")==candidate.expected);
+                let id = envelope["context"]["itemId"]
+                    .as_str()
+                    .expect("export item id");
+                assert!(seen.insert(id.to_owned()), "export page must advance");
+                let candidate = &rotation.candidates[id];
+                let sealed = checked(
+                    serde_json::from_value(envelope.clone()),
+                    "restored export envelope",
+                );
+                assert!(
+                    checked(
+                        key.decrypt_item(&sealed, &context(&a, id, candidate.previous + 1, 2)),
+                        "restored exported plaintext"
+                    ) == candidate.expected
+                );
             }
-            match reply["data"]["nextCursor"].as_str(){Some(cursor)=>after=format!("&after={cursor}"),None=>break}
+            match reply["data"]["nextCursor"].as_str() {
+                Some(cursor) => after = format!("&after={cursor}"),
+                None => break,
+            }
         }
-        assert_eq!(seen.len(),rotation.candidates.len(),"all restored ciphertext exported exactly once");
+        assert_eq!(
+            seen.len(),
+            rotation.candidates.len(),
+            "all restored ciphertext exported exactly once"
+        );
     }
-    call(rp,&b,"GET",&format!("/api/commercial-contracts/{}/export/boxes/{}/state",export_contracts[2],a.box_id),&Value::Null,403);
+    call(
+        rp,
+        &b,
+        "GET",
+        &format!(
+            "/api/commercial-contracts/{}/export/boxes/{}/state",
+            export_contracts[2], a.box_id
+        ),
+        &Value::Null,
+        403,
+    );
     let id = rotation.candidates.keys().next().unwrap();
     for path in [
         format!("{}/items/{id}", root(&a)),
