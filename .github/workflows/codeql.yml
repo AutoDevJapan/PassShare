@@ -135,6 +135,32 @@ jobs:
           git -C "$GITHUB_WORKSPACE" restore --source=HEAD --worktree -- apps/mobile/src-tauri/gen/android ':(top,exclude)apps/mobile/src-tauri/gen/android/buildSrc/src/main/java/com/passshare/mobile/kotlin/BuildTask.kt'
           test -x src-tauri/gen/android/gradlew
 
+      - name: Restore verified Gradle distribution
+        if: matrix.language == 'java-kotlin'
+        uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca
+        with:
+          path: ${{ runner.temp }}/passshare-gradle-distribution
+          key: gradle-8.14.3-bin-bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531
+
+      - name: Prepare checksum-pinned official Gradle distribution
+        if: matrix.language == 'java-kotlin'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: apps/mobile
+        run: |
+          directory="$RUNNER_TEMP/passshare-gradle-distribution"
+          archive="$directory/gradle-8.14.3-bin.zip"
+          mkdir -p "$directory"
+          expected=bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531
+          if [ ! -f "$archive" ]; then
+            # Official release asset API avoids the repeatedly failing browser redirect.
+            gh api -H 'Accept: application/octet-stream' repos/gradle/gradle-distributions/releases/assets/269969095 > "$archive.partial"
+            echo "$expected  $archive.partial" | sha256sum --check --strict
+            mv "$archive.partial" "$archive"
+          fi
+          echo "$expected  $archive" | sha256sum --check --strict
+          sed -i "s|^distributionUrl=.*|distributionUrl=file\\\\:$archive|" src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+
       - name: Compile Android Kotlin and build debug APK
         if: matrix.language == 'java-kotlin'
         working-directory: apps/mobile
