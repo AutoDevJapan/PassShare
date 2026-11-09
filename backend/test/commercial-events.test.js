@@ -19,6 +19,7 @@ test('raw signed test events reject forged stale live wrong-account payloads bef
    assert.equal((await post(event)).status,400);assert.equal(reached,false);
    const direct=structuredClone(event);delete direct.account;
    assert.equal((await post(direct)).status,500);assert.equal(reached,true);
+   reached=false;direct.account=null;assert.equal((await post(direct)).status,500);assert.equal(reached,true);
    // The synthetic DB sentinel proves signature/scope acceptance, not persistence.
   }finally{directServer.closeAllConnections();await new Promise(r=>directServer.close(r));}
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
@@ -49,6 +50,15 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   const conflict=await Promise.all([send(left),send(right)]);assert.deepEqual(conflict.map(r=>r.status).sort(),[200,409]);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE event_id=$1',[raceId])).rows[0].n,1);
   const earlier=structuredClone(event);earlier.id='evt_'+randomUUID().replaceAll('-','');earlier.created-=100;assert.equal((await send(earlier)).status,200);
+  const directApp=express();directApp.use('/events',commercialEventHandler({pool,secret,account,scope:'direct'}));
+  const directServer=directApp.listen(0,'127.0.0.1');await new Promise(r=>directServer.once('listening',r));
+  try{
+   for(const nullable of [false,true]){
+    const value=structuredClone(event);value.id='evt_'+randomUUID().replaceAll('-','');if(nullable)value.account=null;else delete value.account;
+    const payload=JSON.stringify(value);const response=await fetch('http://127.0.0.1:'+directServer.address().port+'/events',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload,secret})},body:payload});assert.equal(response.status,200);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE account_id=$1 AND event_id=$2',[account,value.id])).rows[0].n,1);
+   }
+  }finally{directServer.closeAllConnections();await new Promise(r=>directServer.close(r));}
   const read=await call('/api/commercial-contracts/'+quote.body.id,owner.refreshToken);assert.equal(read.body.state,'accepted_unpaid');assert.equal(read.body.paid,false);assert.equal(read.body.entitlementsGranted,false);
   await pool.query('DELETE FROM users WHERE id=$1',[owner.user.id]);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,0);assert.equal((await send(event)).status,409);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[actors.map(a=>a.user.id)]);await pool.end();delete process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET;delete process.env.PASSSHARE_STRIPE_TEST_ACCOUNT;}
