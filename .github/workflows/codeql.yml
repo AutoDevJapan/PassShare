@@ -164,7 +164,7 @@ jobs:
               status=$?
               cat "$log"
               # Dependency transport only: never retry compiler diagnostics.
-              if ! grep -Eq 'Received status code 504 from server|Server returned HTTP response code: 504' "$log" || [ "$attempt" -eq 3 ]; then
+              if grep -Eq '(^|[[:space:]])error(\[E[0-9]+\])?:|(^|[[:space:]])e: |Compilation error|Compilation failed|Kotlin compilation failed' "$log" || ! grep -Eq 'Received status code 504 from server|Server returned HTTP response code: 504' "$log" || [ "$attempt" -eq 3 ]; then
                 exit "$status"
               fi
               sleep "$((5 * attempt))"
