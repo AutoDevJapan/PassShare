@@ -69,6 +69,27 @@ test('authenticated owner consent and operator status are persistent and single 
     await blocker.query('COMMIT');assert.equal((await queued).status,403);
    }finally{await blocker.query('ROLLBACK');blocker.release();}
    const renewedBeforeRetire=await run(pendingAuth,login.body.refreshToken,grant);assert.equal(renewedBeforeRetire.status,201);
+   for(const scenario of ['create-owner','consume-owner','consume-operator']){
+    const actor=scenario==='consume-operator'?operator.user.id:owner.user.id;
+    await pool.query("UPDATE sessions SET expires_at=clock_timestamp()+interval '2 seconds' WHERE user_id=$1",[actor]);
+    const lock=await pool.connect();let queued;
+    try{
+     await lock.query('BEGIN');await lock.query('SELECT id FROM support_receipts WHERE id=$1 FOR UPDATE',[pendingReceipt.body.id]);
+     queued=scenario==='create-owner'?run(pendingAuth,login.body.refreshToken,grant):run(pendingConsume,opLogin.body.refreshToken,{confirmation:renewedBeforeRetire.body.confirmation});
+     const deadline=Date.now()+5000;let waiting=false;
+     while(Date.now()<deadline){
+      const q=await pool.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT * FROM support_receipts WHERE id=%'");
+      if(q.rows[0].n){waiting=true;break;}await new Promise(r=>setTimeout(r,10));
+     }
+     assert.equal(waiting,true,scenario+' must reach receipt lock before expiry');
+     await pool.query('SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM (max(expires_at)-clock_timestamp())))+0.02) FROM sessions WHERE user_id=$1',[actor]);
+     await lock.query('COMMIT');assert.equal((await queued).status,403,scenario);
+    }finally{
+     await lock.query('ROLLBACK');lock.release();
+     await pool.query("UPDATE sessions SET expires_at=clock_timestamp()+interval '1 hour' WHERE user_id=$1",[actor]);
+     if(queued)await queued;
+    }
+   }
    // A server without the deployment grant cannot consume an existing consent.
    assert.equal((await call(pendingConsume,opLogin.body.refreshToken,{confirmation:renewedBeforeRetire.body.confirmation})).status,403);
    const retired=await call('/api/auth/account',login.body.refreshToken,{currentPassword:'synthetic-password123',confirmationEmail:owner.user.email},'DELETE');assert.equal(retired.status,204);
