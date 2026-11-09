@@ -25,7 +25,14 @@ because this endpoint never performs a refund.
 Verification so far uses locally signed synthetic events through real HTTP and
 PostgreSQL. Official sandbox delivery is not yet verified. The current explicit
 event.account requirement also needs reconciliation with direct-account events,
-which may omit a Connect account field. Do not configure production intake or
+which may omit a Connect account field. `PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE`
+defaults to `connect`, which requires exact event.account equality. Explicit
+`direct` scope requires event.account to be absent/null and rejects Connect
+events even from the configured account. In direct mode, account provenance
+comes from the dedicated endpoint secret provisioned in that verified account's
+sandbox, not from caller metadata or an omitted field. Never share a secret
+between accounts or endpoint scopes. The Dashboard's “Your account” selection
+must be recorded before direct provisioning. Do not configure production intake or
 claim provider integration success until the actual endpoint scope is verified.
 
 References: https://docs.stripe.com/webhooks and

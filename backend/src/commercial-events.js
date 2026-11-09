@@ -13,15 +13,16 @@ export const PAYMENT_EVENT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_payment
 export const migrateCommercialEvents=pool=>applySchemaWithAdvisoryLock(pool,4820129,PAYMENT_EVENT_SCHEMA);
 
 // No API request is made. The official SDK verifies the raw snapshot signature.
-export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_TEST_ACCOUNT}){
+export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_TEST_ACCOUNT,scope=process.env.PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE??'connect'}){
  const router=express.Router();
  router.use(rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-6',legacyHeaders:false}));
  router.post('/',express.raw({type:'application/json',limit:'256kb'}),async(req,res)=>{
   try{
-   if(!pool||!secret||!/^acct_[A-Za-z0-9]+$/.test(account??''))throw authHttpError(503,'PS019','Payment event intake unavailable');
+   if(!pool||!secret||!/^acct_[A-Za-z0-9]+$/.test(account??'')||!['direct','connect'].includes(scope))throw authHttpError(503,'PS019','Payment event intake unavailable');
    let event;try{event=Stripe.webhooks.constructEvent(req.body,req.headers['stripe-signature'],secret,300);}catch{throw authHttpError(400,'PS018','Invalid payment event signature');}
    const o=event.data?.object,m=o?.metadata;
-   if(event.livemode!==false||o?.livemode!==false||event.account!==account||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||!Number.isSafeInteger(event.created))throw authHttpError(400,'PS018','Unsupported payment event scope');
+   const accountMatches=scope==='direct'?event.account==null:event.account===account;
+   if(event.livemode!==false||o?.livemode!==false||!accountMatches||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||!Number.isSafeInteger(event.created))throw authHttpError(400,'PS018','Unsupported payment event scope');
    const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
    if(!uuid(m?.contractId)||!uuid(m?.ownerId)||!/^[a-f0-9]{64}$/.test(m?.quoteHash??''))throw authHttpError(400,'PS018','Invalid contract event binding');
    const digest=createHash('sha256').update(req.body).digest('hex');const c=await pool.connect();

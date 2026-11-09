@@ -11,6 +11,16 @@ test('raw signed test events reject forged stale live wrong-account payloads bef
   assert.equal(await send({...event,account:'acct_other'}),400);
   assert.equal(await send({...event,data:{object:{...event.data.object,currency:'usd'}}}),400);
   assert.equal(await send({...event,type:'charge.refunded'}),400);
+  const directApp=express();let reached=false;
+  directApp.use('/events',commercialEventHandler({pool:{async connect(){reached=true;throw Error('fixture reached binding DB');}},secret,account,scope:'direct'}));
+  const directServer=directApp.listen(0,'127.0.0.1');await new Promise(r=>directServer.once('listening',r));
+  try{
+   const post=async(value)=>{const payload=JSON.stringify(value);return fetch('http://127.0.0.1:'+directServer.address().port+'/events',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload,secret})},body:payload});};
+   assert.equal((await post(event)).status,400);assert.equal(reached,false);
+   const direct=structuredClone(event);delete direct.account;
+   assert.equal((await post(direct)).status,500);assert.equal(reached,true);
+   // The synthetic DB sentinel proves signature/scope acceptance, not persistence.
+  }finally{directServer.closeAllConnections();await new Promise(r=>directServer.close(r));}
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
 test('signed fixture events persist once and bind the accepted quote in PostgreSQL',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
