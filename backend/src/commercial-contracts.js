@@ -10,6 +10,7 @@ import {migrateCommercialEvents} from './commercial-events.js';
 import {migrateCommercialLive,loadEntitlement} from './commercial-live.js';
 import {migrateCommercialSeats,registerSeatRoutes} from './commercial-seats.js';
 import {migrateSeatDecreases,registerSeatDecreaseRoutes} from './commercial-seat-decreases.js';
+import {currentBillingPlan} from './commercial-plan.js';
 import {registerCommercialExport} from './commercial-export.js';
 import {migrateExportAudit,registerExportAudit} from './commercial-export-audit.js';
 
@@ -96,7 +97,7 @@ export function createCommercialContractRouter({pool,authStore}){
   const payments=await persist(req,async c=>{
    const own=(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];
    if(!own)throw authHttpError(404,'PS022','Contract not found');
-   return (await c.query("SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at,disposition_reason AS reason FROM commercial_live_periods WHERE contract_id=$1 AND disposition='refund_review' UNION ALL SELECT event_id,provider_object_id,(quote->>'billingCycle')::integer,paid_amount_jpy::text,payment_received_at,'seat_quote_no_longer_applicable' AS reason FROM commercial_seat_changes WHERE contract_id=$1 AND state='refund_review' ORDER BY cycle",[own.id])).rows;
+   return (await c.query("SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at,disposition_reason AS reason FROM commercial_live_periods WHERE contract_id=$1 AND disposition='refund_review' UNION ALL SELECT event_id,provider_object_id,(quote->>'billingCycle')::integer,paid_amount_jpy::text,payment_received_at,'seat_quote_no_longer_applicable' AS reason FROM commercial_seat_changes WHERE contract_id=$1 AND state='refund_review' UNION ALL SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at,reason FROM commercial_plan_payment_exceptions WHERE contract_id=$1 ORDER BY cycle",[own.id])).rows;
   });
   res.json({refundExecuted:false,entitlementGranted:false,payments:payments.map(p=>({eventId:p.event_id,paymentIntentId:p.provider_object_id,cycle:p.cycle,amountJpy:Number(p.amount_jpy),receivedAt:p.received_at,reason:p.reason,status:'refund_review_required'}))});
  }catch(e){sendAuthError(res,e);}});
@@ -109,7 +110,7 @@ export function createCommercialContractRouter({pool,authStore}){
  }catch(e){sendAuthError(res,e);}});
  router.get('/:id',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
-  const row=await persist(req,async c=>{const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];if(r){r.entitlement=await loadEntitlement(c,r.id,Date.now());r.periods=(await c.query('SELECT period_start::text,period_end::text,amount_jpy::text FROM commercial_paid_periods WHERE contract_id=$1 ORDER BY period_start,event_id',[r.id])).rows;}return r;});
+  const row=await persist(req,async c=>{const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR SHARE',[req.params.id,req.auth.userId])).rows[0];if(r){r.current_plan=await currentBillingPlan(c,r);r.entitlement=await loadEntitlement(c,r.id,Date.now());r.periods=(await c.query('SELECT period_start::text,period_end::text,amount_jpy::text FROM commercial_paid_periods WHERE contract_id=$1 ORDER BY period_start,event_id',[r.id])).rows;}return r;});
   if(!row)throw authHttpError(404,'PS022','Contract not found');res.json({...publicRow(row),providerTestPeriods:row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,amountJpy:Number(x.amount_jpy),evidence:'provider_test_sandbox',entitlementEffective:false})),entitlement:row.entitlement});
  }catch(e){sendAuthError(res,e);}});
  return router;

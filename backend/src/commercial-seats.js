@@ -4,6 +4,8 @@ import {authHttpError,sendAuthError} from './auth/errors.js';
 import {requireCsrf} from './auth/csrf.js';
 import {jstDate} from './commercial-entitlement.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
+import {planInput,currentBillingPlan} from './commercial-plan.js';
+export {planInput} from './commercial-plan.js';
 
 export const SEAT_SCHEMA=`ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS current_plan JSONB;
 ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS seat_revision INTEGER NOT NULL DEFAULT 0;
@@ -18,11 +20,10 @@ ALTER TABLE commercial_seat_changes ADD COLUMN IF NOT EXISTS payment_received_at
 export const migrateCommercialSeats=p=>applySchemaWithAdvisoryLock(p,4820131,SEAT_SCHEMA);
 const uuid=s=>typeof s==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(s);
 const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).length===keys.length&&keys.every(k=>Object.hasOwn(o,k));
-export const planInput=p=>p.type==='personal'?{type:p.type,users:p.users}:{type:p.type,administrators:p.administrators,members:p.members};
 const rowOut=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,baseRevision:r.base_revision,acceptedAt:r.accepted_at,appliedAt:r.applied_at,paymentRequired:['quoted','accepted_unpaid'].includes(r.state),refundReviewRequired:r.state==='refund_review',boxMembershipOrKeysGranted:false});
 async function contract(c,id,user){
  const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[id,user])).rows[0];
- if(!r)throw authHttpError(404,'PS022','Contract not found');return r;
+ if(!r)throw authHttpError(404,'PS022','Contract not found');r.current_plan=await currentBillingPlan(c,r);return r;
 }
 async function currentPeriod(c,r){
  const today=jstDate(Date.now());

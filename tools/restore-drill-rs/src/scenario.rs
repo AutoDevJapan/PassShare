@@ -330,18 +330,75 @@ impl Runner {
         // Live-evidence fixture: signed synthetic events through the closed-by-default
         // live receiver (own secret/account/tables). Never provider delivery proof.
         let live_input = json!({"requestId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}});
-        let live_draft = self.api.json(report,"source_live_contract_draft","POST","/api/commercial-contracts",&owner.session,Some(&live_input),201,None)?;
+        let live_draft = self.api.json(
+            report,
+            "source_live_contract_draft",
+            "POST",
+            "/api/commercial-contracts",
+            &owner.session,
+            Some(&live_input),
+            201,
+            None,
+        )?;
         let live_id = identifier(&live_draft, "/id", 36)?;
-        self.api.json(report,"source_live_contract_accepted","POST",&format!("/api/commercial-contracts/{live_id}/accept"),&owner.session,Some(&json!({"quoteHash":live_draft["quoteHash"]})),200,None)?;
-        let retired_live = self.api.json(report,"source_retired_live_contract_draft","POST","/api/commercial-contracts",&deleted.session,Some(&live_input),201,None)?;
+        self.api.json(
+            report,
+            "source_live_contract_accepted",
+            "POST",
+            &format!("/api/commercial-contracts/{live_id}/accept"),
+            &owner.session,
+            Some(&json!({"quoteHash":live_draft["quoteHash"]})),
+            200,
+            None,
+        )?;
+        let retired_live = self.api.json(
+            report,
+            "source_retired_live_contract_draft",
+            "POST",
+            "/api/commercial-contracts",
+            &deleted.session,
+            Some(&live_input),
+            201,
+            None,
+        )?;
         let retired_live_id = identifier(&retired_live, "/id", 36)?;
-        self.api.json(report,"source_retired_live_contract_accepted","POST",&format!("/api/commercial-contracts/{retired_live_id}/accept"),&deleted.session,Some(&json!({"quoteHash":retired_live["quoteHash"]})),200,None)?;
+        self.api.json(
+            report,
+            "source_retired_live_contract_accepted",
+            "POST",
+            &format!("/api/commercial-contracts/{retired_live_id}/accept"),
+            &deleted.session,
+            Some(&json!({"quoteHash":retired_live["quoteHash"]})),
+            200,
+            None,
+        )?;
         let live_script = r#"const crypto=require('node:crypto');const payload=process.argv[1];const t=Math.floor(Date.now()/1000);const sig=crypto.createHmac('sha256','whsec_restore_live_synthetic_only').update(t+'.'+payload).digest('hex');fetch('http://127.0.0.1:8080/api/commercial-events/stripe-live',{method:'POST',headers:{'content-type':'application/json','stripe-signature':'t='+t+',v1='+sig},body:payload}).then(async r=>{if(r.status!==200)process.exitCode=1;else console.log('saved')}).catch(()=>process.exitCode=1)"#;
         // Cycle 1 anchors at 2026-01-31 JST; cycle 2 arrives late (2026-03-20) and must still cover 02-28..03-31.
         for (label, actor, id, hash, cycle, created) in [
-            ("source_live_cycle1_saved", &owner.id, &live_id, &live_draft["quoteHash"], 1, 1769785200_i64),
-            ("source_live_cycle2_late_saved", &owner.id, &live_id, &live_draft["quoteHash"], 2, 1773964800_i64),
-            ("source_retired_live_cycle1_saved", &deleted.id, &retired_live_id, &retired_live["quoteHash"], 1, 1769785200_i64),
+            (
+                "source_live_cycle1_saved",
+                &owner.id,
+                &live_id,
+                &live_draft["quoteHash"],
+                1,
+                1769785200_i64,
+            ),
+            (
+                "source_live_cycle2_late_saved",
+                &owner.id,
+                &live_id,
+                &live_draft["quoteHash"],
+                2,
+                1773964800_i64,
+            ),
+            (
+                "source_retired_live_cycle1_saved",
+                &deleted.id,
+                &retired_live_id,
+                &retired_live["quoteHash"],
+                1,
+                1769785200_i64,
+            ),
         ] {
             let key = id.replace('-', "");
             let payload = json!({"id":format!("evt_live{cycle}{key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":created,"data":{"object":{"id":format!("pi_live{cycle}{key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":true,"metadata":{"contractId":id,"ownerId":actor,"quoteHash":hash,"cycle":cycle.to_string()}}}});
@@ -349,45 +406,212 @@ impl Runner {
             command.arg("-e").arg(live_script).arg(payload.to_string());
             report.check(label, command_output(command, None).is_ok())?;
         }
-        self.api.json(report,"source_paid_contract_unpaid_withdrawal_denied","POST",&format!("/api/commercial-contracts/{live_id}/cancel"),&owner.session,Some(&json!({"quoteHash":live_draft["quoteHash"],"revision":0})),409,None)?;
-        self.api.json(report,"source_live_cancel_scheduled","POST",&format!("/api/commercial-contracts/{live_id}/cancel-at-period-end"),&owner.session,Some(&json!({"quoteHash":live_draft["quoteHash"]})),200,None)?;
+        self.api.json(
+            report,
+            "source_paid_contract_unpaid_withdrawal_denied",
+            "POST",
+            &format!("/api/commercial-contracts/{live_id}/cancel"),
+            &owner.session,
+            Some(&json!({"quoteHash":live_draft["quoteHash"],"revision":0})),
+            409,
+            None,
+        )?;
+        self.api.json(
+            report,
+            "source_live_cancel_scheduled",
+            "POST",
+            &format!("/api/commercial-contracts/{live_id}/cancel-at-period-end"),
+            &owner.session,
+            Some(&json!({"quoteHash":live_draft["quoteHash"]})),
+            200,
+            None,
+        )?;
         let late_key = live_id.replace('-', "");
         let cancel_second:i64=sql("drill_source",&format!("SELECT floor(extract(epoch FROM cancel_requested_at))::bigint FROM commercial_live_contracts WHERE contract_id='{live_id}'"))?.trim().parse().map_err(|_|Failure::Json)?;
         let pre_payment = json!({"id":format!("evt_pre{late_key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":cancel_second-60,"data":{"object":{"id":format!("pi_pre{late_key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":true,"metadata":{"contractId":live_id,"ownerId":owner.id,"quoteHash":live_draft["quoteHash"],"cycle":"3"}}}});
-        let mut pre_command=clean_command("/usr/local/bin/node");
-        pre_command.arg("-e").arg(live_script).arg(pre_payment.to_string());
-        report.check("source_pre_cancel_paid_delivery_reconciled",command_output(pre_command,None).is_ok())?;
+        let mut pre_command = clean_command("/usr/local/bin/node");
+        pre_command
+            .arg("-e")
+            .arg(live_script)
+            .arg(pre_payment.to_string());
+        report.check(
+            "source_pre_cancel_paid_delivery_reconciled",
+            command_output(pre_command, None).is_ok(),
+        )?;
         report.check("source_cancellation_preserved_paid_cutoff_extended",sql("drill_source",&format!("SELECT cancel_after_cycle FROM commercial_live_contracts WHERE contract_id='{live_id}'"))?.trim()=="3")?;
         let late_payment = json!({"id":format!("evt_late{late_key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":cancel_second+1,"data":{"object":{"id":format!("pi_late{late_key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":true,"metadata":{"contractId":live_id,"ownerId":owner.id,"quoteHash":live_draft["quoteHash"],"cycle":"4"}}}});
         let mut late_command = clean_command("/usr/local/bin/node");
-        late_command.arg("-e").arg(live_script).arg(late_payment.to_string());
-        report.check("source_late_paid_evidence_preserved", command_output(late_command, None).is_ok())?;
-        let live_before = self.api.json(report,"source_live_contract_read","GET",&format!("/api/commercial-contracts/{live_id}"),&owner.session,None,200,None)?;
+        late_command
+            .arg("-e")
+            .arg(live_script)
+            .arg(late_payment.to_string());
+        report.check(
+            "source_late_paid_evidence_preserved",
+            command_output(late_command, None).is_ok(),
+        )?;
+        let live_before = self.api.json(
+            report,
+            "source_live_contract_read",
+            "GET",
+            &format!("/api/commercial-contracts/{live_id}"),
+            &owner.session,
+            None,
+            200,
+            None,
+        )?;
         // An independent current-period contract exercises stored quote -> consent
         // -> signed seat payment -> plan application, not a fabricated empty ledger.
         let mut seat_contract_id = String::new();
         let mut retired_seat_contract_id = String::new();
+        let mut decrease_id = String::new();
+        let mut retired_decrease_id = String::new();
         for (actor, retired) in [(&owner, false), (&deleted, true)] {
             let input = json!({"requestId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}});
-            let draft = self.api.json(report,if retired {"seat_retired_contract"} else {"seat_contract"},"POST","/api/commercial-contracts",&actor.session,Some(&input),201,None)?;
-            let cid = identifier(&draft,"/id",36)?;
-            self.api.json(report,if retired {"seat_retired_contract_accept"} else {"seat_contract_accept"},"POST",&format!("/api/commercial-contracts/{cid}/accept"),&actor.session,Some(&json!({"quoteHash":draft["quoteHash"]})),200,None)?;
+            let draft = self.api.json(
+                report,
+                if retired {
+                    "seat_retired_contract"
+                } else {
+                    "seat_contract"
+                },
+                "POST",
+                "/api/commercial-contracts",
+                &actor.session,
+                Some(&input),
+                201,
+                None,
+            )?;
+            let cid = identifier(&draft, "/id", 36)?;
+            self.api.json(
+                report,
+                if retired {
+                    "seat_retired_contract_accept"
+                } else {
+                    "seat_contract_accept"
+                },
+                "POST",
+                &format!("/api/commercial-contracts/{cid}/accept"),
+                &actor.session,
+                Some(&json!({"quoteHash":draft["quoteHash"]})),
+                200,
+                None,
+            )?;
             let key = cid.replace('-', "");
             let payment = json!({"id":format!("evt_seatperiod{key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":unix_ms()/1000,"data":{"object":{"id":format!("pi_seatperiod{key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":true,"metadata":{"contractId":cid,"ownerId":actor.id,"quoteHash":draft["quoteHash"],"cycle":"1"}}}});
-            let mut cmd = clean_command("/usr/local/bin/node");cmd.arg("-e").arg(live_script).arg(payment.to_string());
-            report.check(if retired {"seat_retired_period_paid"} else {"seat_period_paid"},command_output(cmd,None).is_ok())?;
+            let mut cmd = clean_command("/usr/local/bin/node");
+            cmd.arg("-e").arg(live_script).arg(payment.to_string());
+            report.check(
+                if retired {
+                    "seat_retired_period_paid"
+                } else {
+                    "seat_period_paid"
+                },
+                command_output(cmd, None).is_ok(),
+            )?;
             let quote = self.api.json(report,if retired {"seat_retired_quote"} else {"seat_quote"},"POST",&format!("/api/commercial-contracts/{cid}/seat-quotes"),&actor.session,Some(&json!({"requestId":"ffffffff-ffff-4fff-8fff-ffffffffffff","requestedPlan":{"type":"personal","users":2},"roundingPolicy":"ceil-jpy"})),201,None)?;
-            let sid = identifier(&quote,"/id",36)?;
-            self.api.json(report,if retired {"seat_retired_consent"} else {"seat_consent"},"POST",&format!("/api/commercial-contracts/{cid}/seat-quotes/{sid}/accept"),&actor.session,Some(&json!({"quoteHash":quote["quoteHash"]})),200,None)?;
+            let sid = identifier(&quote, "/id", 36)?;
+            self.api.json(
+                report,
+                if retired {
+                    "seat_retired_consent"
+                } else {
+                    "seat_consent"
+                },
+                "POST",
+                &format!("/api/commercial-contracts/{cid}/seat-quotes/{sid}/accept"),
+                &actor.session,
+                Some(&json!({"quoteHash":quote["quoteHash"]})),
+                200,
+                None,
+            )?;
             let mut payment = payment;
-            payment["id"] = json!(format!("evt_seatincrease{key}"));payment["data"]["object"]["id"] = json!(format!("pi_seatincrease{key}"));
+            payment["id"] = json!(format!("evt_seatincrease{key}"));
+            payment["data"]["object"]["id"] = json!(format!("pi_seatincrease{key}"));
             payment["data"]["object"]["amount"] = quote["quote"]["proposedRoundedJpy"].clone();
-            payment["data"]["object"]["amount_received"] = quote["quote"]["proposedRoundedJpy"].clone();
+            payment["data"]["object"]["amount_received"] =
+                quote["quote"]["proposedRoundedJpy"].clone();
             payment["data"]["object"]["metadata"]["quoteHash"] = quote["quoteHash"].clone();
             payment["data"]["object"]["metadata"]["seatChangeId"] = json!(sid);
-            let mut cmd = clean_command("/usr/local/bin/node");cmd.arg("-e").arg(live_script).arg(payment.to_string());
-            report.check(if retired {"seat_retired_applied"} else {"seat_applied"},command_output(cmd,None).is_ok())?;
-            if retired {retired_seat_contract_id=cid;} else {seat_contract_id=cid;}
+            let mut cmd = clean_command("/usr/local/bin/node");
+            cmd.arg("-e").arg(live_script).arg(payment.to_string());
+            report.check(
+                if retired {
+                    "seat_retired_applied"
+                } else {
+                    "seat_applied"
+                },
+                command_output(cmd, None).is_ok(),
+            )?;
+            // Respect the shared commercial router's real 30/minute quota.
+            // This is not a race barrier and never changes the server limit.
+            if !retired {
+                std::thread::sleep(Duration::from_secs(60));
+            }
+            let mut decrease_quotes = Vec::new();
+            for request in [
+                "11111111-2222-4333-8444-555555555555",
+                "66666666-7777-4888-8999-aaaaaaaaaaaa",
+            ] {
+                let reduction = self.api.json(
+                    report,
+                    if retired {
+                        "decrease_retired_quote"
+                    } else {
+                        "decrease_quote"
+                    },
+                    "POST",
+                    &format!("/api/commercial-contracts/{cid}/seat-decrease-quotes"),
+                    &actor.session,
+                    Some(
+                        &json!({"requestId":request,"requestedPlan":{"type":"personal","users":1}}),
+                    ),
+                    201,
+                    None,
+                )?;
+                let did = identifier(&reduction, "/id", 36)?;
+                self.api.json(
+                    report,
+                    if retired {
+                        "decrease_retired_accept"
+                    } else {
+                        "decrease_accept"
+                    },
+                    "POST",
+                    &format!("/api/commercial-contracts/{cid}/seat-decrease-quotes/{did}/accept"),
+                    &actor.session,
+                    Some(&json!({"quoteHash":reduction["quoteHash"]})),
+                    200,
+                    None,
+                )?;
+                decrease_quotes.push((did, reduction));
+            }
+            for (index, (did, reduction)) in decrease_quotes.iter().enumerate() {
+                let payment = json!({"id":format!("evt_decrease{index}{key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":unix_ms()/1000,"data":{"object":{"id":format!("pi_decrease{index}{key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":true,"metadata":{"contractId":cid,"ownerId":actor.id,"quoteHash":draft["quoteHash"],"cycle":"2","seatDecreaseId":did,"seatDecreaseQuoteHash":reduction["quoteHash"]}}}});
+                let mut cmd = clean_command("/usr/local/bin/node");
+                cmd.arg("-e").arg(live_script).arg(payment.to_string());
+                report.check(
+                    if retired {
+                        "decrease_retired_payment"
+                    } else {
+                        "decrease_payment"
+                    },
+                    command_output(cmd, None).is_ok(),
+                )?;
+            }
+            let funded = decrease_quotes[1].0.clone();
+            report.check(if retired {"source_retired_decrease_funded"} else {"source_decrease_funded"},sql("drill_source",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{funded}' AND state='funded' AND accepted_at IS NOT NULL AND target_cycle=2 AND quote->'renewalQuote'->>'monthlyTotalJpy'='980'"))?.trim()=="1")?;
+            report.check(if retired {"source_retired_decrease_exception_nonempty"} else {"source_decrease_exception_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{cid}' AND amount_jpy=980 AND length(event_hash)=64 AND reason='seat_decrease_no_longer_applicable'"))?.trim()=="1")?;
+            report.check(if retired {"source_retired_decrease_period_bound"} else {"source_decrease_period_bound"},sql("drill_source",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{cid}' AND cycle=2 AND seat_decrease_id='{funded}' AND billing_plan->>'users'='1' AND amount_jpy=980"))?.trim()=="1")?;
+            if retired {
+                retired_decrease_id = funded;
+            } else {
+                decrease_id = funded;
+            }
+            if retired {
+                retired_seat_contract_id = cid;
+            } else {
+                seat_contract_id = cid;
+            }
         }
         self.api.json(
             report,
@@ -928,11 +1152,30 @@ impl Runner {
         report.check("restored_paid_period_nonempty_sandbox_only",sql("drill_restored",&format!("SELECT count(*) FROM commercial_paid_periods WHERE contract_id='{contract_id}' AND evidence='provider_test_sandbox' AND period_end>period_start AND amount_jpy=980"))?.trim()=="1")?;
         report.check("retired_paid_period_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_paid_periods WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check("retired_payment_ledger_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
-        let restored_live = self.api.json(report,"restored_live_contract_current_owner","GET",&format!("/api/commercial-contracts/{live_id}"),&current_owner.session,None,200,None)?;
+        let restored_live = self.api.json(
+            report,
+            "restored_live_contract_current_owner",
+            "GET",
+            &format!("/api/commercial-contracts/{live_id}"),
+            &current_owner.session,
+            None,
+            200,
+            None,
+        )?;
         // The fixture ended in March 2026. Compare stable contract boundaries;
         // today's date is re-derived and may cross midnight while restoring.
-        for (name, field) in [("restored_live_contract_start", "contractStart"), ("restored_live_paid_through", "paidThrough"), ("restored_live_export_window", "exportWindow")] {
-            report.check(name, exact_json(&live_before["entitlement"][field], &restored_live["entitlement"][field]))?;
+        for (name, field) in [
+            ("restored_live_contract_start", "contractStart"),
+            ("restored_live_paid_through", "paidThrough"),
+            ("restored_live_export_window", "exportWindow"),
+        ] {
+            report.check(
+                name,
+                exact_json(
+                    &live_before["entitlement"][field],
+                    &restored_live["entitlement"][field],
+                ),
+            )?;
         }
         report.check("restored_live_periods_anchored_nonempty", sql("drill_restored",&format!("SELECT string_agg(cycle||':'||period_start||'>'||period_end||':'||amount_jpy||':'||evidence, ',' ORDER BY cycle) FROM commercial_live_periods WHERE contract_id='{live_id}' AND disposition='effective'"))?.trim()=="1:2026-01-31>2026-02-28:980:provider_live,2:2026-02-28>2026-03-31:980:provider_live,3:2026-03-31>2026-04-30:980:provider_live")?;
         report.check("restored_refund_review_nonempty", sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{live_id}' AND cycle=4 AND disposition='refund_review' AND amount_jpy=980"))?.trim()=="1")?;
@@ -941,6 +1184,11 @@ impl Runner {
         report.check("restored_seat_change_nonempty_applied",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_changes WHERE contract_id='{seat_contract_id}' AND state='applied' AND accepted_at IS NOT NULL AND applied_at IS NOT NULL AND provider_object_id IS NOT NULL"))?.trim()=="1")?;
         report.check("restored_current_plan_revision",sql("drill_restored",&format!("SELECT (current_plan->>'users')||':'||seat_revision FROM commercial_contracts WHERE id='{seat_contract_id}'"))?.trim()=="2:1")?;
         report.check("retired_seat_change_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_changes WHERE contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
+        report.check("restored_decrease_nonempty_funded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{decrease_id}' AND state='funded' AND target_cycle=2 AND accepted_at IS NOT NULL AND quote->'renewalQuote'->>'monthlyTotalJpy'='980'"))?.trim()=="1")?;
+        report.check("restored_decrease_exception_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{seat_contract_id}' AND amount_jpy=980 AND reason='seat_decrease_no_longer_applicable'"))?.trim()=="1")?;
+        report.check("restored_decrease_period_bound",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{seat_contract_id}' AND cycle=2 AND seat_decrease_id='{decrease_id}' AND billing_plan->>'users'='1' AND amount_jpy=980"))?.trim()=="1")?;
+        report.check("retired_decreases_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{retired_decrease_id}' OR contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
+        report.check("retired_decrease_exceptions_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
         report.check("retired_live_rows_cascaded", sql("drill_restored",&format!("SELECT (SELECT count(*) FROM commercial_live_contracts WHERE contract_id='{retired_live_id}')+(SELECT count(*) FROM commercial_live_periods WHERE contract_id='{retired_live_id}')"))?.trim()=="0")?;
         report.check(
             "retired_contracts_cascaded",

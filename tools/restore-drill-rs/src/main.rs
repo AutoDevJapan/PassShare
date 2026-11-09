@@ -37,6 +37,8 @@ const TABLES: &[&str] = &[
     "commercial_live_contracts",
     "commercial_live_periods",
     "commercial_seat_changes",
+    "commercial_seat_decreases",
+    "commercial_plan_payment_exceptions",
 ];
 // Exact additive tables from backend/native/src/encrypted-schema.sql. This
 // legacy plaintext exercise never activates encrypted storage or stages rotation.
@@ -664,9 +666,15 @@ impl Runner {
             .env("PORT", "8080")
             .env("TRUST_PROXY_HOPS", "0")
             .env("PASSSHARE_MUTATIONS_BIN", NATIVE)
-            .env("PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET", "whsec_restore_synthetic_only")
+            .env(
+                "PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET",
+                "whsec_restore_synthetic_only",
+            )
             .env("PASSSHARE_STRIPE_TEST_ACCOUNT", "acct_restorefixture")
-            .env("PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET", "whsec_restore_live_synthetic_only")
+            .env(
+                "PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET",
+                "whsec_restore_live_synthetic_only",
+            )
             .env("PASSSHARE_STRIPE_LIVE_ACCOUNT", "acct_restorelive")
             .env("PASSSHARE_COMMERCIAL_LIVE_ENABLED", "true")
             .stdout(Stdio::null())
