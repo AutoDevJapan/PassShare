@@ -24,8 +24,13 @@ export function installSupportOperatorRoutes(router,{pool,operatorIds=[]}) {
   const users=await c.query('SELECT id FROM users WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE',[ids]);
   if(users.rowCount!==ids.length)throw denied();
   const sessions=await c.query('SELECT id,user_id,expires_at FROM sessions WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE',[pairs.map(p=>p.session)]);
+  if(pairs.some(p=>!sessions.rows.some(s=>s.id===p.session&&s.user_id===p.user)))throw denied();
+  return sessions.rows;
+ };
+ const assertUnexpired=async(c,sessions)=>{
   const now=(await c.query('SELECT clock_timestamp() AS now')).rows[0].now;
-  if(pairs.some(p=>!sessions.rows.some(s=>s.id===p.session&&s.user_id===p.user&&s.expires_at>now)))throw denied();
+  if(sessions.some(s=>s.expires_at<=now))throw denied();
+  return now;
  };
  router.post('/:id/authorization',requireCsrf,async(req,res)=>{
   try{
@@ -34,8 +39,9 @@ export function installSupportOperatorRoutes(router,{pool,operatorIds=[]}) {
    const operator=b.operatorId.toLowerCase();if(!operators.has(operator))throw denied();
    const token=randomBytes(32).toString('base64url');
    const result=await transaction(async c=>{
-    await lockActors(c,[{user:req.auth.userId,session:req.auth.sessionId}]);
+    const sessions=await lockActors(c,[{user:req.auth.userId,session:req.auth.sessionId}]);
     const r=(await c.query('SELECT * FROM support_receipts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
+    await assertUnexpired(c,sessions);
     if(!r)throw denied();
     if(r.revision!==b.revision||!((r.status==='received'&&b.status==='in_progress')||(r.status==='in_progress'&&b.status==='resolved')))throw authHttpError(409,'PS015','Receipt state changed');
     const value=await c.query(`UPDATE support_receipts SET operator_consent=jsonb_build_object('hash',$2::text,'operator',$3::text,'session',$4::text,'status',$5::text,'revision',$6::int,'expiresAt',clock_timestamp()+interval '10 minutes') WHERE id=$1 RETURNING operator_consent->>'expiresAt' AS expires`,[r.id,hash(token),operator,req.auth.sessionId,b.status,r.revision]);
@@ -50,10 +56,10 @@ export function installSupportOperatorRoutes(router,{pool,operatorIds=[]}) {
    const result=await transaction(async c=>{
     const preliminary=(await c.query('SELECT user_id,operator_consent FROM support_receipts WHERE id=$1',[req.params.id])).rows[0];
     const a=preliminary?.operator_consent;if(!a||!uuid(a.session)||a.operator!==req.auth.userId||a.hash!==hash(b.confirmation))throw denied();
-    await lockActors(c,[{user:preliminary.user_id,session:a.session},{user:req.auth.userId,session:req.auth.sessionId}]);
+    const sessions=await lockActors(c,[{user:preliminary.user_id,session:a.session},{user:req.auth.userId,session:req.auth.sessionId}]);
     const r=(await c.query('SELECT * FROM support_receipts WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
     const current=r?.operator_consent;
-    const now=(await c.query('SELECT clock_timestamp() AS now')).rows[0].now;
+    const now=await assertUnexpired(c,sessions);
     if(!current||current.hash!==hash(b.confirmation)||current.operator!==req.auth.userId||current.session!==a.session||new Date(current.expiresAt)<=now||current.revision!==r.revision)throw denied();
     if(!((r.status==='received'&&current.status==='in_progress')||(r.status==='in_progress'&&current.status==='resolved')))throw denied();
     const changed=(await c.query(`UPDATE support_receipts SET status=$2,revision=revision+1,operator_consent=NULL,history=history||jsonb_build_array(jsonb_build_object('status',$2::text,'at',clock_timestamp(),'operatorId',$3::text)) WHERE id=$1 RETURNING id,status,revision`,[r.id,current.status,req.auth.userId])).rows[0];return changed;

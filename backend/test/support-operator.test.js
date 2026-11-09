@@ -44,10 +44,21 @@ test('authenticated owner consent and operator status are persistent and single 
    assert.equal((await run(consume,opLogin.body.refreshToken,{confirmation:finalGrant.body.confirmation})).status,403);
    const login=await run('/api/auth/login',null,{email:owner.user.email,password:'synthetic-password123'});assert.equal(login.status,200);
    const final=await run(auth,login.body.refreshToken,{...grant,status:'resolved',revision:1});assert.equal(final.status,201);
+   await pool.query('UPDATE support_receipts SET revision=revision+1 WHERE id=$1',[id]);
+   assert.equal((await run(consume,opLogin.body.refreshToken,{confirmation:final.body.confirmation})).status,403);
+   await pool.query('UPDATE support_receipts SET revision=revision-1 WHERE id=$1',[id]);
    assert.equal((await run(consume,opLogin.body.refreshToken,{confirmation:final.body.confirmation})).status,200);
    assert.equal((await run(consume,opLogin.body.refreshToken,{confirmation:final.body.confirmation})).status,403);
    const durable=await call('/api/support-receipts/'+id,login.body.refreshToken);assert.equal(durable.body.history.length,2);assert.equal(durable.body.status,'resolved');
+   const pendingReceipt=await run('/api/support-receipts',login.body.refreshToken,{requestId:randomUUID(),kind:'technical',version:'0.1.0',platform:'web',errorCode:''});assert.equal(pendingReceipt.status,201);
+   const pendingAuth='/api/support-receipts/'+pendingReceipt.body.id+'/authorization';
+   const pendingConsume='/api/support-receipts/'+pendingReceipt.body.id+'/operator-status';
+   const beforeRetire=await run(pendingAuth,login.body.refreshToken,grant);assert.equal(beforeRetire.status,201);
+   // A server without the deployment grant cannot consume an existing consent.
+   assert.equal((await call(pendingConsume,opLogin.body.refreshToken,{confirmation:beforeRetire.body.confirmation})).status,403);
    const retired=await call('/api/auth/account',login.body.refreshToken,{currentPassword:'synthetic-password123',confirmationEmail:owner.user.email},'DELETE');assert.equal(retired.status,204);
+   assert.equal((await run(pendingConsume,opLogin.body.refreshToken,{confirmation:beforeRetire.body.confirmation})).status,403);
+   assert.equal((await pool.query('SELECT count(*)::int n FROM support_receipts WHERE user_id=$1',[owner.user.id])).rows[0].n,0);
    assert.equal((await pool.query('SELECT count(*)::int n FROM support_receipts WHERE id=$1',[id])).rows[0].n,0);
   }finally{nested.closeAllConnections();await new Promise(r=>nested.close(r));}
  }finally{delete process.env.PASSSHARE_SUPPORT_OPERATOR_IDS;server.closeAllConnections();await new Promise(r=>server.close(r));await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[actors]);await pool.end();}
