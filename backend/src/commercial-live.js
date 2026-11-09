@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS commercial_live_periods (
  period_end DATE NOT NULL CHECK(period_end>period_start), amount_jpy BIGINT NOT NULL CHECK(amount_jpy>0),
  provider_object_id TEXT NOT NULL, event_hash TEXT NOT NULL,
  evidence TEXT NOT NULL CHECK(evidence='provider_live'), received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
- disposition TEXT NOT NULL DEFAULT 'effective' CHECK(disposition IN ('effective','refund_review')), PRIMARY KEY(account_id,event_id), UNIQUE(contract_id,cycle), UNIQUE(account_id,provider_object_id));`;
+ disposition TEXT NOT NULL DEFAULT 'effective' CHECK(disposition IN ('effective','refund_review')), PRIMARY KEY(account_id,event_id), UNIQUE(contract_id,cycle), UNIQUE(account_id,provider_object_id));
+ALTER TABLE commercial_live_periods ADD COLUMN IF NOT EXISTS disposition TEXT NOT NULL DEFAULT 'effective' CHECK(disposition IN ('effective','refund_review'));`;
 export const migrateCommercialLive=pool=>applySchemaWithAdvisoryLock(pool,4820130,LIVE_SCHEMA);
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 
