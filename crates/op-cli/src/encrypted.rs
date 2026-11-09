@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use passshare_connect::{
     BoxState, EncryptedItem, EncryptedSessionClient, EncryptedSessionError, ItemContext,
-    OwnerKeyContext, SharedKeyExpectation, SharingItemSummary, SharingRotationClient,
-    SharingSnapshot,
+    OwnerKeyContext, OwnerKeyRecord, SharedKeyExpectation, SharingItemSummary,
+    SharingRotationClient, SharingSnapshot,
 };
 use passshare_core::{
     cloud_crypto::{
@@ -29,6 +29,7 @@ use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{AttachmentCommands, Cli, Commands, ItemCommands, VaultCommands};
+mod bulk_export;
 
 // A maximal Core envelope expands to about 1.4 MiB in JSON/Base64. Allow
 // bounded replay input as well as the original one-MiB plaintext DTO.
@@ -372,6 +373,7 @@ struct Session {
     box_route: ConnectId,
     owner: OwnerKeyContext,
     key: PasswordBoxKey,
+    owner_record: OwnerKeyRecord,
     // Binding replay to the same origin and path prefix is independent of bundles.
     host: String,
 }
@@ -407,7 +409,7 @@ impl Session {
         }
         let salt = KdfParams {
             algorithm: "argon2id".into(),
-            salt: record.bundle.salt,
+            salt: record.bundle.salt.clone(),
             memory_kib: crypto::KDF_MEMORY_KIB,
             time_cost: crypto::KDF_TIME_COST,
             parallelism: crypto::KDF_PARALLELISM,
@@ -428,6 +430,7 @@ impl Session {
             box_route,
             owner,
             key,
+            owner_record: record,
             host: Url::parse(host).map_err(|_| INPUT)?.to_string(),
         })
     }
@@ -1162,6 +1165,13 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         _ => {},
     }
     let mut input = read_input(cli.secret_stdin)?;
+    if matches!(cli.command, Commands::Export { .. })
+        && (!cli.secret_stdin
+            || cli.prepare_only
+            || !object_keys(&input.0, &["sessionToken", "encryptionPassword"]))
+    {
+        return Err(INPUT);
+    }
     if cli.recipient {
         return run_recipient(cli, input).await;
     }
@@ -1187,6 +1197,7 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         },
         Commands::Read { reference } => passshare_connect::parse_op_reference(reference).ok_or(INPUT)?.vault,
         Commands::Attachment { .. } => return Err(INPUT),
+        Commands::Export { vault, .. } => vault.clone(),
     };
     let session = Session::open(&host, &token, &password, &box_id).await?;
     // Keys and credentials are kept only in memory for this invocation.
@@ -1199,6 +1210,15 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         erase(s);
     }
     let prepared = match cli.command {
+        Commands::Export {
+            contract,
+            out,
+            max_bytes,
+            ..
+        } => {
+            bulk_export::run(&session, &contract, &out, max_bytes).await?;
+            return Ok(());
+        }
         Commands::Attachment { .. } => return Err(INPUT),
         Commands::Vault {
             command: VaultCommands::List,

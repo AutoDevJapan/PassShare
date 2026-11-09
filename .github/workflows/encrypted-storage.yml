@@ -62,6 +62,15 @@ jobs:
         run: |
           mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
           cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1 --nocapture
+      - name: Verify owner bulk CLI and offline archive recovery with formal Node
+        env:
+          PASSSHARE_CLI_DOCKER_MODE: node
+          PASSSHARE_CLI_NATIVE: ${{ github.workspace }}/backend/native/target/debug/passshare-mutations
+          PASSSHARE_CLI_BINARY: ${{ github.workspace }}/target/debug/op
+          PASSSHARE_CLI_OUTPUT_DIR: ${{ runner.temp }}/passshare1163-bulk-node
+        run: |
+          mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_bulk_export::formal_cli_bulk_export -- --ignored --exact --test-threads=1 --nocapture
       - name: Verify atomic encrypted attachment storage and rotation with formal Node
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments backend/native/target/debug/passshare-mutations
       - name: Verify complete owner migration with the formal Node API
@@ -89,6 +98,15 @@ jobs:
         run: |
           mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
           cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_recipient::formal_cli_recipient -- --ignored --exact --test-threads=1 --nocapture
+      - name: Verify owner bulk CLI and offline archive recovery with the distribution image
+        env:
+          PASSSHARE_CLI_DOCKER_MODE: image
+          PASSSHARE_CLI_IMAGE: passshare-todo1163-encrypted-api
+          PASSSHARE_CLI_BINARY: ${{ github.workspace }}/target/debug/op
+          PASSSHARE_CLI_OUTPUT_DIR: ${{ runner.temp }}/passshare1163-bulk-image
+        run: |
+          mkdir "$PASSSHARE_CLI_OUTPUT_DIR"
+          cargo test --manifest-path tools/encrypted-storage-acceptance/Cargo.toml --locked sharing_rotation::cli_bulk_export::formal_cli_bulk_export -- --ignored --exact --test-threads=1 --nocapture
       - name: Verify atomic encrypted attachment storage and rotation with the distribution image
         run: tools/encrypted-storage-acceptance/target/debug/passshare-encrypted-storage-acceptance --encrypted-attachments --image passshare-todo1163-encrypted-api
       - name: Verify complete owner migration with the distribution image

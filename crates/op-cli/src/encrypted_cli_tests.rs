@@ -16,6 +16,8 @@ use passshare_core::{cloud_crypto::PasswordBoxKey, crypto};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
+#[path = "bulk_cli_tests.rs"]
+mod bulk;
 #[path = "recipient_cli_tests.rs"]
 mod recipient;
 
@@ -44,6 +46,12 @@ struct State {
     auth_id: String,
     redirects: usize,
     replayed: Option<Value>,
+    export_items: Option<Vec<EncryptedItem>>,
+    export_files: Vec<passshare_connect::EncryptedAttachment>,
+    export_missing_counter: Option<&'static str>,
+    export_failure: u16,
+    export_fail_after: usize,
+    export_reads: usize,
 }
 struct Server {
     password: Zeroizing<String>,
@@ -87,6 +95,12 @@ impl Server {
             auth_id: OWNER.into(),
             redirects: 0,
             replayed: None,
+            export_items: None,
+            export_files: Vec::new(),
+            export_missing_counter: None,
+            export_failure: 0,
+            export_fail_after: 0,
+            export_reads: 0,
         }));
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -309,6 +323,9 @@ fn route(method: &str, path: &str, body: &Value, s: &mut State) -> (u16, Value) 
     }
     if s.auth_failure != 0 {
         return failure(s.auth_failure, s);
+    }
+    if let Some(result) = bulk::export_route(method, path, s) {
+        return result;
     }
     // Independent legacy fixture, requiring a different credential and /v1
     // routes. This exercises actual executable compatibility after dispatch.
