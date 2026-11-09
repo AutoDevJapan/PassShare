@@ -102,7 +102,7 @@ fn verify_zero_files(
     cid: &str,
     output: &std::path::Path,
     expected: &BTreeMap<String, Value>,
-) {
+) -> Value {
     let path = output.join(format!(
         "zero-files-{}.json",
         ConnectId::generate().unwrap()
@@ -135,6 +135,10 @@ fn verify_zero_files(
     let archive: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(archive["attachments"].as_array().unwrap().is_empty());
     assert_eq!(archive["items"].as_array().unwrap().len(), expected.len());
+    std::fs::remove_file(path).unwrap();
+    archive
+}
+fn verify_zero_archive(archive: &Value, a: &Account, expected: &BTreeMap<String, Value>) {
     let owner = owner_context(&a.box_id, &a.id, 1);
     assert_eq!(archive["ownerContext"], json!(owner));
     let key = unwrap_bundle(&archive["ownerBundle"], &a.encryption_password, &owner).unwrap();
@@ -153,7 +157,6 @@ fn verify_zero_files(
             *expected
         );
     }
-    std::fs::remove_file(path).unwrap();
 }
 #[test]
 #[ignore = "requires explicit owned Docker PG, formal backend/op binaries and owned output directory"]
@@ -244,7 +247,7 @@ fn formal_cli_bulk_export() {
     let no_file_contract = contract(&db, p, &no_files);
     paid_fixture(&db, &no_file_contract);
     let mut no_file_expected = BTreeMap::new();
-    verify_zero_files(
+    let empty_archive = verify_zero_files(
         &binary,
         p,
         &no_files,
@@ -264,7 +267,7 @@ fn formal_cli_bulk_export() {
         200,
     );
     no_file_expected.insert(id, value);
-    verify_zero_files(
+    let item_only_archive = verify_zero_files(
         &binary,
         p,
         &no_files,
@@ -340,6 +343,8 @@ fn formal_cli_bulk_export() {
     drop(restored);
     drop(db);
     drop(network); // No service may be needed to recover.
+    verify_zero_archive(&empty_archive, &no_files, &BTreeMap::new());
+    verify_zero_archive(&item_only_archive, &no_files, &no_file_expected);
     let reopened = unwrap_bundle(&archive["ownerBundle"], &a.encryption_password, &owner).unwrap();
     let mut recovered = BTreeMap::new();
     for item in archive["items"].as_array().unwrap() {
