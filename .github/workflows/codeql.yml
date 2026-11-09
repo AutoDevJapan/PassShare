@@ -155,7 +155,21 @@ jobs:
               sleep "$((5 * attempt))"
             fi
           done
-          cargo tauri android build --debug --target x86_64 --apk --ci
+          for attempt in 1 2 3; do
+            log="$RUNNER_TEMP/passshare-android-$attempt.log"
+            if cargo tauri android build --debug --target x86_64 --apk --ci >"$log" 2>&1; then
+              cat "$log"
+              break
+            else
+              status=$?
+              cat "$log"
+              # Dependency transport only: never retry compiler diagnostics.
+              if ! grep -Eq 'Received status code 504 from server|Server returned HTTP response code: 504' "$log" || [ "$attempt" -eq 3 ]; then
+                exit "$status"
+              fi
+              sleep "$((5 * attempt))"
+            fi
+          done
           find src-tauri/gen/android/app/build/outputs/apk -type f -name '*debug.apk' -size +0c -print -quit | grep -q .
 
       - name: Analyze
