@@ -9,10 +9,22 @@ pub(super) fn export_route(method: &str, path: &str, s: &mut State) -> Option<(u
     }
     let encrypted = format!("/api/encrypted/boxes/{BOX}");
     if path == format!("{encrypted}/sharing-snapshot") {
-        return Some((
-            200,
-            json!({"stateRevision":1,"keyEpoch":s.epoch,"ownerAccountId":OWNER,"ownerBundleVersion":s.owner_version,"memberCount":1,"liveItemCount":items.len(),"grantCount":0,"liveAttachmentCount":s.export_files.len(),"liveAttachmentBytes":s.export_files.iter().map(|a|serde_json::to_vec(a).unwrap().len()).sum::<usize>()}),
-        ));
+        let mut snapshot = json!({"stateRevision":1,"keyEpoch":s.epoch,"ownerAccountId":OWNER,"ownerBundleVersion":s.owner_version,"memberCount":1,"liveItemCount":items.len(),"grantCount":0,"liveAttachmentCount":s.export_files.len(),"liveAttachmentBytes":s.export_files.iter().map(|a|serde_json::to_vec(a).unwrap().len()).sum::<usize>()});
+        if s.export_files.is_empty() {
+            // The formal native reply omits both optional counters at zero.
+            snapshot
+                .as_object_mut()
+                .unwrap()
+                .remove("liveAttachmentCount");
+            snapshot
+                .as_object_mut()
+                .unwrap()
+                .remove("liveAttachmentBytes");
+        }
+        if let Some(counter) = s.export_missing_counter {
+            snapshot.as_object_mut().unwrap().remove(counter);
+        }
+        return Some((200, snapshot));
     }
     if path == format!("{encrypted}/sharing-snapshot/items?revision=1") {
         let rows:Vec<_>=items.iter().map(|a|json!({"itemId":a.context.item_id,"itemVersion":a.context.item_version,"keyEpoch":a.context.key_epoch})).collect();
@@ -113,6 +125,54 @@ fn directory() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("passshare-bulk-cli-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&dir).unwrap();
     dir
+}
+
+#[test]
+fn bulk_exports_empty_and_item_only_boxes_with_formal_omitted_zero_file_counts() {
+    for empty in [true, false] {
+        let (server, mut plain, _) = prepared();
+        plain[0]["attachments"] = json!([]);
+        let context = serde_json::from_value(
+            json!({"passwordBoxId":BOX,"itemId":plain[0]["id"],"itemVersion":1,"keyEpoch":1}),
+        )
+        .unwrap();
+        let first = server.key.encrypt_item(&plain[0], &context).unwrap();
+        {
+            let mut state = server.state.lock().unwrap();
+            state.export_files.clear();
+            if empty {
+                state.export_items = Some(vec![])
+            } else {
+                state.export_items.as_mut().unwrap()[0] = first;
+            }
+        }
+        let dir = directory();
+        let path = dir.join("archive.json");
+        let result = server.run(
+            &[
+                "export",
+                "--contract",
+                CONTRACT,
+                "--vault",
+                BOX,
+                "--out",
+                path.to_str().unwrap(),
+            ],
+            json!({}),
+        );
+        assert!(
+            result.status.success(),
+            "legitimate zero-file box must export"
+        );
+        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            saved["items"].as_array().unwrap().len(),
+            if empty { 0 } else { 12 }
+        );
+        assert!(saved["attachments"].as_array().unwrap().is_empty());
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 }
 #[test]
 fn executable_bulk_export_recovers_all_items_and_attachment_offline_without_replacing_output() {
@@ -260,4 +320,31 @@ fn corrupted_attachment_is_never_published_as_a_complete_archive() {
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     assert!(!String::from_utf8_lossy(&result.stderr).contains(FIELD));
     std::fs::remove_dir(dir).unwrap();
+}
+
+#[test]
+fn partial_attachment_counter_pairs_are_rejected_before_export_or_file_creation() {
+    for counter in ["liveAttachmentBytes", "liveAttachmentCount"] {
+        let (server, _, _) = prepared();
+        server.state.lock().unwrap().export_missing_counter = Some(counter);
+        let dir = directory();
+        let path = dir.join("archive.json");
+        let result = server.run(
+            &[
+                "export",
+                "--contract",
+                CONTRACT,
+                "--vault",
+                BOX,
+                "--out",
+                path.to_str().unwrap(),
+            ],
+            json!({}),
+        );
+        assert!(!result.status.success());
+        assert_eq!(server.state.lock().unwrap().export_reads, 0);
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir(dir).unwrap();
+    }
 }

@@ -92,6 +92,69 @@ fn contract(db: &Database, p: u16, a: &Account) -> String {
     );
     id
 }
+fn paid_fixture(db: &Database, id: &str) {
+    db.sql(&format!("INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES('{id}',CURRENT_DATE-35); INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_cli_bulk','evt_{id}','{id}',1,CURRENT_DATE-35,CURRENT_DATE-5,980,'pi_{id}','synthetic-client-export-only','provider_live')"));
+}
+fn verify_zero_files(
+    binary: &std::path::Path,
+    p: u16,
+    a: &Account,
+    cid: &str,
+    output: &std::path::Path,
+    expected: &BTreeMap<String, Value>,
+) {
+    let path = output.join(format!(
+        "zero-files-{}.json",
+        ConnectId::generate().unwrap()
+    ));
+    let result = invoke(
+        binary,
+        p,
+        &json!({"sessionToken":a.session,"encryptionPassword":a.encryption_password}),
+        &[
+            "export",
+            "--contract",
+            cid,
+            "--vault",
+            &a.box_id,
+            "--out",
+            path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "formal empty/item-only Box must export"
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    let raw = String::from_utf8(bytes.clone()).unwrap();
+    assert!(
+        !raw.contains(&a.session)
+            && !raw.contains(&a.encryption_password)
+            && !raw.contains("bulk-plaintext-sentinel")
+    );
+    let archive: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(archive["attachments"].as_array().unwrap().is_empty());
+    assert_eq!(archive["items"].as_array().unwrap().len(), expected.len());
+    let owner = owner_context(&a.box_id, &a.id, 1);
+    assert_eq!(archive["ownerContext"], json!(owner));
+    let key = unwrap_bundle(&archive["ownerBundle"], &a.encryption_password, &owner).unwrap();
+    let mut seen = std::collections::BTreeSet::new();
+    for sealed in archive["items"].as_array().unwrap() {
+        let item: EncryptedItem = serde_json::from_value(sealed.clone()).unwrap();
+        let id = item.context.item_id.as_str();
+        let expected = expected.get(id).expect("independent item inventory");
+        assert!(seen.insert(id.to_owned()));
+        assert_eq!(
+            key.decrypt_item(
+                &item,
+                &context(a, id, expected["version"].as_u64().unwrap(), 1)
+            )
+            .unwrap(),
+            *expected
+        );
+    }
+    std::fs::remove_file(path).unwrap();
+}
 #[test]
 #[ignore = "requires explicit owned Docker PG, formal backend/op binaries and owned output directory"]
 fn formal_cli_bulk_export() {
@@ -167,7 +230,49 @@ fn formal_cli_bulk_export() {
     let paid = contract(&db, p, &a);
     // Only this invocation's isolated DB is changed. The period ended five days
     // ago: actual server authorization must allow only the 30-day export window.
-    db.sql(&format!("INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES('{paid}',CURRENT_DATE-35); INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_cli_bulk','evt_{paid}','{paid}',1,CURRENT_DATE-35,CURRENT_DATE-5,980,'pi_{paid}','synthetic-client-export-only','provider_live')"));
+    paid_fixture(&db, &paid);
+    let no_files = Account::signup(p);
+    let no_file_key = PasswordBoxKey::generate().unwrap();
+    call(
+        p,
+        &no_files,
+        "POST",
+        &format!("{}/setup", root(&no_files)),
+        &json!({"bundle":owner_bundle(&no_file_key,&no_files.master,no_files.salt,&owner_context(&no_files.box_id,&no_files.id,1))}),
+        200,
+    );
+    let no_file_contract = contract(&db, p, &no_files);
+    paid_fixture(&db, &no_file_contract);
+    let mut no_file_expected = BTreeMap::new();
+    verify_zero_files(
+        &binary,
+        p,
+        &no_files,
+        &no_file_contract,
+        &output,
+        &no_file_expected,
+    );
+    let id = ConnectId::generate().unwrap().to_string();
+    let mut value = dto(&no_files, &id, 50, "bulk-plaintext-sentinel");
+    value["attachments"] = json!([]);
+    call(
+        p,
+        &no_files,
+        "PUT",
+        &format!("{}/items/{id}", root(&no_files)),
+        &json!({"expectedVersion":0,"envelope":no_file_key.encrypt_item(&value,&context(&no_files,&id,1,1)).unwrap()}),
+        200,
+    );
+    no_file_expected.insert(id, value);
+    verify_zero_files(
+        &binary,
+        p,
+        &no_files,
+        &no_file_contract,
+        &output,
+        &no_file_expected,
+    );
+    println!("bulk CLI formal zero-file controls passed: empty Box and item-only Box with omitted counters");
     drop(host);
     // Compose the existing full-row archive/authorization qualification with
     // this client path: restored API -> contract export -> offline Core files.

@@ -101,7 +101,9 @@ pub(super) async fn run(
         .iter()
         .map(|m| (m.item_id.to_string(), m))
         .collect();
-    let expected_files = session.snapshot.live_attachment_count.ok_or(CONTEXT)?;
+    // The formal sharing snapshot omits BOTH counters when no attachment
+    // exists; SharingSnapshot validation rejects incomplete or zero-valued pairs.
+    let expected_files = session.snapshot.live_attachment_count.unwrap_or(0);
     if (metadata.len() as u128 + expected_files as u128) * 64 > max_bytes as u128 {
         return Err(EncryptedSessionError::ResponseTooLarge.into());
     }
