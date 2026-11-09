@@ -42,7 +42,7 @@ export function createCommercialContractRouter({pool,authStore}){
  };
  registerSeatRoutes(router,persist);
  registerCommercialExport(router,{pool});
- registerExportAudit(router,{pool});
+ registerExportAudit(router,persist);
  router.post('/',requireCsrf,async(req,res)=>{try{
   const b=req.body;if(!exact(b,['requestId','currency','plan','setup'])||!uuid(b.requestId))throw authHttpError(400,'PS018','Invalid contract quote');
   const quote=await nativeMutation({command:'commercial-quote',currency:b.currency,plan:b.plan,setup:b.setup});

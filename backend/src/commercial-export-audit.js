@@ -14,17 +14,18 @@ export async function recordExport(c,{contractId,actorId,boxId,kind,epoch,revisi
  return id;
 }
 const uuid=s=>typeof s==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(s);
-export function registerExportAudit(router,{pool}){
+export function registerExportAudit(router,persist){
  router.get('/:id/export-events',async(req,res)=>{try{
-  if(!pool)throw authHttpError(503,'PS019','Export audit unavailable');
   if(!uuid(req.params.id)||Object.keys(req.query).some(k=>k!=='after')||(req.query.after!==undefined&&!uuid(req.query.after)))throw authHttpError(400,'PS018','Invalid export audit selector');
-  // The SQL binds every row to a currently live session and its own contract.
-  const active=await pool.query('SELECT c.id FROM commercial_contracts c JOIN sessions s ON s.user_id=c.user_id WHERE c.id=$1 AND c.user_id=$2 AND s.id=$3 AND s.expires_at>clock_timestamp()',[req.params.id,req.auth.userId,req.auth.sessionId]);
-  if(!active.rowCount)throw authHttpError(404,'PS022','Contract not found or session expired');
-  const rows=(await pool.query(`SELECT e.id,e.actor_id,e.box_id,e.kind,e.key_epoch::text,e.snapshot_revision::text,e.item_id,e.attachment_id,e.issued_at
-    FROM commercial_export_events e JOIN commercial_contracts c ON c.id=e.contract_id
-    JOIN sessions s ON s.user_id=c.user_id AND s.id=$3 AND s.expires_at>clock_timestamp()
-    WHERE c.id=$1 AND c.user_id=$2 AND ($4::uuid IS NULL OR e.id>$4::uuid) ORDER BY e.id LIMIT 100`,[req.params.id,req.auth.userId,req.auth.sessionId,req.query.after??null])).rows;
+  // Reuse the contract transaction: user/session SHARE -> contract SHARE.
+  // Revocation/deletion serializes with the read, and persist rechecks the
+  // session by database clock after all query waits, before releasing data.
+  const rows=await persist(req,async c=>{
+   const own=await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR SHARE',[req.params.id,req.auth.userId]);
+   if(!own.rowCount)throw authHttpError(404,'PS022','Contract not found');
+   return (await c.query(`SELECT e.id,e.actor_id,e.box_id,e.kind,e.key_epoch::text,e.snapshot_revision::text,e.item_id,e.attachment_id,e.issued_at
+    FROM commercial_export_events e WHERE e.contract_id=$1 AND ($2::uuid IS NULL OR e.id>$2::uuid) ORDER BY e.id LIMIT 100`,[req.params.id,req.query.after??null])).rows;
+  });
   res.set('Cache-Control','no-store');res.json({events:rows,nextCursor:rows.length===100?rows.at(-1).id:null,ordering:'receipt_id'});
  }catch(e){sendAuthError(res,e?.status?e:authHttpError(503,'PS019','Export audit unavailable'));}});
 }
