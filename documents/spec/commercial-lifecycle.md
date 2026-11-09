@@ -198,3 +198,26 @@ live の支払い証跡は、sandbox 台帳とは別のテーブル（`commercia
 本人の `payment-exceptions` から照会できるが、実返金は実行していない。
 core/selfhostの利用権、Boxの所属・所有権・鍵をこの課金処理から新たに付与・剥奪しない。
 減席はこの経路では拒否し、次回更新からの反映は別の未完工程として保持する。
+
+### 契約に紐づく実暗号文の書き出し
+
+`GET /api/commercial-contracts/:id/export/boxes/:boxId/state` で現在の
+`keyEpoch` と `snapshotRevision` を取得する。以後の取得には `epoch` と
+`revision` を指定し、変更があれば409として先頭からやり直す。
+
+- `.../items`: 最大10件・暗号文合計4MiBまでの実envelopeとnextCursor。
+  `after` は前の応答のcursorだけを利用する。添付本体は別取得。
+- `.../items/:itemId/attachment-snapshot`: 同じsnapshotでのitem envelope。
+- `.../items/:itemId/attachments/:attachmentId`: 指定itemに属する実添付envelope。
+
+これは期間窓だけの提案とは別の経路である。現在の契約所有者セッション、
+有効な支払済み期間または終了後30暦日の窓、現在のBox所属・共有鍵を検査する。
+Box→本人/session→契約の順でロックし、既存nativeが生成するSQLでデータ範囲を再認可する。
+ロック待ち後も失効・取消・鍵epoch・snapshot版を確認し、応答確定前に期間とsessionを再確認する。
+請求管理者の資格だけではBoxへ入れず、書き出し期間は所属や鍵を復活させない。
+
+応答は暗号文のみで、パスワードや復号鍵を取り出さない。所有者が独立して持つ鍵と
+contextで復号・検証する。エラーは固定コードだけでSQLや秘密を反射しない。
+既存core/selfhost/暗号化APIの利用権はこの追加経路では制限しない。
+この経路はページごとの取得であり、クライアントの一括ファイル生成・永続監査台帳・
+終了30日後の単独データ削除は別の未完工程として保持する。
