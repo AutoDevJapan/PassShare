@@ -34,6 +34,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Export a complete owner-authorized ciphertext archive to a new file.
+    Export {
+        #[arg(long)]
+        contract: String,
+        #[arg(long)]
+        vault: String,
+        #[arg(long)]
+        out: std::path::PathBuf,
+        /// Local memory/output budget, not a commercial storage allowance.
+        #[arg(long, default_value_t = 64 * 1024 * 1024)]
+        max_bytes: usize,
+    },
     /// Password box operations (op-compatible command spelling)
     Vault {
         #[command(subcommand)]
@@ -178,6 +190,7 @@ async fn run_connect(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let client = ConnectClient::from_env()?;
 
     match cli.command {
+        Commands::Export { .. } => return Err("export requires --encrypted --secret-stdin".into()),
         Commands::Attachment { .. } => {
             return Err("attachment get requires --encrypted --recipient".into())
         }

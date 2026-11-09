@@ -26,6 +26,10 @@ mod sharing_sdk;
 #[path = "cli_recipient.rs"]
 mod cli_recipient;
 
+#[cfg(test)]
+#[path = "cli_bulk_export.rs"]
+mod cli_bulk_export;
+
 fn request_slot() {
     // Honor the REAL formal router quota; never increase its limit or rewrite
     // rate-limit DB rows. This pacing is unrelated to lock-race evidence.

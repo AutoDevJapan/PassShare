@@ -615,7 +615,7 @@ impl EncryptedSessionClient {
         self.send_limited(Method::GET, url, None, 200, 1_404_000)
             .await
     }
-    async fn send_limited(
+    pub(crate) async fn send_limited(
         &self,
         method: Method,
         url: Url,

@@ -1,6 +1,8 @@
 mod attachment_client;
 mod client;
+mod contract_export_client;
 pub use attachment_client::*;
+pub use contract_export_client::{ContractExportItems, ContractExportSnapshot};
 mod encrypted_client;
 mod migration_client;
 pub use migration_client::*;

@@ -14,7 +14,7 @@
 | ツール | バージョン |
 |--------|-----------|
 | Rust | stable（`rustup` 推奨） |
-| Connect API | ローカル / dev / stg / prd のいずれか |
+| Connect API | Prd、または担当専用の使い捨てテスト資源 |
 
 ## ビルド
 
@@ -48,11 +48,11 @@ $env:OP_CONNECT_TOKEN = "test-connect-token"
 .\target\release\op.exe vault list
 ```
 
-stg 例:
+Prdの既存Connect APIを使う例:
 
 ```powershell
-$env:OP_CONNECT_HOST = "https://pass-share-backend-staging.up.railway.app"
-$env:OP_CONNECT_TOKEN = "<STG_OP_CONNECT_TOKEN>"
+$env:OP_CONNECT_HOST = "https://pass-share-backend-production.up.railway.app"
+$env:OP_CONNECT_TOKEN = "<CONNECT_TOKEN>"
 op vault list
 ```
 
@@ -93,6 +93,24 @@ op --encrypted --secret-stdin item retry --vault "<box-id>"
 一覧は秘密値を表示しない。取得は利用者が明示した秘密値を標準出力へ出すため、出力先を管理する。
 現在の利用者・所有者・鍵世代・バンドル版は毎回取得する。401・403・409や通信失敗を自動再送しない。
 認証情報の永続保管は未対応であり、M4全体の完成を示さない。
+
+### 契約終了後の暗号化一括export（所有者）
+
+同じ秘密管理ツールのパイプ入力で、現在のsessionと暗号化パスワードを渡す。
+支払済み契約と現在のBox権限をサーバーが毎回確認する。
+終了後30暦日のexport窓は鍵・所属・本人確認を復活させない。
+
+```powershell
+op --encrypted --secret-stdin export --contract "<contract-uuid>" --vault "<box-id>" --out "<new-archive-path>"
+```
+
+全項目・全添付を認証し、最後のsnapshot確認まで成功した場合だけ暗号化archiveを保存する。
+平文と認証情報は保存しない。保持している暗号化パスワードはオフライン復号に必要。
+既存ファイルは上書きせず、途中失効・破損・版の変化では完成ファイルを作らない。
+同一フォルダへの原子的hard linkに対応したfilesystem（NTFS等）を使う。
+初期上限64MiBは `--max-bytes` で変更できる技術的な上限で、料金プランの制限ではない。
+受信者の一括export・archive再取込み・GUIはこのコマンドの提供範囲に含まない。
+詳細は[契約export仕様](../spec/encrypted-cli.md#所有者の契約export)を参照する。
 
 ### 暗号化モード（共有受信者の読取）
 

@@ -3,10 +3,47 @@
 originalToDo1163 / M4 の CLI 接続部分です。製品全体・全クライアント・M4 の完了は示しません。
 実装は `crates/op-cli/src/encrypted.rs`。既存 Core と Rust Connect SDK を使用します。
 
+## 所有者の契約export
+
+`op --encrypted --secret-stdin export --contract <UUID> --vault <box-id> --out <new-file-path>`
+は、現在の所有者が使える契約export経路から全項目と添付を取得し、一つの暗号化archiveを保存する。
+入力は `sessionToken` と `encryptionPassword` だけとし、受信者モード・prepare-only・変更本文は拒否する。
+サーバーは各要求で契約・現在の所属・鍵世代・版・有効な支払期間または終了後30暦日の窓を検証する。
+sandbox支払いだけで権限を付けず、core/selfhostの独立した利用権をこのコマンドで制限しない。
+
+契約状態のsnapshotを所有者の現在の共有snapshotと照合し、同じepoch/revisionの全ページを取得する。
+独立した項目一覧・保存版、添付一覧・版・件数、認証済み項目内の全参照が一致することを確認し、
+各DTO・添付名・全bytesをCoreで認証する。最後に同じsnapshotと現在の認可を再確認する。
+項目だけの一括取得や、添付の欠落を成功として扱わない。
+401・403・409、途中の失効、破損、件数不足、版の変化は失敗終了し、完成ファイルを作らない。
+契約exportのGETが429の場合だけ、同じselectorを60秒後に一度再試行する。書込みは再送しない。
+
+archive形式は `passshare-ciphertext-archive-v1`。
+全暗号文、公開のcontextとsnapshot、現在の所有者用に包まれた鍵bundleを含む。
+認証token・暗号化パスワード・平文DTO・平文添付・展開した鍵は保存しない。
+利用者が保持する暗号化パスワードとこのbundleで、サービスを停止した後もCoreで内容を復号できる。
+これはサーバーの本人確認・所属・鍵grantの復活、またはarchiveの再取込み機能ではない。
+
+保存先の親フォルダは利用者が用意する。認証した添付名を保存先に解釈しない。
+全取得と検証の後に同じフォルダへ一時ファイルを新規作成し、書込み・同期後、
+hard linkの原子的な新規作成で指定先へ公開する。既存ファイル・symlinkは上書きしない。
+Unixの新規一時ファイルは0600とし、NTFSなどhard linkを使えるfilesystemを要求する。
+失敗時は一時ファイルを除去し、除去できなければ固定診断を返す。
+標準出力は成功件数と `ciphertextOnly:true` だけで、archive自体を出力しない。
+`--max-bytes` の初期値64MiBはメモリ・出力の技術的な上限であり、料金プランの容量制限ではない。
+利用者は明示的に変更できる。保存完了とサーバーの認可receiptは別の証拠である。
+
+SDKの契約export transportは既存の接続先prefixを保持し、redirectや認証転送を許可しない。
+公開期待contextと応答を照合するが、暗号文の認証は呼出側のCoreが行う。
+通常のCLI/SDK loopbackテストに加え、明示実行の `formal_cli_bulk_export` が正式Node/配布imageと
+所有する隔離PG、実opで全12項目と添付の取得・未払い拒否・他owner拒否・上書き拒否・
+サービス停止後の全JSON/全bytes復号を照合する。契約期間はその隔離DBの明示的なSQLfixtureであり、
+正規の支払い配送や本番有料サービスの稼働を証明するものではない。
+
 ## 対応する操作
 
 `op --encrypted` を明示した場合だけ、現在有効なセッションを使います。
-`item list/get/create/edit/delete`、`read`、限定された `vault list`、`item retry` が対象です。
+`item list/get/create/edit/delete`、`read`、限定された `vault list`、`item retry`、契約exportが対象です。
 共有受信者は `--recipient --secret-stdin` を併用し、後述の有限な読取だけを行います。
 コマンドの `vault` / `--vault` は op 互換の綴りであり、指す対象はパスワードボックスです。
 暗号化モードの指定がない場合は、従来の Connect API の操作を維持します。
