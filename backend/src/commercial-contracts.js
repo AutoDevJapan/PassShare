@@ -9,6 +9,7 @@ import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {migrateCommercialEvents} from './commercial-events.js';
 import {migrateCommercialLive,loadEntitlement} from './commercial-live.js';
 import {migrateCommercialSeats,registerSeatRoutes} from './commercial-seats.js';
+import {migrateSeatDecreases,registerSeatDecreaseRoutes} from './commercial-seat-decreases.js';
 import {registerCommercialExport} from './commercial-export.js';
 import {migrateExportAudit,registerExportAudit} from './commercial-export-audit.js';
 
@@ -20,7 +21,7 @@ export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  UNIQUE(user_id,request_id));
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ;
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS lifecycle_revision INTEGER NOT NULL DEFAULT 0;`;
-export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);await migrateCommercialLive(pool);await migrateCommercialSeats(pool);await migrateExportAudit(pool);};
+export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);await migrateCommercialLive(pool);await migrateCommercialSeats(pool);await migrateSeatDecreases(pool);await migrateExportAudit(pool);};
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
 const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,currentPlan:r.current_plan??r.quote.plan,seatRevision:r.seat_revision??0,createdAt:r.created_at,acceptedAt:r.accepted_at,cancellationRequestedAt:r.cancellation_requested_at??null,lifecycleRevision:r.lifecycle_revision??0,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
@@ -41,6 +42,7 @@ export function createCommercialContractRouter({pool,authStore}){
   }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e;}finally{c.release();}
  };
  registerSeatRoutes(router,persist);
+ registerSeatDecreaseRoutes(router,persist);
  registerCommercialExport(router,{pool});
  registerExportAudit(router,persist);
  router.post('/',requireCsrf,async(req,res)=>{try{
