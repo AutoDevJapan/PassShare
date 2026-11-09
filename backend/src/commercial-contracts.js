@@ -9,6 +9,7 @@ import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {migrateCommercialEvents} from './commercial-events.js';
 import {migrateCommercialLive,loadEntitlement} from './commercial-live.js';
 import {migrateCommercialSeats,registerSeatRoutes} from './commercial-seats.js';
+import {registerCommercialExport} from './commercial-export.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -39,6 +40,7 @@ export function createCommercialContractRouter({pool,authStore}){
   }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e;}finally{c.release();}
  };
  registerSeatRoutes(router,persist);
+ registerCommercialExport(router,{pool});
  router.post('/',requireCsrf,async(req,res)=>{try{
   const b=req.body;if(!exact(b,['requestId','currency','plan','setup'])||!uuid(b.requestId))throw authHttpError(400,'PS018','Invalid contract quote');
   const quote=await nativeMutation({command:'commercial-quote',currency:b.currency,plan:b.plan,setup:b.setup});
