@@ -41,6 +41,8 @@ const TABLES: &[&str] = &[
 // Exact additive tables from backend/native/src/encrypted-schema.sql. This
 // legacy plaintext exercise never activates encrypted storage or stages rotation.
 const ENCRYPTED_TABLES: &[&str] = &[
+    // Contract export receipts remain empty in the legacy plaintext fixture.
+    "commercial_export_events",
     "encrypted_box_state",
     "encrypted_items",
     "encrypted_item_tombstones",

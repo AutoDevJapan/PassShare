@@ -600,6 +600,20 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
         db.sql(&format!("INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES('{cid}',CURRENT_DATE-35); INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_restore_export','evt_{cid}','{cid}',1,CURRENT_DATE-35,CURRENT_DATE-5,980,'pi_{cid}','synthetic-export-window-fixture','provider_live')"));
         export_contracts.push(cid);
     }
+    // A real authorized export selector produces a non-empty, metadata-only
+    // audit row before the archive; the full inventory must restore it exactly.
+    call(
+        p,
+        &a,
+        "GET",
+        &format!(
+            "/api/commercial-contracts/{}/export/boxes/{}/state",
+            export_contracts[0], a.box_id
+        ),
+        &Value::Null,
+        200,
+    );
+    assert_eq!(db.sql("SELECT count(*) FROM commercial_export_events"), "1");
     let mut items = BTreeMap::new();
     for ordinal in 0..101 {
         let id = ConnectId::generate().unwrap().to_string();
@@ -726,6 +740,11 @@ pub fn run(db: &Database, network: &Network, mode: &Mode) {
         "guard probes preserve restored semantic contents"
     );
     let resumed = Host::start(&restored, network, mode);
+    assert_eq!(
+        restored.sql("SELECT count(*) FROM commercial_export_events"),
+        "1",
+        "authorized export receipt survives actual restore"
+    );
     let rp = resumed.port;
     let sdk_a = a.sdk(rp);
     let sdk_c = c.sdk(rp);
