@@ -7,7 +7,8 @@ import {authHttpError,sendAuthError} from './auth/errors.js';
 import {nativeMutation} from './lib/native-mutations.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {migrateCommercialEvents} from './commercial-events.js';
-import {entitlementState} from './commercial-entitlement.js';
+import {exportDecision} from './commercial-entitlement.js';
+import {migrateCommercialLive,loadEntitlement} from './commercial-live.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -17,7 +18,7 @@ export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  UNIQUE(user_id,request_id));
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ;
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS lifecycle_revision INTEGER NOT NULL DEFAULT 0;`;
-export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);};
+export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);await migrateCommercialLive(pool);};
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
 const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,createdAt:r.created_at,acceptedAt:r.accepted_at,cancellationRequestedAt:r.cancellation_requested_at??null,lifecycleRevision:r.lifecycle_revision??0,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
@@ -70,10 +71,30 @@ export function createCommercialContractRouter({pool,authStore}){
    return (await c.query('UPDATE commercial_contracts SET cancellation_requested_at=clock_timestamp(),lifecycle_revision=lifecycle_revision+1 WHERE id=$1 RETURNING *',[r.id])).rows[0];
   });res.json({...publicRow(row),cancellationMeaning:'unpaid_acceptance_withdrawn_no_provider_subscription_canceled',refundExecuted:false,dataDeletionExecuted:false});
  }catch(e){sendAuthError(res,e);}});
+ router.post('/:id/cancel-at-period-end',requireCsrf,async(req,res)=>{try{
+  if(!uuid(req.params.id)||!exact(req.body,['quoteHash'])||!/^[a-f0-9]{64}$/.test(req.body.quoteHash??''))throw authHttpError(400,'PS018','Invalid period-end cancellation request');
+  const out=await persist(req,async c=>{
+   const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
+   if(!r)throw authHttpError(404,'PS022','Contract not found');
+   if(r.quote_hash!==req.body.quoteHash)throw authHttpError(409,'PS015','Contract quote changed');
+   const lc=(await c.query('SELECT * FROM commercial_live_contracts WHERE contract_id=$1 FOR UPDATE',[r.id])).rows[0];
+   if(!lc)throw authHttpError(409,'PS015','Contract has no paid period to end');
+   if(lc.cancel_after_cycle==null)await c.query('UPDATE commercial_live_contracts SET cancel_after_cycle=(SELECT max(cycle) FROM commercial_live_periods WHERE contract_id=$1),cancel_requested_at=clock_timestamp() WHERE contract_id=$1',[r.id]);
+   return loadEntitlement(c,r.id,Date.now());
+  });res.json({entitlement:out,meaning:'ends_at_paid_period_end_no_refund_no_deletion'});
+ }catch(e){sendAuthError(res,e);}});
+ router.get('/:id/export-authorization',async(req,res)=>{try{
+  if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
+  const ent=await persist(req,async c=>{const r=(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];return r?loadEntitlement(c,r.id,Date.now()):null;});
+  if(!ent)throw authHttpError(404,'PS022','Contract not found');
+  // Server-verified claims only: a live session owned this contract. The decision is a proposal, not a key grant.
+  const actor={sessionValid:true,accountRemoved:false,identityConfirmed:true,billingAdministrator:true,membershipActive:true,hasExportScope:true};
+  res.json({entitlement:ent,export:await exportDecision({entitlement:ent,actor})});
+ }catch(e){sendAuthError(res,e);}});
  router.get('/:id',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
-  const row=await persist(req,async c=>{const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];if(r)r.periods=(await c.query('SELECT period_start::text,period_end::text,amount_jpy::text FROM commercial_paid_periods WHERE contract_id=$1 ORDER BY period_start,event_id',[r.id])).rows;return r;});
-  if(!row)throw authHttpError(404,'PS022','Contract not found');const periods=row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,evidence:'provider_test_sandbox'}));res.json({...publicRow(row),providerTestPeriods:row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,amountJpy:Number(x.amount_jpy),evidence:'provider_test_sandbox',entitlementEffective:false})),entitlement:entitlementState({periods,nowMs:Date.now()})});
+  const row=await persist(req,async c=>{const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];if(r){r.entitlement=await loadEntitlement(c,r.id,Date.now());r.periods=(await c.query('SELECT period_start::text,period_end::text,amount_jpy::text FROM commercial_paid_periods WHERE contract_id=$1 ORDER BY period_start,event_id',[r.id])).rows;}return r;});
+  if(!row)throw authHttpError(404,'PS022','Contract not found');res.json({...publicRow(row),providerTestPeriods:row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,amountJpy:Number(x.amount_jpy),evidence:'provider_test_sandbox',entitlementEffective:false})),entitlement:row.entitlement});
  }catch(e){sendAuthError(res,e);}});
  return router;
 }
