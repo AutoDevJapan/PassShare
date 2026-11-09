@@ -1,3 +1,4 @@
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import pg from 'pg';
@@ -11,7 +12,7 @@ test('upgrade the populated pre-disposition live schema without losing evidence'
  const admin=new pg.Pool({connectionString:process.env.DATABASE_URL});
  await admin.query('CREATE DATABASE '+name);
  const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;
- const pool=new pg.Pool({connectionString:url.href});
+ const pool=new pg.Pool({connectionString:url.href});const closePool=trackPoolShutdown(pool);
  try {
   await pool.query('CREATE TABLE users(id UUID PRIMARY KEY)');
   await pool.query(CONTRACT_SCHEMA);
@@ -46,8 +47,8 @@ test('upgrade the populated pre-disposition live schema without losing evidence'
   await migrateCommercialLive(pool);
   assert.equal((await pool.query('SELECT disposition FROM commercial_live_periods')).rows[0].disposition,'refund_review');
  } finally {
-  await pool.end();
-  await admin.query('DROP DATABASE IF EXISTS '+name+' WITH (FORCE)');
+  await closePool();
+  await admin.query('DROP DATABASE IF EXISTS '+name);
   await admin.end();
  }
 });

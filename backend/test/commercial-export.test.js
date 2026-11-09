@@ -1,8 +1,9 @@
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import assert from 'node:assert/strict';import {test} from 'node:test';import pg from 'pg';import Stripe from 'stripe';import {randomUUID} from 'node:crypto';import fs from 'node:fs/promises';
 test('contract-window export returns real ciphertext while rechecking current membership, session and key epoch',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
  assert.match(process.env.DATABASE_URL,/^postgresql:\/\/passshare:passshare@127\.0\.0\.1:(5432|15431)\/passshare$/);
  const admin=new pg.Pool({connectionString:process.env.DATABASE_URL}),name='ps_export_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+name);
- const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});
+ const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});const closePool=trackPoolShutdown(pool);
  const secret='whsec_export_fixture',account='acct_exportfixture';Object.assign(process.env,{PASSSHARE_ENCRYPTED_STORAGE:'true',PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true',PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account});
  const {createApp}=await import('../src/app.js');const {app}=await createApp({pool});const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
  const call=async(p,t,b,method=b===undefined?'GET':'POST')=>{const r=await fetch(base+p,{method,headers:{'content-type':'application/json','x-passshare-client':'mobile',...(t?{authorization:'Bearer '+t}:{})},body:b===undefined?undefined:JSON.stringify(b)});return {status:r.status,body:await r.json().catch(()=>null)}};
@@ -97,5 +98,5 @@ test('contract-window export returns real ciphertext while rechecking current me
   assert.equal((await call(auditPath,login.body.refreshToken)).status,401);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_contracts WHERE id=$1',[q.id])).rows[0].n,0);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_export_events WHERE contract_id=$1',[q.id])).rows[0].n,0);
- }finally{if(box){box.lock();box.free();}server.closeAllConnections();await new Promise(r=>server.close(r));await pool.end();await admin.query('DROP DATABASE '+name+' WITH (FORCE)');await admin.end();for(const k of ['PASSSHARE_ENCRYPTED_STORAGE','PASSSHARE_COMMERCIAL_LIVE_ENABLED','PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT'])delete process.env[k];}
+ }finally{if(box){box.lock();box.free();}server.closeAllConnections();await new Promise(r=>server.close(r));await closePool();await admin.query('DROP DATABASE '+name);await admin.end();for(const k of ['PASSSHARE_ENCRYPTED_STORAGE','PASSSHARE_COMMERCIAL_LIVE_ENABLED','PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT'])delete process.env[k];}
 });

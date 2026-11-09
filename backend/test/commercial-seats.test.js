@@ -1,8 +1,9 @@
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import assert from 'node:assert/strict';import {test} from 'node:test';import pg from 'pg';import Stripe from 'stripe';import {randomUUID} from 'node:crypto';
 test('owner seat quote, explicit consent and verified payment apply one revision in isolated PostgreSQL',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
  assert.match(process.env.DATABASE_URL,/^postgresql:\/\/passshare:passshare@127\.0\.0\.1:(5432|15431)\/passshare$/);
  const admin=new pg.Pool({connectionString:process.env.DATABASE_URL}),db='ps_seats_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+db);
- const url=new URL(process.env.DATABASE_URL);url.pathname='/'+db;const pool=new pg.Pool({connectionString:url.href});
+ const url=new URL(process.env.DATABASE_URL);url.pathname='/'+db;const pool=new pg.Pool({connectionString:url.href});const closePool=trackPoolShutdown(pool);
  const secret='whsec_seats_fixture',account='acct_seatsfixture';
  Object.assign(process.env,{PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account,PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true'});
  const {createApp}=await import('../src/app.js');const {app}=await createApp({pool});const s=app.listen(0,'127.0.0.1');await new Promise(r=>s.once('listening',r));const base='http://127.0.0.1:'+s.address().port;
@@ -87,5 +88,5 @@ test('owner seat quote, explicit consent and verified payment apply one revision
   const {migrateCommercialSeats}=await import('../src/commercial-seats.js');
   await migrateCommercialSeats(pool);await migrateCommercialSeats(pool);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_seat_changes WHERE payment_received_at IS NULL')).rows[0].n,before);
- }finally{s.closeAllConnections();await new Promise(r=>s.close(r));await pool.end();await admin.query('DROP DATABASE '+db+' WITH (FORCE)');await admin.end();for(const k of ['PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT','PASSSHARE_COMMERCIAL_LIVE_ENABLED'])delete process.env[k];}
+ }finally{s.closeAllConnections();await new Promise(r=>s.close(r));await closePool();await admin.query('DROP DATABASE '+db);await admin.end();for(const k of ['PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT','PASSSHARE_COMMERCIAL_LIVE_ENABLED'])delete process.env[k];}
 });
