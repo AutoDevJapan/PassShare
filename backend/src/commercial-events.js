@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import {createHash} from 'node:crypto';
 import {authHttpError,sendAuthError} from './auth/errors.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
+import {rateLimit} from 'express-rate-limit';
 
 export const PAYMENT_EVENT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_payment_events (
  account_id TEXT NOT NULL, event_id TEXT NOT NULL, contract_id UUID NOT NULL REFERENCES commercial_contracts(id) ON DELETE CASCADE,
@@ -14,6 +15,7 @@ export const migrateCommercialEvents=pool=>applySchemaWithAdvisoryLock(pool,4820
 // No API request is made. The official SDK verifies the raw snapshot signature.
 export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_TEST_ACCOUNT}){
  const router=express.Router();
+ router.use(rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-6',legacyHeaders:false}));
  router.post('/',express.raw({type:'application/json',limit:'256kb'}),async(req,res)=>{
   try{
    if(!pool||!secret||!/^acct_[A-Za-z0-9]+$/.test(account??''))throw authHttpError(503,'PS019','Payment event intake unavailable');
