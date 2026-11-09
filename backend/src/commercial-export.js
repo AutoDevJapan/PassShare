@@ -1,6 +1,7 @@
 import {nativeMutation} from './lib/native-mutations.js';
 import {authHttpError,sendAuthError} from './auth/errors.js';
 import {loadEntitlement} from './commercial-live.js';
+import {recordExport} from './commercial-export-audit.js';
 
 const uuid=s=>typeof s==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(s);
 const id=s=>typeof s==='string'&&/^[a-z0-9]{26}$/.test(s);
@@ -58,8 +59,11 @@ export function registerCommercialExport(router,{pool}){
    // Re-evaluate both session and the server-clock window after all lock waits.
    if(!(await c.query('SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()',[req.auth.sessionId,req.auth.userId])).rowCount)throw authHttpError(401,'PS024','Session expired');
    const end=await loadEntitlement(c,contract.id,Date.now());if(!end.effective&&!end.exportWindow?.open)throw authHttpError(403,'PS065','Contract export window expired');
+   const receiptId=await recordExport(c,{contractId:contract.id,actorId:req.auth.userId,boxId:req.params.boxId,kind,epoch:Number(epoch.key_epoch),revision:Number(epoch.state_revision),itemId:req.params.itemId,attachmentId:req.params.attachmentId});
+   if(!(await c.query('SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()',[req.auth.sessionId,req.auth.userId])).rowCount)throw authHttpError(401,'PS024','Session expired');
+   const issued=await loadEntitlement(c,contract.id,Date.now());if(!issued.effective&&!issued.exportWindow?.open)throw authHttpError(403,'PS065','Contract export window expired');
    await c.query('COMMIT');c.release();c=null;
-   res.set('Cache-Control','no-store');res.json({format:'passshare-encrypted-export-v1',boxId:req.params.boxId,keyEpoch:Number(epoch.key_epoch),snapshotRevision:Number(epoch.state_revision),ciphertextOnly:true,restoresIdentityMembershipOrKeys:false,data:result});
+   res.set('Cache-Control','no-store');res.json({format:'passshare-encrypted-export-v1',receiptId,boxId:req.params.boxId,keyEpoch:Number(epoch.key_epoch),snapshotRevision:Number(epoch.state_revision),ciphertextOnly:true,restoresIdentityMembershipOrKeys:false,data:result});
   }catch(e){if(c){await c.query('ROLLBACK').catch(()=>{});c.release();}sendAuthError(res,e?.status?e:authHttpError(503,'PS019','Encrypted export unavailable'));}
  };}
  router.get('/:id/export/boxes/:boxId/state',handle('state'));

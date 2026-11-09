@@ -1,3 +1,4 @@
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import assert from 'node:assert/strict';import {test} from 'node:test';import pg from 'pg';import Stripe from 'stripe';import {randomUUID} from 'node:crypto';
 const pgOn=process.env.PASSSHARE_RECEIPTS_PG==='true';
 test('live receiver is closed unless explicitly enabled and rejects sandbox-mode events',{skip:!pgOn},async()=>{
@@ -9,7 +10,7 @@ test('live receiver is closed unless explicitly enabled and rejects sandbox-mode
 test('verified live payments become cycle-anchored periods and drive entitlement, cancel and export in an isolated database',{skip:!pgOn},async()=>{
  assert.match(process.env.DATABASE_URL,/^postgresql:\/\/passshare:passshare@127\.0\.0\.1:(5432|15431)\/passshare$/);
  const name='passshare_live_'+randomUUID().replaceAll('-','');const admin=new pg.Pool({connectionString:process.env.DATABASE_URL});await admin.query('CREATE DATABASE '+name);
- const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});
+ const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});const closePool=trackPoolShutdown(pool);
  const secret='whsec_synthetic_live_fixture',account='acct_syntheticlive';
  Object.assign(process.env,{PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account,PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true'});
  const {createApp}=await import('../src/app.js');const {loadEntitlement}=await import('../src/commercial-live.js');const {exportDecision}=await import('../src/commercial-entitlement.js');
@@ -77,6 +78,6 @@ test('verified live payments become cycle-anchored periods and drive entitlement
   const gone=await call('/api/auth/account',retiring.refreshToken,{currentPassword:'synthetic-password123',confirmationEmail:retiring.user.email},'DELETE');
   assert.equal(gone.status,204);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods WHERE contract_id=$1',[old.id])).rows[0].n,0);
   assert.equal((await send(ev(old,retiring,2,new Date().toISOString()))).status,409);
- }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await pool.end();await admin.query('DROP DATABASE IF EXISTS '+name+' WITH (FORCE)');await admin.end();
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await closePool();await admin.query('DROP DATABASE IF EXISTS '+name);await admin.end();
   for(const k of ['PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT','PASSSHARE_COMMERCIAL_LIVE_ENABLED'])delete process.env[k];}
 });

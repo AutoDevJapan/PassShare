@@ -1,3 +1,4 @@
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import assert from 'node:assert/strict';import {test} from 'node:test';import pg from 'pg';import Stripe from 'stripe';import {randomUUID} from 'node:crypto';
 import {classifyPayment} from '../src/commercial-live.js';
 import {entitlementState} from '../src/commercial-entitlement.js';
@@ -18,7 +19,7 @@ test('trusted event second and cancellation boundary remain distinct from delive
 test('pre-cancellation paid renewals reconcile after delayed delivery without reviving post-cancel charges',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
  assert.match(process.env.DATABASE_URL,/^postgresql:\/\/passshare:passshare@127\.0\.0\.1:(5432|15431)\/passshare$/);
  const admin=new pg.Pool({connectionString:process.env.DATABASE_URL}),name='ps_reconcile_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+name);
- const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});
+ const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});const closePool=trackPoolShutdown(pool);
  const secret='whsec_reconcile_fixture',account='acct_reconcilefixture';
  Object.assign(process.env,{PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true',PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account});
  const {createApp}=await import('../src/app.js');const {loadEntitlement}=await import('../src/commercial-live.js');const {app}=await createApp({pool});const s=app.listen(0,'127.0.0.1');await new Promise(r=>s.once('listening',r));const base='http://127.0.0.1:'+s.address().port;
@@ -48,5 +49,5 @@ test('pre-cancellation paid renewals reconcile after delayed delivery without re
   const race=await make(),racePaid=event(race,2,Math.floor(Date.now()/1000)-60);const pair=await Promise.all([cancel(race),send(racePaid)]);assert.deepEqual(pair.map(r=>r.status),[200,200]);assert.equal((await row(race)).cancel_after_cycle,2);assert.equal((await loadEntitlement(pool,race.id,Date.now())).effective,true);
   const boundary=await make();assert.equal((await cancel(boundary)).status,200);const boundarySecond=Math.floor((await row(boundary)).cancel_requested_at.getTime()/1000);const sameSecond=event(boundary,2,boundarySecond);assert.equal((await send(sameSecond)).status,200);
   const boundaryRow=(await pool.query('SELECT disposition,disposition_reason FROM commercial_live_periods WHERE event_id=$1',[sameSecond.id])).rows[0];assert.deepEqual(boundaryRow,{disposition:'refund_review',disposition_reason:'payment_time_boundary_review'});assert.equal((await row(boundary)).cancel_after_cycle,1);
- }finally{s.closeAllConnections();await new Promise(r=>s.close(r));await pool.end();await admin.query('DROP DATABASE '+name+' WITH (FORCE)');await admin.end();for(const k of ['PASSSHARE_COMMERCIAL_LIVE_ENABLED','PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT'])delete process.env[k];}
+ }finally{s.closeAllConnections();await new Promise(r=>s.close(r));await closePool();await admin.query('DROP DATABASE '+name);await admin.end();for(const k of ['PASSSHARE_COMMERCIAL_LIVE_ENABLED','PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT'])delete process.env[k];}
 });
