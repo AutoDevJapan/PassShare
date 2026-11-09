@@ -492,6 +492,7 @@ impl Runner {
             "restore_native_operations_full_rows",
             "restore_support_receipts_full_rows",
             "restore_contracts_full_rows",
+            "restore_payment_events_full_rows",
         ];
         for (table, name) in TABLES.iter().zip(names) {
             report.check(name, exact_json(&baseline[*table], &restored[*table]))?;
