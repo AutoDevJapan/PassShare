@@ -15,6 +15,7 @@ pub fn validate(input: &Value) -> Value {
         });
     let version = text("version");
     if !crate::encrypted::exact_fields(r, &fields)
+        || fields.iter().any(|field| !r[field].is_string())
         || !valid_id
         || !["technical", "export", "cancellation", "refund"].contains(&text("kind"))
         || !["web", "windows", "android", "ios", "extension"].contains(&text("platform"))
@@ -41,6 +42,20 @@ mod tests {
     #[test]
     fn fixed_metadata_is_accepted() {
         assert_eq!(validate(&fixture())["status"], 200);
+    }
+    #[test]
+    fn rejects_non_string_metadata() {
+        for value in [
+            Value::Null,
+            json!(123),
+            json!({"secret":"never-store"}),
+            json!(["secret"]),
+            json!(false),
+        ] {
+            let mut x = fixture();
+            x["request"]["errorCode"] = value;
+            assert_eq!(validate(&x)["status"], 400);
+        }
     }
     #[test]
     fn bodies_secrets_and_arbitrary_metadata_are_rejected() {

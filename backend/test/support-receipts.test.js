@@ -40,3 +40,16 @@ test('memory receipt commit rechecks session and retirement purges receipts',asy
  await store.retireAccount(user.id,fresh.sessionId,user.password_hash,user.email,{purgePrivateBoxes(){}});
  assert.throws(()=>store.findSupportReceipt(user.id,fresh.sessionId,id),/Session/);
 });
+
+test('logout after an awaited authentication snapshot cannot save a receipt',async()=>{
+ const store=createMemoryAuthStore();const user=await store.createUser({email:'receipt-overlap@example.test',passwordHash:'$argon2id$'+'b'.repeat(80)});
+ const session=await store.createSession(user.id,user.password_hash);
+ let entered,release;const seen=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+ const original=store.findSessionByToken.bind(store);
+ store.findSessionByToken=async token=>{const snapshot=await original(token);entered();await gate;return snapshot;};
+ const {app}=await createApp({pool:null,authStore:store,store:createMemoryStore()});const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ try{
+  const pending=fetch('http://127.0.0.1:'+server.address().port+'/api/support-receipts',{method:'POST',headers:{authorization:'Bearer '+session.sessionToken,'content-type':'application/json'},body:JSON.stringify({requestId:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',kind:'technical',version:'0.1.0',platform:'web',errorCode:''})});
+  await seen;await store.deleteSession(session.sessionId);release();assert.equal((await pending).status,401);
+ }finally{release();server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
