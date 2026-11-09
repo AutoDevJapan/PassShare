@@ -249,6 +249,21 @@ impl Runner {
         )?;
         let pending_id = identifier(&pending, "/id", 36)?;
 
+        // Exercise the public intake path so the dump contains a real actor-bound
+        // receipt, not a SQL-only row. Exact snapshot comparison covers it too.
+        let receipt = self.api.json(
+            report,
+            "source_support_receipt_saved",
+            "POST",
+            "/api/support-receipts",
+            &owner.session,
+            Some(&json!({"requestId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "kind":"technical","version":"0.1.0","platform":"web","errorCode":"PS019"})),
+            201,
+            None,
+        )?;
+        let receipt_id = identifier(&receipt, "/id", 36)?;
+        self.api.json(report,"source_deleted_account_receipt_saved","POST","/api/support-receipts",&deleted.session,Some(&json!({"requestId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","kind":"technical","version":"0.1.0","platform":"web","errorCode":""})),201,None)?;
         // This final fixture write populates both login guard tables, not fabricated rows.
         // Bracket its committed update; no API mutations occur between this and dump.
         let last_update_begin = unix_ms();
@@ -443,6 +458,7 @@ impl Runner {
             "restore_login_failures_full_rows",
             "restore_login_ip_requests_full_rows",
             "restore_native_operations_full_rows",
+            "restore_support_receipts_full_rows",
         ];
         for (table, name) in TABLES.iter().zip(names) {
             report.check(name, exact_json(&baseline[*table], &restored[*table]))?;
@@ -693,6 +709,42 @@ impl Runner {
             None,
         )?;
 
+        self.api.json(
+            report,
+            "restored_receipt_old_session_denied",
+            "GET",
+            &format!("/api/support-receipts/{receipt_id}"),
+            &owner.session,
+            None,
+            401,
+            None,
+        )?;
+        let current_receipt = self.api.json(
+            report,
+            "restored_receipt_current_owner_read",
+            "GET",
+            &format!("/api/support-receipts/{receipt_id}"),
+            &current_owner.session,
+            None,
+            200,
+            None,
+        )?;
+        report.check(
+            "restored_receipt_exact_current_owner",
+            exact_json(&receipt, &current_receipt),
+        )?;
+        report.check(
+            "retired_account_receipts_cascaded",
+            sql(
+                "drill_restored",
+                &format!(
+                    "SELECT count(*) FROM support_receipts WHERE user_id='{}'",
+                    deleted.id
+                ),
+            )?
+            .trim()
+                == "0",
+        )?;
         // SQL fixture reapproval, not completed identity verification or a reapproval API.
         // IDs validated before SQL construction; no external identifiers are accepted.
         sql("drill_restored", &format!("INSERT INTO vault_memberships(user_id,vault_id,role) VALUES ('{}','{box_id}','owner');", owner.id))?;
