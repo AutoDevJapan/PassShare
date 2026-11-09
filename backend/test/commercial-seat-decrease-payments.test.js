@@ -34,7 +34,9 @@ test('signed renewal binds a decrease while preserving current seats and stale p
   assert.equal(JSON.stringify((await pool.query('SELECT * FROM commercial_plan_payment_exceptions')).rows),staleRows);
   const colliding=payment(2,1960,next);colliding.id=stale.id;colliding.data.object.id=stale.data.object.id;assert.equal((await send(colliding)).status,409);
   const wrong=payment(2,1960,next);wrong.data.object.currency='usd';assert.equal((await send(wrong)).status,400);
-  const wrongAmount=payment(2,1959,next);assert.equal((await send(wrongAmount)).status,409);
+  const wrongAmount=payment(2,1959,next),mismatch=await send(wrongAmount);assert.equal(mismatch.status,200);assert.equal(mismatch.body.refundReviewRequired,true);assert.equal(mismatch.body.seatDecreaseFunded,false);
+  assert.equal(Number((await pool.query('SELECT amount_jpy FROM commercial_plan_payment_exceptions WHERE account_id=$1 AND event_id=$2',[account,wrongAmount.id])).rows[0].amount_jpy),1959);
+  assert.equal((await send(wrongAmount)).body.duplicate,true);
   const wrongHash=payment(2,1960,next);wrongHash.data.object.metadata.seatDecreaseQuoteHash='0'.repeat(64);assert.equal((await send(wrongHash)).status,409);
   const sandbox=payment(2,1960,next);sandbox.livemode=false;sandbox.data.object.livemode=false;assert.equal((await send(sandbox)).status,400);
   const pay=payment(2,1960,next),funded=await send(pay);assert.equal(funded.status,200);assert.equal(funded.body.seatDecreaseFunded,true);
@@ -50,7 +52,7 @@ test('signed renewal binds a decrease while preserving current seats and stale p
   const replay=await send(pay);assert.equal(replay.status,200);assert.equal(replay.body.duplicate,true);
   assert.equal(JSON.stringify((await pool.query('SELECT * FROM commercial_live_periods ORDER BY cycle')).rows),saved);
   const sameIntent=payment(2,1960,next);sameIntent.data.object.id=pay.data.object.id;assert.equal((await send(sameIntent)).status,409);
-  const exceptions=await call(root+'/'+quote.id+'/payment-exceptions',owner.refreshToken);assert.equal(exceptions.status,200);assert.equal(exceptions.body.refundExecuted,false);assert.equal(exceptions.body.payments.length,1);assert.equal(exceptions.body.payments[0].amountJpy,980);
+  const exceptions=await call(root+'/'+quote.id+'/payment-exceptions',owner.refreshToken);assert.equal(exceptions.status,200);assert.equal(exceptions.body.refundExecuted,false);assert.equal(exceptions.body.payments.length,2);assert.deepEqual(exceptions.body.payments.map(p=>p.amountJpy).sort((a,b)=>a-b),[980,1959]);
   assert.equal((await call(path,owner.refreshToken,{requestId:randomUUID(),requestedPlan:{type:'personal',users:1}})).status,409);
   // A later, paid in-cycle increase invalidates an older pending decrease.
   // Its captured money is retained for refund review, never silently applied.
@@ -64,7 +66,8 @@ test('signed renewal binds a decrease while preserving current seats and stale p
   assert.equal((await call(root+'/'+quote.id+'/seat-quotes/'+increase.id+'/accept',owner.refreshToken,{quoteHash:increase.quoteHash})).status,200);
   const add=payment(1,increase.quote.proposedRoundedJpy);add.data.object.metadata.seatChangeId=increase.id;add.data.object.metadata.quoteHash=increase.quoteHash;
   assert.equal((await send(add)).status,200);
-  const obsolete=payment(2,980,candidate);obsolete.created=Math.floor(new Date((await pool.query('SELECT accepted_at t FROM commercial_seat_changes WHERE id=$1',[increase.id])).rows[0].t).getTime()/1000)+1;
+  const changeTime=(await pool.query('SELECT accepted_at,provider_event_created FROM commercial_seat_changes WHERE id=$1',[increase.id])).rows[0];
+  const obsolete=payment(2,980,candidate);obsolete.created=Math.max(Math.floor(new Date(changeTime.accepted_at).getTime()/1000),Number(changeTime.provider_event_created))+1;
   const outdated=await send(obsolete);assert.equal(outdated.status,200);assert.equal(outdated.body.refundReviewRequired,true);assert.equal(outdated.body.seatDecreaseFunded,false);
   const unchanged=await call(root+'/'+quote.id,owner.refreshToken);assert.equal(unchanged.body.currentPlan.users,4);assert.equal(unchanged.body.seatRevision,1);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods WHERE contract_id=$1 AND cycle=2',[quote.id])).rows[0].n,0);

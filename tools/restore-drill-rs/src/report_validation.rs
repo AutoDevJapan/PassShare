@@ -28,6 +28,10 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "source_decrease_legacy_adjustment",
     "restored_decrease_legacy_adjustment",
     "retired_decrease_periods_cascaded",
+    "source_seat_provider_success_saved",
+    "restored_seat_provider_success_saved",
+    "source_decrease_actual_amount_saved",
+    "restored_decrease_actual_amount_saved",
 ];
 
 pub(super) fn validate(report: &Value, negative: bool) -> bool {

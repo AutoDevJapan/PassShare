@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS commercial_seat_changes (
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),accepted_at TIMESTAMPTZ,applied_at TIMESTAMPTZ,payment_received_at TIMESTAMPTZ,
  account_id TEXT,event_id TEXT,provider_object_id TEXT,event_hash TEXT,paid_amount_jpy BIGINT CHECK(paid_amount_jpy>0),
  UNIQUE(contract_id,request_id),UNIQUE(account_id,event_id),UNIQUE(account_id,provider_object_id));
-ALTER TABLE commercial_seat_changes ADD COLUMN IF NOT EXISTS payment_received_at TIMESTAMPTZ;`;
+ALTER TABLE commercial_seat_changes ADD COLUMN IF NOT EXISTS payment_received_at TIMESTAMPTZ;
+ALTER TABLE commercial_seat_changes ADD COLUMN IF NOT EXISTS provider_event_created BIGINT CHECK(provider_event_created>0);`;
 export const migrateCommercialSeats=p=>applySchemaWithAdvisoryLock(p,4820131,SEAT_SCHEMA);
 const uuid=s=>typeof s==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(s);
 const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).length===keys.length&&keys.every(k=>Object.hasOwn(o,k));
@@ -88,10 +89,11 @@ export async function applySeatPayment(c,event,account,digest){
  try {const {p,today}=await currentPeriod(c,r);stillCurrent(r,q,p,today);if(Number(m.cycle)!==p.cycle||jstDate(Date.now())!==today)stale=true;}
  catch(e){if(e?.status===409||e?.statusCode===409)stale=true;else throw e;}
  if(stale){
-  await c.query("UPDATE commercial_seat_changes SET state='refund_review',payment_received_at=clock_timestamp(),account_id=$2,event_id=$3,provider_object_id=$4,event_hash=$5,paid_amount_jpy=$6 WHERE id=$1",[q.id,account,event.id,o.id,digest,o.amount_received]);
+  await c.query("UPDATE commercial_seat_changes SET state='refund_review',payment_received_at=clock_timestamp(),account_id=$2,event_id=$3,provider_object_id=$4,event_hash=$5,paid_amount_jpy=$6,provider_event_created=$7 WHERE id=$1",[q.id,account,event.id,o.id,digest,o.amount_received,event.created]);
   return {received:true,duplicate:false,seatChangeApplied:false,refundReviewRequired:true};
  }
  await c.query('UPDATE commercial_contracts SET current_plan=$2::jsonb,seat_revision=seat_revision+1 WHERE id=$1',[r.id,JSON.stringify(planInput(q.quote.requestedPlan))]);
- await c.query("UPDATE commercial_seat_changes SET state='applied',applied_at=clock_timestamp(),payment_received_at=clock_timestamp(),account_id=$2,event_id=$3,provider_object_id=$4,event_hash=$5,paid_amount_jpy=$6 WHERE id=$1",[q.id,account,event.id,o.id,digest,o.amount_received]);
+ await c.query("UPDATE commercial_seat_decreases SET state='stale' WHERE contract_id=$1 AND state='scheduled' AND base_revision<=$2",[r.id,r.seat_revision]);
+ await c.query("UPDATE commercial_seat_changes SET state='applied',applied_at=clock_timestamp(),payment_received_at=clock_timestamp(),account_id=$2,event_id=$3,provider_object_id=$4,event_hash=$5,paid_amount_jpy=$6,provider_event_created=$7 WHERE id=$1",[q.id,account,event.id,o.id,digest,o.amount_received,event.created]);
  return {received:true,duplicate:false,seatChangeApplied:true,boxMembershipOrKeysGranted:false};
 }

@@ -465,6 +465,7 @@ impl Runner {
         let mut retired_seat_contract_id = String::new();
         let mut decrease_id = String::new();
         let mut retired_decrease_id = String::new();
+        let mut seat_provider_second = 0;
         for (actor, retired) in [(&owner, false), (&deleted, true)] {
             let input = json!({"requestId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}});
             let draft = self.api.json(
@@ -587,6 +588,24 @@ impl Runner {
             }
             for (index, (did, reduction)) in decrease_quotes.iter().enumerate() {
                 let payment = json!({"id":format!("evt_decrease{index}{key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":unix_ms()/1000,"data":{"object":{"id":format!("pi_decrease{index}{key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":true,"metadata":{"contractId":cid,"ownerId":actor.id,"quoteHash":draft["quoteHash"],"cycle":"2","seatDecreaseId":did,"seatDecreaseQuoteHash":reduction["quoteHash"]}}}});
+                if index == 1 {
+                    let mut mismatch = payment.clone();
+                    mismatch["id"] = json!(format!("evt_decreasemismatch{key}"));
+                    mismatch["data"]["object"]["id"] = json!(format!("pi_decreasemismatch{key}"));
+                    mismatch["data"]["object"]["amount"] = json!(979);
+                    mismatch["data"]["object"]["amount_received"] = json!(979);
+                    let mut cmd = clean_command("/usr/local/bin/node");
+                    cmd.arg("-e").arg(live_script).arg(mismatch.to_string());
+                    report.check(
+                        if retired {
+                            "source_retired_decrease_mismatch_received"
+                        } else {
+                            "source_decrease_mismatch_received"
+                        },
+                        command_output(cmd, None).is_ok(),
+                    )?;
+                    report.check(if retired {"source_retired_decrease_actual_amount_saved"} else {"source_decrease_actual_amount_saved"},sql("drill_source",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{cid}' AND amount_jpy=979 AND reason='seat_decrease_amount_mismatch'"))?.trim()=="1")?;
+                }
                 let mut cmd = clean_command("/usr/local/bin/node");
                 cmd.arg("-e").arg(live_script).arg(payment.to_string());
                 report.check(
@@ -597,6 +616,11 @@ impl Runner {
                     },
                     command_output(cmd, None).is_ok(),
                 )?;
+            }
+            let signed_second = payment["created"].as_u64().ok_or(Failure::Shape)?;
+            report.check(if retired {"source_retired_seat_provider_success_saved"} else {"source_seat_provider_success_saved"},sql("drill_source",&format!("SELECT count(*) FROM commercial_seat_changes WHERE id='{sid}' AND provider_event_created={signed_second} AND payment_received_at IS NOT NULL AND accepted_at IS NOT NULL"))?.trim()=="1")?;
+            if !retired {
+                seat_provider_second = signed_second;
             }
             let funded = decrease_quotes[1].0.clone();
             let legacy_payment = json!({"id":format!("evt_legacyplan{key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":unix_ms()/1000,"data":{"object":{"id":format!("pi_legacyplan{key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":1960,"amount_received":1960,"livemode":true,"metadata":{"contractId":cid,"ownerId":actor.id,"quoteHash":draft["quoteHash"],"cycle":"3"}}}});
@@ -1196,10 +1220,12 @@ impl Runner {
         report.check("restored_reconciled_paid_evidence",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{live_id}' AND cycle=3 AND disposition='effective' AND disposition_reason='paid_before_cancellation' AND provider_event_created IS NOT NULL AND reconciled_at IS NOT NULL"))?.trim()=="1")?;
         report.check("restored_live_contract_anchor", sql("drill_restored",&format!("SELECT contract_start::text FROM commercial_live_contracts WHERE contract_id='{live_id}'"))?.trim()=="2026-01-31")?;
         report.check("restored_seat_change_nonempty_applied",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_changes WHERE contract_id='{seat_contract_id}' AND state='applied' AND accepted_at IS NOT NULL AND applied_at IS NOT NULL AND provider_object_id IS NOT NULL"))?.trim()=="1")?;
+        report.check("restored_seat_provider_success_saved",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_changes WHERE contract_id='{seat_contract_id}' AND state='applied' AND provider_event_created={seat_provider_second} AND payment_received_at IS NOT NULL"))?.trim()=="1")?;
         report.check("restored_current_plan_revision",sql("drill_restored",&format!("SELECT (current_plan->>'users')||':'||seat_revision FROM commercial_contracts WHERE id='{seat_contract_id}'"))?.trim()=="2:1")?;
         report.check("retired_seat_change_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_changes WHERE contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
         report.check("restored_decrease_nonempty_funded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{decrease_id}' AND state='funded' AND target_cycle=2 AND accepted_at IS NOT NULL AND quote->'renewalQuote'->>'monthlyTotalJpy'='980'"))?.trim()=="1")?;
         report.check("restored_decrease_exception_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{seat_contract_id}' AND amount_jpy=980 AND reason='seat_decrease_no_longer_applicable'"))?.trim()=="1")?;
+        report.check("restored_decrease_actual_amount_saved",sql("drill_restored",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{seat_contract_id}' AND amount_jpy=979 AND reason='seat_decrease_amount_mismatch'"))?.trim()=="1")?;
         report.check("restored_decrease_period_bound",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{seat_contract_id}' AND cycle=2 AND seat_decrease_id='{decrease_id}' AND billing_plan->>'users'='1' AND amount_jpy=980"))?.trim()=="1")?;
         report.check("restored_decrease_legacy_adjustment",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{seat_contract_id}' AND cycle=3 AND plan_adjustment_review AND billing_plan->>'users'='2' AND amount_jpy=1960"))?.trim()=="1")?;
         report.check("retired_decreases_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{retired_decrease_id}' OR contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
