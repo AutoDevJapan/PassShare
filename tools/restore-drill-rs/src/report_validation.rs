@@ -25,6 +25,9 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "restored_decrease_period_bound",
     "retired_decreases_cascaded",
     "retired_decrease_exceptions_cascaded",
+    "source_decrease_legacy_adjustment",
+    "restored_decrease_legacy_adjustment",
+    "retired_decrease_periods_cascaded",
 ];
 
 pub(super) fn validate(report: &Value, negative: bool) -> bool {

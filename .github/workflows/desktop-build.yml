@@ -18,35 +18,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify desktop dependency scope boundaries
+        shell: bash
+        run: bash .github/scripts/desktop-scope.test.sh
       - env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
         id: scope
         name: Determine affected desktop inputs
         run: |
-          set -euo pipefail
-          desktop=false
-          mobile=false
-          if [[ "${EVENT_NAME:-pull_request}" == push || ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || "$BASE_SHA" =~ ^0+$ ]]; then
-            desktop=true
-            mobile=true
-          else
-            git diff --no-renames --name-only -z "$BASE_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/passshare-paths"
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                frontend/cloud-assets.json|frontend/public/cloud-crypto/*) desktop=true; mobile=true ;;
-                apps/desktop/*) desktop=true ;;
-                apps/mobile/*) mobile=true ;;
-                # The Rust workspace (desktop included) has no path dependency on backend/;
-                # mobile smoke still installs backend and runs its auth API test.
-                backend/*) mobile=true ;;
-                frontend/*|packages/extension/*|e2e/web/*|e2e/extension/*) ;;
-                *) desktop=true; mobile=true ;;
-              esac
-            done < "$RUNNER_TEMP/passshare-paths"
-          fi
-          printf 'desktop=%s\nmobile=%s\n' "$desktop" "$mobile" >> "$GITHUB_OUTPUT"
-          printf 'Desktop tests: %s; mobile tests: %s\n' "$desktop" "$mobile" >> "$GITHUB_STEP_SUMMARY"
+          bash .github/scripts/desktop-scope.sh
         shell: bash
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

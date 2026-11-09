@@ -27,7 +27,8 @@ test('signed renewal binds a decrease while preserving current seats and stale p
   const make=async users=>{const r=await call(path,owner.refreshToken,{requestId:randomUUID(),requestedPlan:{type:'personal',users}});assert.equal(r.status,201);assert.equal((await call(path+'/'+r.body.id+'/accept',owner.refreshToken,{quoteHash:r.body.quoteHash})).status,200);return r.body;};
   const old=await make(1),next=await make(2);
   assert.equal(next.quote.renewalQuote.monthlyTotalJpy,1960);
-  const stale=payment(2,980,old),staleResult=await send(stale);assert.equal(staleResult.status,200);assert.equal(staleResult.body.refundReviewRequired,true);assert.equal(staleResult.body.seatDecreaseFunded,false);
+  const stale=payment(2,980,old);stale.created=Math.floor(new Date((await pool.query('SELECT superseded_at t FROM commercial_seat_decreases WHERE id=$1',[old.id])).rows[0].t).getTime()/1000)+1;
+  const staleResult=await send(stale);assert.equal(staleResult.status,200);assert.equal(staleResult.body.refundReviewRequired,true);assert.equal(staleResult.body.seatDecreaseFunded,false);
   const staleRows=JSON.stringify((await pool.query('SELECT * FROM commercial_plan_payment_exceptions')).rows);
   const staleAgain=await send(stale);assert.equal(staleAgain.status,200);assert.equal(staleAgain.body.duplicate,true);
   assert.equal(JSON.stringify((await pool.query('SELECT * FROM commercial_plan_payment_exceptions')).rows),staleRows);
@@ -63,18 +64,55 @@ test('signed renewal binds a decrease while preserving current seats and stale p
   assert.equal((await call(root+'/'+quote.id+'/seat-quotes/'+increase.id+'/accept',owner.refreshToken,{quoteHash:increase.quoteHash})).status,200);
   const add=payment(1,increase.quote.proposedRoundedJpy);add.data.object.metadata.seatChangeId=increase.id;add.data.object.metadata.quoteHash=increase.quoteHash;
   assert.equal((await send(add)).status,200);
-  const outdated=await send(payment(2,980,candidate));assert.equal(outdated.status,200);assert.equal(outdated.body.refundReviewRequired,true);assert.equal(outdated.body.seatDecreaseFunded,false);
+  const obsolete=payment(2,980,candidate);obsolete.created=Math.floor(new Date((await pool.query('SELECT accepted_at t FROM commercial_seat_changes WHERE id=$1',[increase.id])).rows[0].t).getTime()/1000)+1;
+  const outdated=await send(obsolete);assert.equal(outdated.status,200);assert.equal(outdated.body.refundReviewRequired,true);assert.equal(outdated.body.seatDecreaseFunded,false);
   const unchanged=await call(root+'/'+quote.id,owner.refreshToken);assert.equal(unchanged.body.currentPlan.users,4);assert.equal(unchanged.body.seatRevision,1);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods WHERE contract_id=$1 AND cycle=2',[quote.id])).rows[0].n,0);
   const raceQuote=(await call(root+'/'+quote.id+'/seat-quotes',owner.refreshToken,{requestId:randomUUID(),requestedPlan:{type:'personal',users:5},roundingPolicy:'ceil-jpy'})).body;
   assert.equal((await call(root+'/'+quote.id+'/seat-quotes/'+raceQuote.id+'/accept',owner.refreshToken,{quoteHash:raceQuote.quoteHash})).status,200);
   const seatRace=payment(1,raceQuote.quote.proposedRoundedJpy);seatRace.data.object.metadata.seatChangeId=raceQuote.id;seatRace.data.object.metadata.quoteHash=raceQuote.quoteHash;
-  const reductionRace=payment(2,980,candidate);reductionRace.id=seatRace.id;reductionRace.data.object.id=seatRace.data.object.id;
+  const reductionRace=payment(2,980,candidate);reductionRace.created=obsolete.created;reductionRace.id=seatRace.id;reductionRace.data.object.id=seatRace.data.object.id;
   const racing=await Promise.all([send(seatRace),send(reductionRace)]);assert.deepEqual(racing.map(x=>x.status).sort(),[200,409]);
   const unique=(await pool.query('SELECT (SELECT count(*) FROM commercial_seat_changes WHERE account_id=$1 AND event_id=$2)+(SELECT count(*) FROM commercial_plan_payment_exceptions WHERE account_id=$1 AND event_id=$2) n',[account,seatRace.id])).rows[0];assert.equal(Number(unique.n),1);
+  const oldInvoice=payment(2,2940);oldInvoice.created=obsolete.created-2;
+  const earlierPlan=await send(oldInvoice);assert.equal(earlierPlan.status,200);assert.equal(earlierPlan.body.billingAdjustmentReviewRequired,true);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM commercial_live_periods WHERE contract_id=$1 AND cycle=2 AND billing_plan->>'users'='3' AND plan_adjustment_review",[quote.id])).rows[0].n,1);
+  // A payment completed under the old reservation BEFORE replacement cannot
+  // lose its paid period merely because its signed delivery was delayed.
+  quote=(await call(root,owner.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:3},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}})).body;
+  await call(root+'/'+quote.id+'/accept',owner.refreshToken,{quoteHash:quote.quoteHash});await send(payment(1,2940));
+  const historicalPath=root+'/'+quote.id+'/seat-decrease-quotes';
+  const makeHistorical=async users=>{const r=await call(historicalPath,owner.refreshToken,{requestId:randomUUID(),requestedPlan:{type:'personal',users}});assert.equal(r.status,201);assert.equal((await call(historicalPath+'/'+r.body.id+'/accept',owner.refreshToken,{quoteHash:r.body.quoteHash})).status,200);return r.body;};
+  const prior=await makeHistorical(1),latest=await makeHistorical(2);
+  // Explicit isolated-DB timestamp adapter; no production clock is changed.
+  await pool.query("UPDATE commercial_seat_decreases SET accepted_at=clock_timestamp()-interval '20 seconds',superseded_at=clock_timestamp()-interval '10 seconds' WHERE id=$1",[prior.id]);
+  const delayed=payment(2,980,prior);delayed.created=Math.floor(Date.now()/1000)-15;
+  const oldPaid=await send(delayed);assert.equal(oldPaid.status,200);assert.equal(oldPaid.body.seatDecreaseFunded,true);assert.equal(oldPaid.body.billingAdjustmentReviewRequired,true);
+  assert.equal((await pool.query('SELECT state FROM commercial_seat_decreases WHERE id=$1',[prior.id])).rows[0].state,'historical_funded');
+  assert.equal((await pool.query('SELECT state FROM commercial_seat_decreases WHERE id=$1',[latest.id])).rows[0].state,'settlement_review');
+  assert.equal((await call(historicalPath+'/'+prior.id+'/accept',owner.refreshToken,{quoteHash:prior.quoteHash})).status,409);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods WHERE contract_id=$1 AND cycle=2 AND disposition=\'effective\' AND plan_adjustment_review',[quote.id])).rows[0].n,1);
+  const lateCopy=await send(delayed);assert.equal(lateCopy.status,200);assert.equal(lateCopy.body.duplicate,true);
+  // An original-plan payment captured before a decrease request and delivered
+  // later keeps the paid dates. The new quantity needs adjustment review.
+  quote=(await call(root,owner.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:3},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}})).body;
+  await call(root+'/'+quote.id+'/accept',owner.refreshToken,{quoteHash:quote.quoteHash});await send(payment(1,2940));
+  const unboundPath=root+'/'+quote.id+'/seat-decrease-quotes';
+  const requested=(await call(unboundPath,owner.refreshToken,{requestId:randomUUID(),requestedPlan:{type:'personal',users:2}})).body;
+  assert.equal((await call(unboundPath+'/'+requested.id+'/accept',owner.refreshToken,{quoteHash:requested.quoteHash})).status,200);
+  const original=payment(2,2940);original.created=Math.floor(new Date((await pool.query('SELECT accepted_at t FROM commercial_seat_decreases WHERE id=$1',[requested.id])).rows[0].t).getTime()/1000)-1;
+  const originalPaid=await send(original);assert.equal(originalPaid.status,200);assert.equal(originalPaid.body.billingAdjustmentReviewRequired,true);
+  assert.equal((await pool.query('SELECT state FROM commercial_seat_decreases WHERE id=$1',[requested.id])).rows[0].state,'settlement_review');
+  assert.equal((await pool.query("SELECT count(*)::int n FROM commercial_live_periods WHERE contract_id=$1 AND cycle=2 AND disposition='effective' AND billing_plan->>'users'='3' AND plan_adjustment_review",[quote.id])).rows[0].n,1);
+  await assert.rejects(pool.query('UPDATE commercial_live_periods SET seat_decrease_id=$2 WHERE seat_decrease_id=$1',[next.id,candidate.id]),e=>e.code==='23503');
+  await assert.rejects(pool.query('UPDATE commercial_plan_payment_exceptions SET seat_decrease_id=$2 WHERE seat_decrease_id=$1',[old.id,candidate.id]),e=>e.code==='23503');
   const beforeMigration=JSON.stringify((await pool.query('SELECT * FROM commercial_seat_decreases ORDER BY id')).rows);
+  const beforeMoney=JSON.stringify((await pool.query('SELECT * FROM commercial_plan_payment_exceptions ORDER BY account_id,event_id')).rows);
+  const beforePeriods=JSON.stringify((await pool.query('SELECT * FROM commercial_live_periods ORDER BY account_id,event_id')).rows);
   const {migrateSeatDecreases}=await import('../src/commercial-seat-decreases.js');await migrateSeatDecreases(pool);await migrateSeatDecreases(pool);
   assert.equal(JSON.stringify((await pool.query('SELECT * FROM commercial_seat_decreases ORDER BY id')).rows),beforeMigration);
+  assert.equal(JSON.stringify((await pool.query('SELECT * FROM commercial_plan_payment_exceptions ORDER BY account_id,event_id')).rows),beforeMoney);
+  assert.equal(JSON.stringify((await pool.query('SELECT * FROM commercial_live_periods ORDER BY account_id,event_id')).rows),beforePeriods);
   assert.equal((await call('/api/auth/account',owner.refreshToken,{currentPassword:password,confirmationEmail:email},'DELETE')).status,204);
   for(const table of ['commercial_contracts','commercial_seat_decreases','commercial_plan_payment_exceptions','commercial_live_periods','commercial_seat_changes'])assert.equal((await pool.query('SELECT count(*)::int n FROM '+table)).rows[0].n,0);
   assert.equal((await send(pay)).status,409);

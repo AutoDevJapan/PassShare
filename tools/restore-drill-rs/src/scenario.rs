@@ -599,6 +599,20 @@ impl Runner {
                 )?;
             }
             let funded = decrease_quotes[1].0.clone();
+            let legacy_payment = json!({"id":format!("evt_legacyplan{key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":unix_ms()/1000,"data":{"object":{"id":format!("pi_legacyplan{key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":1960,"amount_received":1960,"livemode":true,"metadata":{"contractId":cid,"ownerId":actor.id,"quoteHash":draft["quoteHash"],"cycle":"3"}}}});
+            let mut cmd = clean_command("/usr/local/bin/node");
+            cmd.arg("-e")
+                .arg(live_script)
+                .arg(legacy_payment.to_string());
+            report.check(
+                if retired {
+                    "source_retired_decrease_legacy_paid"
+                } else {
+                    "source_decrease_legacy_paid"
+                },
+                command_output(cmd, None).is_ok(),
+            )?;
+            report.check(if retired {"source_retired_decrease_legacy_adjustment"} else {"source_decrease_legacy_adjustment"},sql("drill_source",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{cid}' AND cycle=3 AND plan_adjustment_review AND billing_plan->>'users'='2' AND amount_jpy=1960"))?.trim()=="1")?;
             report.check(if retired {"source_retired_decrease_funded"} else {"source_decrease_funded"},sql("drill_source",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{funded}' AND state='funded' AND accepted_at IS NOT NULL AND target_cycle=2 AND quote->'renewalQuote'->>'monthlyTotalJpy'='980'"))?.trim()=="1")?;
             report.check(if retired {"source_retired_decrease_exception_nonempty"} else {"source_decrease_exception_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{cid}' AND amount_jpy=980 AND length(event_hash)=64 AND reason='seat_decrease_no_longer_applicable'"))?.trim()=="1")?;
             report.check(if retired {"source_retired_decrease_period_bound"} else {"source_decrease_period_bound"},sql("drill_source",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{cid}' AND cycle=2 AND seat_decrease_id='{funded}' AND billing_plan->>'users'='1' AND amount_jpy=980"))?.trim()=="1")?;
@@ -1187,8 +1201,10 @@ impl Runner {
         report.check("restored_decrease_nonempty_funded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{decrease_id}' AND state='funded' AND target_cycle=2 AND accepted_at IS NOT NULL AND quote->'renewalQuote'->>'monthlyTotalJpy'='980'"))?.trim()=="1")?;
         report.check("restored_decrease_exception_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{seat_contract_id}' AND amount_jpy=980 AND reason='seat_decrease_no_longer_applicable'"))?.trim()=="1")?;
         report.check("restored_decrease_period_bound",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{seat_contract_id}' AND cycle=2 AND seat_decrease_id='{decrease_id}' AND billing_plan->>'users'='1' AND amount_jpy=980"))?.trim()=="1")?;
+        report.check("restored_decrease_legacy_adjustment",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{seat_contract_id}' AND cycle=3 AND plan_adjustment_review AND billing_plan->>'users'='2' AND amount_jpy=1960"))?.trim()=="1")?;
         report.check("retired_decreases_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{retired_decrease_id}' OR contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
         report.check("retired_decrease_exceptions_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
+        report.check("retired_decrease_periods_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
         report.check("retired_live_rows_cascaded", sql("drill_restored",&format!("SELECT (SELECT count(*) FROM commercial_live_contracts WHERE contract_id='{retired_live_id}')+(SELECT count(*) FROM commercial_live_periods WHERE contract_id='{retired_live_id}')"))?.trim()=="0")?;
         report.check(
             "retired_contracts_cascaded",
