@@ -23,9 +23,23 @@ CREATE TABLE IF NOT EXISTS commercial_live_periods (
  provider_object_id TEXT NOT NULL, event_hash TEXT NOT NULL,
  evidence TEXT NOT NULL CHECK(evidence='provider_live'), received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  disposition TEXT NOT NULL DEFAULT 'effective' CHECK(disposition IN ('effective','refund_review')), PRIMARY KEY(account_id,event_id), UNIQUE(contract_id,cycle), UNIQUE(account_id,provider_object_id));
-ALTER TABLE commercial_live_periods ADD COLUMN IF NOT EXISTS disposition TEXT NOT NULL DEFAULT 'effective' CHECK(disposition IN ('effective','refund_review'));`;
+ALTER TABLE commercial_live_periods ADD COLUMN IF NOT EXISTS disposition TEXT NOT NULL DEFAULT 'effective' CHECK(disposition IN ('effective','refund_review'));
+ALTER TABLE commercial_live_periods ADD COLUMN IF NOT EXISTS provider_event_created BIGINT CHECK(provider_event_created>0);
+ALTER TABLE commercial_live_periods ADD COLUMN IF NOT EXISTS disposition_reason TEXT NOT NULL DEFAULT 'legacy_unclassified';
+ALTER TABLE commercial_live_periods ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ;`;
 export const migrateCommercialLive=pool=>applySchemaWithAdvisoryLock(pool,4820130,LIVE_SCHEMA);
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
+
+// Stripe's signed success-event timestamp is provider evidence, not arrival
+// time or the PaymentIntent's earlier creation time. Second-level precision
+// cannot establish ordering within the cancellation second.
+export function classifyPayment(lc,cycle,providerSecond,precedingEffective=true){
+ if(lc.cancel_after_cycle==null||cycle<=lc.cancel_after_cycle)return {disposition:'effective',reason:'paid_recorded'};
+ if(!lc.cancel_requested_at)return {disposition:'refund_review',reason:'cancellation_time_unavailable'};
+ const cancelSecond=Math.floor(new Date(lc.cancel_requested_at).getTime()/1000);
+ if(providerSecond<cancelSecond&&precedingEffective)return {disposition:'effective',reason:'paid_before_cancellation'};
+ return {disposition:'refund_review',reason:providerSecond===cancelSecond?'payment_time_boundary_review':providerSecond<cancelSecond?'payment_sequence_review':'payment_after_cancellation'};
+}
 
 // The contract anchor (first paid day) and the cycle number are the source of truth.
 // Arrival time and event order never move a period.
@@ -52,7 +66,7 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
    if(!pool||!enabled||!secret||!/^acct_[A-Za-z0-9]+$/.test(account??''))throw authHttpError(503,'PS019','Payment event intake unavailable');
    let event;try{event=Stripe.webhooks.constructEvent(req.body,req.headers['stripe-signature'],secret,300);}catch{throw authHttpError(400,'PS018','Invalid payment event signature');}
    const o=event.data?.object,m=o?.metadata,cycle=Number(m?.cycle);
-   if(event.livemode!==true||o?.livemode!==true||event.account!==account||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||!Number.isSafeInteger(event.created))throw authHttpError(400,'PS018','Unsupported payment event scope');
+   if(event.livemode!==true||o?.livemode!==true||event.account!==account||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||(!Number.isSafeInteger(event.created)||event.created<=0))throw authHttpError(400,'PS018','Unsupported payment event scope');
    if(!uuid(m?.contractId)||!uuid(m?.ownerId)||!/^[a-f0-9]{64}$/.test(m?.quoteHash??'')||!/^[1-9][0-9]{0,2}$/.test(m?.cycle??'')||cycle>120)throw authHttpError(400,'PS018','Invalid contract event binding');
    const digest=createHash('sha256').update(req.body).digest('hex');const c=await pool.connect();
    try{
@@ -68,14 +82,20 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
     if(!user.rowCount)throw authHttpError(409,'PS015','Contract binding unavailable');
     const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[m.contractId,m.ownerId])).rows[0];
     if(!r||r.state!=='accepted_unpaid'||r.quote_hash!==m.quoteHash||r.quote.currency!=='JPY'||r.quote.oneTimeTotalJpy!==0)throw authHttpError(409,'PS015','Payment does not match accepted quote');
-    const old=(await c.query('SELECT event_hash FROM commercial_live_periods WHERE account_id=$1 AND event_id=$2',[account,event.id])).rows[0];
+    const old=(await c.query('SELECT event_hash,disposition,contract_id,cycle FROM commercial_live_periods WHERE account_id=$1 AND event_id=$2',[account,event.id])).rows[0];
     if(old&&old.event_hash!==digest)throw authHttpError(409,'PS015','Payment event changed');
+    if(old&&(old.contract_id!==r.id||old.cycle!==cycle))throw authHttpError(409,'PS015','Payment binding changed');
+    let lc=(await c.query('SELECT *,contract_start::text AS start_text FROM commercial_live_contracts WHERE contract_id=$1 FOR UPDATE',[r.id])).rows[0];
+    const precedingEffective=cycle===1||(await c.query("SELECT 1 FROM commercial_live_periods WHERE contract_id=$1 AND cycle=$2 AND disposition='effective'",[r.id,cycle-1])).rowCount>0;
+    if(old?.disposition==='refund_review'&&lc?.cancel_requested_at&&event.created<Math.floor(new Date(lc.cancel_requested_at).getTime()/1000)&&precedingEffective){
+     await c.query("UPDATE commercial_live_periods SET disposition='effective',disposition_reason='paid_before_cancellation',provider_event_created=$3,reconciled_at=clock_timestamp() WHERE account_id=$1 AND event_id=$2",[account,event.id,event.created]);
+     await c.query('UPDATE commercial_live_contracts SET cancel_after_cycle=GREATEST(cancel_after_cycle,$2) WHERE contract_id=$1',[r.id,cycle]);
+    }
     if(!old){
      let monthly=r.quote.monthlyTotalJpy;
      if(r.current_plan)monthly=(await nativeMutation({command:'commercial-quote',currency:'JPY',plan:planInput(r.current_plan),setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:r.quote.monthlyMaintenanceJpy||null}})).monthlyTotalJpy;
      if(monthly!==o.amount_received)throw authHttpError(409,'PS015','Payment amount does not match current plan');
      if(r.cancellation_requested_at)throw authHttpError(409,'PS015','Contract acceptance was withdrawn');
-     let lc=(await c.query('SELECT *,contract_start::text AS start_text FROM commercial_live_contracts WHERE contract_id=$1 FOR UPDATE',[r.id])).rows[0];
      if(!lc){
       if(cycle!==1)throw authHttpError(409,'PS015','Earlier payment cycle is not recorded yet');
       lc=(await c.query('INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES($1,$2) RETURNING *,contract_start::text AS start_text',[r.id,jstDate(event.created*1000)])).rows[0];
@@ -84,7 +104,9 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
       // Preserve unexpected paid evidence for refund reconciliation without granting access.
      }
      const p=await cyclePeriod(lc.start_text,cycle);
-     await c.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,disposition,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'provider_live')",[account,event.id,r.id,cycle,p.periodStart,p.periodEnd,o.amount_received,o.id,digest,lc.cancel_after_cycle!=null&&cycle>lc.cancel_after_cycle?'refund_review':'effective']);
+     const classification=classifyPayment(lc,cycle,event.created,precedingEffective);
+     await c.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,disposition,provider_event_created,disposition_reason,reconciled_at,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $12='paid_before_cancellation' THEN clock_timestamp() ELSE NULL END,'provider_live')",[account,event.id,r.id,cycle,p.periodStart,p.periodEnd,o.amount_received,o.id,digest,classification.disposition,event.created,classification.reason]);
+     if(classification.reason==='paid_before_cancellation')await c.query('UPDATE commercial_live_contracts SET cancel_after_cycle=GREATEST(cancel_after_cycle,$2) WHERE contract_id=$1',[r.id,cycle]);
     }
     await c.query('COMMIT');res.json({received:true,duplicate:!!old,meaning:'signed_live_payment_recorded'});
    }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')throw authHttpError(409,'PS015','Payment event belongs to another binding');throw e;}finally{c.release();}

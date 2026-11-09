@@ -83,7 +83,7 @@ export function createCommercialContractRouter({pool,authStore}){
    if(r.quote_hash!==req.body.quoteHash)throw authHttpError(409,'PS015','Contract quote changed');
    const lc=(await c.query('SELECT * FROM commercial_live_contracts WHERE contract_id=$1 FOR UPDATE',[r.id])).rows[0];
    if(!lc)throw authHttpError(409,'PS015','Contract has no paid period to end');
-   if(lc.cancel_after_cycle==null)await c.query('UPDATE commercial_live_contracts SET cancel_after_cycle=(SELECT max(cycle) FROM commercial_live_periods WHERE contract_id=$1),cancel_requested_at=clock_timestamp() WHERE contract_id=$1',[r.id]);
+   if(lc.cancel_after_cycle==null)await c.query("UPDATE commercial_live_contracts SET cancel_after_cycle=(SELECT max(cycle) FROM commercial_live_periods WHERE contract_id=$1 AND disposition='effective'),cancel_requested_at=clock_timestamp() WHERE contract_id=$1",[r.id]);
    return loadEntitlement(c,r.id,Date.now());
   });res.json({entitlement:out,meaning:'ends_at_paid_period_end_no_refund_no_deletion'});
  }catch(e){sendAuthError(res,e);}});
@@ -92,7 +92,7 @@ export function createCommercialContractRouter({pool,authStore}){
   const payments=await persist(req,async c=>{
    const own=(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];
    if(!own)throw authHttpError(404,'PS022','Contract not found');
-   return (await c.query("SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at,'payment_after_cancellation' AS reason FROM commercial_live_periods WHERE contract_id=$1 AND disposition='refund_review' UNION ALL SELECT event_id,provider_object_id,(quote->>'billingCycle')::integer,paid_amount_jpy::text,payment_received_at,'seat_quote_no_longer_applicable' AS reason FROM commercial_seat_changes WHERE contract_id=$1 AND state='refund_review' ORDER BY cycle",[own.id])).rows;
+   return (await c.query("SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at,disposition_reason AS reason FROM commercial_live_periods WHERE contract_id=$1 AND disposition='refund_review' UNION ALL SELECT event_id,provider_object_id,(quote->>'billingCycle')::integer,paid_amount_jpy::text,payment_received_at,'seat_quote_no_longer_applicable' AS reason FROM commercial_seat_changes WHERE contract_id=$1 AND state='refund_review' ORDER BY cycle",[own.id])).rows;
   });
   res.json({refundExecuted:false,entitlementGranted:false,payments:payments.map(p=>({eventId:p.event_id,paymentIntentId:p.provider_object_id,cycle:p.cycle,amountJpy:Number(p.amount_jpy),receivedAt:p.received_at,reason:p.reason,status:'refund_review_required'}))});
  }catch(e){sendAuthError(res,e);}});

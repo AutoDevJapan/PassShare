@@ -37,7 +37,8 @@ test('upgrade the populated pre-disposition live schema without losing evidence'
   await assert.rejects(pool.query('SELECT disposition FROM commercial_live_periods'),{code:'42703'});
   await migrateCommercialLive(pool);
   await migrateCommercialLive(pool); // idempotent with populated evidence
-  const {disposition,...after}=(await pool.query('SELECT * FROM commercial_live_periods')).rows[0];
+  const {disposition,provider_event_created,disposition_reason,reconciled_at,...after}=(await pool.query('SELECT * FROM commercial_live_periods')).rows[0];
+  assert.equal(provider_event_created,null);assert.equal(disposition_reason,'legacy_unclassified');assert.equal(reconciled_at,null);
   assert.equal(disposition,'effective');assert.deepEqual(after,before);
   await assert.rejects(pool.query("UPDATE commercial_live_periods SET disposition='unknown'"),{code:'23514'});
   await assert.rejects(pool.query('UPDATE commercial_live_periods SET disposition=NULL'),{code:'23502'});
