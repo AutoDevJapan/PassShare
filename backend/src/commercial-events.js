@@ -30,7 +30,7 @@ export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE
    let event;try{event=Stripe.webhooks.constructEvent(req.body,req.headers['stripe-signature'],secret,300);}catch{throw authHttpError(400,'PS018','Invalid payment event signature');}
    const o=event.data?.object,m=o?.metadata;
    const accountMatches=scope==='direct'?event.account==null:event.account===account;
-   if(event.livemode===false&&accountMatches&&['refund.created','refund.updated'].includes(event.type)){
+   if(event.livemode===false&&accountMatches&&['refund.created','refund.updated','refund.failed'].includes(event.type)){
     res.json(await recordTestRefund(pool,event,account,createHash('sha256').update(req.body).digest('hex')));return;
    }
    if(event.livemode!==false||o?.livemode!==false||!accountMatches||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||!Number.isSafeInteger(event.created))throw authHttpError(400,'PS018','Unsupported payment event scope');

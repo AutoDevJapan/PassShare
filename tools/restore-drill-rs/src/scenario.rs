@@ -355,8 +355,34 @@ impl Runner {
                     command_output(command, None).is_ok(),
                 )?;
             }
-            report.check(if retired {"source_retired_test_refund_nonempty"} else {"source_test_refund_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refunds r JOIN commercial_payment_events p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id) WHERE r.contract_id='{id}' AND r.amount_jpy=400 AND p.amount_jpy=980 AND r.evidence='provider_test_sandbox'"))?.trim()=="1")?;
-            report.check(if retired {"source_retired_test_refund_events_nonempty"} else {"source_test_refund_events_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refund_events WHERE contract_id='{id}' AND length(event_hash)=64"))?.trim()=="2")?;
+            let mut lifecycle_saved = true;
+            for (tag, refund_prefix, status, seconds, amount) in [
+                ("action", "re_refund", "requires_action", 1, 400),
+                ("failed", "re_refund", "failed", 2, 400),
+                ("pending", "re_refund", "pending", 3, 400),
+                ("resuccess", "re_refund", "succeeded", 4, 400),
+                ("failedonly", "re_failed", "failed", 5, 200),
+                ("pendingonly", "pyr_pending", "pending", 6, 100),
+                ("samepending", "re_ambiguous", "pending", 7, 100),
+                ("samesuccess", "re_ambiguous", "succeeded", 7, 100),
+                ("canceled", "re_canceled", "canceled", 8, 100),
+            ] {
+                let refund = json!({"id":format!("evt_refund{tag}{key}"),"account":"acct_restorefixture","type":if status=="failed"||status=="canceled" {"refund.failed"} else {"refund.updated"},"livemode":false,"created":refund_time+seconds,"data":{"object":{"id":format!("{refund_prefix}{key}"),"object":"refund","payment_intent":format!("pi_{key}"),"status":status,"currency":"jpy","amount":amount,"created":refund_time,"metadata":{}}}});
+                let mut command = clean_command("/usr/local/bin/node");
+                command.arg("-e").arg(script).arg(refund.to_string());
+                lifecycle_saved &= command_output(command, None).is_ok();
+            }
+            report.check(
+                if retired {
+                    "source_retired_test_refund_lifecycle_saved"
+                } else {
+                    "source_test_refund_lifecycle_saved"
+                },
+                lifecycle_saved,
+            )?;
+            report.check(if retired {"source_retired_test_refund_nonempty"} else {"source_test_refund_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refunds r JOIN commercial_payment_events p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id) WHERE r.contract_id='{id}' AND r.amount_jpy=400 AND r.provider_status='succeeded' AND p.amount_jpy=980 AND r.evidence='provider_test_sandbox'"))?.trim()=="1")?;
+            report.check(if retired {"source_retired_test_refund_events_nonempty"} else {"source_test_refund_events_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refund_events WHERE contract_id='{id}' AND length(event_hash)=64"))?.trim()=="11")?;
+            report.check(if retired {"source_retired_test_refund_statuses_nonempty"} else {"source_test_refund_statuses_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refunds WHERE contract_id='{id}' AND ((refund_id='re_refund{key}' AND amount_jpy=400 AND provider_status='succeeded') OR (refund_id='re_failed{key}' AND amount_jpy=200 AND provider_status='failed') OR (refund_id='pyr_pending{key}' AND amount_jpy=100 AND provider_status='pending') OR (refund_id='re_ambiguous{key}' AND amount_jpy=100 AND provider_status='status_review') OR (refund_id='re_canceled{key}' AND amount_jpy=100 AND provider_status='canceled'))"))?.trim()=="5")?;
         }
         // Live-evidence fixture: signed synthetic events through the closed-by-default
         // live receiver (own secret/account/tables). Never provider delivery proof.
@@ -1229,7 +1255,9 @@ impl Runner {
         report.check("retired_paid_period_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_paid_periods WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check("retired_payment_ledger_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check("restored_test_refund_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refunds r JOIN commercial_payment_events p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id) WHERE r.contract_id='{contract_id}' AND r.amount_jpy=400 AND p.amount_jpy=980 AND r.evidence='provider_test_sandbox'"))?.trim()=="1")?;
-        report.check("restored_test_refund_events_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_events WHERE contract_id='{contract_id}' AND length(event_hash)=64"))?.trim()=="2")?;
+        report.check("restored_test_refund_events_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_events WHERE contract_id='{contract_id}' AND length(event_hash)=64"))?.trim()=="11")?;
+        report.check("restored_test_refund_statuses_nonempty",sql("drill_restored",&format!("SELECT count(DISTINCT provider_status) FROM commercial_test_refunds WHERE contract_id='{contract_id}' AND provider_status IN ('succeeded','failed','pending','status_review','canceled')"))?.trim()=="5")?;
+        report.check("restored_test_refund_event_statuses",sql("drill_restored",&format!("SELECT count(DISTINCT observed_status) FROM commercial_test_refund_events WHERE contract_id='{contract_id}' AND observed_status IN ('succeeded','failed','pending','requires_action','canceled')"))?.trim()=="5")?;
         report.check("retired_test_refunds_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refunds WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check("retired_test_refund_events_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_events WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         let refund_history = self.api.json(
@@ -1245,9 +1273,19 @@ impl Runner {
         report.check(
             "restored_test_refund_owner_values",
             refund_history["refunds"].as_array().is_some_and(|r| {
-                r.len() == 1
-                    && r[0]["amountJpy"] == 400
-                    && r[0]["evidence"] == "provider_test_sandbox"
+                r.len() == 5
+                    && r.iter().all(|v| v["evidence"] == "provider_test_sandbox")
+                    && r.iter()
+                        .filter_map(|v| v["confirmedAmountJpy"].as_u64())
+                        .sum::<u64>()
+                        == 400
+                    && r.iter()
+                        .any(|v| v["providerStatus"] == "failed" && v["confirmedAmountJpy"] == 0)
+                    && r.iter()
+                        .any(|v| v["providerStatus"] == "pending" && v["confirmedAmountJpy"] == 0)
+                    && r.iter().any(|v| {
+                        v["providerStatus"] == "status_review" && v["confirmedAmountJpy"] == 0
+                    })
             }) && refund_history["nextCursor"].is_null()
                 && refund_history["liveRefundExecuted"] == false
                 && refund_history["entitlementsGranted"] == false,

@@ -42,6 +42,10 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "retired_test_refund_events_cascaded",
     "restored_test_refund_owner_API",
     "restored_test_refund_owner_values",
+    "source_test_refund_lifecycle_saved",
+    "source_test_refund_statuses_nonempty",
+    "restored_test_refund_statuses_nonempty",
+    "restored_test_refund_event_statuses",
 ];
 
 pub(super) fn validate(report: &Value, negative: bool) -> bool {

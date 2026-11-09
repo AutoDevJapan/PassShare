@@ -9,6 +9,8 @@ export const TEST_REFUND_SCHEMA=`
  id UUID NOT NULL UNIQUE,account_id TEXT NOT NULL,refund_id TEXT NOT NULL,
  payment_event_id TEXT NOT NULL,contract_id UUID NOT NULL,provider_object_id TEXT NOT NULL,
  amount_jpy BIGINT NOT NULL CHECK(amount_jpy>0),refund_created BIGINT NOT NULL CHECK(refund_created>0),
+ provider_status TEXT NOT NULL DEFAULT 'status_review' CHECK(provider_status IN ('pending','requires_action','succeeded','failed','canceled','status_review')),
+ status_event_created BIGINT CHECK(status_event_created>0),
  received_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
  evidence TEXT NOT NULL CHECK(evidence='provider_test_sandbox'),
  PRIMARY KEY(account_id,refund_id),UNIQUE(account_id,refund_id,contract_id),
@@ -18,8 +20,14 @@ export const TEST_REFUND_SCHEMA=`
  CREATE TABLE IF NOT EXISTS commercial_test_refund_events (
  account_id TEXT NOT NULL,event_id TEXT NOT NULL,refund_id TEXT NOT NULL,contract_id UUID NOT NULL,
  event_hash TEXT NOT NULL,provider_created BIGINT NOT NULL CHECK(provider_created>0),
+ observed_status TEXT NOT NULL DEFAULT 'succeeded' CHECK(observed_status IN ('pending','requires_action','succeeded','failed','canceled')),
  received_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(account_id,event_id),
- FOREIGN KEY(account_id,refund_id,contract_id) REFERENCES commercial_test_refunds(account_id,refund_id,contract_id) ON DELETE CASCADE);`;
+ FOREIGN KEY(account_id,refund_id,contract_id) REFERENCES commercial_test_refunds(account_id,refund_id,contract_id) ON DELETE CASCADE);
+ ALTER TABLE commercial_test_refunds ADD COLUMN IF NOT EXISTS provider_status TEXT NOT NULL DEFAULT 'status_review' CHECK(provider_status IN ('pending','requires_action','succeeded','failed','canceled','status_review'));
+ ALTER TABLE commercial_test_refunds ADD COLUMN IF NOT EXISTS status_event_created BIGINT CHECK(status_event_created>0);
+ ALTER TABLE commercial_test_refund_events ADD COLUMN IF NOT EXISTS observed_status TEXT NOT NULL DEFAULT 'succeeded' CHECK(observed_status IN ('pending','requires_action','succeeded','failed','canceled'));
+ CREATE INDEX IF NOT EXISTS commercial_test_refund_events_status ON commercial_test_refund_events(account_id,refund_id,provider_created);
+ CREATE INDEX IF NOT EXISTS commercial_test_refunds_payment ON commercial_test_refunds(account_id,provider_object_id);`;
 export const migrateTestRefunds=p=>applySchemaWithAdvisoryLock(p,4820134,TEST_REFUND_SCHEMA);
 
 export async function lockTestPayment(c,account,eventId,paymentIntent){
@@ -28,6 +36,14 @@ export async function lockTestPayment(c,account,eventId,paymentIntent){
 }
 const uuid=s=>typeof s==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(s);
 const conflict=message=>authHttpError(409,'PS015',message);
+const providerId=s=>typeof s==='string'&&/^[A-Za-z0-9_]{1,255}$/.test(s);
+const statuses=['pending','requires_action','succeeded','failed','canceled'];
+const reservedSql="COALESCE(SUM(amount_jpy) FILTER (WHERE provider_status NOT IN ('failed','canceled')),0)::text";
+function financialView(r){
+ const statusReviewRequired=r.provider_status==='status_review';
+ const amountReviewRequired=BigInt(r.reserved_jpy)>BigInt(r.paid_jpy);
+ return {providerStatus:r.provider_status,statusReviewRequired,amountReviewRequired,confirmedAmountJpy:!statusReviewRequired&&!amountReviewRequired&&r.provider_status==='succeeded'?Number(r.amount_jpy):0};
+}
 
 // Only called after the existing receiver verifies the raw Stripe signature,
 // sandbox mode and its configured direct/Connect account scope. No provider API
@@ -36,9 +52,9 @@ export async function recordTestRefund(pool,event,account,digest){
  const o=event.data?.object;
  // Stripe's Refund object does not require a livemode property. The signed
  // Event's mode is authoritative; a contradictory explicit property is refused.
- if(event.livemode!==false||o?.livemode===true||!['refund.created','refund.updated'].includes(event.type)||
-  o?.object!=='refund'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount)||o.amount<=0||
-  !/^re_[A-Za-z0-9]+$/.test(o.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.payment_intent??'')||
+ if(event.livemode!==false||o?.livemode===true||!['refund.created','refund.updated','refund.failed'].includes(event.type)||
+  o?.object!=='refund'||!statuses.includes(o.status)||(event.type==='refund.failed'&&!['failed','canceled'].includes(o.status))||o.currency!=='jpy'||!Number.isSafeInteger(o.amount)||o.amount<=0||
+  !providerId(o.id)||!/^pi_[A-Za-z0-9]+$/.test(o.payment_intent??'')||
   !/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!Number.isSafeInteger(event.created)||event.created<=0||
   !Number.isSafeInteger(o.created)||o.created<=0)throw authHttpError(400,'PS018','Unsupported test refund scope');
  const c=await pool.connect();
@@ -55,14 +71,23 @@ export async function recordTestRefund(pool,event,account,digest){
   if(oldEvent&&(oldEvent.event_hash!==digest||oldEvent.refund_id!==o.id||oldEvent.contract_id!==binding.contract_id))throw conflict('Refund event changed');
   const old=(await c.query('SELECT * FROM commercial_test_refunds WHERE account_id=$1 AND refund_id=$2',[account,o.id])).rows[0];
   if(old&&(old.provider_object_id!==o.payment_intent||old.contract_id!==binding.contract_id||BigInt(old.amount_jpy)!==BigInt(o.amount)||BigInt(old.refund_created)!==BigInt(o.created)))throw conflict('Refund identity changed');
+  const previous=(await c.query('SELECT MAX(provider_created)::text n FROM commercial_test_refund_events WHERE account_id=$1 AND refund_id=$2',[account,o.id])).rows[0].n;
   if(!old){
-   const total=(await c.query('SELECT COALESCE(SUM(amount_jpy),0)::text n FROM commercial_test_refunds WHERE account_id=$1 AND provider_object_id=$2',[account,o.payment_intent])).rows[0].n;
-   if(BigInt(total)+BigInt(o.amount)>BigInt(payment.amount_jpy))throw conflict('Refund total exceeds the recorded test payment');
    await c.query('INSERT INTO commercial_test_refunds(id,account_id,refund_id,payment_event_id,contract_id,provider_object_id,amount_jpy,refund_created,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[randomUUID(),account,o.id,payment.event_id,binding.contract_id,o.payment_intent,o.amount,o.created,'provider_test_sandbox']);
   }
-  if(!oldEvent)await c.query('INSERT INTO commercial_test_refund_events(account_id,event_id,refund_id,contract_id,event_hash,provider_created) VALUES($1,$2,$3,$4,$5,$6)',[account,event.id,o.id,binding.contract_id,digest,event.created]);
+  if(!oldEvent)await c.query('INSERT INTO commercial_test_refund_events(account_id,event_id,refund_id,contract_id,event_hash,provider_created,observed_status) VALUES($1,$2,$3,$4,$5,$6,$7)',[account,event.id,o.id,binding.contract_id,digest,event.created,o.status]);
+  const latest=(await c.query('SELECT e.provider_created::text,ARRAY_AGG(DISTINCT e.observed_status) statuses FROM commercial_test_refund_events e WHERE e.account_id=$1 AND e.refund_id=$2 GROUP BY e.provider_created ORDER BY e.provider_created DESC LIMIT 1',[account,o.id])).rows[0];
+  // An old successful-only ledger cannot prove that no later failed notification
+  // was refused. Do not invent current status or a qualification timestamp.
+  const qualified=!old||old.status_event_created!==null||(!oldEvent&&(previous===null||BigInt(event.created)>BigInt(previous)));
+  const status=qualified&&latest.statuses.length===1?latest.statuses[0]:'status_review';
+  await c.query('UPDATE commercial_test_refunds SET provider_status=$3,status_event_created=$4 WHERE account_id=$1 AND refund_id=$2',[account,o.id,status,qualified?latest.provider_created:null]);
+  const reserved=(await c.query('SELECT '+reservedSql+' n FROM commercial_test_refunds WHERE account_id=$1 AND provider_object_id=$2',[account,o.payment_intent])).rows[0].n;
+  const view=financialView({provider_status:status,amount_jpy:o.amount,reserved_jpy:reserved,paid_jpy:payment.amount_jpy});
   await c.query('COMMIT');
-  return {received:true,duplicate:!!oldEvent,duplicateRefund:!!old,liveRefundExecuted:false,entitlementsGranted:false,meaning:'verified_test_refund_recorded_not_live_payment_or_entitlement'};
+  // Intake observes already-issued refunds. Preserve contradictory signed facts
+  // for reconciliation instead of pretending rejection prevents a provider action.
+  return {received:true,duplicate:!!oldEvent,duplicateRefund:!!old,...view,liveRefundExecuted:false,entitlementsGranted:false,meaning:'verified_test_refund_recorded_not_live_payment_or_entitlement'};
  }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')throw conflict('Refund identity belongs to another binding');throw e;}finally{c.release();}
 }
 
@@ -72,8 +97,8 @@ export function registerTestRefundRoutes(router,persist){
   if(req.query.after!==undefined&&!uuid(req.query.after))throw authHttpError(400,'PS018','Invalid refund cursor');
   const rows=await persist(req,async c=>{
    if(!(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rowCount)throw authHttpError(404,'PS022','Contract not found');
-   return (await c.query('SELECT id,refund_id,provider_object_id,amount_jpy::text,refund_created::text,received_at,evidence FROM commercial_test_refunds WHERE contract_id=$1 AND ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT 101',[req.params.id,req.query.after??null])).rows;
+   return (await c.query('SELECT r.id,r.refund_id,r.provider_object_id,r.amount_jpy::text,r.refund_created::text,r.received_at,r.evidence,r.provider_status,p.amount_jpy::text paid_jpy,(SELECT '+reservedSql+' FROM commercial_test_refunds x WHERE x.account_id=r.account_id AND x.provider_object_id=r.provider_object_id) reserved_jpy FROM commercial_test_refunds r JOIN commercial_payment_events p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id) WHERE r.contract_id=$1 AND ($2::uuid IS NULL OR r.id>$2) ORDER BY r.id LIMIT 101',[req.params.id,req.query.after??null])).rows;
   });const page=rows.slice(0,100);
-  res.json({refunds:page.map(r=>({id:r.id,refundId:r.refund_id,paymentIntentId:r.provider_object_id,amountJpy:Number(r.amount_jpy),providerCreated:Number(r.refund_created),receivedAt:r.received_at,evidence:r.evidence})),nextCursor:rows.length>100?page.at(-1).id:null,liveRefundExecuted:false,entitlementsGranted:false});
+  res.json({refunds:page.map(r=>({id:r.id,refundId:r.refund_id,paymentIntentId:r.provider_object_id,amountJpy:Number(r.amount_jpy),providerCreated:Number(r.refund_created),receivedAt:r.received_at,evidence:r.evidence,...financialView(r)})),nextCursor:rows.length>100?page.at(-1).id:null,liveRefundExecuted:false,entitlementsGranted:false});
  }catch(e){sendAuthError(res,e);}});
 }

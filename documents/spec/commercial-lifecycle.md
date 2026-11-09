@@ -326,8 +326,8 @@ receipt ID順で100件ずつ取得し、履歴にも秘密値を含めない。
 
 ### 公式sandboxの返金証跡と支払い正本の対応
 
-既存の署名検証済みtest受け口は `refund.created` と `refund.updated` の
-成功済みJPY Refundも扱う。公式の[Refund object](https://docs.stripe.com/api/refunds/object)と
+既存の署名検証済みtest受け口は `refund.created`、`refund.updated`、`refund.failed` の
+JPY Refundを扱う。公式の[Refund object](https://docs.stripe.com/api/refunds/object)と
 [event types](https://docs.stripe.com/api/events/types)に従い、署名対象Eventの
 `livemode:false` と既存direct/Connect account条件を使う。
 Refund objectに `livemode` がないことだけで正規の配送を拒否しない。
@@ -336,10 +336,18 @@ Refund objectに `livemode` がないことだけで正規の配送を拒否し�
 その保存済み正本へ結ぶ。Refund metadataやクライアント入力で契約を移さない。
 元支払い未着は409で再送を要求し、成功していない返金を完了扱いにしない。
 一つのRefund IDは一度だけ集計し、別の署名イベントによる更新と再送を別の
-イベント台帳に結ぶ。並行返金の合計が元支払額を超える場合は拒否する。
+イベント台帳に結ぶ。受信日時ではなく署名対象eventの発生秒から現在状態を投影し、
+古い成功通知の再送でfailedを復活させない。同秒の異なる状態は `status_review` とする。
+旧成功専用schemaの現在状態と時刻は補作せず、照合待ちから新しい通知で確定する。
+`pending`、`requires_action`、照合待ちは確定返金額へ加算せず、`failed` と `canceled` は
+予約合計からも外す。署名済みの返金通知は実行後の事実なので、並行合計が元支払額を
+超えた場合も証跡を失わせず確認対象へ保存し、確定額へ加算しない。
+返金実行前の上限判定や返金API呼出しは別の未完工程である。
+`confirmedAmountJpy` は現在のprovider状態がsucceededで、時刻・金額の矛盾がない
+場合の集計であり、顧客の銀行への着金実証ではない。
 正本・イベント・契約の複合FKを持ち、退会cascadeを復元fixtureでも確認する。
 
 `GET .../test-refunds` は有効な契約所有者sessionだけに、非公開・no-storeで
 100件ずつ返す。元の有効期間・席数・Boxの所属・鍵は変更しない。
-これは公式sandboxで返金された事実の受領経路であり、返金APIの実行、live返金、
+これは公式sandboxの返金状態を受領する経路であり、返金APIの実行、live返金、
 本番有料権限付与、販売開始、原M8全体の完了ではない。
