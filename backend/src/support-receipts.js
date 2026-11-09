@@ -12,8 +12,8 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS support_receipts (
  request_id UUID NOT NULL, fingerprint TEXT NOT NULL, metadata JSONB NOT NULL,
  status TEXT NOT NULL DEFAULT 'received' CHECK(status IN ('received','in_progress','resolved')),
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(user_id,request_id));`;
+export async function migrateSupportReceipts(pool) { await applySchemaWithAdvisoryLock(pool,4820127,SCHEMA); }
 export async function createSupportReceiptRouter({pool,authStore}) {
- if(pool) await applySchemaWithAdvisoryLock(pool,4820127,SCHEMA);
 
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:"draft-6",legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
