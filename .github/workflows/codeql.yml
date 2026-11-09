@@ -135,11 +135,67 @@ jobs:
           git -C "$GITHUB_WORKSPACE" restore --source=HEAD --worktree -- apps/mobile/src-tauri/gen/android ':(top,exclude)apps/mobile/src-tauri/gen/android/buildSrc/src/main/java/com/passshare/mobile/kotlin/BuildTask.kt'
           test -x src-tauri/gen/android/gradlew
 
+      - name: Restore verified Gradle distribution
+        if: matrix.language == 'java-kotlin'
+        uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca
+        with:
+          path: ${{ runner.temp }}/passshare-gradle-distribution
+          key: gradle-8.14.3-bin-bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531
+
+      - name: Prepare checksum-pinned official Gradle distribution
+        if: matrix.language == 'java-kotlin'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: apps/mobile
+        run: |
+          directory="$RUNNER_TEMP/passshare-gradle-distribution"
+          archive="$directory/gradle-8.14.3-bin.zip"
+          mkdir -p "$directory"
+          expected=bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531
+          if [ ! -f "$archive" ]; then
+            # Official release asset API avoids the repeatedly failing browser redirect.
+            gh api -H 'Accept: application/octet-stream' repos/gradle/gradle-distributions/releases/assets/269969095 > "$archive.partial"
+            echo "$expected  $archive.partial" | sha256sum --check --strict
+            mv "$archive.partial" "$archive"
+          fi
+          echo "$expected  $archive" | sha256sum --check --strict
+          sed -i "s|^distributionUrl=.*|distributionUrl=file\\\\:$archive|" src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+
       - name: Compile Android Kotlin and build debug APK
         if: matrix.language == 'java-kotlin'
         working-directory: apps/mobile
         run: |
-          cargo tauri android build --debug --target x86_64 --apk --ci
+          # Fetch the pinned wrapper distribution before the traced build. Keep
+          # partial/successful downloads in this job; retry only observed HTTP504.
+          for attempt in 1 2 3; do
+            log="$RUNNER_TEMP/passshare-gradle-$attempt.log"
+            if src-tauri/gen/android/gradlew --version >"$log" 2>&1; then
+              cat "$log"
+              break
+            else
+              status=$?
+              cat "$log"
+              if ! grep -Fq 'Server returned HTTP response code: 504' "$log" || [ "$attempt" -eq 3 ]; then
+                exit "$status"
+              fi
+              sleep "$((5 * attempt))"
+            fi
+          done
+          for attempt in 1 2 3; do
+            log="$RUNNER_TEMP/passshare-android-$attempt.log"
+            if cargo tauri android build --debug --target x86_64 --apk --ci >"$log" 2>&1; then
+              cat "$log"
+              break
+            else
+              status=$?
+              cat "$log"
+              # Dependency transport only: never retry compiler diagnostics.
+              if grep -Eq '(^|[[:space:]])error(\[E[0-9]+\])?:|(^|[[:space:]])e: |Compilation error|Compilation failed|Kotlin compilation failed' "$log" || ! grep -Eq 'Received status code 504 from server|Server returned HTTP response code: 504' "$log" || [ "$attempt" -eq 3 ]; then
+                exit "$status"
+              fi
+              sleep "$((5 * attempt))"
+            fi
+          done
           find src-tauri/gen/android/app/build/outputs/apk -type f -name '*debug.apk' -size +0c -print -quit | grep -q .
 
       - name: Analyze

@@ -263,6 +263,38 @@ impl Runner {
             None,
         )?;
         let receipt_id = identifier(&receipt, "/id", 36)?;
+        let contract_input = json!({"requestId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}});
+        let contract_draft = self.api.json(
+            report,
+            "source_contract_draft",
+            "POST",
+            "/api/commercial-contracts",
+            &owner.session,
+            Some(&contract_input),
+            201,
+            None,
+        )?;
+        let contract_id = identifier(&contract_draft, "/id", 36)?;
+        let contract = self.api.json(
+            report,
+            "source_contract_accepted",
+            "POST",
+            &format!("/api/commercial-contracts/{contract_id}/accept"),
+            &owner.session,
+            Some(&json!({"quoteHash":contract_draft["quoteHash"]})),
+            200,
+            None,
+        )?;
+        self.api.json(
+            report,
+            "source_retired_contract_draft",
+            "POST",
+            "/api/commercial-contracts",
+            &deleted.session,
+            Some(&contract_input),
+            201,
+            None,
+        )?;
         self.api.json(report,"source_deleted_account_receipt_saved","POST","/api/support-receipts",&deleted.session,Some(&json!({"requestId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","kind":"technical","version":"0.1.0","platform":"web","errorCode":""})),201,None)?;
         // This final fixture write populates both login guard tables, not fabricated rows.
         // Bracket its committed update; no API mutations occur between this and dump.
@@ -459,6 +491,7 @@ impl Runner {
             "restore_login_ip_requests_full_rows",
             "restore_native_operations_full_rows",
             "restore_support_receipts_full_rows",
+            "restore_contracts_full_rows",
         ];
         for (table, name) in TABLES.iter().zip(names) {
             report.check(name, exact_json(&baseline[*table], &restored[*table]))?;
@@ -732,6 +765,42 @@ impl Runner {
         report.check(
             "restored_receipt_exact_current_owner",
             exact_json(&receipt, &current_receipt),
+        )?;
+        self.api.json(
+            report,
+            "restored_contract_old_session_denied",
+            "GET",
+            &format!("/api/commercial-contracts/{contract_id}"),
+            &owner.session,
+            None,
+            401,
+            None,
+        )?;
+        let restored_contract = self.api.json(
+            report,
+            "restored_contract_current_owner",
+            "GET",
+            &format!("/api/commercial-contracts/{contract_id}"),
+            &current_owner.session,
+            None,
+            200,
+            None,
+        )?;
+        report.check(
+            "restored_contract_exact_amount_hash_acceptance",
+            exact_json(&contract, &restored_contract),
+        )?;
+        report.check(
+            "retired_contracts_cascaded",
+            sql(
+                "drill_restored",
+                &format!(
+                    "SELECT count(*) FROM commercial_contracts WHERE user_id='{}'",
+                    deleted.id
+                ),
+            )?
+            .trim()
+                == "0",
         )?;
         report.check(
             "retired_account_receipts_cascaded",
