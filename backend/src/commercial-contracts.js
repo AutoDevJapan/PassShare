@@ -6,6 +6,7 @@ import {requireCsrf} from './auth/csrf.js';
 import {authHttpError,sendAuthError} from './auth/errors.js';
 import {nativeMutation} from './lib/native-mutations.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
+import {migrateCommercialEvents} from './commercial-events.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -13,7 +14,7 @@ export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','accepted_unpaid')),
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), accepted_at TIMESTAMPTZ,
  UNIQUE(user_id,request_id));`;
-export const migrateCommercialContracts=pool=>applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);
+export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);};
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
 const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,createdAt:r.created_at,acceptedAt:r.accepted_at,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});

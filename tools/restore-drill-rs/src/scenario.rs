@@ -285,7 +285,7 @@ impl Runner {
             200,
             None,
         )?;
-        self.api.json(
+        let retired_contract = self.api.json(
             report,
             "source_retired_contract_draft",
             "POST",
@@ -295,6 +295,38 @@ impl Runner {
             201,
             None,
         )?;
+        let retired_contract_id = identifier(&retired_contract, "/id", 36)?;
+        self.api.json(
+            report,
+            "source_retired_contract_accepted",
+            "POST",
+            &format!("/api/commercial-contracts/{retired_contract_id}/accept"),
+            &deleted.session,
+            Some(&json!({"quoteHash":retired_contract["quoteHash"]})),
+            200,
+            None,
+        )?;
+        // Public HTTP intake with synthetic signatures, never provider delivery proof.
+        for (label, actor, id, hash) in [
+            (
+                "source_payment_event_saved",
+                &owner.id,
+                &contract_id,
+                &contract_draft["quoteHash"],
+            ),
+            (
+                "source_retired_payment_event_saved",
+                &deleted.id,
+                &retired_contract_id,
+                &retired_contract["quoteHash"],
+            ),
+        ] {
+            let payload = json!({"id":format!("evt_{}",id.replace('-',"")),"account":"acct_restorefixture","type":"payment_intent.succeeded","livemode":false,"created":unix_ms()/1000,"data":{"object":{"id":format!("pi_{}",id.replace('-',"")),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":false,"metadata":{"contractId":id,"ownerId":actor,"quoteHash":hash}}}});
+            let script = r#"const crypto=require('node:crypto');const payload=process.argv[1];const t=Math.floor(Date.now()/1000);const sig=crypto.createHmac('sha256','whsec_restore_synthetic_only').update(t+'.'+payload).digest('hex');fetch('http://127.0.0.1:8080/api/commercial-events/stripe-test',{method:'POST',headers:{'content-type':'application/json','stripe-signature':'t='+t+',v1='+sig},body:payload}).then(async r=>{if(r.status!==200)process.exitCode=1;else console.log('saved')}).catch(()=>process.exitCode=1)"#;
+            let mut command = clean_command("/usr/local/bin/node");
+            command.arg("-e").arg(script).arg(payload.to_string());
+            report.check(label, command_output(command, None).is_ok())?;
+        }
         self.api.json(report,"source_deleted_account_receipt_saved","POST","/api/support-receipts",&deleted.session,Some(&json!({"requestId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","kind":"technical","version":"0.1.0","platform":"web","errorCode":""})),201,None)?;
         // This final fixture write populates both login guard tables, not fabricated rows.
         // Bracket its committed update; no API mutations occur between this and dump.
@@ -492,6 +524,7 @@ impl Runner {
             "restore_native_operations_full_rows",
             "restore_support_receipts_full_rows",
             "restore_contracts_full_rows",
+            "restore_payment_events_full_rows",
         ];
         for (table, name) in TABLES.iter().zip(names) {
             report.check(name, exact_json(&baseline[*table], &restored[*table]))?;
@@ -790,6 +823,8 @@ impl Runner {
             "restored_contract_exact_amount_hash_acceptance",
             exact_json(&contract, &restored_contract),
         )?;
+        report.check("restored_payment_ledger_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{contract_id}'"))?.trim()=="1")?;
+        report.check("retired_payment_ledger_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check(
             "retired_contracts_cascaded",
             sql(

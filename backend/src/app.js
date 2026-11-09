@@ -1,6 +1,7 @@
 import express from "express";
 import { createSupportReceiptRouter } from "./support-receipts.js";
 import {createCommercialContractRouter} from './commercial-contracts.js';
+import {commercialEventHandler} from './commercial-events.js';
 import { rateLimit } from "express-rate-limit";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
@@ -160,6 +161,7 @@ export async function createApp(options = {}) {
     res.json(metrics);
   });
 
+  app.use('/api/commercial-events/stripe-test',commercialEventHandler({pool}));
   app.use(
     express.json({
       limit: "2mb",
