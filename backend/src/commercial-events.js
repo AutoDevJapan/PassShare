@@ -34,7 +34,7 @@ export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE
     if(old&&old.event_hash!==digest)throw authHttpError(409,'PS015','Payment event changed');
     if(!old)await c.query('INSERT INTO commercial_payment_events(account_id,event_id,contract_id,event_hash,event_type,provider_object_id,amount_jpy,provider_created) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[account,event.id,r.id,digest,event.type,o.id,o.amount_received,event.created]);
     await c.query('COMMIT');res.json({received:true,duplicate:!!old,meaning:'signed_test_payment_recorded_not_live_entitlement'});
-   }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e;}finally{c.release();}
+   }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')throw authHttpError(409,'PS015','Payment event belongs to another binding');throw e;}finally{c.release();}
   }catch(e){sendAuthError(res,e);}
  });return router;
 }

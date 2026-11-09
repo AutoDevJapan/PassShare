@@ -658,6 +658,8 @@ impl Runner {
             .env("PORT", "8080")
             .env("TRUST_PROXY_HOPS", "0")
             .env("PASSSHARE_MUTATIONS_BIN", NATIVE)
+            .env("PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET", "whsec_restore_synthetic_only")
+            .env("PASSSHARE_STRIPE_TEST_ACCOUNT", "acct_restorefixture")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         self.node = Some(OwnedChild::spawn(&mut command)?);

@@ -32,6 +32,12 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   const pair=await Promise.all([send(event),send(event)]);assert.deepEqual(pair.map(r=>r.status),[200,200]);assert.equal(pair.filter(r=>r.body.duplicate).length,1);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,1);
   const altered=structuredClone(event);altered.created--;assert.equal((await send(altered)).status,409);
+  const second=await call('/api/commercial-contracts',other.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(second.status,201);
+  assert.equal((await call('/api/commercial-contracts/'+second.body.id+'/accept',other.refreshToken,{quoteHash:second.body.quoteHash})).status,200);
+  const raceId='evt_'+randomUUID().replaceAll('-','');const left=structuredClone(event);left.id=raceId;
+  const right=structuredClone(left);right.data.object.metadata={contractId:second.body.id,ownerId:other.user.id,quoteHash:second.body.quoteHash};
+  const conflict=await Promise.all([send(left),send(right)]);assert.deepEqual(conflict.map(r=>r.status).sort(),[200,409]);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE event_id=$1',[raceId])).rows[0].n,1);
   const earlier=structuredClone(event);earlier.id='evt_'+randomUUID().replaceAll('-','');earlier.created-=100;assert.equal((await send(earlier)).status,200);
   const read=await call('/api/commercial-contracts/'+quote.body.id,owner.refreshToken);assert.equal(read.body.state,'accepted_unpaid');assert.equal(read.body.paid,false);assert.equal(read.body.entitlementsGranted,false);
   await pool.query('DELETE FROM users WHERE id=$1',[owner.user.id]);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,0);assert.equal((await send(event)).status,409);
