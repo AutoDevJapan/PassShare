@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { migrateSupportReceipts } from "../support-receipts.js";
+import { migrateCommercialContracts } from '../commercial-contracts.js';
 import { AUTH_SCHEMA_SQL } from "../db/auth-schema.js";
 import { applySchemaWithAdvisoryLock } from "../db/migration-lock.js";
 import { SESSION_TTL_MS, CONNECT_TOKEN_TTL_MS, INVITATION_TTL_MS } from "./constants.js";
@@ -36,6 +37,7 @@ export function createPgAuthStore(pool) {
     async migrate() {
       await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY, AUTH_SCHEMA_SQL);
       await migrateSupportReceipts(pool);
+      await migrateCommercialContracts(pool);
       await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY, AUTH_SCHEMA_SQL);
       await applySchemaWithAdvisoryLock(pool, AUTH_MIGRATION_LOCK_KEY,
         await nativeMutation({command:"sharing-schema"}));
