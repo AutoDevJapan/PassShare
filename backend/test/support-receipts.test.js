@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import pg from 'pg';
+import {createApp} from '../src/app.js';
+import {createMemoryAuthStore} from '../src/auth/index.js';
+import {createMemoryStore} from '../src/store/memory-store.js';
+for(const persistent of [false,...(process.env.PASSSHARE_RECEIPTS_PG==='true'?[true]:[])]) test('support receipts are idempotent, actor-bound and reject secret bodies '+(persistent?'PostgreSQL':'memory'),async()=>{
+ if(persistent)assert.equal(process.env.DATABASE_URL,'postgresql://passshare:passshare@127.0.0.1:5432/passshare');
+ const pool=persistent?new pg.Pool({connectionString:process.env.DATABASE_URL}):null;
+ const create=()=>createApp(persistent?{pool}:{authStore:createMemoryAuthStore(),store:createMemoryStore()});
+ const {app}=await create();
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ const base='http://127.0.0.1:'+server.address().port;
+ const signup=async(email)=>{const r=await fetch(base+'/api/auth/signup',{method:'POST',headers:{'content-type':'application/json','x-passshare-client':'mobile'},body:JSON.stringify({email,password:'synthetic-password123'})});assert.equal(r.status,201);return (await r.json()).refreshToken;};
+ try{
+  const a=await signup('receipt-a@example.test'),b=await signup('receipt-b@example.test');
+  const body={requestId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',kind:'technical',version:'0.1.0',platform:'windows',errorCode:'PS019'};
+  const post=async(value)=>fetch(base+'/api/support-receipts',{method:'POST',headers:{authorization:'Bearer '+a,'content-type':'application/json'},body:JSON.stringify(value)});
+  const first=await post(body);assert.equal(first.status,201);const row=await first.json();
+  const retries=await Promise.all([post(body),post(body)]);for(const retry of retries)assert.equal((await retry.json()).id,row.id);
+  if(persistent){const {app:second}=await create();const restarted=second.listen(0,'127.0.0.1');await new Promise(r=>restarted.once('listening',r));try{const response=await fetch('http://127.0.0.1:'+restarted.address().port+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+a}});assert.equal(response.status,200);assert.equal((await response.json()).id,row.id);}finally{restarted.closeAllConnections();await new Promise(r=>restarted.close(r));}}
+  assert.equal((await post({...body,kind:'refund'})).status,409);
+  assert.equal((await post({...body,message:'secret'})).status,400);
+  assert.equal((await fetch(base+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+a}})).status,200);
+  assert.equal((await fetch(base+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+b}})).status,404);
+  assert.equal((await fetch(base+'/api/support-receipts/'+row.id)).status,401);
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r));if(pool)await pool.end();}
+});

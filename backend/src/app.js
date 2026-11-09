@@ -1,4 +1,5 @@
 import express from "express";
+import { createSupportReceiptRouter } from "./support-receipts.js";
 import { rateLimit } from "express-rate-limit";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
@@ -172,6 +173,7 @@ export async function createApp(options = {}) {
     }),
   );
   const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });
+  app.use("/api/support-receipts", await createSupportReceiptRouter({pool,authStore}));
   app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore, mutateOnce }));
   // Keep an unfinished client/key migration off existing hosted accounts.
   const encryptedEnabled = process.env.PASSSHARE_ENCRYPTED_STORAGE === "true";
