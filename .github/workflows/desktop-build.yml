@@ -37,6 +37,9 @@ jobs:
                 frontend/cloud-assets.json|frontend/public/cloud-crypto/*) desktop=true; mobile=true ;;
                 apps/desktop/*) desktop=true ;;
                 apps/mobile/*) mobile=true ;;
+                # The Rust workspace (desktop included) has no path dependency on backend/;
+                # mobile smoke still installs backend and runs its auth API test.
+                backend/*) mobile=true ;;
                 frontend/*|packages/extension/*|e2e/web/*|e2e/extension/*) ;;
                 *) desktop=true; mobile=true ;;
               esac
