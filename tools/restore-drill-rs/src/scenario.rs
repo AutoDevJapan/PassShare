@@ -545,6 +545,7 @@ impl Runner {
             "restore_support_receipts_full_rows",
             "restore_contracts_full_rows",
             "restore_payment_events_full_rows",
+            "restore_paid_periods_full_rows",
         ];
         for (table, name) in TABLES.iter().zip(names) {
             report.check(name, exact_json(&baseline[*table], &restored[*table]))?;
@@ -859,6 +860,8 @@ impl Runner {
             None,
         )?;
         report.check("restored_payment_ledger_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{contract_id}'"))?.trim()=="1")?;
+        report.check("restored_paid_period_nonempty_sandbox_only",sql("drill_restored",&format!("SELECT count(*) FROM commercial_paid_periods WHERE contract_id='{contract_id}' AND evidence='provider_test_sandbox' AND period_end>period_start AND amount_jpy=980"))?.trim()=="1")?;
+        report.check("retired_paid_period_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_paid_periods WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check("retired_payment_ledger_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check(
             "retired_contracts_cascaded",

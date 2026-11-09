@@ -11,6 +11,7 @@ export const PAYMENT_EVENT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_payment
  event_hash TEXT NOT NULL, event_type TEXT NOT NULL, provider_object_id TEXT NOT NULL,
  amount_jpy BIGINT NOT NULL, provider_created BIGINT NOT NULL, received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  PRIMARY KEY(account_id,event_id));
+CREATE UNIQUE INDEX IF NOT EXISTS commercial_payment_events_provider_object ON commercial_payment_events(account_id,provider_object_id);
 CREATE TABLE IF NOT EXISTS commercial_paid_periods (
  account_id TEXT NOT NULL, event_id TEXT NOT NULL, contract_id UUID NOT NULL REFERENCES commercial_contracts(id) ON DELETE CASCADE,
  period_start DATE NOT NULL, period_end DATE NOT NULL CHECK(period_end>period_start), amount_jpy BIGINT NOT NULL CHECK(amount_jpy>0),
