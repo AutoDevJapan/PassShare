@@ -37,6 +37,7 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   const [owner,other]=actors;const quote=await call('/api/commercial-contracts',owner.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(quote.status,201);
   const event={id:'evt_'+randomUUID().replaceAll('-',''),account,type:'payment_intent.succeeded',livemode:false,created:Math.floor(Date.now()/1000),data:{object:{id:'pi_'+randomUUID().replaceAll('-',''),object:'payment_intent',status:'succeeded',currency:'jpy',amount:980,amount_received:980,livemode:false,metadata:{contractId:quote.body.id,ownerId:owner.user.id,quoteHash:quote.body.quoteHash}}}};
   assert.equal((await send(event)).status,409); // A draft is never payment authority.
+  assert.equal((await call('/api/commercial-contracts/'+quote.body.id+'/cancel',owner.refreshToken,{quoteHash:quote.body.quoteHash,revision:0})).status,409);
   assert.equal((await call('/api/commercial-contracts/'+quote.body.id+'/accept',owner.refreshToken,{quoteHash:quote.body.quoteHash})).status,200);
   for(const change of [{ownerId:other.user.id},{quoteHash:'0'.repeat(64)}]){const wrong=structuredClone(event);wrong.data.object.metadata={...wrong.data.object.metadata,...change};assert.equal((await send(wrong)).status,409);}
   const amount=structuredClone(event);amount.data.object.amount=979;amount.data.object.amount_received=979;assert.equal((await send(amount)).status,409);
@@ -60,6 +61,17 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
    }
   }finally{directServer.closeAllConnections();await new Promise(r=>directServer.close(r));}
   const read=await call('/api/commercial-contracts/'+quote.body.id,owner.refreshToken);assert.equal(read.body.state,'accepted_unpaid');assert.equal(read.body.paid,false);assert.equal(read.body.entitlementsGranted,false);
+  const cancelPath='/api/commercial-contracts/'+quote.body.id+'/cancel',cancelBody={quoteHash:quote.body.quoteHash,revision:0};
+  assert.equal((await call(cancelPath,other.refreshToken,cancelBody)).status,404);
+  assert.equal((await call(cancelPath,owner.refreshToken,{...cancelBody,quoteHash:'0'.repeat(64)})).status,409);
+  assert.equal((await call(cancelPath,owner.refreshToken,{...cancelBody,quoteHash:null})).status,400);
+  assert.equal((await call(cancelPath,owner.refreshToken,{...cancelBody,revision:1})).status,409);
+  const cancellation=await Promise.all([call(cancelPath,owner.refreshToken,cancelBody),call(cancelPath,owner.refreshToken,cancelBody)]);
+  for(const r of cancellation){assert.equal(r.status,200);assert.equal(r.body.lifecycleRevision,1);assert.equal(r.body.refundExecuted,false);}
+  assert.equal(cancellation[0].body.cancellationRequestedAt,cancellation[1].body.cancellationRequestedAt);
+  assert.equal((await call('/api/commercial-contracts/'+quote.body.id+'/accept',owner.refreshToken,{quoteHash:quote.body.quoteHash})).status,409);
+  assert.equal((await send(event)).status,200); // prior delivery remains idempotent
+  const afterCancel=structuredClone(event);afterCancel.id='evt_'+randomUUID().replaceAll('-','');assert.equal((await send(afterCancel)).status,409);
   await pool.query('DELETE FROM users WHERE id=$1',[owner.user.id]);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,0);assert.equal((await send(event)).status,409);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[actors.map(a=>a.user.id)]);await pool.end();delete process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET;delete process.env.PASSSHARE_STRIPE_TEST_ACCOUNT;}
 });

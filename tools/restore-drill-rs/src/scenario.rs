@@ -275,7 +275,7 @@ impl Runner {
             None,
         )?;
         let contract_id = identifier(&contract_draft, "/id", 36)?;
-        let contract = self.api.json(
+        self.api.json(
             report,
             "source_contract_accepted",
             "POST",
@@ -327,6 +327,26 @@ impl Runner {
             command.arg("-e").arg(script).arg(payload.to_string());
             report.check(label, command_output(command, None).is_ok())?;
         }
+        self.api.json(
+            report,
+            "source_unpaid_acceptance_canceled",
+            "POST",
+            &format!("/api/commercial-contracts/{contract_id}/cancel"),
+            &owner.session,
+            Some(&json!({"quoteHash":contract_draft["quoteHash"],"revision":0})),
+            200,
+            None,
+        )?;
+        let contract = self.api.json(
+            report,
+            "source_canceled_contract_read",
+            "GET",
+            &format!("/api/commercial-contracts/{contract_id}"),
+            &owner.session,
+            None,
+            200,
+            None,
+        )?;
         self.api.json(report,"source_deleted_account_receipt_saved","POST","/api/support-receipts",&deleted.session,Some(&json!({"requestId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","kind":"technical","version":"0.1.0","platform":"web","errorCode":""})),201,None)?;
         // This final fixture write populates both login guard tables, not fabricated rows.
         // Bracket its committed update; no API mutations occur between this and dump.
@@ -822,6 +842,21 @@ impl Runner {
         report.check(
             "restored_contract_exact_amount_hash_acceptance",
             exact_json(&contract, &restored_contract),
+        )?;
+        report.check(
+            "restored_cancellation_timestamp_revision",
+            restored_contract["cancellationRequestedAt"].is_string()
+                && restored_contract["lifecycleRevision"] == 1,
+        )?;
+        self.api.json(
+            report,
+            "restored_canceled_acceptance_denied",
+            "POST",
+            &format!("/api/commercial-contracts/{contract_id}/accept"),
+            &current_owner.session,
+            Some(&json!({"quoteHash":contract_draft["quoteHash"]})),
+            409,
+            None,
         )?;
         report.check("restored_payment_ledger_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{contract_id}'"))?.trim()=="1")?;
         report.check("retired_payment_ledger_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
