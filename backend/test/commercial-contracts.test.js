@@ -19,7 +19,7 @@ test('contract quotes are durable actor-bound and acceptance never grants paid a
   const accepted=await call(accept,a.refreshToken,{quoteHash:row.quoteHash});assert.equal(accepted.status,200);assert.equal(accepted.body.state,'accepted_unpaid');assert.equal(accepted.body.paid,false);assert.equal(accepted.body.entitlementsGranted,false);
   const retries=await Promise.all([call(accept,a.refreshToken,{quoteHash:row.quoteHash}),call(accept,a.refreshToken,{quoteHash:row.quoteHash})]);for(const retry of retries){assert.equal(retry.status,200);assert.equal(retry.body.acceptedAt,accepted.body.acceptedAt);}
   assert.equal((await call(accept,a.refreshToken,{quoteHash:row.quoteHash})).body.acceptedAt,accepted.body.acceptedAt);
-  const restarted=await start();assert.deepEqual((await call(root+'/'+row.id,a.refreshToken,undefined,restarted)).body,accepted.body);
+  const restarted=await start();{const {providerTestPeriods,...again}=(await call(root+'/'+row.id,a.refreshToken,undefined,restarted)).body;assert.deepEqual(providerTestPeriods,[]);assert.deepEqual(again,accepted.body);}
   const pending=await call(root,a.refreshToken,{...input,requestId:randomUUID()});assert.equal(pending.status,201);
   await pool.query("UPDATE sessions SET expires_at=clock_timestamp()+interval '2 seconds' WHERE user_id=$1",[a.user.id]);
   const blocker=await pool.connect();let waitingRequest;
@@ -38,3 +38,4 @@ test('contract quotes are durable actor-bound and acceptance never grants paid a
   await pool.query('DELETE FROM users WHERE id=$1',[a.user.id]);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_contracts WHERE id=$1',[row.id])).rows[0].n,0);
  }finally{for(const s of servers){s.closeAllConnections();await new Promise(r=>s.close(r));}await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[actors.map(a=>a.user.id)]);await pool.end();}
 });
+

@@ -43,6 +43,7 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   const amount=structuredClone(event);amount.data.object.amount=979;amount.data.object.amount_received=979;assert.equal((await send(amount)).status,409);
   const pair=await Promise.all([send(event),send(event)]);assert.deepEqual(pair.map(r=>r.status),[200,200]);assert.equal(pair.filter(r=>r.body.duplicate).length,1);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,1);
+  {const g=await call('/api/commercial-contracts/'+quote.body.id,owner.refreshToken);assert.equal(g.status,200);assert.equal(g.body.providerTestPeriods.length,1);const pp=g.body.providerTestPeriods[0];assert.equal(pp.amountJpy,980);assert.equal(pp.entitlementEffective,false);assert.equal(pp.evidence,'provider_test_sandbox');assert.ok(pp.periodEnd>pp.periodStart);assert.equal(g.body.paid,false);assert.equal(g.body.entitlementsGranted,false);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_paid_periods WHERE contract_id=$1',[quote.body.id])).rows[0].n,1);}
   const altered=structuredClone(event);altered.created--;assert.equal((await send(altered)).status,409);
   const second=await call('/api/commercial-contracts',other.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(second.status,201);
   assert.equal((await call('/api/commercial-contracts/'+second.body.id+'/accept',other.refreshToken,{quoteHash:second.body.quoteHash})).status,200);
@@ -75,3 +76,4 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   await pool.query('DELETE FROM users WHERE id=$1',[owner.user.id]);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,0);assert.equal((await send(event)).status,409);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[actors.map(a=>a.user.id)]);await pool.end();delete process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET;delete process.env.PASSSHARE_STRIPE_TEST_ACCOUNT;}
 });
+
