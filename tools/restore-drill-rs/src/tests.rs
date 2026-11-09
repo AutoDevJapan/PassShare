@@ -116,6 +116,7 @@ fn fixture_and_comparison_detect_added_field_url_and_attachment_loss() {
 fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate_tables() {
     // Independent expected catalog, including every current encrypted DDL table.
     let expected = json!([
+        "commercial_contracts",
         "connect_item_files",
         "connect_items",
         "connect_tokens",
