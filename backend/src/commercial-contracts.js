@@ -7,6 +7,7 @@ import {authHttpError,sendAuthError} from './auth/errors.js';
 import {nativeMutation} from './lib/native-mutations.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {migrateCommercialEvents} from './commercial-events.js';
+import {entitlementState} from './commercial-entitlement.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -72,7 +73,7 @@ export function createCommercialContractRouter({pool,authStore}){
  router.get('/:id',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
   const row=await persist(req,async c=>{const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];if(r)r.periods=(await c.query('SELECT period_start::text,period_end::text,amount_jpy::text FROM commercial_paid_periods WHERE contract_id=$1 ORDER BY period_start,event_id',[r.id])).rows;return r;});
-  if(!row)throw authHttpError(404,'PS022','Contract not found');res.json({...publicRow(row),providerTestPeriods:row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,amountJpy:Number(x.amount_jpy),evidence:'provider_test_sandbox',entitlementEffective:false}))});
+  if(!row)throw authHttpError(404,'PS022','Contract not found');const periods=row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,evidence:'provider_test_sandbox'}));res.json({...publicRow(row),providerTestPeriods:row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,amountJpy:Number(x.amount_jpy),evidence:'provider_test_sandbox',entitlementEffective:false})),entitlement:entitlementState({periods,nowMs:Date.now()})});
  }catch(e){sendAuthError(res,e);}});
  return router;
 }
