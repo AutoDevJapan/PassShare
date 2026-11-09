@@ -54,7 +54,7 @@ test('verified live payments become cycle-anchored periods and drive entitlement
   const cancel=await call('/api/commercial-contracts/'+q.id+'/cancel-at-period-end',owner.refreshToken,{quoteHash:q.quoteHash});assert.equal(cancel.status,200);
   assert.equal((await call('/api/commercial-contracts/'+q.id+'/cancel-at-period-end',owner.refreshToken,{quoteHash:q.quoteHash})).status,200);
   assert.equal((await pool.query('SELECT cancel_after_cycle FROM commercial_live_contracts WHERE contract_id=$1',[q.id])).rows[0].cancel_after_cycle,3);
-  const latePaid=ev(q,owner,4,'2026-04-30T00:00:00+09:00');assert.equal((await send(latePaid)).status,200);assert.equal((await send(latePaid)).body.duplicate,true);assert.equal((await pool.query('SELECT disposition FROM commercial_live_periods WHERE event_id=$1',[latePaid.id])).rows[0].disposition,'refund_review');
+  const latePaid=ev(q,owner,4,new Date(Date.now()+1000).toISOString());assert.equal((await send(latePaid)).status,200);assert.equal((await send(latePaid)).body.duplicate,true);assert.equal((await pool.query('SELECT disposition FROM commercial_live_periods WHERE event_id=$1',[latePaid.id])).rows[0].disposition,'refund_review');
   const exceptions=await call('/api/commercial-contracts/'+q.id+'/payment-exceptions',owner.refreshToken);
   assert.equal(exceptions.status,200);assert.equal(exceptions.body.payments.length,1);assert.equal(exceptions.body.payments[0].amountJpy,980);assert.equal(exceptions.body.payments[0].status,'refund_review_required');assert.equal(exceptions.body.refundExecuted,false);
   assert.equal((await call('/api/commercial-contracts/'+q.id+'/payment-exceptions',other.refreshToken)).status,404);

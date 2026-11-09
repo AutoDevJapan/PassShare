@@ -15,9 +15,9 @@ export function entitlementState({periods,cancelAtPeriodEnd=false,nowMs}){
  const base={today,effective:false,paidThrough:null,cancelScheduled:false,exportWindow:null};
  if(!live.length)return {...base,state:sorted.length?'test_evidence_only':'none'};
  const current=live.find(p=>p.periodStart<=today&&today<p.periodEnd);
- if(current)return {...base,state:cancelAtPeriodEnd?'active_cancel_scheduled':'active',effective:true,paidThrough:current.periodEnd,cancelScheduled:cancelAtPeriodEnd};
+ if(current)return {...base,state:cancelAtPeriodEnd?'active_cancel_scheduled':'active',effective:true,paidThrough:live.at(-1).periodEnd,currentPeriodEnd:current.periodEnd,cancelScheduled:cancelAtPeriodEnd};
  const last=live.at(-1);
- if(today<last.periodStart)return {...base,state:'not_started'};
+ if(today<last.periodStart)return {...base,state:'not_started',paidThrough:last.periodEnd};
  const end=last.periodEnd,until=new Date((day(end)+30)*86400000).toISOString().slice(0,10);
  const open=end<=today&&today<until;
  return {...base,state:open?'export_window':'closed',paidThrough:end,exportWindow:{startInclusive:end,endExclusive:until,open}};
