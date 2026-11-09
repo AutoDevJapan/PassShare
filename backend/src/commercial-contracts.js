@@ -57,12 +57,13 @@ export function createCommercialContractRouter({pool,authStore}){
   });res.json(publicRow(row));
  }catch(e){sendAuthError(res,e);}});
  router.post('/:id/cancel',requireCsrf,async(req,res)=>{try{
-  if(!uuid(req.params.id)||!exact(req.body,['quoteHash','revision'])||!Number.isSafeInteger(req.body.revision)||req.body.revision<0)throw authHttpError(400,'PS018','Invalid cancellation request');
+  if(!uuid(req.params.id)||!exact(req.body,['quoteHash','revision'])||typeof req.body.quoteHash!=='string'||!/^[a-f0-9]{64}$/.test(req.body.quoteHash)||!Number.isSafeInteger(req.body.revision)||req.body.revision<0)throw authHttpError(400,'PS018','Invalid cancellation request');
   const row=await persist(req,async c=>{
    const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
    if(!r)throw authHttpError(404,'PS022','Contract not found');
    if(r.quote_hash!==req.body.quoteHash)throw authHttpError(409,'PS015','Contract quote changed');
    // Idempotent replay of this terminal unpaid withdrawal; never resurrect it.
+   if(r.state!=='accepted_unpaid')throw authHttpError(409,'PS015','Contract has no unpaid acceptance to withdraw');
    if(r.cancellation_requested_at){if(req.body.revision!==r.lifecycle_revision-1)throw authHttpError(409,'PS015','Contract revision changed');return r;}
    if(r.lifecycle_revision!==req.body.revision)throw authHttpError(409,'PS015','Contract revision changed');
    return (await c.query('UPDATE commercial_contracts SET cancellation_requested_at=clock_timestamp(),lifecycle_revision=lifecycle_revision+1 WHERE id=$1 RETURNING *',[r.id])).rows[0];
