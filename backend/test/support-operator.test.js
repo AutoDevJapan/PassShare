@@ -54,10 +54,25 @@ test('authenticated owner consent and operator status are persistent and single 
    const pendingAuth='/api/support-receipts/'+pendingReceipt.body.id+'/authorization';
    const pendingConsume='/api/support-receipts/'+pendingReceipt.body.id+'/operator-status';
    const beforeRetire=await run(pendingAuth,login.body.refreshToken,grant);assert.equal(beforeRetire.status,201);
+   // Hold the receipt so expiry occurs while the request is queued for its lock.
+   const blocker=await pool.connect();
+   try{
+    await blocker.query('BEGIN');await blocker.query('SELECT id FROM support_receipts WHERE id=$1 FOR UPDATE',[pendingReceipt.body.id]);
+    const queued=run(pendingConsume,opLogin.body.refreshToken,{confirmation:beforeRetire.body.confirmation});
+    const deadline=Date.now()+5000;let waiting=false;
+    while(Date.now()<deadline){
+     const q=await pool.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT * FROM support_receipts WHERE id=%'");
+     if(q.rows[0].n>0){waiting=true;break;}await new Promise(r=>setTimeout(r,10));
+    }
+    assert.equal(waiting,true,'operator request must reach the receipt lock');
+    await blocker.query("UPDATE support_receipts SET operator_consent=jsonb_set(operator_consent,'{expiresAt}',to_jsonb(clock_timestamp()::text)) WHERE id=$1",[pendingReceipt.body.id]);
+    await blocker.query('COMMIT');assert.equal((await queued).status,403);
+   }finally{await blocker.query('ROLLBACK');blocker.release();}
+   const renewedBeforeRetire=await run(pendingAuth,login.body.refreshToken,grant);assert.equal(renewedBeforeRetire.status,201);
    // A server without the deployment grant cannot consume an existing consent.
-   assert.equal((await call(pendingConsume,opLogin.body.refreshToken,{confirmation:beforeRetire.body.confirmation})).status,403);
+   assert.equal((await call(pendingConsume,opLogin.body.refreshToken,{confirmation:renewedBeforeRetire.body.confirmation})).status,403);
    const retired=await call('/api/auth/account',login.body.refreshToken,{currentPassword:'synthetic-password123',confirmationEmail:owner.user.email},'DELETE');assert.equal(retired.status,204);
-   assert.equal((await run(pendingConsume,opLogin.body.refreshToken,{confirmation:beforeRetire.body.confirmation})).status,403);
+   assert.equal((await run(pendingConsume,opLogin.body.refreshToken,{confirmation:renewedBeforeRetire.body.confirmation})).status,403);
    assert.equal((await pool.query('SELECT count(*)::int n FROM support_receipts WHERE user_id=$1',[owner.user.id])).rows[0].n,0);
    assert.equal((await pool.query('SELECT count(*)::int n FROM support_receipts WHERE id=$1',[id])).rows[0].n,0);
   }finally{nested.closeAllConnections();await new Promise(r=>nested.close(r));}
