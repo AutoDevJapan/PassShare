@@ -120,13 +120,14 @@ jobs:
           pnpm --dir apps/desktop install --frozen-lockfile
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build unsigned Windows packages with bounded download recovery
+        working-directory: apps/desktop
         shell: pwsh
         run: |
           # Keep Cargo outputs and successfully downloaded bundlers in this job.
           # Only the observed external HTTP 504 bundler failure is retryable.
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             $log = Join-Path $env:RUNNER_TEMP "passshare-bundle-$attempt.log"
-            pnpm --dir apps/desktop tauri build 2>&1 | Tee-Object -FilePath $log
+            pnpm exec tauri build 2>&1 | Tee-Object -FilePath $log
             $buildExit = $LASTEXITCODE
             if ($buildExit -eq 0) { exit 0 }
             $retryable = Select-String -LiteralPath $log -SimpleMatch 'failed to bundle project: `http status: 504`' -Quiet
