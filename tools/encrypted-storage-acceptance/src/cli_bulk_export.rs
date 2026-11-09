@@ -113,6 +113,10 @@ fn formal_cli_bulk_export() {
     };
     let network = Network::start();
     let db = Database::start(&network);
+    println!(
+        "bulk fixture source={} network={} owner={}",
+        db.name, network.name, db.fixture_owner_id
+    );
     let host = Host::start(&db, &network, &mode);
     let p = host.port;
     let a = Account::signup(p);
@@ -164,10 +168,17 @@ fn formal_cli_bulk_export() {
     // Only this invocation's isolated DB is changed. The period ended five days
     // ago: actual server authorization must allow only the 30-day export window.
     db.sql(&format!("INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES('{paid}',CURRENT_DATE-35); INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_cli_bulk','evt_{paid}','{paid}',1,CURRENT_DATE-35,CURRENT_DATE-5,980,'pi_{paid}','synthetic-client-export-only','provider_live')"));
+    drop(host);
+    // Compose the existing full-row archive/authorization qualification with
+    // this client path: restored API -> contract export -> offline Core files.
+    let restored = encrypted_restore::attachment_roundtrip(&db, &network);
+    println!("bulk fixture restored={}", restored.name);
+    let host = Host::start(&restored, &network, &mode);
+    let p = host.port;
     let path = output.join(format!("bulk-{}.json", ConnectId::generate().unwrap()));
     let path_text = path.to_str().unwrap();
     let input = json!({"sessionToken":a.session,"encryptionPassword":a.encryption_password});
-    let before = state_hash(&db, true);
+    let before = state_hash(&restored, true);
     let args = [
         "export",
         "--contract",
@@ -202,7 +213,7 @@ fn formal_cli_bulk_export() {
         json!({"exported":true,"items":12,"attachments":1,"ciphertextOnly":true})
     );
     assert_eq!(
-        state_hash(&db, true),
+        state_hash(&restored, true),
         before,
         "export must preserve encryption/identity/Connect business rows"
     );
@@ -221,6 +232,7 @@ fn formal_cli_bulk_export() {
     let owner = owner_context(&a.box_id, &a.id, 1);
     assert_eq!(archive["ownerContext"], json!(owner));
     drop(host);
+    drop(restored);
     drop(db);
     drop(network); // No service may be needed to recover.
     let reopened = unwrap_bundle(&archive["ownerBundle"], &a.encryption_password, &owner).unwrap();
@@ -244,5 +256,5 @@ fn formal_cli_bulk_export() {
     std::fs::remove_file(&path).unwrap();
     assert!(!path.exists());
     assert!(!CLEANUP_FAILED.load(Ordering::SeqCst));
-    println!("bulk CLI accepted: formal backend/owned PG, 12 complete DTOs + binary file, unpaid/foreign owner refused, no replacement, offline Core exact recovery, owned resources reclaimed; billing period is synthetic SQL only");
+    println!("bulk CLI accepted: formal backend/restored owned PG, 12 complete DTOs + binary file, unpaid/foreign owner refused, no replacement, offline Core exact recovery, owned resources reclaimed; billing period is synthetic SQL only");
 }

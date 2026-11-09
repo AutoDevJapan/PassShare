@@ -36,7 +36,7 @@ Unixの新規一時ファイルは0600とし、NTFSなどhard linkを使えるfi
 SDKの契約export transportは既存の接続先prefixを保持し、redirectや認証転送を許可しない。
 公開期待contextと応答を照合するが、暗号文の認証は呼出側のCoreが行う。
 通常のCLI/SDK loopbackテストに加え、明示実行の `formal_cli_bulk_export` が正式Node/配布imageと
-所有する隔離PG、実opで全12項目と添付の取得・未払い拒否・他owner拒否・上書き拒否・
+所有する隔離PGの実dump/restore、復元後API、実opで全12項目と添付の取得・未払い拒否・他owner拒否・上書き拒否・
 サービス停止後の全JSON/全bytes復号を照合する。契約期間はその隔離DBの明示的なSQLfixtureであり、
 正規の支払い配送や本番有料サービスの稼働を証明するものではない。
 
