@@ -14,6 +14,7 @@ import {currentBillingPlan} from './commercial-plan.js';
 import {registerCommercialExport} from './commercial-export.js';
 import {migrateExportAudit,registerExportAudit} from './commercial-export-audit.js';
 import {migrateTestRefunds,registerTestRefundRoutes} from './commercial-test-refunds.js';
+import {createTestRefundLookup} from './commercial-refund-provider.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -27,7 +28,7 @@ export const migrateCommercialContracts=async pool=>{await applySchemaWithAdviso
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
 const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,currentPlan:r.current_plan??r.quote.plan,seatRevision:r.seat_revision??0,createdAt:r.created_at,acceptedAt:r.accepted_at,cancellationRequestedAt:r.cancellation_requested_at??null,lifecycleRevision:r.lifecycle_revision??0,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
-export function createCommercialContractRouter({pool,authStore}){
+export function createCommercialContractRouter({pool,authStore,refundLookup=createTestRefundLookup()}){
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:'draft-6',legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_q,r,next)=>{r.set('Cache-Control','no-store');next();});
  const persist=async(req,run)=>{
@@ -47,7 +48,7 @@ export function createCommercialContractRouter({pool,authStore}){
  registerSeatDecreaseRoutes(router,persist);
  registerCommercialExport(router,{pool});
  registerExportAudit(router,persist);
- registerTestRefundRoutes(router,persist);
+ registerTestRefundRoutes(router,persist,refundLookup);
  router.post('/',requireCsrf,async(req,res)=>{try{
   const b=req.body;if(!exact(b,['requestId','currency','plan','setup'])||!uuid(b.requestId))throw authHttpError(400,'PS018','Invalid contract quote');
   const quote=await nativeMutation({command:'commercial-quote',currency:b.currency,plan:b.plan,setup:b.setup});

@@ -43,8 +43,10 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "restored_test_refund_owner_API",
     "restored_test_refund_owner_values",
     "source_test_refund_lifecycle_saved",
-    "source_test_refund_statuses_nonempty",
-    "restored_test_refund_statuses_nonempty",
+    "source_test_refund_private_provider_seeded",
+    "source_test_refund_api_fixture_qualified",
+    "source_test_refund_observed_statuses",
+    "restored_test_refund_api_fixture_qualified",
     "restored_test_refund_event_statuses",
 ];
 

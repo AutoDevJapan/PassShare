@@ -7,6 +7,7 @@ import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import express from 'express';
 import {commercialEventHandler} from '../src/commercial-events.js';
 import {migrateTestRefunds} from '../src/commercial-test-refunds.js';
+import {refundProviderFixture} from './helpers/refund-provider-fixture.js';
 
 test('signed sandbox refunds bind the original payment, count once and stay owner-private',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
  const url=new URL(process.env.DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.username,'passshare');assert.equal(url.pathname,'/passshare');
@@ -35,6 +36,10 @@ test('signed sandbox refunds bind the original payment, count once and stay owne
   const history=root+'/'+q.body.id+'/test-refunds';const own=await call(history,owner.refreshToken);assert.equal(own.status,200);assert.equal(own.cache,'no-store');assert.equal(own.body.refunds.length,1);assert.equal(own.body.refunds[0].amountJpy,400);assert.equal(own.body.liveRefundExecuted,false);assert.equal(own.body.entitlementsGranted,false);assert.equal(own.body.nextCursor,null);
   assert.equal((await call(history+'?after=invalid',owner.refreshToken)).status,400);assert.deepEqual((await call(history+'?after='+own.body.refunds[0].id,owner.refreshToken)).body.refunds,[]);
   assert.equal((await call(history,other.refreshToken)).status,404);assert.equal((await call(history,null)).status,401);
+  const refreshPath=history+'/'+own.body.refunds[0].id+'/reconcile';
+  assert.equal((await call(refreshPath,null,{})).status,401);assert.equal((await call(refreshPath,other.refreshToken,{})).status,404);
+  assert.equal((await call(refreshPath,owner.refreshToken,{providerStatus:'succeeded'})).status,400);
+  const unverified=await call(refreshPath,owner.refreshToken,{});assert.equal(unverified.status,200);assert.equal(unverified.body.statusReviewRequired,true);assert.equal(unverified.body.confirmedAmountJpy,0);
   const race=Array.from({length:2},()=>{const value=structuredClone(refund);value.id=id('evt_');value.data.object.id=id('re_');value.data.object.amount=500;return value});assert.deepEqual((await Promise.all(race.map(value=>send(value)))).map(r=>r.status),[200,200]);
   const final=structuredClone(refund);final.id=id('evt_');final.data.object.id=id('re_');final.data.object.amount=80;
   assert.deepEqual((await Promise.all([send(final),send(final)])).map(r=>r.status),[200,200]);
@@ -53,7 +58,7 @@ test('signed sandbox refunds bind the original payment, count once and stay owne
   const reused=structuredClone(r2);reused.id=refund.id;assert.equal((await send(reused)).status,409,'An existing event cannot move to another contract');
   await assert.rejects(pool.query('INSERT INTO commercial_test_refunds(id,account_id,refund_id,payment_event_id,contract_id,provider_object_id,amount_jpy,refund_created,evidence) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8)',[randomUUID(),account,id('re_'),payment.id,q2.body.id,payment.data.object.id,payment.created,'provider_test_sandbox']),e=>e.code==='23503');
   const unchanged=await call(root+'/'+q.body.id,owner.refreshToken);assert.equal(unchanged.body.paid,false);assert.equal(unchanged.body.entitlement.effective,false);assert.equal(unchanged.body.seatRevision,0);
-  assert.equal((await call('/api/auth/logout',owner.refreshToken,{})).status,204);assert.equal((await call(history,owner.refreshToken)).status,401);
+  assert.equal((await call('/api/auth/logout',owner.refreshToken,{})).status,204);assert.equal((await call(history,owner.refreshToken)).status,401);assert.equal((await call(refreshPath,owner.refreshToken,{})).status,401);
   owner.refreshToken=(await call('/api/auth/login',null,{email:owner.email,password})).body.refreshToken;
   assert.equal((await call('/api/auth/account',owner.refreshToken,{currentPassword:password,confirmationEmail:owner.email},'DELETE')).status,204);owner.retired=true;
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_test_refunds WHERE contract_id=$1',[q.body.id])).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_test_refund_events WHERE contract_id=$1',[q.body.id])).rows[0].n,0);assert.equal((await send(refund)).status,409);
@@ -65,43 +70,49 @@ test('signed sandbox refunds bind the original payment, count once and stay owne
  }
 });
 
-test('refund state reconciles reversal, replay, equal-second ambiguity and legacy qualification',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
+test('current refund status requires authenticated provider reads rather than webhook clock order',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
  const url=new URL(process.env.DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.username,'passshare');assert.equal(url.pathname,'/passshare');
- const admin=new pg.Pool({connectionString:url.href}),db='ps_refund_state_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+db);url.pathname='/'+db;
- const pool=new pg.Pool({connectionString:url.href}),close=trackPoolShutdown(pool),secret='whsec_refund_state_fixture',account='acct_refundstate';let server;
+ const admin=new pg.Pool({connectionString:url.href}),db='ps_refund_current_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+db);url.pathname='/'+db;
+ const pool=new pg.Pool({connectionString:url.href}),close=trackPoolShutdown(pool),secret='whsec_refund_current_fixture',account='acct_refundcurrent';let server;
+ const provider=await refundProviderFixture(account);
  Object.assign(process.env,{PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_TEST_ACCOUNT:account,PASSSHARE_COMMERCIAL_LIVE_ENABLED:'false'});
  try{
-  const {createApp}=await import('../src/app.js');const {app}=await createApp({pool});server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
+  const {createApp}=await import('../src/app.js');const {app}=await createApp({pool,testRefundLookup:provider.lookup});server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
   const call=async(path,token,body)=>{const r=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json','x-passshare-client':'mobile',...(token?{authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()}};
   const send=async(event)=>{const payload=JSON.stringify(event);const r=await fetch(base+'/api/commercial-events/stripe-test',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload,secret})},body:payload});return {status:r.status,body:await r.json()}};
   const id=prefix=>prefix+randomUUID().replaceAll('-','');
-  const actor=(await call('/api/auth/signup',null,{email:id('refund-state-')+'@example.test',password:'synthetic-refund-state-password'})).body;
+  const actor=(await call('/api/auth/signup',null,{email:id('refund-current-')+'@example.test',password:'synthetic-refund-current-password'})).body;
   const quote=await call('/api/commercial-contracts',actor.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(quote.status,201);assert.equal((await call('/api/commercial-contracts/'+quote.body.id+'/accept',actor.refreshToken,{quoteHash:quote.body.quoteHash})).status,200);
-  const pay=async()=>{const e={id:id('evt_'),account,type:'payment_intent.succeeded',livemode:false,created:1,data:{object:{id:id('pi_'),object:'payment_intent',status:'succeeded',currency:'jpy',amount:980,amount_received:980,livemode:false,metadata:{contractId:quote.body.id,ownerId:actor.user.id,quoteHash:quote.body.quoteHash}}}};assert.equal((await send(e)).status,200);return e.data.object.id};
-  const pi=await pay();
-  const event=(refundId,status,at,amount=400,payment=pi)=>({id:id('evt_'),account,type:status==='failed'?'refund.failed':'refund.updated',livemode:false,created:at,data:{object:{id:refundId,object:'refund',payment_intent:payment,amount,currency:'jpy',created:1,status,metadata:{}}}});
-  const expect=async(e,state,confirmed)=>{const r=await send(e);assert.equal(r.status,200);assert.equal(r.body.providerStatus,state);assert.equal(r.body.confirmedAmountJpy,confirmed);return r.body};
-  const rid=id('re_'),original=event(rid,'succeeded',9);await expect(original,'succeeded',400);
-  const before=(await pool.query('SELECT to_jsonb(r)-$2::text[] data FROM commercial_test_refunds r WHERE refund_id=$1',[rid,['provider_status','status_event_created']])).rows[0].data;
-  // Reconstruct the unreleased successful-only schema with one nonempty record,
-  // then exercise the real additive migration without fabricating current time.
-  await pool.query('ALTER TABLE commercial_test_refunds DROP COLUMN provider_status,DROP COLUMN status_event_created; ALTER TABLE commercial_test_refund_events DROP COLUMN observed_status');await migrateTestRefunds(pool);
-  assert.deepEqual((await pool.query('SELECT to_jsonb(r)-$2::text[] data FROM commercial_test_refunds r WHERE refund_id=$1',[rid,['provider_status','status_event_created']])).rows[0].data,before);
-  await expect(original,'status_review',0);assert.equal((await pool.query('SELECT status_event_created FROM commercial_test_refunds WHERE refund_id=$1',[rid])).rows[0].status_event_created,null);
-  await expect(event(rid,'pending',8),'status_review',0);
-  await expect(event(rid,'requires_action',10),'requires_action',0); // Numeric 10 must sort after 9.
-  await expect(event(rid,'failed',11),'failed',0);await expect(original,'failed',0);
-  await expect(event(rid,'succeeded',12),'succeeded',400);await expect(event(rid,'failed',13),'failed',0);
-  const replacement=id('re_');await expect(event(replacement,'succeeded',14,980),'succeeded',980);
-  await expect(event(rid,'succeeded',12),'failed',0);
-  await expect(event(rid,'succeeded',13),'status_review',0); // Same-second contradiction is not ordered by arrival.
-  const uncertain=await call('/api/commercial-contracts/'+quote.body.id+'/test-refunds',actor.refreshToken);assert.ok(uncertain.body.refunds.every(r=>r.amountReviewRequired&&r.confirmedAmountJpy===0));
-  await expect(event(rid,'failed',14),'failed',0);
-  const settled=await call('/api/commercial-contracts/'+quote.body.id+'/test-refunds',actor.refreshToken);assert.equal(settled.body.refunds.reduce((sum,r)=>sum+r.confirmedAmountJpy,0),980);assert.ok(settled.body.refunds.every(r=>!r.amountReviewRequired));
-  const pi2=await pay(),pendingId=id('pyr_');await expect(event(pendingId,'pending',15,580,pi2),'pending',0);await expect(event(pendingId,'requires_action',16,580,pi2),'requires_action',0);await expect(event(pendingId,'failed',17,580,pi2),'failed',0);await expect(event(pendingId,'succeeded',18,580,pi2),'succeeded',580);
-  const equalId=id('re_');await expect(event(equalId,'pending',20,100,pi2),'pending',0);await expect(event(equalId,'succeeded',20,100,pi2),'status_review',0);await expect(event(equalId,'failed',21,100,pi2),'failed',0);
-  const reversedId=id('re_');await expect(event(reversedId,'succeeded',20,100,pi2),'succeeded',100);await expect(event(reversedId,'pending',20,100,pi2),'status_review',0);await expect(event(reversedId,'failed',21,100,pi2),'failed',0);
-  assert.equal((await pool.query('SELECT provider_status FROM commercial_test_refunds WHERE refund_id=$1',[pendingId])).rows[0].provider_status,'succeeded');assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_test_refund_events WHERE observed_status IN ($1,$2,$3)',['pending','failed','requires_action'])).rows[0].n>0,true);
+  const pay={id:id('evt_'),account,type:'payment_intent.succeeded',livemode:false,created:1,data:{object:{id:id('pi_'),object:'payment_intent',status:'succeeded',currency:'jpy',amount:980,amount_received:980,livemode:false,metadata:{contractId:quote.body.id,ownerId:actor.user.id,quoteHash:quote.body.quoteHash}}}};assert.equal((await send(pay)).status,200);provider.payments.set(pay.data.object.id,structuredClone(pay.data.object));
+  const event=(refundId,status,at,amount=400)=>({id:id('evt_'),account,type:status==='failed'?'refund.failed':'refund.updated',livemode:false,created:at,data:{object:{id:refundId,object:'refund',payment_intent:pay.data.object.id,amount,currency:'jpy',created:1,status,metadata:{}}}});
+  const expect=async(e,status,confirmed)=>{const r=await send(e);assert.equal(r.status,200);assert.equal(r.body.providerStatus,status);assert.equal(r.body.confirmedAmountJpy,confirmed);return r.body};
+  const rid=id('re_'),original=event(rid,'succeeded',9);provider.refunds.set(rid,structuredClone(original.data.object));
+  const first=await expect(original,'succeeded',400);assert.equal(first.statusBasis,'provider_api_test');assert.ok(Date.parse(first.statusCheckedAt)>Date.now()-10000);
+  const legacyFields=['provider_status','status_event_created','status_verified','status_checked_at','api_reserved_jpy'];
+  const before=(await pool.query('SELECT to_jsonb(r)-$2::text[] data FROM commercial_test_refunds r WHERE refund_id=$1',[rid,legacyFields])).rows[0].data;
+  await pool.query('ALTER TABLE commercial_test_refunds DROP COLUMN provider_status,DROP COLUMN status_event_created,DROP COLUMN status_verified,DROP COLUMN status_checked_at,DROP COLUMN api_reserved_jpy; ALTER TABLE commercial_test_refund_events DROP COLUMN observed_status');await migrateTestRefunds(pool);
+  assert.deepEqual((await pool.query('SELECT to_jsonb(r)-$2::text[] data FROM commercial_test_refunds r WHERE refund_id=$1',[rid,legacyFields])).rows[0].data,before);
+  const history='/api/commercial-contracts/'+quote.body.id+'/test-refunds';
+  const unknown=(await call(history,actor.refreshToken)).body.refunds[0];assert.equal(unknown.statusBasis,'unverified');assert.equal(unknown.confirmedAmountJpy,0);
+  provider.control.fail=true;await expect(original,'status_review',0);assert.equal((await pool.query('SELECT status_event_created,status_checked_at FROM commercial_test_refunds WHERE refund_id=$1',[rid])).rows[0].status_checked_at,null);
+  assert.equal((await call(history+'/'+unknown.id+'/reconcile',actor.refreshToken,{providerStatus:'succeeded'})).status,400);
+  provider.control.fail=false;provider.refunds.get(rid).status='failed';
+  await expect(event(rid,'succeeded',1000),'failed',0);await expect(original,'failed',0);
+  provider.refunds.get(rid).status='requires_action';await expect(event(rid,'failed',2),'requires_action',0);
+  provider.refunds.get(rid).status='succeeded';await expect(event(rid,'pending',1),'succeeded',400);
+  await expect(event(rid,'failed',20),'succeeded',400);await expect(event(rid,'succeeded',20),'succeeded',400);
+  provider.control.fail=true;await expect(event(rid,'succeeded',20),'status_review',0);await expect(event(rid,'failed',20),'status_review',0);provider.control.fail=false;
+  provider.refunds.get(rid).status='failed';
+  const replacement=id('pyr_'),replacementEvent=event(replacement,'succeeded',3,980);provider.refunds.set(replacement,structuredClone(replacementEvent.data.object));provider.control.pageSize=1;
+  await expect(replacementEvent,'succeeded',980);
+  const settled=(await call(history,actor.refreshToken)).body;assert.equal(settled.refunds.reduce((n,r)=>n+r.confirmedAmountJpy,0),980);assert.equal(settled.refunds.find(r=>r.refundId===rid).providerStatus,'failed');
+  provider.payments.get(pay.data.object.id).livemode=true;await expect(event(replacement,'succeeded',2000,980),'status_review',0);provider.payments.get(pay.data.object.id).livemode=false;
+  provider.payments.get(pay.data.object.id).amount_received=979;await expect(event(replacement,'succeeded',2001,980),'status_review',0);provider.payments.get(pay.data.object.id).amount_received=980;
+  provider.refunds.get(replacement).payment_intent='pi_wrong';await expect(event(replacement,'succeeded',2002,980),'status_review',0);provider.refunds.get(replacement).payment_intent=pay.data.object.id;
+  provider.refunds.get(replacement).amount=979;await expect(event(replacement,'succeeded',2003,980),'status_review',0);provider.refunds.get(replacement).amount=980;
+  const receipt=(await call(history,actor.refreshToken)).body.refunds.find(r=>r.refundId===replacement);
+  const refreshed=await call(history+'/'+receipt.id+'/reconcile',actor.refreshToken,{});assert.equal(refreshed.status,200);assert.equal(refreshed.body.confirmedAmountJpy,980);assert.equal(refreshed.body.statusBasis,'provider_api_test');
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_test_refunds WHERE contract_id=$1 AND status_event_created IS NOT NULL',[quote.body.id])).rows[0].n,0);
   const contract=(await call('/api/commercial-contracts/'+quote.body.id,actor.refreshToken)).body;assert.equal(contract.paid,false);assert.equal(contract.entitlement.effective,false);assert.equal(contract.seatRevision,0);
- }finally{if(server){server.closeAllConnections();await new Promise(r=>server.close(r))}await close();await admin.query('DROP DATABASE '+db+' WITH (FORCE)');await admin.end();for(const key of ['PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET','PASSSHARE_STRIPE_TEST_ACCOUNT','PASSSHARE_COMMERCIAL_LIVE_ENABLED'])delete process.env[key]}
+ }finally{if(server){server.closeAllConnections();await new Promise(r=>server.close(r))}await provider.close();await close();await admin.query('DROP DATABASE '+db+' WITH (FORCE)');await admin.end();for(const key of ['PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET','PASSSHARE_STRIPE_TEST_ACCOUNT','PASSSHARE_COMMERCIAL_LIVE_ENABLED'])delete process.env[key]}
 });

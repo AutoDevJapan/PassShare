@@ -6,6 +6,7 @@ import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {rateLimit} from 'express-rate-limit';
 import {nativeMutation} from './lib/native-mutations.js';
 import {lockTestPayment,recordTestRefund} from './commercial-test-refunds.js';
+import {createTestRefundLookup} from './commercial-refund-provider.js';
 
 export const PAYMENT_EVENT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_payment_events (
  account_id TEXT NOT NULL, event_id TEXT NOT NULL, contract_id UUID NOT NULL REFERENCES commercial_contracts(id) ON DELETE CASCADE,
@@ -20,8 +21,8 @@ CREATE TABLE IF NOT EXISTS commercial_paid_periods (
  FOREIGN KEY(account_id,event_id) REFERENCES commercial_payment_events(account_id,event_id) ON DELETE CASCADE);`;
 export const migrateCommercialEvents=pool=>applySchemaWithAdvisoryLock(pool,4820129,PAYMENT_EVENT_SCHEMA);
 
-// No API request is made. The official SDK verifies the raw snapshot signature.
-export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_TEST_ACCOUNT,scope=process.env.PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE??'connect'}){
+// Verify the raw signature before any optional authenticated test refund reads.
+export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_TEST_ACCOUNT,scope=process.env.PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE??'connect',refundLookup=createTestRefundLookup({account,scope})}){
  const router=express.Router();
  router.use(rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-6',legacyHeaders:false}));
  router.post('/',express.raw({type:'application/json',limit:'256kb'}),async(req,res)=>{
@@ -31,7 +32,7 @@ export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE
    const o=event.data?.object,m=o?.metadata;
    const accountMatches=scope==='direct'?event.account==null:event.account===account;
    if(event.livemode===false&&accountMatches&&['refund.created','refund.updated','refund.failed'].includes(event.type)){
-    res.json(await recordTestRefund(pool,event,account,createHash('sha256').update(req.body).digest('hex')));return;
+    res.json(await recordTestRefund(pool,event,account,createHash('sha256').update(req.body).digest('hex'),refundLookup));return;
    }
    if(event.livemode!==false||o?.livemode!==false||!accountMatches||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||!Number.isSafeInteger(event.created))throw authHttpError(400,'PS018','Unsupported payment event scope');
    const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
