@@ -100,7 +100,7 @@ jobs:
           psql --version
       - run: cargo build --manifest-path backend/native/Cargo.toml --release --locked
       - name: Verify persistent support receipts and actor isolation
-        run: node --test backend/test/support-receipts.test.js
+        run: node --test --test-concurrency=1 backend/test/support-receipts.test.js backend/test/support-operator.test.js
         env:
           DATABASE_URL: postgresql://passshare:passshare@127.0.0.1:5432/passshare
           PASSSHARE_RECEIPTS_PG: "true"

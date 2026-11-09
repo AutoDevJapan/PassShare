@@ -32,9 +32,42 @@ authenticated flow must bind the owner's current session, that owner's receipt,
 the specific requested action and an authorized operator. Any confirmation used
 across the mail boundary must be scoped, expiring and replay-protected; it must
 not carry a session token or grant mailbox readers data access. This binding and
-operator status mutation are not implemented. Until then an email reply may
+operator status mutation require the deployment-scoped flow below. An email reply may
 confirm mail arrival, but must not claim authenticated ownership or change the
 application status. Deleted receipt rows must not be recreated from old mail.
+
+## Authenticated operator status flow
+
+Deployment configuration `PASSSHARE_SUPPORT_OPERATOR_IDS` lists existing user
+UUIDs authorized only to update support receipt state. It is empty by default.
+Enrollment requires the existing deployment administrator; mailbox access,
+monitoring credentials, email addresses and request headers never enroll users.
+This is the operator role in the support lifecycle specification, limited to
+recording receipt progress, with no payment, contract, export or deletion grant.
+
+The owner calls `POST /api/support-receipts/:id/authorization` with `operatorId`,
+the next `status` and current `revision`. A live owner session is required. The
+one-time `confirmation` returned is bound to that session, operator, receipt,
+revision and transition, expires after ten minutes, and replaces prior consent.
+Only its SHA-256 digest is stored. It is not an account credential. Do not put
+session credentials in mail. The owner may convey the scoped confirmation to
+the assigned operator through the existing contact conversation.
+
+The configured operator uses their own live session to POST only `confirmation`
+to `/api/support-receipts/:id/operator-status`. PostgreSQL locks both identities,
+their current sessions and the receipt, then consumes consent and increments
+the revision atomically. Logout, retirement, expiry, stale revision and replay
+are rejected. The transitions are received → in_progress → resolved; resolution
+records support handling only and does not execute the underlying request.
+The owner GET returns the same receipt and status history without operator IDs
+or confirmation material. Retirement cascades the receipt, consent and history.
+No operator API is available with the nonpersistent memory store.
+
+The isolated PostgreSQL HTTP test covers positive transitions, mailbox/owner
+separation, wrong actors, expiry, superseded consent, simultaneous consumption,
+logout, persistent history and retirement cleanup. Production enrollment and
+the end-to-end authenticated contact workflow require separate acceptance;
+the earlier synthetic mail roundtrip does not demonstrate this flow.
 
 Tests: Rust fixed-field rejection; real HTTP actor isolation, idempotent retries,
 changed-body conflict, unknown/secret-field rejection; PostgreSQL second-instance
