@@ -13,11 +13,13 @@ export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  request_id UUID NOT NULL, quote JSONB NOT NULL, quote_hash TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','accepted_unpaid')),
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), accepted_at TIMESTAMPTZ,
- UNIQUE(user_id,request_id));`;
+ UNIQUE(user_id,request_id));
+ ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ;
+ ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS lifecycle_revision INTEGER NOT NULL DEFAULT 0;`;
 export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);};
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
-const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,createdAt:r.created_at,acceptedAt:r.accepted_at,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
+const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,createdAt:r.created_at,acceptedAt:r.accepted_at,cancellationRequestedAt:r.cancellation_requested_at??null,lifecycleRevision:r.lifecycle_revision??0,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
 export function createCommercialContractRouter({pool,authStore}){
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:'draft-6',legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_q,r,next)=>{r.set('Cache-Control','no-store');next();});
@@ -49,9 +51,22 @@ export function createCommercialContractRouter({pool,authStore}){
   const row=await persist(req,async c=>{
    const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
    if(!r)throw authHttpError(404,'PS022','Contract not found');
+   if(r.cancellation_requested_at)throw authHttpError(409,'PS015','Contract acceptance was withdrawn');
    if(r.quote_hash!==req.body.quoteHash)throw authHttpError(409,'PS015','Contract quote changed');
    return (await c.query("UPDATE commercial_contracts SET state='accepted_unpaid',accepted_at=COALESCE(accepted_at,clock_timestamp()) WHERE id=$1 RETURNING *",[r.id])).rows[0];
   });res.json(publicRow(row));
+ }catch(e){sendAuthError(res,e);}});
+ router.post('/:id/cancel',requireCsrf,async(req,res)=>{try{
+  if(!uuid(req.params.id)||!exact(req.body,['quoteHash','revision'])||!Number.isSafeInteger(req.body.revision)||req.body.revision<0)throw authHttpError(400,'PS018','Invalid cancellation request');
+  const row=await persist(req,async c=>{
+   const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
+   if(!r)throw authHttpError(404,'PS022','Contract not found');
+   if(r.quote_hash!==req.body.quoteHash)throw authHttpError(409,'PS015','Contract quote changed');
+   // Idempotent replay of this terminal unpaid withdrawal; never resurrect it.
+   if(r.cancellation_requested_at){if(req.body.revision!==r.lifecycle_revision-1)throw authHttpError(409,'PS015','Contract revision changed');return r;}
+   if(r.lifecycle_revision!==req.body.revision)throw authHttpError(409,'PS015','Contract revision changed');
+   return (await c.query('UPDATE commercial_contracts SET cancellation_requested_at=clock_timestamp(),lifecycle_revision=lifecycle_revision+1 WHERE id=$1 RETURNING *',[r.id])).rows[0];
+  });res.json({...publicRow(row),cancellationMeaning:'unpaid_acceptance_withdrawn_no_provider_subscription_canceled',refundExecuted:false,dataDeletionExecuted:false});
  }catch(e){sendAuthError(res,e);}});
  router.get('/:id',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');

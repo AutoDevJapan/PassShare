@@ -60,6 +60,14 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
    }
   }finally{directServer.closeAllConnections();await new Promise(r=>directServer.close(r));}
   const read=await call('/api/commercial-contracts/'+quote.body.id,owner.refreshToken);assert.equal(read.body.state,'accepted_unpaid');assert.equal(read.body.paid,false);assert.equal(read.body.entitlementsGranted,false);
+  const cancelPath='/api/commercial-contracts/'+quote.body.id+'/cancel',cancelBody={quoteHash:quote.body.quoteHash,revision:0};
+  assert.equal((await call(cancelPath,other.refreshToken,cancelBody)).status,404);
+  const cancellation=await Promise.all([call(cancelPath,owner.refreshToken,cancelBody),call(cancelPath,owner.refreshToken,cancelBody)]);
+  for(const r of cancellation){assert.equal(r.status,200);assert.equal(r.body.lifecycleRevision,1);assert.equal(r.body.refundExecuted,false);}
+  assert.equal(cancellation[0].body.cancellationRequestedAt,cancellation[1].body.cancellationRequestedAt);
+  assert.equal((await call('/api/commercial-contracts/'+quote.body.id+'/accept',owner.refreshToken,{quoteHash:quote.body.quoteHash})).status,409);
+  assert.equal((await send(event)).status,200); // prior delivery remains idempotent
+  const afterCancel=structuredClone(event);afterCancel.id='evt_'+randomUUID().replaceAll('-','');assert.equal((await send(afterCancel)).status,409);
   await pool.query('DELETE FROM users WHERE id=$1',[owner.user.id]);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,0);assert.equal((await send(event)).status,409);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[actors.map(a=>a.user.id)]);await pool.end();delete process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET;delete process.env.PASSSHARE_STRIPE_TEST_ACCOUNT;}
 });
