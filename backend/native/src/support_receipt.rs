@@ -30,7 +30,7 @@ pub fn validate(input: &Value) -> Value {
     {
         return json!({"status":400,"code":"PS018","message":"Invalid support receipt request"});
     }
-    json!({"status":200,"body":r})
+    json!({"status":200,"body":{"requestId":id.to_ascii_lowercase(),"kind":text("kind"),"version":text("version"),"platform":text("platform"),"errorCode":text("errorCode")}})
 }
 #[cfg(test)]
 mod tests {

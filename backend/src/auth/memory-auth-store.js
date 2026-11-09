@@ -8,6 +8,7 @@ import { nativeMutation } from "../lib/native-mutations.js";
 export function createMemoryAuthStore() {
   /** @type {Map<string, { id: string, email: string, password_hash: string, created_at: string }>} */
   const usersById = new Map();
+  const receiptRows = new Map();
   /** @type {Map<string, string>} */
   const userIdByEmail = new Map();
   /** @type {Map<string, { id: string, user_id: string, token_hash: string, expires_at: string }>} */
@@ -33,6 +34,12 @@ export function createMemoryAuthStore() {
 
   return {
     async migrate() {},
+    supportReceipt(userId, sessionId, requestId, create) {
+      const session=sessionsById.get(sessionId);
+      if(!usersById.has(userId)||!session||session.user_id!==userId||new Date(session.expires_at).getTime()<=Date.now()) throw authHttpError(401,"PS024","Session is invalid or expired");
+      const key=userId+":"+requestId;let row=receiptRows.get(key);if(!row&&create){row=create();receiptRows.set(key,row);}return row;
+    },
+    findSupportReceipt(userId,sessionId,id){this.supportReceipt(userId,sessionId,"",null);return [...receiptRows.values()].find(r=>r.userId===userId&&r.id===id);},
 
     async findUserByEmail(email) {
       const userId = userIdByEmail.get(email);
@@ -257,6 +264,7 @@ export function createMemoryAuthStore() {
       for (const [id,row] of connectTokensById) {
         if (row.user_id===userId) {connectTokensById.delete(id);connectTokenIdByHash.delete(row.token_hash);}
       }
+      for(const [key,row] of receiptRows){if(row.userId===userId)receiptRows.delete(key);}
       userIdByEmail.delete(user.email);usersById.delete(userId);
     },
 

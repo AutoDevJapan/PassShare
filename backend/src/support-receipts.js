@@ -14,7 +14,7 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS support_receipts (
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(user_id,request_id));`;
 export async function createSupportReceiptRouter({pool,authStore}) {
  if(pool) await applySchemaWithAdvisoryLock(pool,4820127,SCHEMA);
- const memory=new Map();
+
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:"draft-6",legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
  const publicRow=r=>({id:r.id,status:r.status,createdAt:r.created_at,request:r.metadata,meaning:'request_received_not_contract_or_payment_confirmation'});
@@ -31,8 +31,7 @@ export async function createSupportReceiptRouter({pool,authStore}) {
      RETURNING *`,[user,req.auth.sessionId,randomUUID(),requestId,fingerprint,JSON.stringify(metadata)]);
     row=result.rows[0];if(!row)throw authHttpError(401,'PS024','Session expired');
    } else {
-    const key=user+':'+requestId;row=memory.get(key);
-    if(!row){row={userId:user,id:randomUUID(),status:'received',created_at:new Date().toISOString(),metadata,fingerprint};memory.set(key,row);}
+    row=authStore.supportReceipt(user,req.auth.sessionId,requestId,()=>({userId:user,id:randomUUID(),status:'received',created_at:new Date().toISOString(),metadata,fingerprint}));
    }
    if(row.fingerprint!==fingerprint)throw authHttpError(409,'PS015','Receipt request changed');
    res.status(201).json(publicRow(row));
@@ -40,8 +39,8 @@ export async function createSupportReceiptRouter({pool,authStore}) {
  });
  router.get('/:id',async(req,res)=>{
   try {
-   if(!/^[a-f0-9-]{36}$/i.test(req.params.id))throw authHttpError(404,'PS022','Receipt not found');
-   const row=pool?(await pool.query('SELECT r.* FROM support_receipts r JOIN sessions s ON s.user_id=r.user_id WHERE r.id=$1 AND r.user_id=$2 AND s.id=$3 AND s.expires_at>NOW()',[req.params.id,req.auth.userId,req.auth.sessionId])).rows[0]:[...memory.values()].find(r=>r.id===req.params.id&&r.userId===req.auth.userId);
+   if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(req.params.id))throw authHttpError(404,'PS022','Receipt not found');
+   const row=pool?(await pool.query('SELECT r.* FROM support_receipts r JOIN sessions s ON s.user_id=r.user_id WHERE r.id=$1 AND r.user_id=$2 AND s.id=$3 AND s.expires_at>NOW()',[req.params.id,req.auth.userId,req.auth.sessionId])).rows[0]:authStore.findSupportReceipt(req.auth.userId,req.auth.sessionId,req.params.id.toLowerCase());
    if(!row)throw authHttpError(404,'PS022','Receipt not found');res.json(publicRow(row));
   }catch(e){sendAuthError(res,e);}
  });

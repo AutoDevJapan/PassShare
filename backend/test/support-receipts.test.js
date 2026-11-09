@@ -16,7 +16,9 @@ for(const persistent of [false,...(process.env.PASSSHARE_RECEIPTS_PG==='true'?[t
   const a=await signup('receipt-a@example.test'),b=await signup('receipt-b@example.test');
   const body={requestId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',kind:'technical',version:'0.1.0',platform:'windows',errorCode:'PS019'};
   const post=async(value)=>fetch(base+'/api/support-receipts',{method:'POST',headers:{authorization:'Bearer '+a,'content-type':'application/json'},body:JSON.stringify(value)});
-  const first=await post(body);assert.equal(first.status,201);const row=await first.json();
+  const firstPair=await Promise.all([post(body),post(body)]);assert.equal(firstPair[0].status,201);const row=await firstPair[0].json();assert.equal((await firstPair[1].json()).id,row.id);
+  const reordered={errorCode:body.errorCode,platform:body.platform,version:body.version,kind:body.kind,requestId:body.requestId.toUpperCase()};assert.equal((await (await post(reordered)).json()).id,row.id);
+  assert.equal((await fetch(base+'/api/support-receipts/'+('-'.repeat(36)),{headers:{authorization:'Bearer '+a}})).status,404);
   const retries=await Promise.all([post(body),post(body)]);for(const retry of retries)assert.equal((await retry.json()).id,row.id);
   if(persistent){const {app:second}=await create();const restarted=second.listen(0,'127.0.0.1');await new Promise(r=>restarted.once('listening',r));try{const response=await fetch('http://127.0.0.1:'+restarted.address().port+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+a}});assert.equal(response.status,200);assert.equal((await response.json()).id,row.id);}finally{restarted.closeAllConnections();await new Promise(r=>restarted.close(r));}}
   assert.equal((await post({...body,kind:'refund'})).status,409);
@@ -25,4 +27,16 @@ for(const persistent of [false,...(process.env.PASSSHARE_RECEIPTS_PG==='true'?[t
   assert.equal((await fetch(base+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+b}})).status,404);
   assert.equal((await fetch(base+'/api/support-receipts/'+row.id)).status,401);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));if(pool)await pool.end();}
+});
+
+test('memory receipt commit rechecks session and retirement purges receipts',async()=>{
+ const store=createMemoryAuthStore();const user=await store.createUser({email:'receipt-race@example.test',passwordHash:'$argon2id$'+'a'.repeat(80)});
+ const session=await store.createSession(user.id,user.password_hash);
+ const id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ store.supportReceipt(user.id,session.sessionId,id,()=>({id,userId:user.id}));
+ await store.deleteSession(session.sessionId);
+ assert.throws(()=>store.supportReceipt(user.id,session.sessionId,'late',()=>({id:'late'})),/Session/);
+ const fresh=await store.createSession(user.id,user.password_hash);
+ await store.retireAccount(user.id,fresh.sessionId,user.password_hash,user.email,{purgePrivateBoxes(){}});
+ assert.throws(()=>store.findSupportReceipt(user.id,fresh.sessionId,id),/Session/);
 });
