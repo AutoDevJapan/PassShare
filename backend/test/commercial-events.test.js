@@ -43,19 +43,29 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   const amount=structuredClone(event);amount.data.object.amount=979;amount.data.object.amount_received=979;assert.equal((await send(amount)).status,409);
   const pair=await Promise.all([send(event),send(event)]);assert.deepEqual(pair.map(r=>r.status),[200,200]);assert.equal(pair.filter(r=>r.body.duplicate).length,1);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,1);
+  {const g=await call('/api/commercial-contracts/'+quote.body.id,owner.refreshToken);assert.equal(g.status,200);assert.equal(g.body.providerTestPeriods.length,1);const pp=g.body.providerTestPeriods[0];assert.equal(pp.amountJpy,980);assert.equal(pp.entitlementEffective,false);assert.equal(pp.evidence,'provider_test_sandbox');assert.ok(pp.periodEnd>pp.periodStart);assert.equal(g.body.paid,false);assert.equal(g.body.entitlementsGranted,false);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_paid_periods WHERE contract_id=$1',[quote.body.id])).rows[0].n,1);}
   const altered=structuredClone(event);altered.created--;assert.equal((await send(altered)).status,409);
   const second=await call('/api/commercial-contracts',other.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(second.status,201);
   assert.equal((await call('/api/commercial-contracts/'+second.body.id+'/accept',other.refreshToken,{quoteHash:second.body.quoteHash})).status,200);
-  const raceId='evt_'+randomUUID().replaceAll('-','');const left=structuredClone(event);left.id=raceId;
+  // A different event for the same PaymentIntent must not create a second period.
+  const samePi=structuredClone(event);samePi.id='evt_'+randomUUID().replaceAll('-','');assert.equal((await send(samePi)).status,409);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_paid_periods WHERE contract_id=$1',[quote.body.id])).rows[0].n,1);
+  const raceId='evt_'+randomUUID().replaceAll('-','');const left=structuredClone(event);left.id=raceId;left.data.object.id='pi_'+randomUUID().replaceAll('-','');
   const right=structuredClone(left);right.data.object.metadata={contractId:second.body.id,ownerId:other.user.id,quoteHash:second.body.quoteHash};
   const conflict=await Promise.all([send(left),send(right)]);assert.deepEqual(conflict.map(r=>r.status).sort(),[200,409]);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE event_id=$1',[raceId])).rows[0].n,1);
-  const earlier=structuredClone(event);earlier.id='evt_'+randomUUID().replaceAll('-','');earlier.created-=100;assert.equal((await send(earlier)).status,200);
+  {const third=await call('/api/commercial-contracts',other.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(third.status,201);
+   assert.equal((await call('/api/commercial-contracts/'+third.body.id+'/accept',other.refreshToken,{quoteHash:third.body.quoteHash})).status,200);
+   // 2026-01-31 00:00 JST: the period must clamp to the end of February, not drift into March.
+   const edge=structuredClone(event);edge.id='evt_'+randomUUID().replaceAll('-','');edge.created=Date.UTC(2026,0,30,15,0,0)/1000;edge.data.object.id='pi_'+randomUUID().replaceAll('-','');edge.data.object.metadata={contractId:third.body.id,ownerId:other.user.id,quoteHash:third.body.quoteHash};
+   assert.equal((await send(edge)).status,200);const g=await call('/api/commercial-contracts/'+third.body.id,other.refreshToken);
+   assert.deepEqual(g.body.providerTestPeriods.map(x=>[x.periodStart,x.periodEnd]),[['2026-01-31','2026-02-28']]);}
+  const earlier=structuredClone(event);earlier.id='evt_'+randomUUID().replaceAll('-','');earlier.created-=100;earlier.data.object.id='pi_'+randomUUID().replaceAll('-','');assert.equal((await send(earlier)).status,200);
   const directApp=express();directApp.use('/events',commercialEventHandler({pool,secret,account,scope:'direct'}));
   const directServer=directApp.listen(0,'127.0.0.1');await new Promise(r=>directServer.once('listening',r));
   try{
    for(const nullable of [false,true]){
-    const value=structuredClone(event);value.id='evt_'+randomUUID().replaceAll('-','');if(nullable)value.account=null;else delete value.account;
+    const value=structuredClone(event);value.id='evt_'+randomUUID().replaceAll('-','');value.data.object.id='pi_'+randomUUID().replaceAll('-','');if(nullable)value.account=null;else delete value.account;
     const payload=JSON.stringify(value);const response=await fetch('http://127.0.0.1:'+directServer.address().port+'/events',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload,secret})},body:payload});assert.equal(response.status,200);
     assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE account_id=$1 AND event_id=$2',[account,value.id])).rows[0].n,1);
    }
@@ -75,3 +85,5 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   await pool.query('DELETE FROM users WHERE id=$1',[owner.user.id]);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE contract_id=$1',[quote.body.id])).rows[0].n,0);assert.equal((await send(event)).status,409);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])',[actors.map(a=>a.user.id)]);await pool.end();delete process.env.PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET;delete process.env.PASSSHARE_STRIPE_TEST_ACCOUNT;}
 });
+
+

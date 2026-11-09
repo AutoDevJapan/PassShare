@@ -5,7 +5,7 @@ import {createApp} from '../src/app.js';
 import {createMemoryAuthStore} from '../src/auth/index.js';
 import {createMemoryStore} from '../src/store/memory-store.js';
 for(const persistent of [false,...(process.env.PASSSHARE_RECEIPTS_PG==='true'?[true]:[])]) test('support receipts are idempotent, actor-bound and reject secret bodies '+(persistent?'PostgreSQL':'memory'),async()=>{
- if(persistent)assert.equal(process.env.DATABASE_URL,'postgresql://passshare:passshare@127.0.0.1:5432/passshare');
+ if(persistent)assert.match(process.env.DATABASE_URL,/^postgresql:\/\/passshare:passshare@127\.0\.0\.1:(5432|15431)\/passshare$/);
  const pool=persistent?new pg.Pool({connectionString:process.env.DATABASE_URL}):null;
  const create=()=>createApp(persistent?{pool}:{pool:null,authStore:createMemoryAuthStore(),store:createMemoryStore()});
  const {app}=await create();
@@ -64,3 +64,4 @@ test('logout after an awaited authentication snapshot cannot save a receipt',asy
   await seen;await store.deleteSession(session.sessionId);release();assert.equal((await pending).status,401);
  }finally{release();server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+

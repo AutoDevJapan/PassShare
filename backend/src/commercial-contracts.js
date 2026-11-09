@@ -71,8 +71,9 @@ export function createCommercialContractRouter({pool,authStore}){
  }catch(e){sendAuthError(res,e);}});
  router.get('/:id',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
-  const row=await persist(req,async c=>(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0]);
-  if(!row)throw authHttpError(404,'PS022','Contract not found');res.json(publicRow(row));
+  const row=await persist(req,async c=>{const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];if(r)r.periods=(await c.query('SELECT period_start::text,period_end::text,amount_jpy::text FROM commercial_paid_periods WHERE contract_id=$1 ORDER BY period_start,event_id',[r.id])).rows;return r;});
+  if(!row)throw authHttpError(404,'PS022','Contract not found');res.json({...publicRow(row),providerTestPeriods:row.periods.map(x=>({periodStart:x.period_start,periodEnd:x.period_end,amountJpy:Number(x.amount_jpy),evidence:'provider_test_sandbox',entitlementEffective:false}))});
  }catch(e){sendAuthError(res,e);}});
  return router;
 }
+
