@@ -266,3 +266,21 @@ func TestScopeDiagnosticKeepsFixedClassWithoutPrivateError(t *testing.T) {
 		}
 	}
 }
+
+func TestGraphQLRejectionIsNeverSuccessAndNeverLogsDetails(t *testing.T) {
+	for _, sample := range []struct{ body, want string }{
+		{`{"errors":[{"message":"Not Authorized credential=private-value"}],"data":null}`, "provider-access-denied"},
+		{`{"errors":[{"message":"private-value"}],"data":{"project":{"id":"expected"}}}`, "unclassified"},
+	} {
+		c := client{dir: t.TempDir(), run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if args[len(args)-1] != "--allow-errors" {
+				t.Fatal("CLI must return the GraphQL envelope for local rejection")
+			}
+			return []byte(sample.body), nil
+		}}
+		err := c.query(context.Background(), "query{project{id}}", nil, &struct{}{})
+		if err == nil || !strings.Contains(err.Error(), sample.want) || strings.Contains(err.Error(), "private-value") {
+			t.Fatalf("unsafe rejection: %v", err)
+		}
+	}
+}

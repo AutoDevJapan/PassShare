@@ -111,7 +111,7 @@ func (c client) query(ctx context.Context, query string, variables any, reply an
 	if err = os.WriteFile(v, b, 0600); err != nil {
 		return err
 	}
-	out, err := c.run(ctx, "railway", "api", "--file", q, "--variables", "@"+v, "--compact")
+	out, err := c.run(ctx, "railway", "api", "--file", q, "--variables", "@"+v, "--compact", "--allow-errors")
 	if err != nil {
 		var failure *commandFailure
 		if errors.As(err, &failure) {
@@ -123,7 +123,17 @@ func (c client) query(ctx context.Context, query string, variables any, reply an
 		Errors []json.RawMessage `json:"errors"`
 		Data   json.RawMessage   `json:"data"`
 	}
-	if json.Unmarshal(out, &envelope) != nil || len(envelope.Errors) != 0 || len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+	if json.Unmarshal(out, &envelope) != nil {
+		return errors.New("private snapshot provider reply is invalid")
+	}
+	if len(envelope.Errors) != 0 {
+		var item struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(envelope.Errors[0], &item)
+		return fmt.Errorf("private snapshot provider GraphQL rejection (class=%s)", failureClass([]byte(item.Message)))
+	}
+	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
 		return errors.New("private snapshot provider reply is invalid")
 	}
 	if err = json.Unmarshal(envelope.Data, reply); err != nil {
