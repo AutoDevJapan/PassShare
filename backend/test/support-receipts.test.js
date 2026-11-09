@@ -7,7 +7,7 @@ import {createMemoryStore} from '../src/store/memory-store.js';
 for(const persistent of [false,...(process.env.PASSSHARE_RECEIPTS_PG==='true'?[true]:[])]) test('support receipts are idempotent, actor-bound and reject secret bodies '+(persistent?'PostgreSQL':'memory'),async()=>{
  if(persistent)assert.equal(process.env.DATABASE_URL,'postgresql://passshare:passshare@127.0.0.1:5432/passshare');
  const pool=persistent?new pg.Pool({connectionString:process.env.DATABASE_URL}):null;
- const create=()=>createApp(persistent?{pool}:{authStore:createMemoryAuthStore(),store:createMemoryStore()});
+ const create=()=>createApp(persistent?{pool}:{pool:null,authStore:createMemoryAuthStore(),store:createMemoryStore()});
  const {app}=await create();
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
  const base='http://127.0.0.1:'+server.address().port;
