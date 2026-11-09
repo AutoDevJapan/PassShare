@@ -26,6 +26,16 @@ for(const persistent of [false,...(process.env.PASSSHARE_RECEIPTS_PG==='true'?[t
   for(const value of [{nested:'never-store-secret'},['never-store-secret'],null,42,false]){const requestId=crypto.randomUUID();const rejected=await post({...body,requestId,errorCode:value});assert.equal(rejected.status,400);assert.equal((await rejected.text()).includes('never-store-secret'),false);if(persistent){const result=await pool.query('SELECT count(*)::int AS n FROM support_receipts WHERE request_id=\u00241',[requestId]);assert.equal(result.rows[0].n,0);}const corrected=await post({...body,requestId});assert.equal(corrected.status,201);if(persistent){const result=await pool.query('SELECT count(*)::int AS n FROM support_receipts WHERE request_id=\u00241',[requestId]);assert.equal(result.rows[0].n,1);}}
   assert.equal((await fetch(base+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+a}})).status,200);
   assert.equal((await fetch(base+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+b}})).status,404);
+  // A claimed email identity or known receipt ID is not ownership proof.
+  const forged=await fetch(base+'/api/support-receipts/'+row.id,{headers:{authorization:'Bearer '+b,'x-user-id':'receipt-a@example.test','x-forwarded-email':'receipt-a@example.test'}});
+  assert.equal(forged.status,404);
+  assert.equal((await forged.text()).includes(row.id),false);
+  for(const claim of [{userId:'receipt-a@example.test'},{email:'receipt-a@example.test'},{receiptId:row.id},{status:'resolved'}]){
+   const rejected=await fetch(base+'/api/support-receipts',{method:'POST',headers:{authorization:'Bearer '+b,'content-type':'application/json'},body:JSON.stringify({...body,...claim})});
+   assert.equal(rejected.status,400);
+  }
+  const own=await fetch(base+'/api/support-receipts',{method:'POST',headers:{authorization:'Bearer '+b,'content-type':'application/json'},body:JSON.stringify(body)});
+  assert.equal(own.status,201);assert.notEqual((await own.json()).id,row.id);
   assert.equal((await fetch(base+'/api/support-receipts/'+row.id)).status,401);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));if(pool)await pool.end();}
 });
