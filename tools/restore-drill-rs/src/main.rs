@@ -34,6 +34,8 @@ const TABLES: &[&str] = &[
     "commercial_contracts",
     "commercial_payment_events",
     "commercial_paid_periods",
+    "commercial_live_contracts",
+    "commercial_live_periods",
 ];
 // Exact additive tables from backend/native/src/encrypted-schema.sql. This
 // legacy plaintext exercise never activates encrypted storage or stages rotation.
@@ -661,6 +663,9 @@ impl Runner {
             .env("PASSSHARE_MUTATIONS_BIN", NATIVE)
             .env("PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET", "whsec_restore_synthetic_only")
             .env("PASSSHARE_STRIPE_TEST_ACCOUNT", "acct_restorefixture")
+            .env("PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET", "whsec_restore_live_synthetic_only")
+            .env("PASSSHARE_STRIPE_LIVE_ACCOUNT", "acct_restorelive")
+            .env("PASSSHARE_COMMERCIAL_LIVE_ENABLED", "true")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         self.node = Some(OwnedChild::spawn(&mut command)?);

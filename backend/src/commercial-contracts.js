@@ -64,6 +64,7 @@ export function createCommercialContractRouter({pool,authStore}){
    const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
    if(!r)throw authHttpError(404,'PS022','Contract not found');
    if(r.quote_hash!==req.body.quoteHash)throw authHttpError(409,'PS015','Contract quote changed');
+   if((await c.query('SELECT 1 FROM commercial_live_contracts WHERE contract_id=$1',[r.id])).rowCount)throw authHttpError(409,'PS015','A paid contract cannot be withdrawn as unpaid');
    // Idempotent replay of this terminal unpaid withdrawal; never resurrect it.
    if(r.state!=='accepted_unpaid')throw authHttpError(409,'PS015','Contract has no unpaid acceptance to withdraw');
    if(r.cancellation_requested_at){if(req.body.revision!==r.lifecycle_revision-1)throw authHttpError(409,'PS015','Contract revision changed');return r;}
