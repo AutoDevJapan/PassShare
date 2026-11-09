@@ -54,7 +54,11 @@ test('verified live payments become cycle-anchored periods and drive entitlement
   const cancel=await call('/api/commercial-contracts/'+q.id+'/cancel-at-period-end',owner.refreshToken,{quoteHash:q.quoteHash});assert.equal(cancel.status,200);
   assert.equal((await call('/api/commercial-contracts/'+q.id+'/cancel-at-period-end',owner.refreshToken,{quoteHash:q.quoteHash})).status,200);
   assert.equal((await pool.query('SELECT cancel_after_cycle FROM commercial_live_contracts WHERE contract_id=$1',[q.id])).rows[0].cancel_after_cycle,3);
-  assert.equal((await send(ev(q,owner,4,'2026-04-30T00:00:00+09:00'))).status,409); // no renewal after the cancellation
+  const latePaid=ev(q,owner,4,'2026-04-30T00:00:00+09:00');assert.equal((await send(latePaid)).status,200);assert.equal((await send(latePaid)).body.duplicate,true);assert.equal((await pool.query('SELECT disposition FROM commercial_live_periods WHERE event_id=$1',[latePaid.id])).rows[0].disposition,'refund_review');
+  const exceptions=await call('/api/commercial-contracts/'+q.id+'/payment-exceptions',owner.refreshToken);
+  assert.equal(exceptions.status,200);assert.equal(exceptions.body.payments.length,1);assert.equal(exceptions.body.payments[0].amountJpy,980);assert.equal(exceptions.body.payments[0].status,'refund_review_required');assert.equal(exceptions.body.refundExecuted,false);
+  assert.equal((await call('/api/commercial-contracts/'+q.id+'/payment-exceptions',other.refreshToken)).status,404);
+  assert.equal((await call('/api/commercial-contracts/'+q.id+'/payment-exceptions')).status,401);
   const sched=await loadEntitlement(pool,q.id,at('2026-04-29T12:00:00+09:00'));assert.deepEqual([sched.state,sched.effective],['active_cancel_scheduled',true]);
   const ended=await loadEntitlement(pool,q.id,at('2026-04-30T12:00:00+09:00'));assert.deepEqual([ended.state,ended.effective],['export_window',false]);
   const actor={sessionValid:true,accountRemoved:false,identityConfirmed:true,billingAdministrator:true,membershipActive:true,hasExportScope:true};
@@ -64,11 +68,11 @@ test('verified live payments become cycle-anchored periods and drive entitlement
   const past=new Date(Date.now()-35*86400000).toISOString();const old=await quote(retiring);
   assert.equal((await send(ev(old,retiring,1,past))).status,200);
   const auth=await call('/api/commercial-contracts/'+old.id+'/export-authorization',retiring.refreshToken);
-  assert.equal(auth.status,200);assert.equal(auth.body.entitlement.effective,false);assert.equal(auth.body.export.allowed,true);assert.equal(auth.body.export.restoresIdentityMembershipOrKeys,false);
+  assert.equal(auth.status,200);assert.equal(auth.body.entitlement.effective,false);assert.equal(auth.body.export.windowOpen,true);assert.equal(auth.body.export.authorized,false);assert.equal(auth.body.export.proposalOnly,true);assert.equal(auth.body.export.restoresIdentityMembershipOrKeys,false);
   assert.equal((await call('/api/commercial-contracts/'+old.id+'/export-authorization',other.refreshToken)).status,404);
   const fresh=await quote(owner);assert.equal((await send(ev(fresh,owner,1,new Date().toISOString()))).status,200);
   const active=await call('/api/commercial-contracts/'+fresh.id,owner.refreshToken);assert.deepEqual([active.body.entitlement.state,active.body.entitlement.effective],['active',true]);assert.equal(active.body.paid,false);
-  assert.equal((await call('/api/commercial-contracts/'+fresh.id+'/export-authorization',owner.refreshToken)).body.export.allowed,false);
+  assert.equal((await call('/api/commercial-contracts/'+fresh.id+'/export-authorization',owner.refreshToken)).body.export.windowOpen,false);
   // Retired owner: rows cascade away and later events are refused.
   const gone=await call('/api/auth/account',retiring.refreshToken,{currentPassword:'synthetic-password123',confirmationEmail:retiring.user.email},'DELETE');
   assert.equal(gone.status,204);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods WHERE contract_id=$1',[old.id])).rows[0].n,0);

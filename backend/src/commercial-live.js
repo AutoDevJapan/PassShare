@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS commercial_live_periods (
  period_end DATE NOT NULL CHECK(period_end>period_start), amount_jpy BIGINT NOT NULL CHECK(amount_jpy>0),
  provider_object_id TEXT NOT NULL, event_hash TEXT NOT NULL,
  evidence TEXT NOT NULL CHECK(evidence='provider_live'), received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
- PRIMARY KEY(account_id,event_id), UNIQUE(contract_id,cycle), UNIQUE(account_id,provider_object_id));`;
+ disposition TEXT NOT NULL DEFAULT 'effective' CHECK(disposition IN ('effective','refund_review')), PRIMARY KEY(account_id,event_id), UNIQUE(contract_id,cycle), UNIQUE(account_id,provider_object_id));`;
 export const migrateCommercialLive=pool=>applySchemaWithAdvisoryLock(pool,4820130,LIVE_SCHEMA);
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 
@@ -35,7 +35,7 @@ export async function cyclePeriod(contractStart,cycle){
 }
 
 export async function loadEntitlement(db,contractId,nowMs){
- const live=(await db.query("SELECT p.period_start::text AS \"periodStart\",p.period_end::text AS \"periodEnd\",p.evidence FROM commercial_live_periods p WHERE p.contract_id=$1",[contractId])).rows;
+ const live=(await db.query("SELECT p.period_start::text AS \"periodStart\",p.period_end::text AS \"periodEnd\",p.evidence FROM commercial_live_periods p WHERE p.contract_id=$1 AND p.disposition='effective'",[contractId])).rows;
  const sandbox=(await db.query("SELECT period_start::text AS \"periodStart\",period_end::text AS \"periodEnd\",evidence FROM commercial_paid_periods WHERE contract_id=$1",[contractId])).rows;
  const c=(await db.query('SELECT cancel_after_cycle,contract_start::text AS start_text FROM commercial_live_contracts WHERE contract_id=$1',[contractId])).rows[0];
  // contractStart is the first paid day (JST); renewals fall on the same day each month.
@@ -69,10 +69,10 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
       lc=(await c.query('INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES($1,$2) RETURNING *,contract_start::text AS start_text',[r.id,jstDate(event.created*1000)])).rows[0];
      }else{
       if(cycle>1&&!(await c.query('SELECT 1 FROM commercial_live_periods WHERE contract_id=$1 AND cycle=$2',[r.id,cycle-1])).rowCount)throw authHttpError(409,'PS015','Earlier payment cycle is not recorded yet');
-      if(lc.cancel_after_cycle!=null&&cycle>lc.cancel_after_cycle)throw authHttpError(409,'PS015','Contract is set to end at the paid period');
+      // Preserve unexpected paid evidence for refund reconciliation without granting access.
      }
      const p=await cyclePeriod(lc.start_text,cycle);
-     await c.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'provider_live')",[account,event.id,r.id,cycle,p.periodStart,p.periodEnd,o.amount_received,o.id,digest]);
+     await c.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,disposition,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'provider_live')",[account,event.id,r.id,cycle,p.periodStart,p.periodEnd,o.amount_received,o.id,digest,lc.cancel_after_cycle!=null&&cycle>lc.cancel_after_cycle?'refund_review':'effective']);
     }
     await c.query('COMMIT');res.json({received:true,duplicate:!!old,meaning:'signed_live_payment_recorded'});
    }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')throw authHttpError(409,'PS015','Payment event belongs to another binding');throw e;}finally{c.release();}

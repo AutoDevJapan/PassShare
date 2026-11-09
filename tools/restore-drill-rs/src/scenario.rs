@@ -350,6 +350,12 @@ impl Runner {
             report.check(label, command_output(command, None).is_ok())?;
         }
         self.api.json(report,"source_paid_contract_unpaid_withdrawal_denied","POST",&format!("/api/commercial-contracts/{live_id}/cancel"),&owner.session,Some(&json!({"quoteHash":live_draft["quoteHash"],"revision":0})),409,None)?;
+        self.api.json(report,"source_live_cancel_scheduled","POST",&format!("/api/commercial-contracts/{live_id}/cancel-at-period-end"),&owner.session,Some(&json!({"quoteHash":live_draft["quoteHash"]})),200,None)?;
+        let late_key = live_id.replace('-', "");
+        let late_payment = json!({"id":format!("evt_late{late_key}"),"account":"acct_restorelive","type":"payment_intent.succeeded","livemode":true,"created":1773964800_i64,"data":{"object":{"id":format!("pi_late{late_key}"),"object":"payment_intent","status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"livemode":true,"metadata":{"contractId":live_id,"ownerId":owner.id,"quoteHash":live_draft["quoteHash"],"cycle":"3"}}}});
+        let mut late_command = clean_command("/usr/local/bin/node");
+        late_command.arg("-e").arg(live_script).arg(late_payment.to_string());
+        report.check("source_late_paid_evidence_preserved", command_output(late_command, None).is_ok())?;
         let live_before = self.api.json(report,"source_live_contract_read","GET",&format!("/api/commercial-contracts/{live_id}"),&owner.session,None,200,None)?;
         self.api.json(
             report,
@@ -890,8 +896,13 @@ impl Runner {
         report.check("retired_paid_period_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_paid_periods WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         report.check("retired_payment_ledger_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_payment_events WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         let restored_live = self.api.json(report,"restored_live_contract_current_owner","GET",&format!("/api/commercial-contracts/{live_id}"),&current_owner.session,None,200,None)?;
-        report.check("restored_live_entitlement_exact", exact_json(&live_before["entitlement"], &restored_live["entitlement"]))?;
-        report.check("restored_live_periods_anchored_nonempty", sql("drill_restored",&format!("SELECT string_agg(cycle||':'||period_start||'>'||period_end||':'||amount_jpy||':'||evidence, ',' ORDER BY cycle) FROM commercial_live_periods WHERE contract_id='{live_id}'"))?.trim()=="1:2026-01-31>2026-02-28:980:provider_live,2:2026-02-28>2026-03-31:980:provider_live")?;
+        // The fixture ended in March 2026. Compare stable contract boundaries;
+        // today's date is re-derived and may cross midnight while restoring.
+        for (name, field) in [("restored_live_contract_start", "contractStart"), ("restored_live_paid_through", "paidThrough"), ("restored_live_export_window", "exportWindow")] {
+            report.check(name, exact_json(&live_before["entitlement"][field], &restored_live["entitlement"][field]))?;
+        }
+        report.check("restored_live_periods_anchored_nonempty", sql("drill_restored",&format!("SELECT string_agg(cycle||':'||period_start||'>'||period_end||':'||amount_jpy||':'||evidence, ',' ORDER BY cycle) FROM commercial_live_periods WHERE contract_id='{live_id}' AND disposition='effective'"))?.trim()=="1:2026-01-31>2026-02-28:980:provider_live,2:2026-02-28>2026-03-31:980:provider_live")?;
+        report.check("restored_refund_review_nonempty", sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{live_id}' AND cycle=3 AND disposition='refund_review' AND amount_jpy=980"))?.trim()=="1")?;
         report.check("restored_live_contract_anchor", sql("drill_restored",&format!("SELECT contract_start::text FROM commercial_live_contracts WHERE contract_id='{live_id}'"))?.trim()=="2026-01-31")?;
         report.check("retired_live_rows_cascaded", sql("drill_restored",&format!("SELECT (SELECT count(*) FROM commercial_live_contracts WHERE contract_id='{retired_live_id}')+(SELECT count(*) FROM commercial_live_periods WHERE contract_id='{retired_live_id}')"))?.trim()=="0")?;
         report.check(

@@ -7,7 +7,6 @@ import {authHttpError,sendAuthError} from './auth/errors.js';
 import {nativeMutation} from './lib/native-mutations.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {migrateCommercialEvents} from './commercial-events.js';
-import {exportDecision} from './commercial-entitlement.js';
 import {migrateCommercialLive,loadEntitlement} from './commercial-live.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
@@ -84,13 +83,21 @@ export function createCommercialContractRouter({pool,authStore}){
    return loadEntitlement(c,r.id,Date.now());
   });res.json({entitlement:out,meaning:'ends_at_paid_period_end_no_refund_no_deletion'});
  }catch(e){sendAuthError(res,e);}});
+ router.get('/:id/payment-exceptions',async(req,res)=>{try{
+  if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
+  const payments=await persist(req,async c=>{
+   const own=(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];
+   if(!own)throw authHttpError(404,'PS022','Contract not found');
+   return (await c.query("SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at FROM commercial_live_periods WHERE contract_id=$1 AND disposition='refund_review' ORDER BY cycle",[own.id])).rows;
+  });
+  res.json({refundExecuted:false,entitlementGranted:false,payments:payments.map(p=>({eventId:p.event_id,paymentIntentId:p.provider_object_id,cycle:p.cycle,amountJpy:Number(p.amount_jpy),receivedAt:p.received_at,reason:'payment_after_cancellation',status:'refund_review_required'}))});
+ }catch(e){sendAuthError(res,e);}});
  router.get('/:id/export-authorization',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
   const ent=await persist(req,async c=>{const r=(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];return r?loadEntitlement(c,r.id,Date.now()):null;});
   if(!ent)throw authHttpError(404,'PS022','Contract not found');
-  // Server-verified claims only: a live session owned this contract. The decision is a proposal, not a key grant.
-  const actor={sessionValid:true,accountRemoved:false,identityConfirmed:true,billingAdministrator:true,membershipActive:true,hasExportScope:true};
-  res.json({entitlement:ent,export:await exportDecision({entitlement:ent,actor})});
+  // Billing dates do not authorize identity, membership or key access.
+  res.json({entitlement:ent,export:{proposalOnly:true,windowOpen:!!ent.exportWindow?.open,authorized:false,requiresCurrentIdentityMembershipAndKeyScope:true,restoresIdentityMembershipOrKeys:false}});
  }catch(e){sendAuthError(res,e);}});
  router.get('/:id',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
