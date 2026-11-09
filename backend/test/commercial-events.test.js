@@ -54,6 +54,12 @@ test('signed fixture events persist once and bind the accepted quote in PostgreS
   const right=structuredClone(left);right.data.object.metadata={contractId:second.body.id,ownerId:other.user.id,quoteHash:second.body.quoteHash};
   const conflict=await Promise.all([send(left),send(right)]);assert.deepEqual(conflict.map(r=>r.status).sort(),[200,409]);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_payment_events WHERE event_id=$1',[raceId])).rows[0].n,1);
+  {const third=await call('/api/commercial-contracts',other.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(third.status,201);
+   assert.equal((await call('/api/commercial-contracts/'+third.body.id+'/accept',other.refreshToken,{quoteHash:third.body.quoteHash})).status,200);
+   // 2026-01-31 00:00 JST: the period must clamp to the end of February, not drift into March.
+   const edge=structuredClone(event);edge.id='evt_'+randomUUID().replaceAll('-','');edge.created=Date.UTC(2026,0,30,15,0,0)/1000;edge.data.object.id='pi_'+randomUUID().replaceAll('-','');edge.data.object.metadata={contractId:third.body.id,ownerId:other.user.id,quoteHash:third.body.quoteHash};
+   assert.equal((await send(edge)).status,200);const g=await call('/api/commercial-contracts/'+third.body.id,other.refreshToken);
+   assert.deepEqual(g.body.providerTestPeriods.map(x=>[x.periodStart,x.periodEnd]),[['2026-01-31','2026-02-28']]);}
   const earlier=structuredClone(event);earlier.id='evt_'+randomUUID().replaceAll('-','');earlier.created-=100;earlier.data.object.id='pi_'+randomUUID().replaceAll('-','');assert.equal((await send(earlier)).status,200);
   const directApp=express();directApp.use('/events',commercialEventHandler({pool,secret,account,scope:'direct'}));
   const directServer=directApp.listen(0,'127.0.0.1');await new Promise(r=>directServer.once('listening',r));
