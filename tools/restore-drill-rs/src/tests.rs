@@ -125,6 +125,8 @@ fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate
         "commercial_plan_payment_exceptions",
         "commercial_seat_changes",
         "commercial_seat_decreases",
+        "commercial_test_refund_events",
+        "commercial_test_refunds",
         "connect_item_files",
         "connect_items",
         "connect_tokens",

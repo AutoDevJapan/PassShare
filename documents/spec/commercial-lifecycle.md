@@ -157,7 +157,7 @@ GETは現在の本人だけが照会できる。PostgreSQLでセッションと�
 
 - 期間の識別は、プロバイダアカウントとイベント ID の組、およびアカウントと PaymentIntent の組で一意とする。同じイベントの再送は期間を増やさない。別のイベント ID で同じ PaymentIntent が届いた場合は 409 とする。
 - 行は `provider_test_sandbox` の証跡だけを許可する制約を持つ。`paid`、`entitlementsGranted`、`entitlementEffective` は常に false で、この台帳から有料権限を付与しない。
-- 取消済みの契約への新規イベントは 409。返金や払い戻しのイベントは受け付けない（`payment_intent.succeeded` 以外は 400）。期間末解約、返金、export、削除は引き続き未実装。
+- 取消済みの契約への新規支払いイベントは409。検証済みsandbox返金は後節に従い既存支払いへ結び、その他の未対応イベントは400とする。これは本番返金、契約終了後の自動削除や販売開始の完了ではない。
 
 - 一意インデックスは起動時の移行で作る。既存の DB に同じアカウントと PaymentIntent の行が複数あると移行は失敗するため、導入前に重複が無いことを確認する（本番の台帳は導入前は空）。この変更より前に保存されたイベントの再送では期間行を補わない。期間の金額は、受理した見積の月額と一致したイベントだけが記録するため、台帳側には別の金額制約を置かない。
 
@@ -323,3 +323,23 @@ snapshot版・対象ID・サーバー時刻だけを保存し、暗号文・復�
 receipt ID順で100件ずつ取得し、履歴にも秘密値を含めない。
 契約・本人の削除時は外部キーで削除する。契約終了30日後の自動削除・法定保持条件の同期は
 元の未完工程であり、この監査追加を新しい保存期間の約束にはしない。
+
+### 公式sandboxの返金証跡と支払い正本の対応
+
+既存の署名検証済みtest受け口は `refund.created` と `refund.updated` の
+成功済みJPY Refundも扱う。公式の[Refund object](https://docs.stripe.com/api/refunds/object)と
+[event types](https://docs.stripe.com/api/events/types)に従い、署名対象Eventの
+`livemode:false` と既存direct/Connect account条件を使う。
+Refund objectに `livemode` がないことだけで正規の配送を拒否しない。
+
+元PaymentIntent・accountから既存sandbox支払いを特定し、契約・所有者・金額を
+その保存済み正本へ結ぶ。Refund metadataやクライアント入力で契約を移さない。
+元支払い未着は409で再送を要求し、成功していない返金を完了扱いにしない。
+一つのRefund IDは一度だけ集計し、別の署名イベントによる更新と再送を別の
+イベント台帳に結ぶ。並行返金の合計が元支払額を超える場合は拒否する。
+正本・イベント・契約の複合FKを持ち、退会cascadeを復元fixtureでも確認する。
+
+`GET .../test-refunds` は有効な契約所有者sessionだけに、非公開・no-storeで
+100件ずつ返す。元の有効期間・席数・Boxの所属・鍵は変更しない。
+これは公式sandboxで返金された事実の受領経路であり、返金APIの実行、live返金、
+本番有料権限付与、販売開始、原M8全体の完了ではない。

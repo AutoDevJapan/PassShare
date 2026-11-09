@@ -32,6 +32,16 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "restored_seat_provider_success_saved",
     "source_decrease_actual_amount_saved",
     "restored_decrease_actual_amount_saved",
+    "source_test_refund_nonempty",
+    "source_test_refund_events_nonempty",
+    "restore_test_refunds_full_rows",
+    "restore_test_refund_events_full_rows",
+    "restored_test_refund_nonempty",
+    "restored_test_refund_events_nonempty",
+    "retired_test_refunds_cascaded",
+    "retired_test_refund_events_cascaded",
+    "restored_test_refund_owner_API",
+    "restored_test_refund_owner_values",
 ];
 
 pub(super) fn validate(report: &Value, negative: bool) -> bool {

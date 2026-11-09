@@ -5,6 +5,7 @@ import {authHttpError,sendAuthError} from './auth/errors.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {rateLimit} from 'express-rate-limit';
 import {nativeMutation} from './lib/native-mutations.js';
+import {lockTestPayment,recordTestRefund} from './commercial-test-refunds.js';
 
 export const PAYMENT_EVENT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_payment_events (
  account_id TEXT NOT NULL, event_id TEXT NOT NULL, contract_id UUID NOT NULL REFERENCES commercial_contracts(id) ON DELETE CASCADE,
@@ -29,12 +30,17 @@ export function commercialEventHandler({pool,secret=process.env.PASSSHARE_STRIPE
    let event;try{event=Stripe.webhooks.constructEvent(req.body,req.headers['stripe-signature'],secret,300);}catch{throw authHttpError(400,'PS018','Invalid payment event signature');}
    const o=event.data?.object,m=o?.metadata;
    const accountMatches=scope==='direct'?event.account==null:event.account===account;
+   if(event.livemode===false&&accountMatches&&['refund.created','refund.updated'].includes(event.type)){
+    res.json(await recordTestRefund(pool,event,account,createHash('sha256').update(req.body).digest('hex')));return;
+   }
    if(event.livemode!==false||o?.livemode!==false||!accountMatches||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||!Number.isSafeInteger(event.created))throw authHttpError(400,'PS018','Unsupported payment event scope');
    const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
    if(!uuid(m?.contractId)||!uuid(m?.ownerId)||!/^[a-f0-9]{64}$/.test(m?.quoteHash??''))throw authHttpError(400,'PS018','Invalid contract event binding');
    const digest=createHash('sha256').update(req.body).digest('hex');const c=await pool.connect();
    try{
     await c.query('BEGIN');
+    await lockTestPayment(c,account,event.id,o.id);
+    if((await c.query('SELECT 1 FROM commercial_test_refund_events WHERE account_id=$1 AND event_id=$2',[account,event.id])).rowCount)throw authHttpError(409,'PS015','Event identity belongs to a refund');
     // Follow retirement's identity-before-resource lock order.
     const user=await c.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[m.ownerId]);
     if(!user.rowCount)throw authHttpError(409,'PS015','Contract binding unavailable');
