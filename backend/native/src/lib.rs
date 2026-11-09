@@ -15,6 +15,7 @@ pub mod recovery;
 pub mod retirement;
 pub mod share;
 pub mod shared_grant;
+pub mod support_receipt;
 
 use serde_json::{json, Value};
 
@@ -25,6 +26,7 @@ pub fn dispatch(input: &Value) -> Value {
     match input.get("command").and_then(Value::as_str) {
         Some("account-lifecycle-page") => lifecycle_page::render(input),
         Some("account-lifecycle-form") => lifecycle_page::validate_form(input),
+        Some("support-receipt-validate") => support_receipt::validate(input),
         Some("commercial-quote") => commercial_lifecycle::quote(input),
         Some("commercial-lifecycle-decision") => commercial_lifecycle::lifecycle(input),
         Some("encrypted-schema") => json!({"status":200,"body":encrypted::SCHEMA}),

@@ -99,6 +99,12 @@ jobs:
           sudo apt-get install --yes postgresql-client
           psql --version
       - run: cargo build --manifest-path backend/native/Cargo.toml --release --locked
+      - name: Verify persistent support receipts and actor isolation
+        run: node --test backend/test/support-receipts.test.js
+        env:
+          DATABASE_URL: postgresql://passshare:passshare@127.0.0.1:5432/passshare
+          PASSSHARE_RECEIPTS_PG: "true"
+          PASSSHARE_MUTATIONS_BIN: ${{ github.workspace }}/backend/native/target/release/passshare-mutations
       - name: Verify atomic PostgreSQL operations and restart
         run: backend/native/target/release/acceptance
         env:

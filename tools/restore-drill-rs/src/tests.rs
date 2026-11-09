@@ -140,6 +140,7 @@ fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate
         "login_ip_requests",
         "mutation_operations",
         "sessions",
+        "support_receipts",
         "users",
         "vault_invitations",
         "vault_memberships"
