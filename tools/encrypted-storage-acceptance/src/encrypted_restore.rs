@@ -80,6 +80,8 @@ fn security_state(db: &Database) -> String {
         "commercial_live_contracts",
         "commercial_live_periods",
         "commercial_seat_changes",
+        "commercial_seat_decreases",
+        "commercial_plan_payment_exceptions",
     ];
     let parts = tables.iter().map(|t| format!("SELECT '{t}' AS name, count(*)::text || ':' || COALESCE(string_agg(md5(to_jsonb(r)::text),',' ORDER BY md5(to_jsonb(r)::text)),'') AS hash FROM {t} r")).collect::<Vec<_>>();
     db.sql(&format!(

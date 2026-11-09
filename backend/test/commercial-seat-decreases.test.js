@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import pg from 'pg';
+import Stripe from 'stripe';
+import {randomUUID} from 'node:crypto';
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
+
+test('owned next-renewal decrease quotes persist without changing the current paid plan',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
+ const source=new URL(process.env.DATABASE_URL);
+ assert.equal(source.hostname,'127.0.0.1');assert.equal(source.username,'passshare');assert.equal(source.pathname,'/passshare');
+ const admin=new pg.Pool({connectionString:source.href}),name='ps_decrease_'+randomUUID().replaceAll('-','');
+ await admin.query('CREATE DATABASE '+name);
+ source.pathname='/'+name;
+ const pool=new pg.Pool({connectionString:source.href}),close=trackPoolShutdown(pool);
+ const secret='whsec_decrease_fixture',account='acct_decreasefixture';
+ Object.assign(process.env,{PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account,PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true'});
+ const {createApp}=await import('../src/app.js');const {app}=await createApp({pool});
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ const base='http://127.0.0.1:'+server.address().port;
+ const call=async(path,token,body,method=body===undefined?'GET':'POST')=>{
+  const r=await fetch(base+path,{method,headers:{'content-type':'application/json','x-passshare-client':'mobile',...(token?{authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body)});
+  return {status:r.status,body:await r.json().catch(()=>null)};
+ };
+ const root='/api/commercial-contracts';let owner,other;
+ try{
+  const password='synthetic-decrease-password';
+  const signup=async()=>{const email=randomUUID()+'@example.test';const r=await call('/api/auth/signup',null,{email,password});assert.equal(r.status,201);return {...r.body,email};};
+  owner=await signup();other=await signup();
+  const q=(await call(root,owner.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:3},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}})).body;
+  assert.equal((await call(root+'/'+q.id+'/accept',owner.refreshToken,{quoteHash:q.quoteHash})).status,200);
+  const path=root+'/'+q.id+'/seat-decrease-quotes',input={requestId:randomUUID(),requestedPlan:{type:'personal',users:1}};
+  assert.equal((await call(path,null,input)).status,401);
+  assert.equal((await call(path,other.refreshToken,input)).status,404);
+  assert.equal((await call(path,owner.refreshToken,input)).status,409);
+  const event={id:'evt_'+randomUUID().replaceAll('-',''),account,type:'payment_intent.succeeded',livemode:true,created:Math.floor(Date.now()/1000),data:{object:{id:'pi_'+randomUUID().replaceAll('-',''),object:'payment_intent',status:'succeeded',currency:'jpy',amount:2940,amount_received:2940,livemode:true,metadata:{contractId:q.id,ownerId:owner.user.id,quoteHash:q.quoteHash,cycle:'1'}}}};
+  const payload=JSON.stringify(event),paid=await fetch(base+'/api/commercial-events/stripe-live',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload,secret})},body:payload});assert.equal(paid.status,200);
+  const first=await call(path,owner.refreshToken,input);assert.equal(first.status,201);
+  assert.equal(first.body.state,'quoted');assert.equal(first.body.quote.requestedPlan.users,1);
+  assert.equal(first.body.quote.refundForCurrentPeriodJpy,0);assert.equal(first.body.activePlanChanged,false);
+  const again=await call(path,owner.refreshToken,input);assert.equal(again.status,201);assert.equal(again.body.id,first.body.id);
+  assert.equal((await call(path,owner.refreshToken,{...input,requestedPlan:{type:'personal',users:2}})).status,409);
+  assert.equal((await call(path,owner.refreshToken,{...input,requestId:randomUUID(),requestedPlan:{type:'personal',users:4}})).status,400);
+  const accept=path+'/'+first.body.id+'/accept';
+  assert.equal((await call(accept,other.refreshToken,{quoteHash:first.body.quoteHash})).status,404);
+  assert.equal((await call(accept,owner.refreshToken,{quoteHash:'0'.repeat(64)})).status,409);
+  const results=await Promise.all([call(accept,owner.refreshToken,{quoteHash:first.body.quoteHash}),call(accept,owner.refreshToken,{quoteHash:first.body.quoteHash})]);
+  assert.deepEqual(results.map(x=>x.status),[200,200]);assert.ok(results.every(x=>x.body.state==='scheduled'&&x.body.schedulePersisted===true&&x.body.activePlanChanged===false));
+  const current=await call(root+'/'+q.id,owner.refreshToken);assert.equal(current.status,200);assert.equal(current.body.currentPlan.users,3);assert.equal(current.body.seatRevision,0);
+  const stored=(await pool.query('SELECT * FROM commercial_seat_decreases WHERE id=$1',[first.body.id])).rows[0];
+  assert.equal(stored.quote_hash,first.body.quoteHash);assert.equal(stored.target_cycle,2);assert.equal(stored.state,'scheduled');
+  assert.equal((await call(path+'/'+first.body.id,other.refreshToken)).status,404);
+  const replacement=await call(path,owner.refreshToken,{requestId:randomUUID(),requestedPlan:{type:'personal',users:2}});assert.equal(replacement.status,201);
+  assert.equal((await call(path+'/'+replacement.body.id+'/accept',owner.refreshToken,{quoteHash:replacement.body.quoteHash})).status,200);
+  assert.equal((await call(accept,owner.refreshToken,{quoteHash:first.body.quoteHash})).status,409);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM commercial_seat_decreases WHERE contract_id=$1 AND state='scheduled'",[q.id])).rows[0].n,1);
+  assert.equal((await pool.query('SELECT current_plan FROM commercial_contracts WHERE id=$1',[q.id])).rows[0].current_plan,null);
+  const expired=await call(path,owner.refreshToken,{requestId:randomUUID(),requestedPlan:{type:'personal',users:1}});assert.equal(expired.status,201);
+  const oldEnd=(await pool.query('SELECT period_end::text e FROM commercial_live_periods WHERE contract_id=$1',[q.id])).rows[0].e;
+  await pool.query("UPDATE commercial_live_periods SET period_start=CURRENT_DATE-3,period_end=CURRENT_DATE-1 WHERE contract_id=$1",[q.id]);
+  assert.equal((await call(path+'/'+expired.body.id+'/accept',owner.refreshToken,{quoteHash:expired.body.quoteHash})).status,409);
+  assert.equal((await pool.query('SELECT state FROM commercial_seat_decreases WHERE id=$1',[expired.body.id])).rows[0].state,'quoted');
+  await pool.query('UPDATE commercial_live_periods SET period_start=CURRENT_DATE,period_end=$2::date WHERE contract_id=$1',[q.id,oldEnd]);
+  assert.equal((await call('/api/auth/account',owner.refreshToken,{currentPassword:password,confirmationEmail:owner.email},'DELETE')).status,204);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_seat_decreases')).rows[0].n,0);
+  assert.equal((await call(path+'/'+first.body.id,owner.refreshToken)).status,401);
+ }finally{
+  server.closeAllConnections();await new Promise(r=>server.close(r));await close();await admin.query('DROP DATABASE '+name);await admin.end();
+  for(const key of ['PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT','PASSSHARE_COMMERCIAL_LIVE_ENABLED'])delete process.env[key];
+ }
+});

@@ -7,6 +7,8 @@ import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {nativeMutation} from './lib/native-mutations.js';
 import {entitlementState,jstDate} from './commercial-entitlement.js';
 import {applySeatPayment,planInput} from './commercial-seats.js';
+import {renewalBillingPlan,earlierRenewalPlan} from './commercial-plan.js';
+import {existingPlanException,resolveDecreasePayment,fundDecrease} from './commercial-seat-decreases.js';
 
 // Verified live payment evidence. This is a separate responsibility from the
 // sandbox ledger: its own tables, its own receiver and its own secret. The
@@ -73,6 +75,8 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
     await c.query('BEGIN');
     // Serialize event and PaymentIntent identities across period and seat ledgers.
     for(const key of [account+':event:'+event.id,account+':intent:'+o.id].sort())await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,4820132))',[key]);
+    const exception=await existingPlanException(c,event,account,digest);
+    if(exception){await c.query('COMMIT');res.json(exception);return;}
     if(m.seatChangeId){
      const result=await applySeatPayment(c,event,account,digest);
      await c.query('COMMIT');res.json(result);return;
@@ -82,19 +86,20 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
     if(!user.rowCount)throw authHttpError(409,'PS015','Contract binding unavailable');
     const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[m.contractId,m.ownerId])).rows[0];
     if(!r||r.state!=='accepted_unpaid'||r.quote_hash!==m.quoteHash||r.quote.currency!=='JPY'||r.quote.oneTimeTotalJpy!==0)throw authHttpError(409,'PS015','Payment does not match accepted quote');
-    const old=(await c.query('SELECT event_hash,disposition,contract_id,cycle FROM commercial_live_periods WHERE account_id=$1 AND event_id=$2',[account,event.id])).rows[0];
+    const old=(await c.query('SELECT event_hash,disposition,contract_id,cycle,seat_decrease_id,plan_adjustment_review FROM commercial_live_periods WHERE account_id=$1 AND event_id=$2',[account,event.id])).rows[0];
     if(old&&old.event_hash!==digest)throw authHttpError(409,'PS015','Payment event changed');
     if(old&&(old.contract_id!==r.id||old.cycle!==cycle))throw authHttpError(409,'PS015','Payment binding changed');
     let lc=(await c.query('SELECT *,contract_start::text AS start_text FROM commercial_live_contracts WHERE contract_id=$1 FOR UPDATE',[r.id])).rows[0];
     const precedingEffective=cycle===1||(await c.query("SELECT 1 FROM commercial_live_periods WHERE contract_id=$1 AND cycle=$2 AND disposition='effective'",[r.id,cycle-1])).rowCount>0;
+    let decreaseFunded=false;
+    let adjustmentReview=!!old?.plan_adjustment_review;
     if(old?.disposition==='refund_review'&&lc?.cancel_requested_at&&event.created<Math.floor(new Date(lc.cancel_requested_at).getTime()/1000)&&precedingEffective){
      await c.query("UPDATE commercial_live_periods SET disposition='effective',disposition_reason='paid_before_cancellation',provider_event_created=$3,reconciled_at=clock_timestamp() WHERE account_id=$1 AND event_id=$2",[account,event.id,event.created]);
      await c.query('UPDATE commercial_live_contracts SET cancel_after_cycle=GREATEST(cancel_after_cycle,$2) WHERE contract_id=$1',[r.id,cycle]);
+     const historical=await fundDecrease(c,old.seat_decrease_id);decreaseFunded=!!old.seat_decrease_id;
+     if(historical){adjustmentReview=true;await c.query('UPDATE commercial_live_periods SET plan_adjustment_review=true WHERE account_id=$1 AND event_id=$2',[account,event.id]);}
     }
     if(!old){
-     let monthly=r.quote.monthlyTotalJpy;
-     if(r.current_plan)monthly=(await nativeMutation({command:'commercial-quote',currency:'JPY',plan:planInput(r.current_plan),setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:r.quote.monthlyMaintenanceJpy||null}})).monthlyTotalJpy;
-     if(monthly!==o.amount_received)throw authHttpError(409,'PS015','Payment amount does not match current plan');
      if(r.cancellation_requested_at)throw authHttpError(409,'PS015','Contract acceptance was withdrawn');
      if(!lc){
       if(cycle!==1)throw authHttpError(409,'PS015','Earlier payment cycle is not recorded yet');
@@ -104,11 +109,23 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
       // Preserve unexpected paid evidence for refund reconciliation without granting access.
      }
      const p=await cyclePeriod(lc.start_text,cycle);
+     const decrease=await resolveDecreasePayment(c,r,p,cycle,event,account,digest);
+     if(decrease?.exception){await c.query('COMMIT');res.json({received:true,duplicate:false,refundReviewRequired:true,seatDecreaseFunded:false});return;}
+     let billingPlan=decrease?.plan??await renewalBillingPlan(c,r,cycle);
+     const monthly=(await nativeMutation({command:'commercial-quote',currency:'JPY',plan:planInput(billingPlan),setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:r.quote.monthlyMaintenanceJpy||null}})).monthlyTotalJpy;
+     if(monthly!==o.amount_received){
+      if(decrease?.id)throw authHttpError(409,'PS015','Payment amount does not match current plan');
+      const earlier=cycle>1?await earlierRenewalPlan(c,r,cycle,o.amount_received):null;
+      if(!earlier)throw authHttpError(409,'PS015','Payment amount does not match current plan');
+      billingPlan=earlier;adjustmentReview=true;
+     }
+     if(decrease?.adjustmentId){adjustmentReview=true;await c.query("UPDATE commercial_seat_decreases SET state='settlement_review' WHERE id=$1 AND state='scheduled'",[decrease.adjustmentId]);}
      const classification=classifyPayment(lc,cycle,event.created,precedingEffective);
-     await c.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,disposition,provider_event_created,disposition_reason,reconciled_at,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $12='paid_before_cancellation' THEN clock_timestamp() ELSE NULL END,'provider_live')",[account,event.id,r.id,cycle,p.periodStart,p.periodEnd,o.amount_received,o.id,digest,classification.disposition,event.created,classification.reason]);
+     if(classification.disposition==='effective'){const historical=await fundDecrease(c,decrease?.id);decreaseFunded=!!decrease?.id;adjustmentReview ||= historical;}
+     await c.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,disposition,provider_event_created,disposition_reason,reconciled_at,evidence,billing_plan,seat_decrease_id,plan_adjustment_review) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $12='paid_before_cancellation' THEN clock_timestamp() ELSE NULL END,'provider_live',$13::jsonb,$14,$15)",[account,event.id,r.id,cycle,p.periodStart,p.periodEnd,o.amount_received,o.id,digest,classification.disposition,event.created,classification.reason,JSON.stringify(billingPlan),decrease?.id??null,adjustmentReview]);
      if(classification.reason==='paid_before_cancellation')await c.query('UPDATE commercial_live_contracts SET cancel_after_cycle=GREATEST(cancel_after_cycle,$2) WHERE contract_id=$1',[r.id,cycle]);
     }
-    await c.query('COMMIT');res.json({received:true,duplicate:!!old,meaning:'signed_live_payment_recorded'});
+    await c.query('COMMIT');res.json({received:true,duplicate:!!old,seatDecreaseFunded:decreaseFunded||!!old?.seat_decrease_id&&old.disposition==='effective',billingAdjustmentReviewRequired:adjustmentReview,meaning:'signed_live_payment_recorded'});
    }catch(e){await c.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')throw authHttpError(409,'PS015','Payment event belongs to another binding');throw e;}finally{c.release();}
   }catch(e){sendAuthError(res,e);}
  });return router;

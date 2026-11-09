@@ -1,2 +1,4 @@
 # Generated browser assets must retain the bytes accepted and hashed in CI.
 frontend/public/cloud-crypto/* -text
+# Bash must keep LF when these CI controls are checked out on Windows.
+.github/scripts/desktop-scope*.sh text eol=lf

@@ -17,6 +17,21 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "stale_PUT_version_409",
     "former_member_after_reapproval_write_403",
     "source_full_snapshot_unchanged_by_restore_and_API",
+    "source_decrease_funded",
+    "source_decrease_exception_nonempty",
+    "source_decrease_period_bound",
+    "restored_decrease_nonempty_funded",
+    "restored_decrease_exception_nonempty",
+    "restored_decrease_period_bound",
+    "retired_decreases_cascaded",
+    "retired_decrease_exceptions_cascaded",
+    "source_decrease_legacy_adjustment",
+    "restored_decrease_legacy_adjustment",
+    "retired_decrease_periods_cascaded",
+    "source_seat_provider_success_saved",
+    "restored_seat_provider_success_saved",
+    "source_decrease_actual_amount_saved",
+    "restored_decrease_actual_amount_saved",
 ];
 
 pub(super) fn validate(report: &Value, negative: bool) -> bool {
