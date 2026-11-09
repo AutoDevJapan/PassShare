@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {createApp} from '../src/app.js';
 import {createMemoryAuthStore} from '../src/auth/index.js';
@@ -13,7 +14,7 @@ for(const persistent of [false,...(process.env.PASSSHARE_RECEIPTS_PG==='true'?[t
  const base='http://127.0.0.1:'+server.address().port;
  const signup=async(email)=>{const r=await fetch(base+'/api/auth/signup',{method:'POST',headers:{'content-type':'application/json','x-passshare-client':'mobile'},body:JSON.stringify({email,password:'synthetic-password123'})});assert.equal(r.status,201);return (await r.json()).refreshToken;};
  try{
-  const a=await signup('receipt-a@example.test'),b=await signup('receipt-b@example.test');
+  const run=randomUUID();const a=await signup('receipt-a-'+run+'@example.test'),b=await signup('receipt-b-'+run+'@example.test');
   const body={requestId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',kind:'technical',version:'0.1.0',platform:'windows',errorCode:'PS019'};
   const post=async(value)=>fetch(base+'/api/support-receipts',{method:'POST',headers:{authorization:'Bearer '+a,'content-type':'application/json'},body:JSON.stringify(value)});
   const firstPair=await Promise.all([post(body),post(body)]);assert.equal(firstPair[0].status,201);const row=await firstPair[0].json();assert.equal((await firstPair[1].json()).id,row.id);

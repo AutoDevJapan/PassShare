@@ -6,6 +6,7 @@ import {authHttpError,sendAuthError} from './auth/errors.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {nativeMutation} from './lib/native-mutations.js';
 import {entitlementState,jstDate} from './commercial-entitlement.js';
+import {applySeatPayment,planInput} from './commercial-seats.js';
 
 // Verified live payment evidence. This is a separate responsibility from the
 // sandbox ledger: its own tables, its own receiver and its own secret. The
@@ -56,13 +57,23 @@ export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_
    const digest=createHash('sha256').update(req.body).digest('hex');const c=await pool.connect();
    try{
     await c.query('BEGIN');
+    // Serialize event and PaymentIntent identities across period and seat ledgers.
+    for(const key of [account+':event:'+event.id,account+':intent:'+o.id].sort())await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,4820132))',[key]);
+    if(m.seatChangeId){
+     const result=await applySeatPayment(c,event,account,digest);
+     await c.query('COMMIT');res.json(result);return;
+    }
+    if((await c.query('SELECT 1 FROM commercial_seat_changes WHERE account_id=$1 AND (event_id=$2 OR provider_object_id=$3)',[account,event.id,o.id])).rowCount)throw authHttpError(409,'PS015','Payment is already bound to a seat change');
     const user=await c.query('SELECT id FROM users WHERE id=$1 FOR SHARE',[m.ownerId]);
     if(!user.rowCount)throw authHttpError(409,'PS015','Contract binding unavailable');
     const r=(await c.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[m.contractId,m.ownerId])).rows[0];
-    if(!r||r.state!=='accepted_unpaid'||r.quote_hash!==m.quoteHash||r.quote.currency!=='JPY'||r.quote.monthlyTotalJpy!==o.amount_received||r.quote.oneTimeTotalJpy!==0)throw authHttpError(409,'PS015','Payment does not match accepted quote');
+    if(!r||r.state!=='accepted_unpaid'||r.quote_hash!==m.quoteHash||r.quote.currency!=='JPY'||r.quote.oneTimeTotalJpy!==0)throw authHttpError(409,'PS015','Payment does not match accepted quote');
     const old=(await c.query('SELECT event_hash FROM commercial_live_periods WHERE account_id=$1 AND event_id=$2',[account,event.id])).rows[0];
     if(old&&old.event_hash!==digest)throw authHttpError(409,'PS015','Payment event changed');
     if(!old){
+     let monthly=r.quote.monthlyTotalJpy;
+     if(r.current_plan)monthly=(await nativeMutation({command:'commercial-quote',currency:'JPY',plan:planInput(r.current_plan),setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:r.quote.monthlyMaintenanceJpy||null}})).monthlyTotalJpy;
+     if(monthly!==o.amount_received)throw authHttpError(409,'PS015','Payment amount does not match current plan');
      if(r.cancellation_requested_at)throw authHttpError(409,'PS015','Contract acceptance was withdrawn');
      let lc=(await c.query('SELECT *,contract_start::text AS start_text FROM commercial_live_contracts WHERE contract_id=$1 FOR UPDATE',[r.id])).rows[0];
      if(!lc){

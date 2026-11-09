@@ -36,6 +36,7 @@ const TABLES: &[&str] = &[
     "commercial_paid_periods",
     "commercial_live_contracts",
     "commercial_live_periods",
+    "commercial_seat_changes",
 ];
 // Exact additive tables from backend/native/src/encrypted-schema.sql. This
 // legacy plaintext exercise never activates encrypted storage or stages rotation.

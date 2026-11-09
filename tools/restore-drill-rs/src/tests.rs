@@ -121,6 +121,7 @@ fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate
         "commercial_live_periods",
         "commercial_paid_periods",
         "commercial_payment_events",
+        "commercial_seat_changes",
         "connect_item_files",
         "connect_items",
         "connect_tokens",

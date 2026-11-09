@@ -8,6 +8,7 @@ import {nativeMutation} from './lib/native-mutations.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {migrateCommercialEvents} from './commercial-events.js';
 import {migrateCommercialLive,loadEntitlement} from './commercial-live.js';
+import {migrateCommercialSeats,registerSeatRoutes} from './commercial-seats.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -17,10 +18,10 @@ export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  UNIQUE(user_id,request_id));
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ;
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS lifecycle_revision INTEGER NOT NULL DEFAULT 0;`;
-export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);await migrateCommercialLive(pool);};
+export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);await migrateCommercialLive(pool);await migrateCommercialSeats(pool);};
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
-const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,createdAt:r.created_at,acceptedAt:r.accepted_at,cancellationRequestedAt:r.cancellation_requested_at??null,lifecycleRevision:r.lifecycle_revision??0,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
+const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,currentPlan:r.current_plan??r.quote.plan,seatRevision:r.seat_revision??0,createdAt:r.created_at,acceptedAt:r.accepted_at,cancellationRequestedAt:r.cancellation_requested_at??null,lifecycleRevision:r.lifecycle_revision??0,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
 export function createCommercialContractRouter({pool,authStore}){
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:'draft-6',legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_q,r,next)=>{r.set('Cache-Control','no-store');next();});
@@ -37,6 +38,7 @@ export function createCommercialContractRouter({pool,authStore}){
    await c.query('COMMIT');return result;
   }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e;}finally{c.release();}
  };
+ registerSeatRoutes(router,persist);
  router.post('/',requireCsrf,async(req,res)=>{try{
   const b=req.body;if(!exact(b,['requestId','currency','plan','setup'])||!uuid(b.requestId))throw authHttpError(400,'PS018','Invalid contract quote');
   const quote=await nativeMutation({command:'commercial-quote',currency:b.currency,plan:b.plan,setup:b.setup});
@@ -88,9 +90,9 @@ export function createCommercialContractRouter({pool,authStore}){
   const payments=await persist(req,async c=>{
    const own=(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2',[req.params.id,req.auth.userId])).rows[0];
    if(!own)throw authHttpError(404,'PS022','Contract not found');
-   return (await c.query("SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at FROM commercial_live_periods WHERE contract_id=$1 AND disposition='refund_review' ORDER BY cycle",[own.id])).rows;
+   return (await c.query("SELECT event_id,provider_object_id,cycle,amount_jpy::text,received_at,'payment_after_cancellation' AS reason FROM commercial_live_periods WHERE contract_id=$1 AND disposition='refund_review' UNION ALL SELECT event_id,provider_object_id,(quote->>'billingCycle')::integer,paid_amount_jpy::text,payment_received_at,'seat_quote_no_longer_applicable' AS reason FROM commercial_seat_changes WHERE contract_id=$1 AND state='refund_review' ORDER BY cycle",[own.id])).rows;
   });
-  res.json({refundExecuted:false,entitlementGranted:false,payments:payments.map(p=>({eventId:p.event_id,paymentIntentId:p.provider_object_id,cycle:p.cycle,amountJpy:Number(p.amount_jpy),receivedAt:p.received_at,reason:'payment_after_cancellation',status:'refund_review_required'}))});
+  res.json({refundExecuted:false,entitlementGranted:false,payments:payments.map(p=>({eventId:p.event_id,paymentIntentId:p.provider_object_id,cycle:p.cycle,amountJpy:Number(p.amount_jpy),receivedAt:p.received_at,reason:p.reason,status:'refund_review_required'}))});
  }catch(e){sendAuthError(res,e);}});
  router.get('/:id/export-authorization',async(req,res)=>{try{
   if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
