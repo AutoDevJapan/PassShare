@@ -275,7 +275,7 @@ impl Runner {
             None,
         )?;
         let contract_id = identifier(&contract_draft, "/id", 36)?;
-        let mut contract = self.api.json(
+        self.api.json(
             report,
             "source_contract_accepted",
             "POST",
@@ -337,7 +337,7 @@ impl Runner {
             200,
             None,
         )?;
-        contract = self.api.json(
+        let contract = self.api.json(
             report,
             "source_canceled_contract_read",
             "GET",
