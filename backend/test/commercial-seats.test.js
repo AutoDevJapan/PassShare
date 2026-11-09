@@ -34,13 +34,21 @@ test('owner seat quote, explicit consent and verified payment apply one revision
   assert.equal((await call(path+'/'+old.id+'/accept',owner.refreshToken,{quoteHash:old.quoteHash})).status,200);
   assert.equal((await send(payment(a,a.quote.proposedRoundedJpy+1))).status,409);
   const pay=payment(a,a.quote.proposedRoundedJpy);
-  const paid=await Promise.all([send(pay),send(pay)]);assert.deepEqual(paid.map(r=>r.status),[200,200]);assert.equal(paid.filter(r=>r.body.duplicate).length,1);
+  // Distinguish quote creation from actual payment receipt.
+  await pool.query("UPDATE commercial_seat_changes SET created_at=clock_timestamp()-interval '1 day' WHERE contract_id=$1",[q.id]);
+  const receiptNotBefore=Date.now()-1000;
+  const competingPay=payment(old,old.quote.proposedRoundedJpy);
+  const paid=await Promise.all([send(pay),send(pay),send(competingPay)]);assert.deepEqual(paid.map(r=>r.status),[200,200,200]);assert.equal(paid.filter(r=>r.body.duplicate).length,1);
+  const states=(await pool.query('SELECT id,state FROM commercial_seat_changes WHERE contract_id=$1',[q.id])).rows;
+  assert.equal(states.filter(r=>r.state==='applied').length,1);assert.equal(states.filter(r=>r.state==='refund_review').length,1);
+  const winner=states.find(r=>r.state==='applied').id===a.id?a:old;
+  const losingPay=winner.id===a.id?competingPay:pay;
   const stored=(await pool.query('SELECT current_plan,seat_revision FROM commercial_contracts WHERE id=$1',[q.id])).rows[0];assert.equal(stored.current_plan.users,2);assert.equal(stored.seat_revision,1);
   const displayed=await call(root+'/'+q.id,owner.refreshToken);assert.equal(displayed.body.currentPlan.users,2);assert.equal(displayed.body.seatRevision,1);
-  assert.equal((await call(path+'/'+a.id,owner.refreshToken)).body.state,'applied');
+  assert.equal((await call(path+'/'+winner.id,owner.refreshToken)).body.state,'applied');
   assert.equal((await call(path+'/'+a.id,other.refreshToken)).status,404);
-  const stalePaid=await send(payment(old,old.quote.proposedRoundedJpy));assert.equal(stalePaid.status,200);assert.equal(stalePaid.body.seatChangeApplied,false);assert.equal(stalePaid.body.refundReviewRequired,true); // paid stale quote preserved, never reapplied
-  assert.equal((await call(path+'/'+old.id+'/accept',owner.refreshToken,{quoteHash:old.quoteHash})).status,409);
+  const stalePaid=await send(losingPay);assert.equal(stalePaid.status,200);assert.equal(stalePaid.body.seatChangeApplied,false);assert.equal(stalePaid.body.refundReviewRequired,true);
+  const loser=winner.id===a.id?old:a;assert.equal((await call(path+'/'+loser.id+'/accept',owner.refreshToken,{quoteHash:loser.quoteHash})).status,409);
   const next=await call(path,owner.refreshToken,{...input,requestId:randomUUID(),requestedPlan:{type:'personal',users:3}});assert.equal(next.status,201);assert.equal(next.body.quote.currentPlan.users,2);
   assert.equal((await send(initialPaid)).status,200); // old period replay remains valid after plan change
   assert.equal((await call(path,owner.refreshToken,{...input,requestId:randomUUID(),requestedPlan:{type:'personal',users:1}})).status,400); // decreases use the separate next-renewal story
@@ -60,11 +68,24 @@ test('owner seat quote, explicit consent and verified payment apply one revision
   await call(path+'/'+dated.body.id+'/accept',owner.refreshToken,{quoteHash:dated.body.quoteHash});
   await pool.query("UPDATE commercial_seat_changes SET quote=jsonb_set(quote,'{changeDate}','\"2000-01-01\"') WHERE id=$1",[dated.body.id]);
   const datedPaid=await send(payment(dated.body,dated.body.quote.proposedRoundedJpy));assert.equal(datedPaid.status,200);assert.equal(datedPaid.body.refundReviewRequired,true);
-  const exceptions=await call(root+'/'+q.id+'/payment-exceptions',owner.refreshToken);assert.equal(exceptions.status,200);assert.equal(exceptions.body.payments.length,3);assert.equal(exceptions.body.refundExecuted,false);
+  const exceptions=await call(root+'/'+q.id+'/payment-exceptions',owner.refreshToken);assert.equal(exceptions.status,200);assert.equal(exceptions.body.payments.length,3);assert.equal(exceptions.body.refundExecuted,false);assert.ok(exceptions.body.payments.every(p=>p.reason==='seat_quote_no_longer_applicable'));
+  assert.ok(exceptions.body.payments.every(p=>Date.parse(p.receivedAt)>=receiptNotBefore));
   assert.equal((await pool.query('SELECT seat_revision FROM commercial_contracts WHERE id=$1',[q.id])).rows[0].seat_revision,1);
   const renewal=payment(null,1960);renewal.data.object.metadata.cycle='2';assert.equal((await send(renewal)).status,200);
+  const raceQuote=(await call(path,owner.refreshToken,{...input,requestId:randomUUID(),requestedPlan:{type:'personal',users:3}})).body;
+  assert.equal((await call(path+'/'+raceQuote.id+'/accept',owner.refreshToken,{quoteHash:raceQuote.quoteHash})).status,200);
+  const seatRace=payment(raceQuote,raceQuote.quote.proposedRoundedJpy),periodRace=payment(null,1960);periodRace.data.object.metadata.cycle='3';
+  periodRace.id=seatRace.id;periodRace.data.object.id=seatRace.data.object.id;
+  const cross=await Promise.all([send(seatRace),send(periodRace)]);assert.deepEqual(cross.map(r=>r.status).sort(),[200,409]);
+  const identityCount=await pool.query('SELECT (SELECT count(*) FROM commercial_seat_changes WHERE account_id=$1 AND event_id=$2)+(SELECT count(*) FROM commercial_live_periods WHERE account_id=$1 AND event_id=$2) n',[account,seatRace.id]);assert.equal(Number(identityCount.rows[0].n),1);
   // Removing the session must invalidate saved-quote access without granting any Box scope.
   await pool.query('DELETE FROM sessions WHERE user_id=$1',[owner.user.id]);
   assert.equal((await call(path+'/'+a.id,owner.refreshToken)).status,401);
+  // A pre-receipt-column candidate can upgrade without fabricating historical timestamps.
+  const before=(await pool.query('SELECT count(*)::int n FROM commercial_seat_changes')).rows[0].n;
+  await pool.query('ALTER TABLE commercial_seat_changes DROP COLUMN payment_received_at');
+  const {migrateCommercialSeats}=await import('../src/commercial-seats.js');
+  await migrateCommercialSeats(pool);await migrateCommercialSeats(pool);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_seat_changes WHERE payment_received_at IS NULL')).rows[0].n,before);
  }finally{s.closeAllConnections();await new Promise(r=>s.close(r));await pool.end();await admin.query('DROP DATABASE '+db+' WITH (FORCE)');await admin.end();for(const k of ['PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT','PASSSHARE_COMMERCIAL_LIVE_ENABLED'])delete process.env[k];}
 });
