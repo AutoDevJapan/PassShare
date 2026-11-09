@@ -43,6 +43,7 @@ test('verified live payments become cycle-anchored periods and drive entitlement
   const reuse=ev(q,owner,3,'2026-03-31T00:00:00+09:00');reuse.data.object.id=c2.data.object.id;assert.equal((await send(reuse)).status,409); // duplicate PaymentIntent
   assert.equal((await send(ev(q,owner,3,'2026-04-02T00:00:00+09:00'))).status,200);
   assert.deepEqual(await periods(q.id),[[1,'2026-01-31','2026-02-28'],[2,'2026-02-28','2026-03-31'],[3,'2026-03-31','2026-04-30']]);
+  assert.equal((await call('/api/commercial-contracts/'+q.id,owner.refreshToken)).body.entitlement.contractStart,'2026-01-31'); // shown even though cycle 2 arrived late
   // Leap-year February keeps the original day.
   const leap=await quote(other);assert.equal((await send(ev(leap,other,1,'2028-01-31T10:00:00+09:00'))).status,200);assert.equal((await send(ev(leap,other,2,'2028-02-29T10:00:00+09:00'))).status,200);
   assert.deepEqual(await periods(leap.id),[[1,'2028-01-31','2028-02-29'],[2,'2028-02-29','2028-03-31']]);

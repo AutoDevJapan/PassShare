@@ -37,8 +37,9 @@ export async function cyclePeriod(contractStart,cycle){
 export async function loadEntitlement(db,contractId,nowMs){
  const live=(await db.query("SELECT p.period_start::text AS \"periodStart\",p.period_end::text AS \"periodEnd\",p.evidence FROM commercial_live_periods p WHERE p.contract_id=$1",[contractId])).rows;
  const sandbox=(await db.query("SELECT period_start::text AS \"periodStart\",period_end::text AS \"periodEnd\",evidence FROM commercial_paid_periods WHERE contract_id=$1",[contractId])).rows;
- const c=(await db.query('SELECT cancel_after_cycle FROM commercial_live_contracts WHERE contract_id=$1',[contractId])).rows[0];
- return entitlementState({periods:[...live,...sandbox],cancelAtPeriodEnd:c?.cancel_after_cycle!=null,nowMs});
+ const c=(await db.query('SELECT cancel_after_cycle,contract_start::text AS start_text FROM commercial_live_contracts WHERE contract_id=$1',[contractId])).rows[0];
+ // contractStart is the first paid day (JST); renewals fall on the same day each month.
+ return {...entitlementState({periods:[...live,...sandbox],cancelAtPeriodEnd:c?.cancel_after_cycle!=null,nowMs}),contractStart:c?.start_text??null};
 }
 
 export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_LIVE_ACCOUNT,enabled=process.env.PASSSHARE_COMMERCIAL_LIVE_ENABLED==='true'}){
