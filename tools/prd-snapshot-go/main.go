@@ -29,6 +29,15 @@ const (
 )
 
 type runner func(context.Context, string, ...string) ([]byte, error)
+type commandFailure struct {
+	command string
+	code    int
+	class   string
+}
+
+func (e *commandFailure) Error() string {
+	return fmt.Sprintf("%s command failed (exit=%d, class=%s)", e.command, e.code, e.class)
+}
 
 // capBuffer prevents command output from consuming unbounded runner memory.
 type capBuffer struct{ bytes.Buffer }
@@ -59,7 +68,7 @@ func execute(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if ctx.Err() != nil {
 			class = "cancelled-or-deadline"
 		}
-		return nil, fmt.Errorf("%s command failed (exit=%d, class=%s)", filepath.Base(name), code, class)
+		return nil, &commandFailure{command: filepath.Base(name), code: code, class: class}
 	}
 	return stdout.Bytes(), nil
 }
@@ -74,6 +83,9 @@ func failureClass(stderr []byte) string {
 		{"could not resolve hostname", "ssh-name-resolution"},
 		{"connection timed out", "ssh-connect-timeout"},
 		{"unauthorized", "provider-auth-rejected"},
+		{"forbidden", "provider-access-denied"},
+		{"not authorized", "provider-access-denied"},
+		{"unrecognized subcommand", "unsupported-cli-command"},
 	} {
 		if strings.Contains(text, entry.needle) {
 			return entry.class
@@ -101,7 +113,11 @@ func (c client) query(ctx context.Context, query string, variables any, reply an
 	}
 	out, err := c.run(ctx, "railway", "api", "--file", q, "--variables", "@"+v, "--compact")
 	if err != nil {
-		return errors.New("private snapshot provider request failed")
+		var failure *commandFailure
+		if errors.As(err, &failure) {
+			return fmt.Errorf("private snapshot provider request failed: %w", failure)
+		}
+		return errors.New("private snapshot provider request failed (unclassified)")
 	}
 	var envelope struct {
 		Errors []json.RawMessage `json:"errors"`
@@ -189,7 +205,7 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 		} `json:"project"`
 	}
 	if err = c.query(ctx, `query($id:String!){project(id:$id){id workspaceId}}`, map[string]string{"id": projectID}, &scope); err != nil {
-		return errors.New("production project scope verification failed")
+		return fmt.Errorf("production project scope verification failed: %w", err)
 	}
 	if scope.Project.ID != projectID || scope.Project.WorkspaceID != workspaceID {
 		return errors.New("production project owner differs from the reconciled workspace")

@@ -250,3 +250,19 @@ func TestPinnedRailwayHostMatchesPreviouslyTrustedPublicKey(t *testing.T) {
 		t.Fatal("trusted host key fingerprint changed")
 	}
 }
+
+func TestScopeDiagnosticKeepsFixedClassWithoutPrivateError(t *testing.T) {
+	for _, sample := range []struct {
+		err  error
+		want string
+	}{
+		{&commandFailure{command: "railway", code: 1, class: "provider-access-denied"}, "provider-access-denied"},
+		{errors.New("credential=private-value"), "unclassified"},
+	} {
+		c := client{dir: t.TempDir(), run: func(context.Context, string, ...string) ([]byte, error) { return nil, sample.err }}
+		err := c.query(context.Background(), "query{project{id}}", nil, &struct{}{})
+		if err == nil || !strings.Contains(err.Error(), sample.want) || strings.Contains(err.Error(), "private-value") {
+			t.Fatalf("unexpected fixed diagnostic: %v", err)
+		}
+	}
+}
