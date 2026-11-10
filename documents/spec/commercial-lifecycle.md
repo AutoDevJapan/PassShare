@@ -164,14 +164,15 @@ GETは現在の本人だけが照会できる。PostgreSQLでセッションと�
 
 ### live 支払い証跡と権限状態（受け口は既定で閉鎖）
 
-live の支払い証跡は、sandbox 台帳とは別のテーブル（`commercial_live_contracts`、`commercial_live_periods`）と別の受け口（`POST /api/commercial-events/stripe-live`）で扱う。受け口は `PASSSHARE_COMMERCIAL_LIVE_ENABLED=true`、live の署名 secret、live のアカウント ID がそろうまで 503 を返す。これらの設定は販売開始の承認とは別で、この変更では有効にしない。
+live の支払い証跡は、sandbox 台帳とは別のテーブル（`commercial_live_contracts`、`commercial_live_periods`）と別の受け口（`POST /api/commercial-events/stripe-live`）で扱う。受け口は `PASSSHARE_COMMERCIAL_LIVE_ENABLED=true`、live の署名 secret、live のアカウント ID、有効なendpoint scopeがそろうまで 503 を返す。これらの設定は販売開始の承認とは別で、この変更では有効にしない。
 
 - 契約の起点日は、最初の live 支払いの JST 暦日とし、以後の更新日は毎月その日（存在しない月だけ月末）とする。承認済みの「契約日と同じ日を毎月の更新日とする」を、最初の支払日からの周期として実装した解釈である。見積の受諾日とは別の日付で、契約画面には起点日を表示する。
 - 期間は起点日と周期番号から native の更新計算で決める。入金の到着時刻や到着順では動かさない。周期 N は周期 N-1 が記録済みのときだけ受理し、先着した場合は 409 としてプロバイダの再送を待つ。同じ周期の別の支払い、同じ PaymentIntent の別イベント、内容が変わった再送は 409。
 - 有効な権限になるのは `provider_live` の期間だけ。sandbox の期間は `test_evidence_only` で、権限は常に false。期間は JST の暦日で `[開始, 終了)` の半開区間、日付はサーバーの時計で判定する。
 - 期間末解約は所有者だけが予約でき、支払済みの最終日まで利用できる。この要求は内部の解約予約であり、プロバイダの定期課金を停止したとの確認ではない。解約後に成立した課金や時刻の前後が確定できない支払いは捨てず、`refund_review` として保存する。同じイベントの再送は冪等で、有効期間には含めない。本人だけが `GET /api/commercial-contracts/:id/payment-exceptions` で金額・PaymentIntent・周期を照会できる。返金は未実行と明記し、実返金・プロバイダ解約連携が整うまで販売は有効にしない。支払済みの契約は、未払い受諾の撤回では取り消せない。
 - 契約終了後 30 暦日の書き出しは、サーバー側の日付で窓だけを判定する。API は `proposalOnly:true`、`windowOpen` と `authorized:false` を返す。所属や鍵のスコープを検証したことにはせず、実データの書き出し認可を付与しない。
-- 現live受け口は Connect の `event.account` 一致を必須とする。直接アカウントのイベントは受け付けない。初回導入費用のある見積は対象外で、月額JPYと支払額が一致するものだけを受理する。
+- `PASSSHARE_STRIPE_LIVE_ENDPOINT_SCOPE` は署名secretを取得したendpointの種類に合わせる。省略時は既存互換の `connect` とし、署名済み `event.account` と設定accountの一致を必須にする。`direct` は [Stripe の Your account scope](https://docs.stripe.com/connect/webhooks) に対応し、`event.account` が省略またはnullの形式だけを認め、設定済みaccountへ記録する。endpoint・専用secret・accountが同じ所有アカウントに属することを設定時に確認し、利用者の本文からscopeを選ばせない。不明なscopeは503。いずれもEventとPaymentIntentの `livemode:true` を要求し、sandbox通知を有料権限へ昇格しない。
+- 初回導入費用のある見積は対象外で、月額JPYと支払額が一致するものだけを受理する。
 - 減席の次回更新は後節の保存・署名支払い経路で扱う。実返金と重複請求の解消、30 日後の単独データ削除、製品機能ごとの有料制限（提供機能は技術検証後に確定）は未実装。増席は次節の経路で扱う。
 
 ### 増席の保存・同意・支払い待ち・適用
