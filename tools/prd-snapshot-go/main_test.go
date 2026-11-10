@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fake struct {
@@ -18,6 +20,11 @@ type fake struct {
 	failCapture, failDigest, failCleanup, wrongOwner bool
 	lostCreateReply, emptyCreateID                   bool
 	created, revoked, captures                       int
+	readinessErrors                                  []error
+	wrongReadinessReply                              bool
+	probes                                           int
+	sshCalls                                         [][]string
+	captureError                                     error
 }
 
 func (f *fake) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -32,7 +39,21 @@ func (f *fake) run(_ context.Context, name string, args ...string) ([]byte, erro
 		return nil, os.WriteFile(key+".pub", []byte("ssh-ed25519 synthetic-public-key"), 0600)
 	case "railway":
 		if args[0] == "ssh" {
+			f.sshCalls = append(f.sshCalls, append([]string(nil), args...))
+			if args[len(args)-1] == "printf 'passshare-private-snapshot-ssh-ready-v1\\n'" {
+				f.probes++
+				if f.probes <= len(f.readinessErrors) && f.readinessErrors[f.probes-1] != nil {
+					return nil, f.readinessErrors[f.probes-1]
+				}
+				if f.wrongReadinessReply {
+					return []byte("unexpected service reply"), nil
+				}
+				return []byte("passshare-private-snapshot-ssh-ready-v1\n"), nil
+			}
 			f.captures++
+			if f.captureError != nil {
+				return nil, f.captureError
+			}
 			if f.failCapture {
 				return nil, errors.New("synthetic capture failure")
 			}
@@ -83,6 +104,160 @@ func (f *fake) run(_ context.Context, name string, args ...string) ([]byte, erro
 	return nil, errors.New("unexpected command")
 }
 
+func TestReadinessPrecedesSingleArchiveUsingTheSameRegisteredIdentity(t *testing.T) {
+	f := &fake{root: t.TempDir()}
+	if err := snapshot(context.Background(), filepath.Join(t.TempDir(), "snapshot.dump"), f.run, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.probes != 1 || f.captures != 1 || f.created != 1 || f.revoked != 1 || len(f.sshCalls) != 2 {
+		t.Fatalf("readiness/capture/key lifecycle differs: %+v", f)
+	}
+	probe, capture := f.sshCalls[0], f.sshCalls[1]
+	if strings.Join(probe[:len(probe)-1], "\x00") != strings.Join(capture[:len(capture)-1], "\x00") {
+		t.Fatal("readiness and capture changed project, environment, service or identity")
+	}
+}
+
+func TestReadinessConnectTimeoutRetriesBeforeOneArchive(t *testing.T) {
+	f := &fake{root: t.TempDir(), readinessErrors: []error{&commandFailure{command: "railway", code: 255, class: "ssh-connect-timeout"}}}
+	if err := snapshot(context.Background(), filepath.Join(t.TempDir(), "snapshot.dump"), f.run, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.probes != 2 || f.captures != 1 || f.created != 1 || f.revoked != 1 {
+		t.Fatalf("transport retry repeated the archive or identity mutation: %+v", f)
+	}
+}
+
+func TestReadinessFailureNeverStartsArchiveAndStillRevokesItsKey(t *testing.T) {
+	for _, class := range []string{"ssh-connect-timeout", "ssh-identity-rejected", "host-key-verification", "host-key-changed", "provider-access-denied", "unclassified", "invalid-ready-reply"} {
+		t.Run(class, func(t *testing.T) {
+			failure := &commandFailure{command: "railway", code: 255, class: class}
+			f := &fake{root: t.TempDir(), readinessErrors: []error{failure, failure, failure}, wrongReadinessReply: class == "invalid-ready-reply"}
+			if f.wrongReadinessReply {
+				f.readinessErrors = nil
+			}
+			out := filepath.Join(t.TempDir(), "snapshot.dump")
+			err := snapshot(context.Background(), out, f.run, "")
+			wantProbes := 1
+			if class == "ssh-connect-timeout" {
+				wantProbes = 3
+			}
+			if err == nil || f.probes != wantProbes || f.captures != 0 || f.created != 1 || f.revoked != 1 {
+				t.Fatalf("failed readiness was accepted or cleanup/retry bound differs: err=%v fake=%+v", err, f)
+			}
+			if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+				t.Fatal("failed readiness created an archive")
+			}
+		})
+	}
+}
+
+func TestArchiveFailureIsNotRetriedAfterReadiness(t *testing.T) {
+	f := &fake{root: t.TempDir(), captureError: &commandFailure{command: "railway", code: 255, class: "ssh-connect-timeout"}}
+	if snapshot(context.Background(), filepath.Join(t.TempDir(), "snapshot.dump"), f.run, "") == nil || f.probes != 1 || f.captures != 1 || f.revoked != 1 {
+		t.Fatalf("archive failure retried or skipped key cleanup: %+v", f)
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (w writerFunc) Write(b []byte) (int, error) { return w(b) }
+
+func TestCancelledReadinessBackoffDoesNotConnectAgain(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fake{root: t.TempDir(), readinessErrors: []error{&commandFailure{command: "railway", code: 255, class: "ssh-connect-timeout"}}}
+	var log bytes.Buffer
+	w := writerFunc(func(b []byte) (int, error) {
+		if bytes.Contains(b, []byte("Private SSH readiness failed")) {
+			cancel()
+		}
+		return log.Write(b)
+	})
+	err := snapshotWithDiagnostics(ctx, filepath.Join(t.TempDir(), "snapshot.dump"), f.run, "", w)
+	if err == nil || !strings.Contains(err.Error(), "cancelled during backoff") || f.probes != 1 || f.captures != 0 || f.revoked != 1 {
+		t.Fatalf("cancelled backoff continued or leaked identity: err=%v probes=%d captures=%d revoked=%d", err, f.probes, f.captures, f.revoked)
+	}
+}
+
+func TestReadinessHasOwnDeadlineAndNeverExtendsWholeRequest(t *testing.T) {
+	for _, budget := range []time.Duration{time.Minute, 5 * time.Second} {
+		t.Run(budget.String(), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), budget)
+			defer cancel()
+			parentDeadline, _ := ctx.Deadline()
+			f := &fake{root: t.TempDir()}
+			observed := false
+			run := func(probeCtx context.Context, name string, args ...string) ([]byte, error) {
+				if name == "railway" && args[0] == "ssh" {
+					deadline, ok := probeCtx.Deadline()
+					if !ok || deadline.After(parentDeadline) || time.Until(deadline) > 25*time.Second {
+						t.Fatal("readiness lost its own limit or extended the whole request")
+					}
+					if budget > 25*time.Second && !deadline.Before(parentDeadline) {
+						t.Fatal("readiness limit is not independently bounded")
+					}
+					observed = true
+					cancel()
+					return nil, probeCtx.Err()
+				}
+				if probeCtx.Err() != nil {
+					t.Fatal("revocation used the cancelled whole-request context")
+				}
+				return f.run(probeCtx, name, args...)
+			}
+			if snapshot(ctx, filepath.Join(t.TempDir(), "snapshot.dump"), run, "") == nil || !observed || f.captures != 0 || f.revoked != 1 {
+				t.Fatal("cancelled readiness accepted output, ran an archive, or skipped revocation")
+			}
+		})
+	}
+}
+
+func TestReadinessDiagnosticsNeverCopyCommandErrorsOrReplies(t *testing.T) {
+	f := &fake{root: t.TempDir(), readinessErrors: []error{errors.New("credential=private-diagnostic-value")}}
+	var log bytes.Buffer
+	err := snapshotWithDiagnostics(context.Background(), filepath.Join(t.TempDir(), "snapshot.dump"), f.run, "", &log)
+	if err == nil || !strings.Contains(log.String(), "class=unclassified") || strings.Contains(log.String()+err.Error(), "private-diagnostic-value") || f.probes != 1 || f.captures != 0 || f.revoked != 1 {
+		t.Fatal("readiness leaked diagnostics or accepted an unclassified failure")
+	}
+}
+
+func TestReadinessFailurePreservesUnconfirmedRevocationDescriptor(t *testing.T) {
+	f := &fake{root: t.TempDir(), failCleanup: true, readinessErrors: []error{&commandFailure{command: "railway", code: 255, class: "ssh-identity-rejected"}}}
+	out := filepath.Join(t.TempDir(), "snapshot.dump")
+	err := snapshot(context.Background(), out, f.run, "")
+	info, readErr := os.ReadFile(out + ".ssh-key-recovery.json")
+	if err == nil || readErr != nil || !strings.Contains(err.Error(), "temporary key recovery unconfirmed") || !strings.Contains(err.Error(), "ssh-identity-rejected") || !strings.Contains(string(info), `"key_id":"this-run-only-key"`) || f.probes != 1 || f.captures != 0 || f.revoked != 1 {
+		t.Fatal("failed readiness hid unconfirmed revocation or lost its recovery scope")
+	}
+}
+
+func TestCapturePhaseUsesOnlyFixedRemoteMarkers(t *testing.T) {
+	for _, sample := range []struct{ input, want string }{
+		{"connection timed out credential=private-value", "before-archive-marker"},
+		{captureStartedMarker + "\npg_dump: private database failure", "archive-started"},
+		{captureStartedMarker + "\n" + archiveValidatedMarker + "\ntransfer failed", "archive-validated"},
+		{"not-a-marker " + archiveValidatedMarker, "before-archive-marker"},
+	} {
+		if got := capturePhase([]byte(sample.input)); got != sample.want || strings.Contains(got, "private") {
+			t.Fatalf("phase=%s want=%s", got, sample.want)
+		}
+	}
+}
+
+func TestDeploymentBoundsOnlyVerifiedRailwayHostConnection(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "deploy-prd.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ReplaceAll(string(b), "\r\n", "\n")
+	for _, expected := range []string{"Host ssh.railway.com\n", "StrictHostKeyChecking yes", "BatchMode yes", "IdentitiesOnly yes", "ConnectTimeout 15", "ConnectionAttempts 1"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("production SSH connection scope/trust/limit missing: %s", expected)
+		}
+	}
+}
+
 func TestUnconfirmedRegistrationRetainsOnlyNonSecretRecoveryInformation(t *testing.T) {
 	for _, lostReply := range []bool{true, false} {
 		f := &fake{root: t.TempDir(), lostCreateReply: lostReply, emptyCreateID: !lostReply}
@@ -114,7 +289,7 @@ func TestCancellationStillRevokesUsingIndependentCleanupContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		if name == "railway" && args[0] == "ssh" {
+		if name == "railway" && args[0] == "ssh" && strings.Contains(args[len(args)-1], captureStartedMarker) {
 			cancel()
 			return nil, ctx.Err()
 		}

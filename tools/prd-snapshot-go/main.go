@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,11 +22,17 @@ import (
 )
 
 const (
-	projectID     = "82730a82-b4d4-47d0-b578-f951465465fc"
-	environmentID = "c1a3cdfc-9aa3-420d-b101-e6497714ccb9"
-	databaseID    = "4fdfda2d-ed50-4396-9797-25ea7720f720"
-	workspaceID   = "3d4f692a-5353-4211-a82b-5b1f40a402b8"
-	maxOutput     = 96 << 20
+	projectID              = "82730a82-b4d4-47d0-b578-f951465465fc"
+	environmentID          = "c1a3cdfc-9aa3-420d-b101-e6497714ccb9"
+	databaseID             = "4fdfda2d-ed50-4396-9797-25ea7720f720"
+	workspaceID            = "3d4f692a-5353-4211-a82b-5b1f40a402b8"
+	maxOutput              = 96 << 20
+	readinessAttempts      = 3
+	readinessTimeout       = 25 * time.Second
+	readinessDelay         = 2 * time.Second
+	readinessMarker        = "passshare-private-snapshot-ssh-ready-v1"
+	captureStartedMarker   = "PASSSHARE_SNAPSHOT_CAPTURE_STARTED_V1"
+	archiveValidatedMarker = "PASSSHARE_SNAPSHOT_ARCHIVE_VALIDATED_V1"
 )
 
 type runner func(context.Context, string, ...string) ([]byte, error)
@@ -33,9 +40,13 @@ type commandFailure struct {
 	command string
 	code    int
 	class   string
+	phase   string
 }
 
 func (e *commandFailure) Error() string {
+	if e.phase != "" {
+		return fmt.Sprintf("%s command failed (exit=%d, class=%s, phase=%s)", e.command, e.code, e.class, e.phase)
+	}
 	return fmt.Sprintf("%s command failed (exit=%d, class=%s)", e.command, e.code, e.class)
 }
 
@@ -68,9 +79,78 @@ func execute(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if ctx.Err() != nil {
 			class = "cancelled-or-deadline"
 		}
-		return nil, &commandFailure{command: filepath.Base(name), code: code, class: class}
+		phase := ""
+		if len(args) > 0 && args[0] == "ssh" && strings.Contains(args[len(args)-1], captureStartedMarker) {
+			phase = capturePhase(stderr.Bytes())
+		}
+		return nil, &commandFailure{command: filepath.Base(name), code: code, class: class, phase: phase}
 	}
 	return stdout.Bytes(), nil
+}
+
+// Fixed remote markers distinguish a started dump from a connection failure.
+// They are diagnostics only: an error never publishes or accepts an archive.
+func capturePhase(stderr []byte) string {
+	phase := "before-archive-marker"
+	for _, line := range bytes.Split(stderr, []byte{'\n'}) {
+		switch string(bytes.TrimSpace(line)) {
+		case captureStartedMarker:
+			phase = "archive-started"
+		case archiveValidatedMarker:
+			phase = "archive-validated"
+		}
+	}
+	return phase
+}
+
+// Retry only a harmless readiness command, never pg_dump or an uncertain
+// archive transfer. All attempts use the same registered identity and scope.
+func waitForSSH(ctx context.Context, run runner, args []string, diagnostics io.Writer) error {
+	probeArgs := append(append([]string(nil), args...), "--", "sh", "-lc", "printf '"+readinessMarker+"\\n'")
+	for attempt := 1; attempt <= readinessAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return errors.New("private SSH readiness cancelled before connection")
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, readinessTimeout)
+		started := time.Now()
+		out, err := run(probeCtx, "railway", probeArgs...)
+		probeErr := probeCtx.Err()
+		cancel()
+		class := "unclassified"
+		var failure *commandFailure
+		if errors.As(err, &failure) {
+			class = failure.class
+		}
+		if ctx.Err() != nil {
+			class = "cancelled-or-deadline"
+		} else if probeErr != nil {
+			class = "readiness-deadline"
+		} else if err == nil {
+			matches := 0
+			for _, line := range bytes.Split(out, []byte{'\n'}) {
+				if string(bytes.TrimSpace(line)) == readinessMarker {
+					matches++
+				}
+			}
+			if matches == 1 {
+				fmt.Fprintf(diagnostics, "Private SSH readiness succeeded (attempt=%d/%d, elapsed_ms=%d); requesting archive capture.\n", attempt, readinessAttempts, time.Since(started).Milliseconds())
+				return nil
+			}
+			class = "invalid-ready-reply"
+		}
+		fmt.Fprintf(diagnostics, "Private SSH readiness failed (attempt=%d/%d, class=%s, elapsed_ms=%d).\n", attempt, readinessAttempts, class, time.Since(started).Milliseconds())
+		if class != "ssh-connect-timeout" || attempt == readinessAttempts {
+			return fmt.Errorf("private SSH readiness failed (attempt=%d/%d, class=%s)", attempt, readinessAttempts, class)
+		}
+		timer := time.NewTimer(readinessDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.New("private SSH readiness cancelled during backoff")
+		case <-timer.C:
+		}
+	}
+	return errors.New("private SSH readiness exhausted")
 }
 
 // Return fixed diagnostic labels only, never command arguments or stderr.
@@ -180,7 +260,11 @@ func decodeArchive(output []byte) ([]byte, error) {
 	return found, nil
 }
 
-func snapshot(ctx context.Context, output string, run runner, existingIdentity string) (returnErr error) {
+func snapshot(ctx context.Context, output string, run runner, existingIdentity string) error {
+	return snapshotWithDiagnostics(ctx, output, run, existingIdentity, io.Discard)
+}
+
+func snapshotWithDiagnostics(ctx context.Context, output string, run runner, existingIdentity string, diagnostics io.Writer) (returnErr error) {
 	// Refuse any destination underneath the checkout, including an absent file.
 	root, err := run(ctx, "git", "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -220,6 +304,7 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 	if scope.Project.ID != projectID || scope.Project.WorkspaceID != workspaceID {
 		return errors.New("production project owner differs from the reconciled workspace")
 	}
+	fmt.Fprintln(diagnostics, "Private production project scope verified.")
 	identity := existingIdentity
 	keyID := ""
 	if identity == "" {
@@ -266,6 +351,7 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 					if err := os.Remove(recoveryPath); err != nil {
 						returnErr = errors.New("revoked key recovery record could not be removed")
 					}
+					fmt.Fprintln(diagnostics, "Temporary snapshot identity revoked.")
 					return
 				}
 			}
@@ -294,11 +380,16 @@ func snapshot(ctx context.Context, output string, run runner, existingIdentity s
 		if err := os.WriteFile(recoveryPath, info, 0600); err != nil {
 			return errors.New("cannot persist registered key identifier before capture")
 		}
+		fmt.Fprintln(diagnostics, "Temporary snapshot identity registered.")
+	}
+	sshArgs := []string{"ssh", "--project", projectID, "--environment", environmentID, "--service", databaseID, "--identity-file", identity}
+	if err := waitForSSH(ctx, run, sshArgs, diagnostics); err != nil {
+		return err
 	}
 	// Credentials are consumed inside the database's container only. No public
 	// proxy, DB variables API, new service, or retained backup is provisioned.
-	remote := `set -eu; umask 077; dump=$(mktemp /tmp/passshare-prd-dump.XXXXXX); trap 'rm -f -- "$dump"' EXIT; trap 'exit 1' HUP INT TERM; export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -Fc --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" --file "$dump"; pg_restore --list "$dump" >/dev/null; sha256sum "$dump"; base64 -w 0 "$dump"; printf '\n'; rm -f -- "$dump"; test ! -e "$dump"; trap - EXIT HUP INT TERM`
-	data, err := run(ctx, "railway", "ssh", "--project", projectID, "--environment", environmentID, "--service", databaseID, "--identity-file", identity, "--", "sh", "-lc", remote)
+	remote := `set -eu; umask 077; printf '` + captureStartedMarker + `\n' >&2; dump=$(mktemp /tmp/passshare-prd-dump.XXXXXX); trap 'rm -f -- "$dump"' EXIT; trap 'exit 1' HUP INT TERM; export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -Fc --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB" --file "$dump"; pg_restore --list "$dump" >/dev/null; printf '` + archiveValidatedMarker + `\n' >&2; sha256sum "$dump"; base64 -w 0 "$dump"; printf '\n'; rm -f -- "$dump"; test ! -e "$dump"; trap - EXIT HUP INT TERM`
+	data, err := run(ctx, "railway", append(sshArgs, "--", "sh", "-lc", remote)...)
 	if err != nil {
 		return fmt.Errorf("private production archive capture failed: %w", err)
 	}
@@ -335,7 +426,7 @@ func main() {
 	defer stop()
 	ctx, cancel := context.WithTimeout(requestCtx, 4*time.Minute)
 	defer cancel()
-	if err := snapshot(ctx, *output, execute, *identity); err != nil {
+	if err := snapshotWithDiagnostics(ctx, *output, execute, *identity, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
