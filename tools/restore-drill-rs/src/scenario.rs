@@ -481,6 +481,27 @@ impl Runner {
             command.arg("-e").arg(live_script).arg(payload.to_string());
             report.check(label, command_output(command, None).is_ok())?;
         }
+        let mut source_refund_request = Value::Null;
+        for (retired, session, id) in [
+            (false, &owner.session, &live_id),
+            (true, &deleted.session, &retired_live_id),
+        ] {
+            let key = id.replace('-', "");
+            let request = self.api.json(
+                report,
+                if retired { "source_retired_refund_request_API" } else { "source_refund_request_API" },
+                "POST",
+                &format!("/api/commercial-contracts/{id}/refund-requests"),
+                session,
+                Some(&json!({"requestId":"45454545-4545-4545-8545-454545454545","paymentIntentId":format!("pi_live1{key}"),"amountJpy":400,"reason":"service_unprovided"})),
+                201,
+                None,
+            )?;
+            report.check(if retired {"source_retired_refund_request_nonempty"} else {"source_refund_request_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_refund_requests r JOIN commercial_live_periods p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id,r.payment_amount_jpy,r.payment_event_hash)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id,p.amount_jpy,p.event_hash) JOIN commercial_contracts c ON c.id=r.contract_id WHERE r.contract_id='{id}' AND p.cycle=1 AND r.requested_amount_jpy=400 AND r.payment_amount_jpy=980 AND r.quote_hash=c.quote_hash AND r.reason='service_unprovided' AND r.status='received' AND r.requested_at IS NOT NULL"))?.trim()=="1")?;
+            if !retired {
+                source_refund_request = request;
+            }
+        }
         self.api.json(
             report,
             "source_paid_contract_unpaid_withdrawal_denied",
@@ -952,6 +973,7 @@ impl Runner {
             "restore_plan_payment_exceptions_full_rows",
             "restore_test_refunds_full_rows",
             "restore_test_refund_events_full_rows",
+            "restore_refund_requests_full_rows",
         ];
         if names.len() != TABLES.len() {
             return Err(Failure::Shape);
@@ -1321,6 +1343,26 @@ impl Runner {
             }) && refund_history["nextCursor"].is_null()
                 && refund_history["liveRefundExecuted"] == false
                 && refund_history["entitlementsGranted"] == false,
+        )?;
+        report.check("restored_refund_request_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_requests r JOIN commercial_live_periods p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id,r.payment_amount_jpy,r.payment_event_hash)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id,p.amount_jpy,p.event_hash) JOIN commercial_contracts c ON c.id=r.contract_id WHERE r.contract_id='{live_id}' AND p.cycle=1 AND r.requested_amount_jpy=400 AND r.payment_amount_jpy=980 AND r.quote_hash=c.quote_hash AND r.status='received' AND r.reason='service_unprovided'"))?.trim()=="1")?;
+        report.check("retired_refund_requests_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_requests WHERE contract_id='{retired_live_id}'"))?.trim()=="0")?;
+        let refund_request_id = identifier(&source_refund_request, "/id", 36)?;
+        let restored_refund_request = self.api.json(
+            report,
+            "restored_refund_request_owner_API",
+            "GET",
+            &format!("/api/commercial-contracts/{live_id}/refund-requests/{refund_request_id}"),
+            &current_owner.session,
+            None,
+            200,
+            None,
+        )?;
+        report.check(
+            "restored_refund_request_owner_values",
+            exact_json(&source_refund_request, &restored_refund_request)
+                && restored_refund_request["refundExecuted"] == false
+                && restored_refund_request["approvalGranted"] == false
+                && restored_refund_request["approvedAmountJpy"].is_null(),
         )?;
         let restored_live = self.api.json(
             report,

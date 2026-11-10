@@ -374,3 +374,35 @@ launcherとsimulatorは本番imageへ含めず、report metadataにも実Stripe�
 別の受入で確認する。
 これは公式sandboxの返金状態を受領する経路であり、返金APIの実行、live返金、
 本番有料権限付与、販売開始、原M8全体の完了ではない。
+
+### 支払い正本に紐づく返金申請の受付
+
+`POST /api/commercial-contracts/:id/refund-requests` は、現在有効な契約所有者の
+sessionで `requestId`、`paymentIntentId`、`amountJpy`、`reason` を受け取る。
+所有者・金額・イベントhash・見積hashは保存済みの署名付き支払い正本から取得する。
+対象は同じ契約の `provider_live` 支払い1件へ一意に結び付くものに限り、
+sandbox台帳を支払済みの根拠にしない。受け口の本番有効化は従来どおり別の操作である。
+
+理由は `duplicate_charge`、`service_unprovided`、`statutory_right`、`other`。
+申請額は正の整数JPYで、対象の記録済み支払額以下とする。
+[採用済み条件](commercial-packaging.md)を保持し、理由の受付だけで返金の法的な
+可否を判断しない。自己都合の日割り返金を約束せず、重複請求・未提供期間相当と
+法令上の権利を審査するための受付記録とする。契約終了後も有効な本人認証があれば
+過去の支払いについて申請でき、終了後exportの期限やBox所属・鍵の復活へは結ばない。
+
+同じ契約・requestId・内容の再送は同じ受付番号と日時を返す。並行処理は契約行で
+直列化し、同じ番号で内容が変わる場合は409。所有者、支払い状態、承認済み額、
+処理日時などを利用者が入力して変更する経路は設けない。
+`GET .../refund-requests/:request` は同じ契約所有者だけにno-storeで返す。
+行ロック待ちの後にもsession期限を確認し、失効した資格は401、他人の契約は404。
+
+受付は `received`、`approvalGranted:false`、`approvedAmountJpy:null`、
+`refundExecuted:false` を返す。記録済みの支払額は署名イベント当時の事実であり、
+現在の返金可能残額の照会や返金承認ではない。申請の合計を実行済み返金へ加算しない。
+プロバイダへの返金API、担当者による審査・承認・通知、live返金状態の照合と実行時の
+上限確認は引き続き未達である。支払済み期間・席数・所有権・暗号鍵は変更しない。
+
+受付は元支払い・契約・金額・イベントhashを複合FKで保持する。合成復元fixtureでは
+非空の申請を正式HTTP経路で作り、全行・値・FK対応と退会cascadeを検証する。
+この退会cascadeは現時点の架空データの挙動であり、有料契約の法定保存義務を
+確定したものではない。保存期間を含む販売条件の受入は継続する。
