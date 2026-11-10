@@ -4,7 +4,18 @@ import Stripe from 'stripe';
 // accepted. Current state comes from authenticated provider reads, never from
 // webhook timestamps or a client-provided assertion.
 export function createTestRefundLookup({key=process.env.PASSSHARE_STRIPE_TEST_READ_KEY,account=process.env.PASSSHARE_STRIPE_TEST_ACCOUNT,scope=process.env.PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE??'connect',fetchImpl=globalThis.fetch}={}){
- if(typeof key!=='string'||!/^(sk|rk)_test_[A-Za-z0-9_]+$/.test(key)||!/^acct_[A-Za-z0-9]+$/.test(account??'')||!['direct','connect'].includes(scope))return null;
+ return createRefundLookup({key,account,scope,fetchImpl,live:false});
+}
+
+// Separately configured read authority. Test credentials/payment mode can never
+// qualify this path; reading a balance does not enable the live receiver.
+export function createLiveRefundLookup({key=process.env.PASSSHARE_STRIPE_LIVE_READ_KEY,account=process.env.PASSSHARE_STRIPE_LIVE_ACCOUNT,scope=process.env.PASSSHARE_STRIPE_LIVE_ENDPOINT_SCOPE??'connect',fetchImpl=globalThis.fetch}={}){
+ return createRefundLookup({key,account,scope,fetchImpl,live:true});
+}
+
+function createRefundLookup({key,account,scope,fetchImpl,live}){
+ const keyPattern=live?/^(sk|rk)_live_[A-Za-z0-9_]+$/:/^(sk|rk)_test_[A-Za-z0-9_]+$/;
+ if(typeof key!=='string'||!keyPattern.test(key)||!/^acct_[A-Za-z0-9]+$/.test(account??'')||!['direct','connect'].includes(scope))return null;
  return async binding=>{
   if(binding.account!==account)return null;
   const abort=new AbortController();let timer;
@@ -17,13 +28,13 @@ export function createTestRefundLookup({key=process.env.PASSSHARE_STRIPE_TEST_RE
     // formats. A direct webhook omits event.account; that is not API authority.
     const options={stripeAccount:account};
     const payment=await client.paymentIntents.retrieve(binding.paymentIntentId,{},options);
-    if(payment.livemode!==false)return null;
+    if(payment.livemode!==live)return null;
     const refunds=[],seen=new Set();let after;
     for(let pageIndex=0;pageIndex<10;pageIndex++){
      const page=await client.refunds.list({payment_intent:binding.paymentIntentId,limit:100,...(after?{starting_after:after}:{})},options);
      if(!Array.isArray(page.data)||page.data.length>100||typeof page.has_more!=='boolean')return null;
      for(const refund of page.data){if(typeof refund.id!=='string'||seen.has(refund.id))return null;seen.add(refund.id);refunds.push(refund)}
-     if(!page.has_more)return {account,payment,refunds};
+     if(!page.has_more)return {account,payment,refunds,...(live?{inventoryComplete:true}:{})};
      if(page.data.length===0)return null;
      after=page.data.at(-1).id;
     }

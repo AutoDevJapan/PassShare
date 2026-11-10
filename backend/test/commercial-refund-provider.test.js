@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createTestRefundLookup} from '../src/commercial-refund-provider.js';
-import {refundProviderFixture} from './helpers/refund-provider-fixture.js';
+import {createTestRefundLookup,createLiveRefundLookup} from '../src/commercial-refund-provider.js';
+import {refundProviderFixture,liveRefundProviderFixture} from './helpers/refund-provider-fixture.js';
 
 test('test-only provider lookup uses authenticated reads, exact account and complete pagination',async()=>{
  const account='acct_readerfixture',f=await refundProviderFixture(account);
@@ -28,5 +28,20 @@ test('restore-only private fixture seeds current truth independently of webhook 
   const refunds=[{id:'re_restore',object:'refund',payment_intent:payment.id,status:'failed',currency:'jpy',amount:400,created:1}];
   const response=await f.fetchImpl('https://api.stripe.com/fixture/state',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer rk_test_refund_http_fixture','stripe-account':account},body:JSON.stringify({payment,refunds})});assert.equal(response.status,200);
   const current=await f.lookup({account,paymentIntentId:payment.id});assert.equal(current.refunds[0].status,'failed');assert.equal(current.payment.amount_received,980);
+ }finally{await f.close()}
+});
+
+test('live reader has separate credentials, mode and complete account-bound inventory',async()=>{
+ const account='acct_livebalance',f=await liveRefundProviderFixture(account,'direct');
+ try{
+  for(const key of ['sk_test_forbidden','rk_test_forbidden','pk_live_public',''])assert.equal(createLiveRefundLookup({key,account,fetchImpl:()=>{throw Error('No outbound request is allowed')}}),null);
+  const payment={id:'pi_livebalance',object:'payment_intent',livemode:true,status:'succeeded',currency:'jpy',amount:980,amount_received:980};f.payments.set(payment.id,payment);
+  f.control.pageSize=1;
+  for(let i=0;i<2;i++)f.refunds.set('re_livebalance'+i,{id:'re_livebalance'+i,object:'refund',payment_intent:payment.id,status:'pending',currency:'jpy',amount:100});
+  const r=await f.lookup({account,paymentIntentId:payment.id});assert.equal(r.inventoryComplete,true);assert.equal(r.payment.livemode,true);assert.equal(r.refunds.length,2);assert.ok(f.requests.every(r=>r.method==='GET'&&r.account===account));
+  const before=f.requests.length;assert.equal(await f.lookup({account:'acct_wrong',paymentIntentId:payment.id}),null);assert.equal(f.requests.length,before);
+  payment.livemode=false;assert.equal(await f.lookup({account,paymentIntentId:payment.id}),null);payment.livemode=true;
+  f.control.pageSize=0;assert.equal(await f.lookup({account,paymentIntentId:payment.id}),null,'Incomplete inventory cannot qualify zero refunds');f.control.pageSize=1;
+  f.control.fail=true;assert.equal(await f.lookup({account,paymentIntentId:payment.id}),null);
  }finally{await f.close()}
 });
