@@ -358,6 +358,12 @@ live keyは使わない。必要なのはPaymentIntentとRefundの読取りで�
 
 `GET .../test-refunds` は有効な契約所有者sessionだけに、非公開・no-storeで
 100件ずつ返す。元の有効期間・席数・Boxの所属・鍵は変更しない。
+GETの金額・受領時刻・`observedStatuses` は保存済みの通知事実で、現在状態とは区別する。
+`providerStatus`・`confirmedAmountJpy`・`statusBasis`・`statusCheckedAt` は照合のprojectionであり、
+reader未設定で起動した場合は、古い照合cacheがDBにあってもreview・0・unverified・nullを返す。
+このGETは履歴やcache自体を書き換えない。reader設定時のcacheも最終照合時点のsnapshotであり、
+その後の現在状態を保証するものではない。再照合POSTは新しいAPI読取りを試み、取得不能なら
+cacheの資格を失効させるが、署名通知の台帳・元支払いの事実は消さない。
 `POST .../test-refunds/:receipt/reconcile` は同じ本人認可・CSRF条件の下でAPI照合を再実行する。
 本文は空オブジェクトだけを受け入れ、利用者が状態・取得資格・金額を申告する経路にはしない。
 復元演習は検証image専用launcherから同じAPI factoryを起動し、外部providerだけを

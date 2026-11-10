@@ -45,8 +45,8 @@ const conflict=message=>authHttpError(409,'PS015',message);
 const providerId=s=>typeof s==='string'&&/^[A-Za-z0-9_]{1,255}$/.test(s);
 const statuses=['pending','requires_action','succeeded','failed','canceled'];
 const reservedSql="COALESCE(SUM(amount_jpy) FILTER (WHERE NOT(status_verified AND provider_status IN ('failed','canceled'))),0)::text";
-function financialView(r){
- const verified=r.status_verified===true&&r.status_checked_at!=null;
+function financialView(r,readerConfigured=true){
+ const verified=readerConfigured&&r.status_verified===true&&r.status_checked_at!=null;
  const statusReviewRequired=!verified||r.provider_status==='status_review';
  const amountReviewRequired=BigInt(r.reserved_jpy)>BigInt(r.paid_jpy)||(r.api_reserved_jpy!=null&&BigInt(r.api_reserved_jpy)>BigInt(r.paid_jpy));
  return {providerStatus:statusReviewRequired?'status_review':r.provider_status,statusReviewRequired,amountReviewRequired,statusCheckedAt:verified?r.status_checked_at:null,statusBasis:verified?'provider_api_test':'unverified',confirmedAmountJpy:!statusReviewRequired&&!amountReviewRequired&&r.provider_status==='succeeded'?Number(r.amount_jpy):0};
@@ -135,6 +135,6 @@ export function registerTestRefundRoutes(router,persist,lookup){
    if(!(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rowCount)throw authHttpError(404,'PS022','Contract not found');
    return (await c.query("SELECT r.id,r.refund_id,r.provider_object_id,r.amount_jpy::text,r.refund_created::text,r.received_at,r.evidence,r.provider_status,r.status_verified,r.status_checked_at,r.api_reserved_jpy::text,p.amount_jpy::text paid_jpy,(SELECT COALESCE(ARRAY_AGG(DISTINCT observed_status ORDER BY observed_status),'{}'::text[]) FROM commercial_test_refund_events e WHERE e.account_id=r.account_id AND e.refund_id=r.refund_id AND e.contract_id=r.contract_id) observed_statuses,(SELECT "+reservedSql+' FROM commercial_test_refunds x WHERE x.account_id=r.account_id AND x.provider_object_id=r.provider_object_id) reserved_jpy FROM commercial_test_refunds r JOIN commercial_payment_events p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id) WHERE r.contract_id=$1 AND ($2::uuid IS NULL OR r.id>$2) ORDER BY r.id LIMIT 101',[req.params.id,req.query.after??null])).rows;
   });const page=rows.slice(0,100);
-  res.json({refunds:page.map(r=>({id:r.id,refundId:r.refund_id,paymentIntentId:r.provider_object_id,amountJpy:Number(r.amount_jpy),providerCreated:Number(r.refund_created),receivedAt:r.received_at,evidence:r.evidence,observedStatuses:r.observed_statuses,...financialView(r)})),nextCursor:rows.length>100?page.at(-1).id:null,liveRefundExecuted:false,entitlementsGranted:false});
+  res.json({refunds:page.map(r=>({id:r.id,refundId:r.refund_id,paymentIntentId:r.provider_object_id,amountJpy:Number(r.amount_jpy),providerCreated:Number(r.refund_created),receivedAt:r.received_at,evidence:r.evidence,observedStatuses:r.observed_statuses,...financialView(r,typeof lookup==='function')})),nextCursor:rows.length>100?page.at(-1).id:null,liveRefundExecuted:false,entitlementsGranted:false});
  }catch(e){sendAuthError(res,e);}});
 }

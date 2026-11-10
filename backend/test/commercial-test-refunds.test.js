@@ -88,6 +88,17 @@ test('current refund status requires authenticated provider reads rather than we
   const expect=async(e,status,confirmed)=>{const r=await send(e);assert.equal(r.status,200);assert.equal(r.body.providerStatus,status);assert.equal(r.body.confirmedAmountJpy,confirmed);return r.body};
   const rid=id('re_'),original=event(rid,'succeeded',9);provider.refunds.set(rid,structuredClone(original.data.object));
   const first=await expect(original,'succeeded',400);assert.equal(first.statusBasis,'provider_api_test');assert.ok(Date.parse(first.statusCheckedAt)>Date.now()-10000);
+  // A new process without a reader may retain history, but must not present the
+  // previous qualification cache as a currently usable confirmed projection.
+  const {app:withoutReader}=await createApp({pool,testRefundLookup:null});const bare=withoutReader.listen(0,'127.0.0.1');await new Promise(r=>bare.once('listening',r));
+  try{
+   const path='/api/commercial-contracts/'+quote.body.id+'/test-refunds';
+   const headers={'content-type':'application/json','x-passshare-client':'mobile',authorization:'Bearer '+actor.refreshToken};
+   const response=await fetch('http://127.0.0.1:'+bare.address().port+path,{headers});assert.equal(response.status,200);const data=await response.json(),row=data.refunds[0];assert.equal(row.amountJpy,400);assert.deepEqual(row.observedStatuses,['succeeded']);assert.equal(row.providerStatus,'status_review');assert.equal(row.confirmedAmountJpy,0);assert.equal(row.statusBasis,'unverified');assert.equal(row.statusCheckedAt,null);
+   const cache=(await pool.query('SELECT status_verified,status_checked_at FROM commercial_test_refunds WHERE refund_id=$1',[rid])).rows[0];assert.equal(cache.status_verified,true);assert.ok(cache.status_checked_at); // GET does not rewrite stored facts/cache.
+   const reset=await fetch('http://127.0.0.1:'+bare.address().port+path+'/'+row.id+'/reconcile',{method:'POST',headers,body:'{}'});assert.equal(reset.status,200);const projected=await reset.json();assert.equal(projected.providerStatus,'status_review');assert.equal(projected.confirmedAmountJpy,0);
+  }finally{bare.closeAllConnections();await new Promise(r=>bare.close(r))}
+  await expect(original,'succeeded',400); // A real reader path can qualify again.
   const legacyFields=['provider_status','status_event_created','status_verified','status_checked_at','api_reserved_jpy'];
   const before=(await pool.query('SELECT to_jsonb(r)-$2::text[] data FROM commercial_test_refunds r WHERE refund_id=$1',[rid,legacyFields])).rows[0].data;
   await pool.query('ALTER TABLE commercial_test_refunds DROP COLUMN provider_status,DROP COLUMN status_event_created,DROP COLUMN status_verified,DROP COLUMN status_checked_at,DROP COLUMN api_reserved_jpy; ALTER TABLE commercial_test_refund_events DROP COLUMN observed_status');await migrateTestRefunds(pool);
