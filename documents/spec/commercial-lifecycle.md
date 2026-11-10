@@ -380,8 +380,14 @@ launcherとsimulatorは本番imageへ含めず、report metadataにも実Stripe�
 `POST /api/commercial-contracts/:id/refund-requests` は、現在有効な契約所有者の
 sessionで `requestId`、`paymentIntentId`、`amountJpy`、`reason` を受け取る。
 所有者・金額・イベントhash・見積hashは保存済みの署名付き支払い正本から取得する。
-対象は同じ契約の `provider_live` 支払い1件へ一意に結び付くものに限り、
+対象は同じ契約の署名済みlive支払い1件へ一意に結び付くものに限り、
 sandbox台帳を支払済みの根拠にしない。受け口の本番有効化は従来どおり別の操作である。
+サーバーは月額期間、入金済みの増席（`applied` と `refund_review`）、減席等の
+入金不一致を保存した例外台帳から対象を特定し、実際に記録された受領額を使う。
+`paymentSource` はこの正本の区分を返す。同じPIが複数の正本へ該当して一意に
+特定できない場合は409とし、利用者の申告で区分や参照先を選ばせない。
+各区分は明示した非null参照と複合FKで元の契約・PI・受領額・イベントhashへ結び、
+ほかの区分の参照はnullにする。既存の月額申請はID・指紋・受付日時を保って移行する。
 
 理由は `duplicate_charge`、`service_unprovided`、`statutory_right`、`other`。
 申請額は正の整数JPYで、対象の記録済み支払額以下とする。

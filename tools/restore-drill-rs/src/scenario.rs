@@ -562,6 +562,7 @@ impl Runner {
         let mut decrease_id = String::new();
         let mut retired_decrease_id = String::new();
         let mut seat_provider_second = 0;
+        let mut additional_refund_requests = Vec::new();
         for (actor, retired) in [(&owner, false), (&deleted, true)] {
             let input = json!({"requestId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}});
             let draft = self.api.json(
@@ -605,6 +606,8 @@ impl Runner {
                 },
                 command_output(cmd, None).is_ok(),
             )?;
+            // Keep the real shared commercial quota; no test-only limit override.
+            std::thread::sleep(Duration::from_secs(60));
             let quote = self.api.json(report,if retired {"seat_retired_quote"} else {"seat_quote"},"POST",&format!("/api/commercial-contracts/{cid}/seat-quotes"),&actor.session,Some(&json!({"requestId":"ffffffff-ffff-4fff-8fff-ffffffffffff","requestedPlan":{"type":"personal","users":2},"roundingPolicy":"ceil-jpy"})),201,None)?;
             let sid = identifier(&quote, "/id", 36)?;
             self.api.json(
@@ -621,7 +624,24 @@ impl Runner {
                 200,
                 None,
             )?;
+            let review_quote = self.api.json(report,if retired {"seat_retired_review_quote"} else {"seat_review_quote"},"POST",&format!("/api/commercial-contracts/{cid}/seat-quotes"),&actor.session,Some(&json!({"requestId":"45454545-6767-4898-8989-abababababab","requestedPlan":{"type":"personal","users":3},"roundingPolicy":"ceil-jpy"})),201,None)?;
+            let review_sid = identifier(&review_quote, "/id", 36)?;
+            self.api.json(
+                report,
+                if retired {
+                    "seat_retired_review_consent"
+                } else {
+                    "seat_review_consent"
+                },
+                "POST",
+                &format!("/api/commercial-contracts/{cid}/seat-quotes/{review_sid}/accept"),
+                &actor.session,
+                Some(&json!({"quoteHash":review_quote["quoteHash"]})),
+                200,
+                None,
+            )?;
             let mut payment = payment;
+            payment["created"] = json!(unix_ms() / 1000);
             payment["id"] = json!(format!("evt_seatincrease{key}"));
             payment["data"]["object"]["id"] = json!(format!("pi_seatincrease{key}"));
             payment["data"]["object"]["amount"] = quote["quote"]["proposedRoundedJpy"].clone();
@@ -639,11 +659,29 @@ impl Runner {
                 },
                 command_output(cmd, None).is_ok(),
             )?;
-            // Respect the shared commercial router's real 30/minute quota.
-            // This is not a race barrier and never changes the server limit.
-            if !retired {
-                std::thread::sleep(Duration::from_secs(60));
-            }
+            let mut review_payment = payment.clone();
+            review_payment["id"] = json!(format!("evt_seatreview{key}"));
+            review_payment["created"] = json!(unix_ms() / 1000);
+            review_payment["data"]["object"]["id"] = json!(format!("pi_seatreview{key}"));
+            review_payment["data"]["object"]["amount"] =
+                review_quote["quote"]["proposedRoundedJpy"].clone();
+            review_payment["data"]["object"]["amount_received"] =
+                review_quote["quote"]["proposedRoundedJpy"].clone();
+            review_payment["data"]["object"]["metadata"]["quoteHash"] =
+                review_quote["quoteHash"].clone();
+            review_payment["data"]["object"]["metadata"]["seatChangeId"] = json!(review_sid);
+            let mut cmd = clean_command("/usr/local/bin/node");
+            cmd.arg("-e")
+                .arg(live_script)
+                .arg(review_payment.to_string());
+            report.check(
+                if retired {
+                    "source_retired_seat_review_paid"
+                } else {
+                    "source_seat_review_paid"
+                },
+                command_output(cmd, None).is_ok(),
+            )?;
             let mut decrease_quotes = Vec::new();
             for request in [
                 "11111111-2222-4333-8444-555555555555",
@@ -736,6 +774,81 @@ impl Runner {
             report.check(if retired {"source_retired_decrease_funded"} else {"source_decrease_funded"},sql("drill_source",&format!("SELECT count(*) FROM commercial_seat_decreases WHERE id='{funded}' AND state='funded' AND accepted_at IS NOT NULL AND target_cycle=2 AND quote->'renewalQuote'->>'monthlyTotalJpy'='980'"))?.trim()=="1")?;
             report.check(if retired {"source_retired_decrease_exception_nonempty"} else {"source_decrease_exception_nonempty"},sql("drill_source",&format!("SELECT count(*) FROM commercial_plan_payment_exceptions WHERE contract_id='{cid}' AND amount_jpy=980 AND length(event_hash)=64 AND reason='seat_decrease_no_longer_applicable'"))?.trim()=="1")?;
             report.check(if retired {"source_retired_decrease_period_bound"} else {"source_decrease_period_bound"},sql("drill_source",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{cid}' AND cycle=2 AND seat_decrease_id='{funded}' AND billing_plan->>'users'='1' AND amount_jpy=980"))?.trim()=="1")?;
+            let paid_sources:Value=serde_json::from_str(&sql("drill_source",&format!("SELECT json_agg(row_to_json(s) ORDER BY kind,detail) FROM (SELECT provider_object_id,paid_amount_jpy::text AS amount,'seat_change' AS kind,state AS detail FROM commercial_seat_changes WHERE contract_id='{cid}' AND paid_amount_jpy>0 AND state IN ('applied','refund_review') UNION ALL SELECT provider_object_id,amount_jpy::text,'payment_exception','mismatch' FROM commercial_plan_payment_exceptions WHERE contract_id='{cid}' AND reason='seat_decrease_amount_mismatch') s"))?).map_err(|_|Failure::Json)?;
+            let paid_sources = paid_sources
+                .as_array()
+                .filter(|rows| rows.len() == 3)
+                .ok_or(Failure::Shape)?;
+            for (index, paid) in paid_sources.iter().enumerate() {
+                let label = match (paid["kind"].as_str(), paid["detail"].as_str()) {
+                    (Some("seat_change"), Some("applied")) => "seat_applied",
+                    (Some("seat_change"), Some("refund_review")) => "seat_review",
+                    (Some("payment_exception"), Some("mismatch")) => "payment_exception",
+                    _ => return Err(Failure::Shape),
+                };
+                let amount: u64 = paid["amount"]
+                    .as_str()
+                    .ok_or(Failure::Shape)?
+                    .parse()
+                    .map_err(|_| Failure::Shape)?;
+                let names = match label {
+                    "seat_applied" => (
+                        if retired {
+                            "source_retired_seat_applied_refund_request_API"
+                        } else {
+                            "source_seat_applied_refund_request_API"
+                        },
+                        if retired {
+                            "source_retired_seat_applied_refund_request_nonempty"
+                        } else {
+                            "source_seat_applied_refund_request_nonempty"
+                        },
+                        "restored_seat_applied_refund_request_API",
+                        "restored_seat_applied_refund_request_values",
+                    ),
+                    "seat_review" => (
+                        if retired {
+                            "source_retired_seat_review_refund_request_API"
+                        } else {
+                            "source_seat_review_refund_request_API"
+                        },
+                        if retired {
+                            "source_retired_seat_review_refund_request_nonempty"
+                        } else {
+                            "source_seat_review_refund_request_nonempty"
+                        },
+                        "restored_seat_review_refund_request_API",
+                        "restored_seat_review_refund_request_values",
+                    ),
+                    "payment_exception" => (
+                        if retired {
+                            "source_retired_payment_exception_refund_request_API"
+                        } else {
+                            "source_payment_exception_refund_request_API"
+                        },
+                        if retired {
+                            "source_retired_payment_exception_refund_request_nonempty"
+                        } else {
+                            "source_payment_exception_refund_request_nonempty"
+                        },
+                        "restored_payment_exception_refund_request_API",
+                        "restored_payment_exception_refund_request_values",
+                    ),
+                    _ => return Err(Failure::Shape),
+                };
+                let requested = amount.min(400);
+                let request_id = [
+                    "64646464-6464-4646-8646-646464646464",
+                    "75757575-7575-4757-8757-757575757575",
+                    "86868686-8686-4868-8868-868686868686",
+                ][index];
+                let receipt=self.api.json(report,names.0,"POST",&format!("/api/commercial-contracts/{cid}/refund-requests"),&actor.session,Some(&json!({"requestId":request_id,"paymentIntentId":paid["provider_object_id"],"amountJpy":requested,"reason":"service_unprovided"})),201,None)?;
+                let rid = identifier(&receipt, "/id", 36)?;
+                report.check(names.1,receipt["paymentSource"]==paid["kind"] && receipt["paymentAmountJpy"]==amount && receipt["refundExecuted"]==false && sql("drill_source",&format!("SELECT count(*) FROM commercial_refund_requests WHERE id='{rid}' AND contract_id='{cid}' AND requested_amount_jpy={requested} AND payment_amount_jpy={amount} AND length(payment_event_hash)=64 AND status='received'"))?.trim()=="1")?;
+                if !retired {
+                    additional_refund_requests.push((cid.clone(), receipt, names.2, names.3));
+                }
+            }
             if retired {
                 retired_decrease_id = funded;
             } else {
@@ -747,6 +860,7 @@ impl Runner {
                 seat_contract_id = cid;
             }
         }
+        report.check("source_refund_requests_all_paid_sources",sql("drill_source","SELECT string_agg(payment_source||':'||n,',' ORDER BY payment_source) FROM (SELECT payment_source,count(*) n FROM commercial_refund_requests GROUP BY payment_source) s")?.trim()=="payment_exception:2,period:2,seat_change:4")?;
         self.api.json(
             report,
             "source_unpaid_acceptance_canceled",
@@ -1364,6 +1478,22 @@ impl Runner {
                 && restored_refund_request["approvalGranted"] == false
                 && restored_refund_request["approvedAmountJpy"].is_null(),
         )?;
+        for (cid, source, api_name, value_name) in &additional_refund_requests {
+            let rid = identifier(source, "/id", 36)?;
+            let restored = self.api.json(
+                report,
+                api_name,
+                "GET",
+                &format!("/api/commercial-contracts/{cid}/refund-requests/{rid}"),
+                &current_owner.session,
+                None,
+                200,
+                None,
+            )?;
+            report.check(value_name, exact_json(source, &restored))?;
+        }
+        report.check("restored_refund_requests_all_paid_sources",sql("drill_restored","SELECT string_agg(payment_source||':'||n,',' ORDER BY payment_source) FROM (SELECT payment_source,count(*) n FROM commercial_refund_requests GROUP BY payment_source) s")?.trim()=="payment_exception:1,period:1,seat_change:2")?;
+        report.check("retired_extra_refund_requests_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_requests WHERE contract_id='{retired_seat_contract_id}'"))?.trim()=="0")?;
         let restored_live = self.api.json(
             report,
             "restored_live_contract_current_owner",
