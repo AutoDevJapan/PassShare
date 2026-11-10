@@ -41,6 +41,7 @@ const TABLES: &[&str] = &[
     "commercial_plan_payment_exceptions",
     "commercial_test_refunds",
     "commercial_test_refund_events",
+    "commercial_refund_requests",
 ];
 // Exact additive tables from backend/native/src/encrypted-schema.sql. This
 // legacy plaintext exercise never activates encrypted storage or stages rotation.

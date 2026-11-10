@@ -123,6 +123,7 @@ fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate
         "commercial_paid_periods",
         "commercial_payment_events",
         "commercial_plan_payment_exceptions",
+        "commercial_refund_requests",
         "commercial_seat_changes",
         "commercial_seat_decreases",
         "commercial_test_refund_events",
