@@ -39,6 +39,8 @@ const TABLES: &[&str] = &[
     "commercial_seat_changes",
     "commercial_seat_decreases",
     "commercial_plan_payment_exceptions",
+    "commercial_test_refunds",
+    "commercial_test_refund_events",
 ];
 // Exact additive tables from backend/native/src/encrypted-schema.sql. This
 // legacy plaintext exercise never activates encrypted storage or stages rotation.
@@ -234,6 +236,7 @@ impl Report {
                 json!({
                     "source_sha": i.source_sha, "backend_source_sha256": i.backend_sha256,
                     "negative_control": i.omit_purge,
+                    "current_refund_provider_fixture": "simulated_private_http_fake_test_key_not_real_Stripe",
                 })
             }),
         }
@@ -657,7 +660,8 @@ impl Runner {
         let mut command = clean_command("/usr/local/bin/node");
         command
             .current_dir("/app")
-            .arg("/app/src/index.js")
+            .arg("/app/fixture-api.mjs")
+            .env("PASSSHARE_RESTORE_DRILL", "synthetic-container-v1")
             .env("DATABASE_URL", database_url(database)?)
             // The parent owns the unpublished internal Docker network and alias.
             .env("DATABASE_TRUSTED_PRIVATE_HOSTS", "postgres")

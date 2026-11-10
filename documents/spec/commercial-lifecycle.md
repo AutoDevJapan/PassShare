@@ -157,7 +157,7 @@ GETは現在の本人だけが照会できる。PostgreSQLでセッションと�
 
 - 期間の識別は、プロバイダアカウントとイベント ID の組、およびアカウントと PaymentIntent の組で一意とする。同じイベントの再送は期間を増やさない。別のイベント ID で同じ PaymentIntent が届いた場合は 409 とする。
 - 行は `provider_test_sandbox` の証跡だけを許可する制約を持つ。`paid`、`entitlementsGranted`、`entitlementEffective` は常に false で、この台帳から有料権限を付与しない。
-- 取消済みの契約への新規イベントは 409。返金や払い戻しのイベントは受け付けない（`payment_intent.succeeded` 以外は 400）。期間末解約、返金、export、削除は引き続き未実装。
+- 取消済みの契約への新規支払いイベントは409。検証済みsandbox返金は後節に従い既存支払いへ結び、その他の未対応イベントは400とする。これは本番返金、契約終了後の自動削除や販売開始の完了ではない。
 
 - 一意インデックスは起動時の移行で作る。既存の DB に同じアカウントと PaymentIntent の行が複数あると移行は失敗するため、導入前に重複が無いことを確認する（本番の台帳は導入前は空）。この変更より前に保存されたイベントの再送では期間行を補わない。期間の金額は、受理した見積の月額と一致したイベントだけが記録するため、台帳側には別の金額制約を置かない。
 
@@ -323,3 +323,54 @@ snapshot版・対象ID・サーバー時刻だけを保存し、暗号文・復�
 receipt ID順で100件ずつ取得し、履歴にも秘密値を含めない。
 契約・本人の削除時は外部キーで削除する。契約終了30日後の自動削除・法定保持条件の同期は
 元の未完工程であり、この監査追加を新しい保存期間の約束にはしない。
+
+### 公式sandboxの返金証跡と支払い正本の対応
+
+既存の署名検証済みtest受け口は `refund.created`、`refund.updated`、`refund.failed` の
+JPY Refundを扱う。公式の[Refund object](https://docs.stripe.com/api/refunds/object)と
+[event types](https://docs.stripe.com/api/events/types)に従い、署名対象Eventの
+`livemode:false` と既存direct/Connect account条件を使う。
+Refund objectに `livemode` がないことだけで正規の配送を拒否しない。
+
+元PaymentIntent・accountから既存sandbox支払いを特定し、契約・所有者・金額を
+その保存済み正本へ結ぶ。Refund metadataやクライアント入力で契約を移さない。
+元支払い未着は409で再送を要求し、成功していない返金を完了扱いにしない。
+一つのRefund IDは一度だけ集計し、別の署名イベントによる更新と再送を別の
+イベント台帳に結ぶ。[Webhookの順序仕様](https://docs.stripe.com/webhooks#event-ordering)に従い、
+`event.created`、受信順、通知に含まれる自己申告だけでは現在状態を確定しない。
+通知した状態の集合は `observedStatuses` として順序を付けずに保持する。
+
+現在状態は、同じaccountの認証済みtest APIでPaymentIntentと返金一覧を読み直し、
+mode、JPY金額、元支払い、返金ID・作成時刻・金額の一致を確認した場合だけ照合済みとする。
+専用の `PASSSHARE_STRIPE_TEST_READ_KEY` はtestのsecret/restricted keyだけを認め、
+live keyは使わない。必要なのはPaymentIntentとRefundの読取りであり、返金の作成は行わない。
+固定のStripe APIへ公式SDKで照会し、全体5秒・一覧1000件の上限内で完全な一覧を確認する。
+資格未設定、取得失敗、modeや結合不一致、一覧未完了なら `status_review`・確定額0を維持する。
+旧schemaの現在状態・照合時刻は補作しない。
+
+`pending`、`requires_action`、未照合は確定返金額へ加算せず、照合できた`failed` と `canceled` は
+予約合計からも外す。署名済みの返金通知は受領済みの事実なので、並行合計が元支払額を
+超えた場合も証跡を失わせず確認対象へ保存し、確定額へ加算しない。
+返金実行前の上限判定や返金API呼出しは別の未完工程である。
+`confirmedAmountJpy` は `statusCheckedAt` のAPI照合時点でsucceededかつ金額の矛盾がない
+場合の集計であり、顧客の銀行への着金実証ではない。
+正本・イベント・契約の複合FKを持ち、退会cascadeを復元fixtureでも確認する。
+
+`GET .../test-refunds` は有効な契約所有者sessionだけに、非公開・no-storeで
+100件ずつ返す。元の有効期間・席数・Boxの所属・鍵は変更しない。
+GETの金額・受領時刻・`observedStatuses` は保存済みの通知事実で、現在状態とは区別する。
+`providerStatus`・`confirmedAmountJpy`・`statusBasis`・`statusCheckedAt` は照合のprojectionであり、
+reader未設定で起動した場合は、古い照合cacheがDBにあってもreview・0・unverified・nullを返す。
+このGETは履歴やcache自体を書き換えない。reader設定時のcacheも最終照合時点のsnapshotであり、
+その後の現在状態を保証するものではない。再照合POSTは新しいAPI読取りを試み、取得不能なら
+cacheの資格を失効させるが、署名通知の台帳・元支払いの事実は消さない。
+`POST .../test-refunds/:receipt/reconcile` は同じ本人認可・CSRF条件の下でAPI照合を再実行する。
+本文は空オブジェクトだけを受け入れ、利用者が状態・取得資格・金額を申告する経路にはしない。
+復元演習は検証image専用launcherから同じAPI factoryを起動し、外部providerだけを
+private loopbackのHTTP simulatorへ置き換える。現在状態は通知と別に設定し、公式SDKの
+認証付き読取りを経由して非空の照合済みcache・時刻・状態とjournalを作る。
+launcherとsimulatorは本番imageへ含めず、report metadataにも実Stripeでないことを記録する。
+この演習はAPI資格・状態値の保存と復元のテストであり、公式sandboxでの実配送・実照合は
+別の受入で確認する。
+これは公式sandboxの返金状態を受領する経路であり、返金APIの実行、live返金、
+本番有料権限付与、販売開始、原M8全体の完了ではない。
