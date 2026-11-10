@@ -60,15 +60,18 @@ export async function loadEntitlement(db,contractId,nowMs){
  return {...entitlementState({periods:[...live,...sandbox],cancelAtPeriodEnd:c?.cancel_after_cycle!=null,nowMs}),contractStart:c?.start_text??null};
 }
 
-export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_LIVE_ACCOUNT,enabled=process.env.PASSSHARE_COMMERCIAL_LIVE_ENABLED==='true'}){
+export function liveEventHandler({pool,secret=process.env.PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET,account=process.env.PASSSHARE_STRIPE_LIVE_ACCOUNT,scope=process.env.PASSSHARE_STRIPE_LIVE_ENDPOINT_SCOPE??'connect',enabled=process.env.PASSSHARE_COMMERCIAL_LIVE_ENABLED==='true'}){
  const router=express.Router();
  router.use(rateLimit({windowMs:60000,limit:120,standardHeaders:'draft-6',legacyHeaders:false}));
  router.post('/',express.raw({type:'application/json',limit:'256kb'}),async(req,res)=>{
   try{
-   if(!pool||!enabled||!secret||!/^acct_[A-Za-z0-9]+$/.test(account??''))throw authHttpError(503,'PS019','Payment event intake unavailable');
+   if(!pool||!enabled||!secret||!/^acct_[A-Za-z0-9]+$/.test(account??'')||!['direct','connect'].includes(scope))throw authHttpError(503,'PS019','Payment event intake unavailable');
    let event;try{event=Stripe.webhooks.constructEvent(req.body,req.headers['stripe-signature'],secret,300);}catch{throw authHttpError(400,'PS018','Invalid payment event signature');}
    const o=event.data?.object,m=o?.metadata,cycle=Number(m?.cycle);
-   if(event.livemode!==true||o?.livemode!==true||event.account!==account||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||(!Number.isSafeInteger(event.created)||event.created<=0))throw authHttpError(400,'PS018','Unsupported payment event scope');
+   // Scope comes from the configured endpoint, never a caller claim. Own-account
+   // events omit the connected-account attribute or use its nullable form.
+   const accountMatches=scope==='direct'?event.account==null:event.account===account;
+   if(event.livemode!==true||o?.livemode!==true||!accountMatches||event.type!=='payment_intent.succeeded'||o.object!=='payment_intent'||o.status!=='succeeded'||o.currency!=='jpy'||!Number.isSafeInteger(o.amount_received)||o.amount_received<=0||o.amount!==o.amount_received||!/^evt_[A-Za-z0-9]+$/.test(event.id??'')||!/^pi_[A-Za-z0-9]+$/.test(o.id??'')||(!Number.isSafeInteger(event.created)||event.created<=0))throw authHttpError(400,'PS018','Unsupported payment event scope');
    if(!uuid(m?.contractId)||!uuid(m?.ownerId)||!/^[a-f0-9]{64}$/.test(m?.quoteHash??'')||!/^[1-9][0-9]{0,2}$/.test(m?.cycle??'')||cycle>120)throw authHttpError(400,'PS018','Invalid contract event binding');
    const digest=createHash('sha256').update(req.body).digest('hex');const c=await pool.connect();
    try{
