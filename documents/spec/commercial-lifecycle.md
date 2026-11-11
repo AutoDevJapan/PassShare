@@ -489,6 +489,8 @@ private HTTP provider simulatorでこのAPIの正常・拒否・期限切れを�
 `POST /api/commercial-contracts/:id/test-refund-operations` は明示した既存の返金担当者だけが、
 署名検証済みsandbox支払いの契約・所有者・金額・元event hashと見積hashに結び付く承認を保存する。
 同じoperationId・同じ内容は再送でき、内容変更や他の承認との合計超過は409となる。
+別契約で同じoperationIdを同時承認した場合も、一方だけを保存し他方は409とする。
+競合した応答へ別契約の操作内容を返さず、保存済み操作の金額・指紋・日時を保持する。
 この台帳は `provider_test_sandbox` の別表であり、Liveの申請・承認記録や有料権限へ昇格しない。
 本人と担当者は `GET .../test-refund-operations/:operation` で非公開・no-storeの状態を確認できる。
 
@@ -508,6 +510,10 @@ providerへの操作は保存済みの額・PaymentIntentと決定指紋から�
 初回送信から23時間を過ぎた未確定操作は新しいPOSTを行わず、`POST .../:operation/reconcile` で
 現在の同account・同paymentとoperation/decision metadataを持つ返金を読み直す。
 状態不明・未着はそのまま保留し、別operationを自動発行しない。
+過去の送信が未確定の操作は、後の見積binding不一致・残額不足・認可拒否だけでは
+`rejected`へ確定せず、`uncertain`と予約額を保持する。今回送信できないことは、
+前回も返金されなかった証拠ではない。元の操作に対応する正確なprovider結果が
+確認できた場合にだけ、その結果へ遷移する。
 
 この候補の受入は隔離HTTP/PGとprivate provider simulatorから始める。
 公式sandboxの実配送・実API結果は別に確認し、同じ公式test accountと資格の正規出所を照合する。

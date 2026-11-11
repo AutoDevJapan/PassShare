@@ -18,9 +18,10 @@ test('a committed sandbox refund survives result-write failure and is reconciled
  const provider=await refundProviderFixture(account,'direct',{allowTestExecution:true});
  Object.assign(process.env,{PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_TEST_ACCOUNT:account,PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE:'direct'});
  delete process.env.PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS;
- let server,base;
+ let server,base,loseNextResponse=false;
+ const fetchImpl=async(url,options)=>{const response=await provider.fetchImpl(url,options);if(loseNextResponse&&options?.method==='POST'){loseNextResponse=false;await response.arrayBuffer();throw Error('Synthetic lost response after accepted sandbox refund');}return response;};
  const stop=async()=>{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));server=null;}};
- const start=async()=>{const {createApp}=await import('../src/app.js');const {app}=await createApp({pool,testRefundLookup:provider.lookup,testRefundExecutor:createTestRefundExecutor({key:'rk_test_refund_http_fixture',account,scope:'direct',fetchImpl:provider.fetchImpl})});server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base='http://127.0.0.1:'+server.address().port;};
+ const start=async()=>{const {createApp}=await import('../src/app.js');const {app}=await createApp({pool,testRefundLookup:provider.lookup,testRefundExecutor:createTestRefundExecutor({key:'rk_test_refund_http_fixture',account,scope:'direct',fetchImpl})});server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base='http://127.0.0.1:'+server.address().port;};
  const call=async(path,actor,body,method=body===undefined?'GET':'POST')=>{const response=await fetch(base+path,{method,signal:AbortSignal.timeout(10000),headers:{'content-type':'application/json','x-passshare-client':'mobile',...(actor?{authorization:'Bearer '+actor.refreshToken}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,body:await response.json().catch(()=>null)};};
  try{
   await start();const actors=[];
@@ -50,6 +51,21 @@ test('a committed sandbox refund survives result-write failure and is reconciled
   const reconciled=await call(operation+'/reconcile',reviewer,{});assert.equal(reconciled.status,200);assert.equal(reconciled.body.state,'succeeded');assert.equal(reconciled.body.providerRefundId,refund.id);assert.equal(reconciled.body.liveRefundExecuted,false);assert.equal(reconciled.body.entitlementsGranted,false);
   assert.equal(posts(),1);assert.equal(provider.refunds.size,1);
   const replay=await call(operation+'/execute',reviewer,{});assert.equal(replay.status,200);assert.deepEqual(replay.body,reconciled.body);assert.equal(posts(),1);
+  const uncertainId=randomUUID(),uncertainPath=route+'/'+uncertainId;
+  assert.equal((await call(route,reviewer,{operationId:uncertainId,paymentIntentId:payment.id,quoteHash:contract.quoteHash,amountJpy:800,reason:'unprovided_period_confirmed'})).status,201);
+  loseNextResponse=true;const lost=await call(uncertainPath+'/execute',reviewer,{});
+  assert.equal(lost.status,202);assert.equal(lost.body.state,'uncertain');assert.equal(posts(),2);assert.equal(provider.refunds.size,2);
+  const received=[...provider.refunds.values()].find(value=>value.metadata.operationId===uncertainId);assert.equal(received.amount,800);
+  // A later binding mismatch proves only that this attempt cannot dispatch;
+  // it cannot erase the earlier provider-accepted refund with a lost reply.
+  provider.payments.set(payment.id,{...payment,metadata:{...payment.metadata,quoteHash:'c'.repeat(64)}});
+  const retry=await call(uncertainPath+'/execute',reviewer,{});
+  assert.equal(retry.status,202,'A failed later precondition cannot release an uncertain reservation');assert.equal(retry.body.state,'uncertain');assert.equal(posts(),2);
+  assert.equal((await pool.query('SELECT state FROM commercial_test_refund_operations WHERE operation_id=$1',[uncertainId])).rows[0].state,'uncertain');
+  assert.equal((await call(route,reviewer,{operationId:randomUUID(),paymentIntentId:payment.id,quoteHash:contract.quoteHash,amountJpy:81,reason:'unprovided_period_confirmed'})).status,409,'100 confirmed plus800 uncertain leaves only80, even if the provider result is temporarily unreadable');
+  provider.payments.set(payment.id,payment);
+  const found=await call(uncertainPath+'/reconcile',reviewer,{});assert.equal(found.status,200);assert.equal(found.body.state,'succeeded');assert.equal(found.body.providerRefundId,received.id);assert.equal(posts(),2);
+  assert.equal((await call(uncertainPath+'/execute',reviewer,{})).body.state,'succeeded');assert.equal(posts(),2,'Confirmed result replay never repeats the mutation');
   const unchanged=(await call('/api/commercial-contracts/'+contract.id,owner)).body;assert.equal(unchanged.paid,false);assert.equal(unchanged.entitlement.effective,false);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods')).rows[0].n,0);
   for(const actor of [reviewer,owner,other])assert.equal((await call('/api/auth/account',actor,{currentPassword:password,confirmationEmail:actor.email},'DELETE')).status,204);

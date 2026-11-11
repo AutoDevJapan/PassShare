@@ -61,7 +61,7 @@ export function registerTestRefundOperationRoutes(router,{pool,executor,lookup=c
    if(allocated+external+BigInt(b.amountJpy)>BigInt(p.amount_jpy))throw error(409,'Other sandbox refunds reserve this payment');
    const r=(await c.query("INSERT INTO commercial_test_refund_operations(operation_id,contract_id,account_id,payment_event_id,provider_object_id,payment_amount_jpy,payment_event_hash,quote_hash,decision_fingerprint,reviewer_id,amount_jpy,reason,state,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'approved','provider_test_sandbox') RETURNING *",[op,contract.id,p.account_id,p.event_id,p.provider_object_id,p.amount_jpy,p.event_hash,b.quoteHash,fingerprint,req.auth.userId,b.amountJpy,b.reason])).rows[0];return view(r);
   });res.status(201).json(out);
- }catch(e){sendAuthError(res,e)}});
+ }catch(e){sendAuthError(res,e?.code==='23505'&&e.constraint==='commercial_test_refund_operations_pkey'?error(409,'Sandbox refund operation changed'):e)}});
  router.get('/:id/test-refund-operations/:operation',async(req,res)=>{try{res.json(await transaction(req,false,async c=>view(await read(c,req))))}catch(e){sendAuthError(res,e)}});
  router.post('/:id/test-refund-operations/:operation/reconcile',requireCsrf,async(req,res)=>{try{
   if(!exact(req.body,[]))throw error(400,'Reconciliation accepts no client financial state');
@@ -84,12 +84,15 @@ export function registerTestRefundOperationRoutes(router,{pool,executor,lookup=c
    // mutation for an old uncertain operation; retain it for reconciliation.
    if(r.first_dispatched_at&&(await c.query("SELECT $1::timestamptz < clock_timestamp()-interval '23 hours' expired",[r.first_dispatched_at])).rows[0].expired)throw error(409,'Old uncertain operation requires provider reconciliation');
    await c.query("UPDATE commercial_test_refund_operations SET state='in_flight',first_dispatched_at=COALESCE(first_dispatched_at,clock_timestamp()) WHERE operation_id=$1",[r.operation_id]);
-   return {operationId:r.operation_id,account:r.account_id,paymentIntentId:r.provider_object_id,contractId:contract.id,ownerId:contract.user_id,quoteHash:r.quote_hash,paymentAmountJpy:Number(r.payment_amount_jpy),approvedAmountJpy:Number(r.amount_jpy),decisionFingerprint:r.decision_fingerprint};
+   return {operationId:r.operation_id,account:r.account_id,paymentIntentId:r.provider_object_id,contractId:contract.id,ownerId:contract.user_id,quoteHash:r.quote_hash,paymentAmountJpy:Number(r.payment_amount_jpy),approvedAmountJpy:Number(r.amount_jpy),decisionFingerprint:r.decision_fingerprint,previouslyUncertain:r.state==='uncertain'};
   });if(captured.final){res.json(captured.final);return}
   const authorize=()=>transaction(req,true,async(c,contract)=>{const r=await read(c,req);if(r.state!=='in_flight'||r.decision_fingerprint!==captured.decisionFingerprint||r.quote_hash!==contract.quote_hash)throw error(409,'Sandbox authority changed before dispatch');return true});
   let result;try{result=await executor(captured,authorize)}catch{result={state:'uncertain',refund:null}}
   const r=result?.refund,known=['succeeded','pending','requires_action','failed','canceled'].includes(result?.state)&&/^((re|pyr)_[A-Za-z0-9]+)$/.test(r?.id??'')&&r.paymentIntentId===captured.paymentIntentId&&r.amountJpy===captured.approvedAmountJpy&&r.currency==='jpy';
-  const state=known?result.state:result?.state==='rejected'?'rejected':'uncertain';
+  // A later dispatch precondition says nothing about a previous request whose
+  // response was lost. Keep its reservation until an exact provider result is
+  // known, even when this attempt cannot dispatch.
+  const state=known?result.state:result?.state==='rejected'&&!captured.previouslyUncertain?'rejected':'uncertain';
   // Record a result even if the initiating session expired during the call.
   // Disclosure still goes through fresh authorization below.
   await pool.query("UPDATE commercial_test_refund_operations SET state=$3,provider_refund_id=$4,result_recorded_at=clock_timestamp() WHERE operation_id=$1 AND decision_fingerprint=$2 AND state='in_flight'",[captured.operationId,captured.decisionFingerprint,state,known?r.id:null]);
