@@ -966,6 +966,7 @@ impl Runner {
         // from the shared product box. Current paid dates are synthetic SQL;
         // requests/cancellation use the formal HTTP route and reauthentication.
         let mut source_deletion = Value::Null;
+        let mut due_request = Value::Null;
         let mut deletion_contract = String::new();
         let mut deletion_box = String::new();
         let mut retired_deletion_id = String::new();
@@ -986,6 +987,7 @@ impl Runner {
             let paid:Value=serde_json::from_str(&sql("drill_source",&format!("SELECT COALESCE(jsonb_agg(jsonb_build_object('account',p.account_id,'event',p.event_id,'start',p.period_start::text,'end',p.period_end::text)),'[]'::jsonb) FROM commercial_live_periods p JOIN commercial_contracts c ON c.id=p.contract_id WHERE c.user_id='{}' AND c.id<>'{cid}';",actor.id))?).map_err(|_|Failure::Json)?;
             sql("drill_source",&format!("UPDATE commercial_live_periods p SET period_start=CURRENT_DATE-100,period_end=CURRENT_DATE-60 FROM commercial_contracts c WHERE p.contract_id=c.id AND c.user_id='{}' AND c.id<>'{cid}';",actor.id))?;
             let created=self.api.json(report,if retired {"source_retired_deletion_request_HTTP"}else{"source_deletion_request_HTTP"},"POST",&format!("/api/commercial-contracts/{cid}/data-deletion-requests"),&actor.session,Some(&json!({"requestId":request_id,"boxId":bid,"quoteHash":quote["quoteHash"],"expectedContentVersion":1,"expectedAttributeVersion":1,"expectedStateRevision":null,"expectedKeyEpoch":null,"confirmationBoxId":bid,"currentPassword":password})),201,None)?;
+            if !retired {due_request=self.api.json(report,"source_due_deletion_consent_HTTP","POST",&format!("/api/commercial-contracts/{cid}/data-deletion-requests/schedule-due"),&actor.session,Some(&json!({"requestId":"fafafafa-fafa-4afa-8afa-fafafafafafa","boxId":bid,"quoteHash":quote["quoteHash"],"expectedContentVersion":1,"expectedAttributeVersion":1,"expectedStateRevision":null,"expectedKeyEpoch":null,"confirmationBoxId":bid,"currentPassword":password})),201,None)?;}
             for row in paid.as_array().ok_or(Failure::Shape)? {let account=text(row,"/account")?;let event=text(row,"/event")?;let start=text(row,"/start")?;let end=text(row,"/end")?;if ![account.as_str(),event.as_str(),start.as_str(),end.as_str()].iter().all(|value|value.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')){return Err(Failure::Shape);}sql("drill_source",&format!("UPDATE commercial_live_periods SET period_start='{start}'::date,period_end='{end}'::date WHERE account_id='{account}' AND event_id='{event}';"))?;}
             let rid=identifier(&created,"/id",36)?;
             if retired {
@@ -1005,7 +1007,10 @@ impl Runner {
             if retired {retired_deletion_id=rid;report.check("source_retired_deletion_request_nonempty",created["state"]=="pending"&&created["dataDeleted"]==false)?;}
             else {deletion_contract=cid;deletion_box=bid;source_deletion=created;}
         }
-        report.check("source_deletion_requests_nonempty",sql("drill_source","SELECT count(*) FROM commercial_data_deletion_requests WHERE state='pending' AND revision=0 AND canceled_at IS NULL AND completed_at IS NULL AND not_before=paid_through+30 AND content_version=1 AND attribute_version=1 AND length(data_fingerprint)=64;")?.trim()=="2")?;
+        report.check("source_deletion_requests_nonempty",sql("drill_source","SELECT count(*) FROM commercial_data_deletion_requests WHERE execution_mode='manual' AND state='pending' AND revision=0 AND canceled_at IS NULL AND completed_at IS NULL AND not_before=paid_through+30 AND content_version=1 AND attribute_version=1 AND length(data_fingerprint)=64;")?.trim()=="2")?;
+        // Explicit future execution is a separate consent; never promote an
+        // existing manual request. Exercise the real schedule route in fixture.
+        report.check("source_due_deletion_consent_nonempty",due_request["executionMode"]=="due"&&due_request["state"]=="pending"&&sql("drill_source","SELECT count(*) FROM commercial_data_deletion_requests WHERE execution_mode='due' AND consent_credential_fingerprint ~ '^[a-f0-9]{64}$';")?.trim()=="1")?;
         report.check("source_deleted_creation_tombstones",sql("drill_source","SELECT count(*) FROM mutation_operations WHERE operation='box' AND request_key='restore-deleted-creation-0001' AND request_hash='' AND result='{\"deleted\":true}'::jsonb;")?.trim()=="2")?;
         // This final fixture write populates both login guard tables, not fabricated rows.
         // Bracket its committed update; no API mutations occur between this and dump.
@@ -1319,6 +1324,9 @@ impl Runner {
             "reopen_gate_credentials_and_current_accounts_clean",
             reopen_state_clean(&state),
         )?;
+        // Fixed synthetic-container marker only after the current-credential
+        // gate. The earlier unsafe demonstration must not run the due worker.
+        std::fs::write("/tmp/passshare-drill-current-qualified",b"synthetic-current-qualified").map_err(|_|Failure::Io)?;
         let after_reconcile = snapshot("drill_restored")?;
         report.check(
             "reconciliation_keeps_encrypted_tables_empty",
@@ -1486,6 +1494,10 @@ impl Runner {
         report.check("restored_deletion_request_values",exact_json(&source_deletion,&deletion_read))?;
         report.check("restored_deletion_request_retired_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_data_deletion_requests WHERE id='{retired_deletion_id}';"))?.trim()=="0")?;
         report.check("restored_completed_deletion_journal_survives_retirement",sql("drill_restored","SELECT count(*) FROM commercial_deletion_journal j WHERE completed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM connect_vaults v WHERE v.id=j.box_id);")?.trim()=="1")?;
+        let due_id=identifier(&due_request,"/id",36)?;
+        let due_read=self.api.json(report,"restored_due_deletion_consent_HTTP","GET",&format!("/api/commercial-contracts/{deletion_contract}/data-deletion-requests/{due_id}"),&current_owner.session,None,200,None)?;
+        report.check("restored_due_deletion_consent_values",due_request["id"]==due_read["id"]&&due_request["boxId"]==due_read["boxId"]&&due_request["notBefore"]==due_read["notBefore"]&&due_read["executionMode"]=="due"&&due_read["requiresNewConsent"]==true&&sql("drill_restored",&format!("SELECT count(*) FROM commercial_data_deletion_requests WHERE id='{due_id}' AND execution_mode='due' AND consent_credential_fingerprint ~ '^[a-f0-9]{{64}}$';"))?.trim()=="1")?;
+        report.check("restored_due_worker_keeps_old_consent_closed",sql("drill_restored",&format!("SELECT count(*) FROM connect_vaults WHERE id='{deletion_box}';"))?.trim()=="1"&&due_read["state"]=="pending")?;
         let canceled=self.api.json(report,"restored_deletion_cancel_HTTP","POST",&format!("{deletion_path}/cancel"),&current_owner.session,Some(&json!({"revision":0})),200,None)?;
         report.check("restored_deletion_cancel_preserves_box",canceled["state"]=="canceled"&&canceled["dataDeleted"]==false&&sql("drill_restored",&format!("SELECT count(*) FROM connect_vaults WHERE id='{deletion_box}';"))?.trim()=="1")?;
         report.check("restored_deleted_creation_tombstone",sql("drill_restored",&format!("SELECT count(*) FROM mutation_operations WHERE actor='{}' AND resource='{}' AND operation='box' AND request_key='restore-deleted-creation-0001' AND request_hash='' AND result='{{\"deleted\":true}}'::jsonb;",owner.id,owner.id))?.trim()=="1")?;

@@ -116,6 +116,7 @@ export async function prepareClosedDeletionRestore(client,{expectedTargetDatabas
   const rows=(await client.query('SELECT * FROM passshare_restore_control.recovery FOR UPDATE')).rows;
   if(rows.length&&!(rows.length===1&&rows[0].operation_id===restoreOperationId&&rows[0].source_id===sourceId&&rows[0].phase==='closed'))throw Error('Existing recovery binding cannot be replaced');
   if(!rows.length)await client.query("INSERT INTO passshare_restore_control.recovery VALUES(true,$1,$2,'closed',NULL)",[restoreOperationId,sourceId]);
+  if((await client.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_schema='public' AND table_name='commercial_data_deletion_requests' AND column_name IN('execution_mode','consent_invalidated_at')")).rows[0].n===2)await client.query("UPDATE commercial_data_deletion_requests SET consent_invalidated_at=clock_timestamp() WHERE execution_mode='due' AND state='pending' AND consent_invalidated_at IS NULL");
   await client.query('COMMIT');return{closed:true,restoreOperationId};
  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e;}
 }
