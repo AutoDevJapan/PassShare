@@ -42,3 +42,10 @@ test('a mutated caller pin cannot authorize an unsolicited in-flight snapshot',a
  const pin={keyEpoch:2,snapshotRevision:3};const pending=api.getCommercialExportPage(contract,box,pin,null,new AbortController().signal);
  pin.keyEpoch=9;pin.snapshotRevision=10;release();await assert.rejects(pending);
 });
+test('contract attachment export obtains the parent snapshot with the same pinned scope',async()=>{
+ const itemId='b'.repeat(26),context={passwordBoxId:box,itemId,itemVersion:2,keyEpoch:2};
+ const envelope={format:1,context,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(16).toString('base64')};
+ const calls:string[]=[];const api=createCloudApi(async p=>{calls.push(p);return Response.json(reply(envelope));});
+ assert.deepEqual(JSON.parse(await api.getCommercialAttachmentItemSnapshot(contract,context,3,new AbortController().signal)),envelope);
+ assert.equal(calls[0],`/api/commercial-contracts/${contract}/export/boxes/${box}/items/${itemId}/attachment-snapshot?epoch=2&revision=3`);
+});

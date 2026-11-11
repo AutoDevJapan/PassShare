@@ -12,6 +12,18 @@ export class CloudApiError extends Error {
 
 export function createCloudApi(authFetch: CloudFetch) {
 
+  async function getCommercialAttachmentItemSnapshot(contractId: string, expected: ItemContext, revision: number, signal: AbortSignal): Promise<string> {
+    expected = {...expected}; validateItemContext(expected);
+    if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(contractId) || !positiveInteger(revision)) throw new CloudApiError(400);
+    const text=await itemRequest(`/api/commercial-contracts/${contractId}/export/boxes/${expected.passwordBoxId}/items/${expected.itemId}/attachment-snapshot?epoch=${expected.keyEpoch}&revision=${revision}`,{signal},200,2*1024*1024);
+    let result:any;try{result=JSON.parse(text);}catch{throw new CloudApiError(502);}
+    if (!fields(result,['format','receiptId','boxId','keyEpoch','snapshotRevision','ciphertextOnly','restoresIdentityMembershipOrKeys','data']) ||
+      result.format!=='passshare-encrypted-export-v1' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(result.receiptId) ||
+      result.boxId!==expected.passwordBoxId || result.keyEpoch!==expected.keyEpoch || result.snapshotRevision!==revision ||
+      result.ciphertextOnly!==true || result.restoresIdentityMembershipOrKeys!==false) throw new CloudApiError(502);
+    const envelope=JSON.stringify(result.data);readItemEnvelope(envelope,expected);return envelope;
+  }
+
   async function getCommercialExportPage(contractId: string, boxId: string,
     pin: {keyEpoch: number; snapshotRevision: number}, after: string | null, signal: AbortSignal): Promise<{envelopes: EncryptedEnvelope[]; nextCursor: string | null; attachmentsIncluded: false}> {
     pin = {keyEpoch: pin.keyEpoch, snapshotRevision: pin.snapshotRevision};
@@ -316,6 +328,6 @@ export function createCloudApi(authFetch: CloudFetch) {
     return revision + 2;
   }
 
-  return Object.freeze({ getCommercialExportPage, getBoxState, getAttachmentState, getOwnerBundle, putOwnerBundle, setupBox, bundleText, sameBundle, readPendingBundle, savePendingBundle, clearPendingBundle, validateItemContext, publicOwnerBundle, readItemEnvelope, listEncryptedItems, getEncryptedItem, putEncryptedItem, deleteEncryptedItem, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment });
+  return Object.freeze({ getCommercialAttachmentItemSnapshot, getCommercialExportPage, getBoxState, getAttachmentState, getOwnerBundle, putOwnerBundle, setupBox, bundleText, sameBundle, readPendingBundle, savePendingBundle, clearPendingBundle, validateItemContext, publicOwnerBundle, readItemEnvelope, listEncryptedItems, getEncryptedItem, putEncryptedItem, deleteEncryptedItem, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment });
 }
 export type CloudApi = ReturnType<typeof createCloudApi>;
