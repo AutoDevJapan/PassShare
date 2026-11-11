@@ -36,3 +36,9 @@ test('an in-flight export keeps the snapshot selected when the request was sent'
  const pin={keyEpoch:2,snapshotRevision:3};const pending=api.getCommercialExportPage(contract,box,pin,null,new AbortController().signal);
  pin.keyEpoch=9;pin.snapshotRevision=10;release();assert.equal((await pending).nextCursor,null);
 });
+test('a mutated caller pin cannot authorize an unsolicited in-flight snapshot',async()=>{
+ let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+ const api=createCloudApi(async()=>{await gate;return Response.json({...reply({envelopes:[],nextCursor:null,attachmentsIncluded:false}),keyEpoch:9,snapshotRevision:10});});
+ const pin={keyEpoch:2,snapshotRevision:3};const pending=api.getCommercialExportPage(contract,box,pin,null,new AbortController().signal);
+ pin.keyEpoch=9;pin.snapshotRevision=10;release();await assert.rejects(pending);
+});
