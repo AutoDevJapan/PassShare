@@ -119,6 +119,15 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn required_scenario_check_names_are_emitted_once() {
+        let source=include_str!("scenario.rs");
+        for name in REQUIRED_POSITIVE {
+            let literal=format!("\"{name}\"");
+            assert_eq!(source.match_indices(&literal).count(),1,"missing or duplicated scenario result: {name}");
+        }
+    }
+
     fn negative_fixture() -> Value {
         let mut checks = vec![
             json!({"name":"reopen_gate_credentials_and_current_accounts_clean","passed":false}),
