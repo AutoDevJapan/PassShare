@@ -30,7 +30,11 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   await source.query('INSERT INTO commercial_live_contracts(contract_id,contract_start,cancel_after_cycle,cancel_requested_at) VALUES($1,CURRENT_DATE-65,1,clock_timestamp())',[contract.id]);
   await source.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_redelete','evt_redelete',$1,1,CURRENT_DATE-65,CURRENT_DATE-35,980,'pi_redelete','synthetic-redelete','provider_live')",[contract.id]);
   const route='/api/commercial-contracts/'+contract.id+'/data-deletion-requests',request=await call(route,owner,{requestId:randomUUID(),boxId,quoteHash:contract.quoteHash,expectedContentVersion:1,expectedAttributeVersion:1,expectedStateRevision:null,expectedKeyEpoch:null,confirmationBoxId:boxId,currentPassword:password});assert.equal(request.status,201);
+  // Capture the real pre-journal schema, not a new archive whose journal table
+  // is merely removed afterwards. Only this owned fixture is changed here.
+  await source.query('DROP TABLE commercial_deletion_journal');
   const dump=execFileSync('docker',['exec',container,'pg_dump','-U','passshare','-d',sourceName,'-Fc','--no-owner','--no-acl'],{windowsHide:true,maxBuffer:16*1024*1024});assert.equal(dump.subarray(0,5).toString(),'PGDMP');fs.writeFileSync(archive,dump,{flag:'wx',mode:0o600});
+  const {migrateDeletionJournal}=await import('../src/commercial-deletion-journal.js');await migrateDeletionJournal(source);
   const completed=await call(route+'/'+request.body.id+'/execute',owner,{revision:0,currentPassword:password,confirmationBoxId:boxId});assert.equal(completed.status,200);assert.equal(completed.body.dataDeleted,true);
   assert.equal((await source.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[boxId])).rows[0].n,0);
   assert.equal((await call('/api/auth/account',owner,{currentPassword:password,confirmationEmail:owner.email},'DELETE')).status,204);
@@ -51,7 +55,7 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   const options={bytes:journal,expectedSha256,expectedSourceId,expectedTargetDatabase:targetName,restoreOperationId,currentSource,expectedSourceDatabase:sourceName};
   await assert.rejects(reconcileCompletedDeletions(source,options),/Wrong restore database/);
   const tampered=Buffer.from(journal);tampered[tampered.length-2]^=1;await assert.rejects(reconcileCompletedDeletions(target,{...options,bytes:tampered}),/trusted current digest/);
-  await target.query('DROP TABLE commercial_deletion_journal');
+  assert.equal((await target.query("SELECT to_regclass('public.commercial_deletion_journal') IS NULL missing")).rows[0].missing,true,'The old real archive has no journal table');
   fs.writeFileSync(targetConfig,JSON.stringify({format:'passshare-deletion-recovery-v1',databaseUrlEnv:'PASSSHARE_RECOVERY_TARGET_DATABASE_URL',currentSourceDatabaseUrlEnv:'PASSSHARE_RECOVERY_SOURCE_DATABASE_URL',currentSourceDatabase:sourceName,journalPath:journalFile,trustedJournalSha256:expectedSha256,sourceId,targetDatabase:targetName,restoreOperationId}),{flag:'wx'});
   const fresh=await target.connect();fresh.release();await closeTarget();
   const prepared=JSON.parse(execFileSync(process.execPath,[cli,'prepare-closed',targetConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(prepared.closed,true);
