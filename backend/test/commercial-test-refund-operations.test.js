@@ -1,0 +1,57 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID,createHash} from 'node:crypto';
+import pg from 'pg';
+import Stripe from 'stripe';
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
+import {refundProviderFixture} from './helpers/refund-provider-fixture.js';
+import {createTestRefundExecutor} from '../src/commercial-test-refund-executor.js';
+
+test('sandbox approval persists an immutable operation before bounded execution and survives uncertain responses',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
+ const url=new URL(process.env.DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.username,'passshare');assert.equal(url.pathname,'/passshare');
+ const admin=new pg.Pool({connectionString:url.href}),db='ps_test_refund_execution_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+db);url.pathname='/'+db;
+ const pool=new pg.Pool({connectionString:url.href}),close=trackPoolShutdown(pool),account='acct_executionops',secret='whsec_executionops',password='test-execution-password',keys=['PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS','PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET','PASSSHARE_STRIPE_TEST_ACCOUNT','PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE'],saved=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+ let server,base,executions=0,executeMode='uncertain',seen,waiter,release,pending,currentSnapshot=null,provider=null;
+ Object.assign(process.env,{PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_TEST_ACCOUNT:account,PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE:'direct'});delete process.env.PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS;
+ const call=async(path,actor,body,method=body===undefined?'GET':'POST')=>{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(10000),headers:{'content-type':'application/json','x-passshare-client':'mobile',...(actor?{authorization:'Bearer '+actor.refreshToken}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json().catch(()=>null),cache:r.headers.get('cache-control')}};
+ try{
+  const {createApp}=await import('../src/app.js');
+  const executor=async(operation,authorize)=>{executions++;seen=operation;assert.equal((await pool.query('SELECT state FROM commercial_test_refund_operations WHERE operation_id=$1',[operation.operationId])).rows[0].state,'in_flight','Intent committed before provider call');if(waiter)await waiter;await authorize();return executeMode==='uncertain'?{state:'uncertain',refund:null}:{state:'succeeded',refund:{id:'re_executionops'+operation.operationId.replaceAll('-',''),paymentIntentId:operation.paymentIntentId,amountJpy:operation.approvedAmountJpy,currency:'jpy'}}};
+  const start=async configured=>{const {app}=await createApp({pool,testRefundExecutor:configured===true?executor:configured||null,testRefundLookup:provider?.lookup??(async()=>currentSnapshot)});server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port};await start(true);
+  const actors=[];for(let i=0;i<3;i++){const email=randomUUID()+'@example.test',r=await call('/api/auth/signup',null,{email,password});assert.equal(r.status,201);actors.push({...r.body,email})}const [owner,reviewer,other]=actors;
+  const contract=(await call('/api/commercial-contracts',owner,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}})).body;assert.equal((await call('/api/commercial-contracts/'+contract.id+'/accept',owner,{quoteHash:contract.quoteHash})).status,200);
+  const payment={id:'pi_'+randomUUID().replaceAll('-',''),object:'payment_intent',livemode:false,status:'succeeded',currency:'jpy',amount:980,amount_received:980,metadata:{contractId:contract.id,ownerId:owner.user.id,quoteHash:contract.quoteHash}},event={id:'evt_'+randomUUID().replaceAll('-',''),type:'payment_intent.succeeded',livemode:false,created:Math.floor(Date.now()/1000),data:{object:payment}},body=JSON.stringify(event);
+  const r=await fetch(base+'/api/commercial-events/stripe-test',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload:body,secret})},body});assert.equal(r.status,200);
+  const route='/api/commercial-contracts/'+contract.id+'/test-refund-operations',approval={operationId:randomUUID(),paymentIntentId:payment.id,quoteHash:contract.quoteHash,amountJpy:400,reason:'unprovided_period_confirmed'};
+  assert.equal((await call(route,reviewer,approval)).status,403,'Unconfigured reviewers cannot approve');
+  process.env.PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS=reviewer.user.id;server.closeAllConnections();await new Promise(r=>server.close(r));await start(true);
+  assert.equal((await call(route,owner,approval)).status,403);assert.equal((await call(route,null,approval)).status,401);
+  assert.equal((await call(route,reviewer,{...approval,paid:true})).status,400);assert.equal((await call(route,reviewer,{...approval,amountJpy:981})).status,409);
+  const first=await call(route,reviewer,approval);assert.equal(first.status,201);assert.equal(first.body.state,'approved');assert.equal(first.body.refundExecuted,false);assert.equal(first.body.paymentEvidence,'provider_test_sandbox');assert.equal(first.cache,'no-store');
+  assert.deepEqual((await call(route,reviewer,approval)).body,first.body);assert.equal((await call(route,reviewer,{...approval,amountJpy:401})).status,409);assert.equal(executions,0);
+  const op=route+'/'+approval.operationId;assert.equal((await call(op,other)).status,404);assert.equal((await call(op,owner)).body.state,'approved');
+  const lost=await call(op+'/execute',reviewer,{});assert.equal(lost.status,202);assert.equal(lost.body.state,'uncertain');assert.equal(lost.body.refundExecuted,false);assert.equal(executions,1);assert.equal(seen.amountJpy,undefined);assert.equal(seen.approvedAmountJpy,400);assert.equal(seen.decisionFingerprint.length,64);
+  executeMode='succeeded';const recovered=await call(op+'/execute',reviewer,{});assert.equal(recovered.status,200);assert.equal(recovered.body.state,'succeeded');assert.equal(recovered.body.refundExecuted,true);assert.equal(recovered.body.liveRefundExecuted,false);assert.equal(executions,2);
+  assert.deepEqual((await call(op+'/execute',reviewer,{})).body,recovered.body);assert.equal(executions,2,'Confirmed operation never issues another mutation');
+  const stored=(await pool.query('SELECT * FROM commercial_test_refund_operations WHERE operation_id=$1',[approval.operationId])).rows[0];assert.equal(stored.payment_event_hash,createHash('sha256').update(body).digest('hex'));assert.equal(stored.amount_jpy,'400');assert.equal(stored.provider_refund_id,'re_executionops'+approval.operationId.replaceAll('-',''));
+  assert.equal((await call(op+'/reconcile',reviewer,{})).status,409,'No provider read cannot qualify a result');
+  currentSnapshot={account,payment,refunds:[{id:stored.provider_refund_id,object:'refund',payment_intent:payment.id,amount:400,currency:'jpy',status:'succeeded',metadata:{operationId:approval.operationId,decisionFingerprint:stored.decision_fingerprint}}]};
+  assert.equal((await call(op+'/reconcile',reviewer,{})).status,200);assert.equal(executions,2,'Readback never issues a provider mutation');
+  const again={...approval,operationId:randomUUID(),amountJpy:100};assert.equal((await call(route,reviewer,again)).status,201);waiter=new Promise(r=>{release=r});pending=call(route+'/'+again.operationId+'/execute',reviewer,{});
+  for(let i=0;i<100&&executions<3;i++)await new Promise(r=>setTimeout(r,10));assert.equal(executions,3);
+  assert.equal((await call(route+'/'+again.operationId+'/execute',reviewer,{})).status,409,'In-flight attempt cannot duplicate the provider call');release();waiter=null;assert.equal((await pending).status,200);pending=null;
+  const stale={...approval,operationId:randomUUID(),amountJpy:50};assert.equal((await call(route,reviewer,stale)).status,201);executeMode='uncertain';assert.equal((await call(route+'/'+stale.operationId+'/execute',reviewer,{})).status,202);const beforeOld=executions;
+  await pool.query("UPDATE commercial_test_refund_operations SET first_dispatched_at=clock_timestamp()-interval '24 hours' WHERE operation_id=$1",[stale.operationId]);assert.equal((await call(route+'/'+stale.operationId+'/execute',reviewer,{})).status,409);assert.equal(executions,beforeOld,'Expired provider idempotency retention never starts another mutation');
+  const untouched=(await call('/api/commercial-contracts/'+contract.id,owner)).body;assert.equal(untouched.paid,false);assert.equal(untouched.entitlement.effective,false);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods')).rows[0].n,0,'Sandbox execution grants no live period');
+  server.closeAllConnections();await new Promise(r=>server.close(r));await start(false);assert.equal((await call(op+'/execute',reviewer,{})).status,503,'Missing executor closes execution even after restart');assert.equal((await call(op,owner)).body.state,'succeeded');
+  provider=await refundProviderFixture(account,'direct',{allowTestExecution:true});provider.payments.set(payment.id,payment);
+  server.closeAllConnections();await new Promise(r=>server.close(r));await start(createTestRefundExecutor({key:'rk_test_refund_http_fixture',account,scope:'direct',fetchImpl:provider.fetchImpl}));
+  const sdkOperation={...approval,operationId:randomUUID(),amountJpy:200};assert.equal((await call(route,reviewer,sdkOperation)).status,201);
+  const sdkPath=route+'/'+sdkOperation.operationId,executed=await call(sdkPath+'/execute',reviewer,{});assert.equal(executed.status,200);assert.equal(executed.body.state,'succeeded');assert.equal(executed.body.liveRefundExecuted,false);assert.equal(provider.refunds.size,1);
+  const posts=()=>provider.requests.filter(r=>r.method==='POST').length;assert.equal(posts(),1);assert.deepEqual((await call(sdkPath+'/execute',reviewer,{})).body,executed.body);assert.equal(posts(),1);assert.equal((await call(sdkPath+'/reconcile',reviewer,{})).status,200);assert.equal(posts(),1,'Official SDK readback does not repeat the mutation');
+  const beforeReviewerRetirement=(await pool.query('SELECT count(*)::int n,count(reviewer_id)::int reviewers FROM commercial_test_refund_operations')).rows[0];assert.ok(beforeReviewerRetirement.n>0);assert.equal(beforeReviewerRetirement.reviewers,beforeReviewerRetirement.n);
+  assert.equal((await call('/api/auth/account',reviewer,{currentPassword:password,confirmationEmail:reviewer.email},'DELETE')).status,204);
+  const afterReviewerRetirement=(await pool.query('SELECT count(*)::int n,count(reviewer_id)::int reviewers FROM commercial_test_refund_operations')).rows[0];assert.equal(afterReviewerRetirement.n,beforeReviewerRetirement.n);assert.equal(afterReviewerRetirement.reviewers,0);
+  for(const u of [owner,other])assert.equal((await call('/api/auth/account',u,{currentPassword:password,confirmationEmail:u.email},'DELETE')).status,204);assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_test_refund_operations')).rows[0].n,0);
+ }finally{release?.();if(pending)await pending.catch(()=>{});if(server){server.closeAllConnections();await new Promise(r=>server.close(r))}if(provider)await provider.close();await close();await admin.query('DROP DATABASE '+db+' WITH (FORCE)');await admin.end();for(const [k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v}}
+});
