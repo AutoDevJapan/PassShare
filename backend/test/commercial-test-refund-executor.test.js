@@ -7,14 +7,14 @@ const account='acct_sandboxexecutor',key='rk_test_refund_execution_fixture';
 const operation=()=>({account,paymentIntentId:'pi_sandboxexecutor',contractId:randomUUID(),ownerId:randomUUID(),quoteHash:'a'.repeat(64),paymentAmountJpy:980,approvedAmountJpy:400,operationId:randomUUID(),decisionFingerprint:'b'.repeat(64)});
 
 async function fixture(){
- const requests=[],payments=new Map(),replies=new Map();let refundCount=0,dropFirst=false,externalRefunds=[];
+ const requests=[],payments=new Map(),replies=new Map();let refundCount=0,dropFirst=false,externalRefunds=[],hideCreated=false;
  const server=createServer(async(req,res)=>{
   const chunks=[];for await(const chunk of req)chunks.push(chunk);const body=new URLSearchParams(Buffer.concat(chunks).toString()),url=new URL(req.url,'http://127.0.0.1');
   requests.push({method:req.method,path:url.pathname,account:req.headers['stripe-account'],key:req.headers['idempotency-key'],body:Object.fromEntries(body)});
   const json=(code,value)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(value))};
   if(req.headers.authorization!=='Bearer '+key||req.headers['stripe-account']!==account)return json(401,{error:{type:'authentication_error',message:'Fixture account mismatch'}});
   if(req.method==='GET'&&url.pathname.startsWith('/v1/payment_intents/'))return json(200,payments.get(url.pathname.split('/').at(-1)));
-  if(req.method==='GET'&&url.pathname==='/v1/refunds')return json(200,{object:'list',has_more:false,data:[...replies.values(),...externalRefunds]});
+  if(req.method==='GET'&&url.pathname==='/v1/refunds')return json(200,{object:'list',has_more:false,data:[...(hideCreated?[]:replies.values()),...externalRefunds]});
   if(req.method==='POST'&&url.pathname==='/v1/refunds'){
    const idempotency=req.headers['idempotency-key'];
    if(!replies.has(idempotency))replies.set(idempotency,{id:'re_execution'+(++refundCount),object:'refund',payment_intent:body.get('payment_intent'),amount:Number(body.get('amount')),currency:'jpy',status:'succeeded',metadata:{operationId:body.get('metadata[operationId]'),decisionFingerprint:body.get('metadata[decisionFingerprint]')}});
@@ -24,7 +24,7 @@ async function fixture(){
   return json(404,{error:{type:'invalid_request_error',message:'Unexpected fixture request'}});
  });
  server.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
- return {requests,payments,replies,get refundCount(){return refundCount},set dropFirst(v){dropFirst=v},set externalRefunds(v){externalRefunds=v},fetchImpl:(url,options)=>{const u=new URL(url);assert.equal(u.origin,'https://api.stripe.com');return fetch(base+u.pathname+u.search,options)},async close(){server.closeAllConnections();await new Promise(r=>server.close(r))}};
+ return {requests,payments,replies,get refundCount(){return refundCount},set dropFirst(v){dropFirst=v},set hideCreated(v){hideCreated=v},set externalRefunds(v){externalRefunds=v},fetchImpl:(url,options)=>{const u=new URL(url);assert.equal(u.origin,'https://api.stripe.com');return fetch(base+u.pathname+u.search,options)},async close(){server.closeAllConnections();await new Promise(r=>server.close(r))}};
 }
 
 test('sandbox executor rejects live/unconfigured authority before any provider mutation',async()=>{
@@ -65,5 +65,14 @@ test('lost sandbox provider response stays uncertain and retry preserves operati
   f.payments.set(op.paymentIntentId,{id:op.paymentIntentId,object:'payment_intent',livemode:false,status:'succeeded',amount:980,amount_received:980,currency:'jpy',metadata:{contractId:op.contractId,ownerId:op.ownerId,quoteHash:op.quoteHash}});f.dropFirst=true;
   const execute=createTestRefundExecutor({key,account,fetchImpl:f.fetchImpl});const lost=await execute(op,async()=>true);assert.equal(lost.state,'uncertain');assert.equal(lost.refund,null);assert.equal(f.refundCount,1);
   const retry=await execute(op);assert.equal(retry.state,'succeeded');assert.equal(f.refundCount,1);const sent=f.requests.filter(r=>r.method==='POST');assert.equal(sent.length,1,'Matching provider metadata reconciles a lost response without another POST');
+ }finally{await f.close()}
+});
+
+test('uncertain retry reuses the identical provider key when current inventory has not exposed the first refund',async()=>{
+ const {createTestRefundExecutor}=await import('../src/commercial-test-refund-executor.js'),f=await fixture(),op=operation();
+ try{
+  f.payments.set(op.paymentIntentId,{id:op.paymentIntentId,object:'payment_intent',livemode:false,status:'succeeded',amount:980,amount_received:980,currency:'jpy',metadata:{contractId:op.contractId,ownerId:op.ownerId,quoteHash:op.quoteHash}});f.dropFirst=true;f.hideCreated=true;
+  const execute=createTestRefundExecutor({key,account,fetchImpl:f.fetchImpl});assert.equal((await execute(op,async()=>true)).state,'uncertain');assert.equal((await execute(op,async()=>true)).state,'succeeded');
+  const posts=f.requests.filter(r=>r.method==='POST');assert.equal(posts.length,2);assert.equal(posts[0].key,posts[1].key);assert.deepEqual(posts[0].body,posts[1].body);assert.equal(f.refundCount,1,'Repeated dispatch cannot create a second refund when the result was lost');
  }finally{await f.close()}
 });
