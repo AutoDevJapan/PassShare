@@ -15,11 +15,11 @@ for mode in first fallback allfail; do
    local operation="${*: -1}"
    if [[ " $* " == *' update '* || "$operation" == update ]]; then
     updates=$((updates+1))
-    grep -q 'signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg' "$sources"
+    grep -q 'signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg' "$sources" || exit 97
     if [[ "$mode" == first ]]; then return 0; fi
     if ((updates==1)); then return 100; fi
-    grep -q 'https://archive.ubuntu.com/ubuntu/ noble ' "$sources"
-    grep -q 'https://security.ubuntu.com/ubuntu/ noble-security ' "$sources"
+    grep -q 'https://archive.ubuntu.com/ubuntu/ noble ' "$sources" || exit 97
+    grep -q 'https://security.ubuntu.com/ubuntu/ noble-security ' "$sources" || exit 97
     [[ "$mode" != allfail ]]
    else
     installs=$((installs+1)); [[ " $* " == *' libfixture '* ]]
