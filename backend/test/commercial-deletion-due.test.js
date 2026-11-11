@@ -58,6 +58,7 @@ test('only a reauthenticated explicitly scheduled Box is deleted by the due work
   }
   const recoveryConsent=await schedule();
   assert.equal((await call('/api/auth/recovery-key',actor,{currentPassword:password})).status,201);
+  assert.equal((await call(root+'/'+recoveryConsent.id,actor)).body.requiresNewConsent,true,'The current owner can distinguish invalidated consent before a worker examines it');
   assert.equal((await runDueDeletions(pool,{limit:5})).retained,1,'Recovery key reissue invalidates the old automatic deletion consent');
   assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[retainedBox.body.vaultId])).rows[0].n,1);
   assert.equal((await call(root+'/'+recoveryConsent.id+'/cancel',actor,{revision:0})).status,200);
@@ -65,6 +66,7 @@ test('only a reauthenticated explicitly scheduled Box is deleted by the due work
   const invitedEmail=randomUUID()+'@example.test';const invitation=await call('/api/auth/vaults/'+retainedBox.body.vaultId+'/invitations',actor,{email:invitedEmail,role:'member'});assert.equal(invitation.status,201);
   const invitationId=invitation.body.id??invitation.body.invitation?.id;assert(invitationId);
   assert.equal((await call('/api/auth/vaults/'+retainedBox.body.vaultId+'/invitations/'+invitationId,actor,undefined,'DELETE')).status,204);
+  assert.equal((await call(root+'/'+sharedConsent.id,actor)).body.requiresNewConsent,true);
   assert.equal((await runDueDeletions(pool,{limit:5})).retained,1,'A sharing/invitation change permanently invalidates the original automatic consent even after cancellation');
   assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[retainedBox.body.vaultId])).rows[0].n,1);
   const {startDueDeletionWorker}=await import('../src/commercial-deletion-worker.js');let observed,release;const reached=new Promise(r=>{observed=r;}),resume=new Promise(r=>{release=r;}),worker=startDueDeletionWorker(pool,{intervalMs:10,run:async()=>{observed();await resume;return{nextAfter:null};}});
