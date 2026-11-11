@@ -621,3 +621,8 @@ sandbox台帳や未払い受諾を有料期間へ昇格しない。他の契約�
 最新削除台帳の独立保全、本番復元後の削除再適用の運用受入、法定保持期間・監査記録の
 保持契約、全クライアントの表示／受入も未完である。受付台帳の退会cascadeは架空検査の
 挙動であり、有料契約の法定保存期間を確定したものではない。本候補をM8全完としない。
+
+契約添付consumerは`consumeCommercialAttachment`で親snapshotと添付暗号文を同revisionで
+取得し、既存workerへ独立contextと両revisionを渡す。保存callbackは必要bytesを処理中に
+コピーし、返却後に保持しない。成功・保存失敗・取消しの全経路でworkerの解放を行う。
+このcallback接続は一括archive形式や全client UIの提供完了を意味しない。
