@@ -117,6 +117,7 @@ fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate
     // Independent expected catalog, including every current encrypted DDL table.
     let expected = json!([
         "commercial_contracts",
+        "commercial_data_deletion_requests",
         "commercial_export_events",
         "commercial_live_contracts",
         "commercial_live_periods",

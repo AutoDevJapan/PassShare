@@ -421,7 +421,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
         throw authHttpError(400, "PS023", "Password box name is required");
       }
       if (req.headers["idempotency-key"] && mutateOnce) {
-        const result = await mutateOnce({ actor: req.auth.userId, resource: req.auth.userId,
+        const result = await mutateOnce({ actor: req.auth.userId, sessionId:req.auth.sessionId, resource: req.auth.userId,
           operation: "box", key: req.headers["idempotency-key"], request: { name } });
         res.status(201).json(result);
         return;

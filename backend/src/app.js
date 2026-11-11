@@ -185,7 +185,7 @@ export async function createApp(options = {}) {
   );
   const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });
   app.use("/api/support-receipts", await createSupportReceiptRouter({pool,authStore}));
-  app.use('/api/commercial-contracts',createCommercialContractRouter({pool,authStore,refundLookup:testRefundLookup,liveRefundLookup,...(Object.hasOwn(options,'testRefundExecutor')?{testRefundExecutor:options.testRefundExecutor}:{})}));
+  app.use('/api/commercial-contracts',createCommercialContractRouter({pool,authStore,loginGuardStore,refundLookup:testRefundLookup,liveRefundLookup,...(Object.hasOwn(options,'testRefundExecutor')?{testRefundExecutor:options.testRefundExecutor}:{})}));
   app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore, mutateOnce }));
   // Keep an unfinished client/key migration off existing hosted accounts.
   const encryptedEnabled = process.env.PASSSHARE_ENCRYPTED_STORAGE === "true";

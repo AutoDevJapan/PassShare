@@ -144,3 +144,17 @@ step never issues another refund POST. A separate HTTP/PostgreSQL test injects a
 real result-write failure after one simulated provider POST, restarts the API,
 and verifies one-refund read-only reconciliation. Neither fixture uses Stripe or
 establishes recovery of an operation for which no exact provider result exists.
+
+Explicit Box deletion requests are also part of the exact inventory and every
+column is compared before reopening. Dedicated unshared boxes and canceled paid
+contracts use synthetic SQL dates; the formal HTTP endpoint and real password
+reauthentication create nonempty requests for surviving and retired actors.
+After restore, the current owner retrieves the same request, cancels it, and
+the Box remains. The retired actor's request must cascade to zero. This is not
+an automatic deletion job, production deletion, legal-retention qualification,
+or reapplication of a post-backup deletion barrier. Those remain separate work.
+The mutation inventory also retains synthetic deleted-creation tombstones.
+Full-row comparison preserves their original scope but no Box identity or
+content/request digest. After restore, replaying the same creation key must
+return409 without creating a Box. This is a pre-backup terminal barrier, not
+proof of reconciling a newer deletion against an older backup.

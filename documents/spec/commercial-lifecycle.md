@@ -549,3 +549,48 @@ API再起動後の照合と追加POSTなしを検査する。合成復元ではH
 空の成功や私的な履歴を返さない。ページ間の新しい申請/判断は各読取り時点の履歴として
 扱い、全ページのtransaction snapshotは約束しない。通知配送・実返金・保存期間や
 削除の完了は、この再取得APIで代用しない。
+
+### 本人が明示した単独所有ボックスの削除受付
+
+契約終了後30日の条件は[承認済み商用条件](commercial-packaging.md)に従う。
+`POST /api/commercial-contracts/:id/data-deletion-requests`は、現在の契約所有者かつ
+対象パスワードボックスの単独所有者が、再認証して一つの対象を明示する経路である。
+課金管理だけでボックス所有権を取得せず、全ボックスの自動削除を開始しない。
+
+本文は`requestId`、`boxId`、`quoteHash`、`expectedContentVersion`、
+`expectedAttributeVersion`、`expectedStateRevision`、`expectedKeyEpoch`、
+`confirmationBoxId`、`currentPassword`だけを受ける。暗号化されていない対象では
+state revisionとkey epochを明示的にnullとする。確認Box IDは選択Box IDと一致させる。
+日時、削除済みフラグ、他人のowner主張は受け付けない。再認証値と項目・添付本文は
+受付台帳へ保存しない。
+
+サーバーはBox→本人→session→契約の順でロックし、DB現在時刻で資格を確認する。
+契約は期間末解約済みで、検証済み有料期間の終了日から30日が経過している必要がある。
+sandbox台帳や未払い受諾を有料期間へ昇格しない。他の契約に有効期間・未来期間・
+書出し猶予がある場合も保持する。現在の他メンバー、未解決招待、暗号化移行・rotationが
+ある対象は拒否する。端末の`.pbox`、共同データ、他のBoxは対象に含めない。
+
+受付は`pending`と版0を返し、同request IDと同内容の再送は同じ受付を返す。
+契約・対象・入力が変わる再利用は409。他ownerは404、無資格は401、応答はno-store。
+`GET .../data-deletion-requests/:request`で再ログイン／API再起動後にも状態を取得できる。
+
+`POST .../:request/cancel`は`revision`だけを受け、実行前の受付を原子的に`canceled`へ
+確定する。取消成功後は削除しない。`POST .../:request/execute`は`revision`、
+`currentPassword`、`confirmationBoxId`を受け、期日・所有・session・資格指紋・
+有料期間・Box版・暗号世代・項目と添付の内容指紋を再確認する。変化時は元データを
+保持して409／401／403とする。成功時はそのBoxだけを削除し、同transactionで
+`completed`と日時を保存する。完了再送は保存結果を返し、完了後の取消は409。
+アカウント・他Boxの資格・会計契約・支払い／返金記録をこの処理で消さない。
+対象Box作成の冪等記録は消すと古い要求で再作成されるため、元のscope識別子だけを
+残す`deleted:true`の最小tombstoneへ変える。対象ID・作成結果指紋・要求内容指紋を
+除去し、古い同scope要求は409にする。他Box・他ownerのscopeは変えない。
+
+このAPI候補の利用側は認証済みHTTP経路であり、UI画面の追加・本人未確認の見た目変更を
+含まない。隔離PG検査は署名fixtureとSQLで期間状態を構成し、公式StripeやPrd有料契約を
+使わない。取消と実行、共有化・移管、期間延長、logout／資格期限・password変更を
+実ロック待ちに同期して検査する。
+
+元要件の自動期日処理は、受付で承認された対象を既存jobへ接続する次工程として残る。
+最新削除台帳の独立保全とバックアップ復元後の削除再適用、法定保持期間・監査記録の
+保持契約、全クライアントの表示／受入も未完である。受付台帳の退会cascadeは架空検査の
+挙動であり、有料契約の法定保存期間を確定したものではない。本候補をM8全完としない。
