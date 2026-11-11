@@ -423,6 +423,12 @@ sandbox台帳を支払済みの根拠にしない。受け口の本番有効化�
 結果返却前に、DB時刻でsession期限を再確認し、
 失効した資格へ結果を返さない。Box所属・鍵・支払済み期間を変更しない。
 
+現在資格と支払いbindingを短いtransactionで取得し、DB接続と契約行ロックを解放してから
+providerを照会する。同じ契約の並行照会が外部待ちで共有poolを占有しない。
+返却後は新しいtransactionで現在session・所有者・申請指紋・元イベントhash・契約/見積と
+支払いbindingを再取得し、変化があれば401/404/409で拒否する。照会結果の再利用や
+読み取りの外に出したことによる承認・返金実行権限の省略は行わない。
+
 Live読取りは `PASSSHARE_STRIPE_LIVE_READ_KEY`、既存のlive accountとendpoint scopeを
 使い、test読取りとは別に構成する。providerへの呼出しはPaymentIntentとRefund一覧の
 GETだけで、live mode、同じaccount/PI、JPY受領額、元の所有者・契約・見積を照合する。
