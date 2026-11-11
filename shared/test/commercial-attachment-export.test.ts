@@ -36,3 +36,13 @@ test('attachment caller consumes a file successfully and then wipes it',async()=
  await consumeCommercialAttachment(api as any,worker as any,'contract',item,attachment,4,new AbortController().signal,async v=>{assert.equal(v.bytes[0],9);consumed++;});
  assert.equal(consumed,1);assert.equal(released,1);assert.equal(file.bytes[0],0);
 });
+
+test('box consumer walks multiple pages and delivers item plus attachment under one snapshot',async()=>{
+ const {consumeCommercialBox}=await import('../cloud/commercial-attachment-export.ts');
+ const box='a'.repeat(26),ids=['b'.repeat(26),'c'.repeat(26)];const contexts=ids.map(itemId=>({passwordBoxId:box,itemId,itemVersion:1,keyEpoch:2}));
+ const files:any[]=[],items:string[]=[],pins:number[]=[];let released=0;
+ const api={getCommercialExportPage:async(_c:any,_b:any,p:any,after:any)=>{pins.push(p.snapshotRevision);const i=after===null?0:1;return {envelopes:[{context:contexts[i]}],nextCursor:i===0?ids[0]:null,attachmentsIncluded:false};},getCommercialAttachmentItemSnapshot:async()=> 'parent',getCommercialEncryptedAttachment:async()=> 'body'};
+ const worker={decrypt:async(_e:any,c:any)=>JSON.stringify({id:c.itemId,attachments:c.itemId===ids[0]?[{attachmentId:'d'.repeat(26),attachmentVersion:1,keyEpoch:2}]:[]}),decryptAttachment:async()=>({name:'添付',bytes:new Uint8Array([0,255])}),releaseAttachment:(v:any)=>{released++;v.bytes.fill(0);}};
+ await consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async text=>{items.push(JSON.parse(text).id);},async file=>{files.push([...file.bytes]);});
+ assert.deepEqual(items,ids);assert.deepEqual(files,[[0,255]]);assert.deepEqual(pins,[4,4]);assert.equal(released,1);
+});
