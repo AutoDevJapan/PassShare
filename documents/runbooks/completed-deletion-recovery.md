@@ -2,7 +2,7 @@
 
 関連: [#593](https://github.com/AutoDevJapan/PassShare/issues/593)、[#600](https://github.com/AutoDevJapan/PassShare/issues/600)、[商用条件](../spec/commercial-packaging.md)、[保持仕様](../spec/support-data-lifecycle.md)。
 
-CLIの現在正本・復元先の接続にも通常backendと同じDB接続方針を適用する。URLの`host`上書きを拒否し、URL内TLS設定で証明書検証を弱めず、`DATABASE_CA_CERT`があれば同じCAへ固定する。Railway内部・loopback・運用者が正規に指定したprivate hostの既存条件は維持する。接続先ごとの正当な設定を事前に確認し、検証を通すために公開hostをprivate指定へ追加しない。
+CLIの現在正本・復元先の接続にも通常backendと同じDB接続方針を適用する。URLの`host`上書きを拒否し、URL内TLS設定で証明書検証を弱めない。既存方針ではRailway内部hostはTLSなしで接続し、この内部host例外では`DATABASE_CA_CERT`が設定されていてもCAを使わない。それ以外はCAがあれば同じCAへ固定し、CAなしのloopback・正規に指定したprivate hostはTLS要求がなければTLSなし、それ以外は既存の明示した検証省略設定がない限り証明書を検証する。接続先ごとの正当な設定を事前に確認し、検証を通すために公開hostをprivate指定へ追加しない。
 
 この手順は復元先の停止中に、現在の確定済み削除を反映する。削除受付を新しく承認したり、バックアップ内の古い資格を有効にしたりする処理ではない。元の本人確認・共有・暗号鍵・取消記録の照合がすべて終わるまで、API、worker、外部ネットワークを開かない。
 
