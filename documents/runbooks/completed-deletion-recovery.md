@@ -2,6 +2,8 @@
 
 関連: [#593](https://github.com/AutoDevJapan/PassShare/issues/593)、[#600](https://github.com/AutoDevJapan/PassShare/issues/600)、[商用条件](../spec/commercial-packaging.md)、[保持仕様](../spec/support-data-lifecycle.md)。
 
+CLIの現在正本・復元先の接続にも通常backendと同じDB接続方針を適用する。URLの`host`上書きを拒否し、URL内TLS設定で証明書検証を弱めず、`DATABASE_CA_CERT`があれば同じCAへ固定する。Railway内部・loopback・運用者が正規に指定したprivate hostの既存条件は維持する。接続先ごとの正当な設定を事前に確認し、検証を通すために公開hostをprivate指定へ追加しない。
+
 この手順は復元先の停止中に、現在の確定済み削除を反映する。削除受付を新しく承認したり、バックアップ内の古い資格を有効にしたりする処理ではない。元の本人確認・共有・暗号鍵・取消記録の照合がすべて終わるまで、API、worker、外部ネットワークを開かない。
 
 確定削除のtransactionは`commercial_deletion_journal`へ削除ID・Box ID・確定時刻だけを保存する。アカウント退会後にも古いbackupを照合できるよう、user/contractへのcascade参照を持たない。項目本文、添付、鍵、認証値、内容指紋は記録しない。対象を復活させ得るbackupがなくなり、その復元経路を閉じたと確認するまで必要な記録として保持する。新しい固定年数・無期限保持・有料保管先をこの実装で決めない。
