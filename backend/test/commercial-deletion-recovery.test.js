@@ -133,6 +133,6 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   }finally{await client.end();}
   assert.equal((await call('/api/auth/account',other,{currentPassword:password,confirmationEmail:other.email},'DELETE')).status,204);
  }finally{
-  if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}if(currentSource)await currentSource.end();await closeSource();await closeTarget();await admin.query('DROP DATABASE '+targetName+' WITH (FORCE)');await admin.query('DROP DATABASE '+sourceName+' WITH (FORCE)');await admin.end();for(const name of ['old-private-fixture.dump','current-deletions.private.json','source.private.json','target.private.json']){const file=path.join(scratch,name);if(fs.existsSync(file))fs.unlinkSync(file);}fs.rmdirSync(scratch);
+  if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}if(currentSource)await currentSource.end();await closeSource();await closeTarget();await admin.query('DROP DATABASE '+targetName+' WITH (FORCE)');await admin.query('DROP DATABASE '+sourceName+' WITH (FORCE)');await admin.end();for(const name of ['old-private-fixture.dump','current-deletions.private.json','source.private.json','target.private.json','independent-journal.private.json','copy.private.json']){const file=path.join(scratch,name);if(fs.existsSync(file))fs.unlinkSync(file);}fs.rmdirSync(scratch);
  }
 });
