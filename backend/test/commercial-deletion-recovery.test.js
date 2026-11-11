@@ -64,6 +64,26 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   const prepared=JSON.parse(execFileSync(process.execPath,[cli,'prepare-closed',targetConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(prepared.closed,true);
   const transientTarget=new pg.Pool({connectionString:url.href});try{await assert.rejects(createApp({pool:transientTarget,loginGuardStore:createMemoryLoginGuardStore()}),/RESTORE_TARGET_CLOSED/);assert.equal(await completedDeletionGate(transientTarget,options),false,'Old archive cannot qualify itself as current');}finally{await transientTarget.end();}
   const oldConsentPool=new pg.Pool({connectionString:url.href});try{const row=(await oldConsentPool.query('SELECT state,consent_invalidated_at FROM commercial_data_deletion_requests WHERE id=$1',[oldDue.body.id])).rows[0];assert.equal(row.state,'pending','The actual old archive really revived a later canceled automatic request');assert(row.consent_invalidated_at,'Closed restore preparation invalidates archive-era automatic approval');const{runDueDeletions}=await import('../src/commercial-data-deletion.js');await assert.rejects(runDueDeletions(oldConsentPool),/RESTORE_TARGET_CLOSED/);}finally{await oldConsentPool.end();}
+  // All other original approval conditions still match in this real restored
+  // archive. Temporarily open only this isolated target control marker: removing
+  // the invalidation alone must permit deletion, proving why it is necessary.
+  const sensitivityPool=new pg.Pool({connectionString:url.href});
+  try{
+   const{runDueDeletions}=await import('../src/commercial-data-deletion.js');await migrateDeletionJournal(sensitivityPool);await sensitivityPool.query("UPDATE passshare_restore_control.recovery SET phase='open'");
+   assert.equal((await runDueDeletions(sensitivityPool,{limit:100})).completed,0,'With every other precondition current, restored invalidation alone prevents the old canceled request');
+   const invalidation=(await sensitivityPool.query('SELECT consent_invalidated_at FROM commercial_data_deletion_requests WHERE id=$1',[oldDue.body.id])).rows[0].consent_invalidated_at;
+   const exactRows=(await sensitivityPool.query("SELECT 'box' kind,to_jsonb(v) r FROM connect_vaults v WHERE id=$1 UNION ALL SELECT 'membership',to_jsonb(m) FROM vault_memberships m WHERE vault_id=$1 UNION ALL SELECT 'item',to_jsonb(i) FROM connect_items i WHERE vault_id=$1",[boxId])).rows;
+   const oldRequest=(await sensitivityPool.query('SELECT to_jsonb(r) r FROM commercial_data_deletion_requests r WHERE id=$1',[oldDue.body.id])).rows[0].r;
+   await sensitivityPool.query('UPDATE commercial_data_deletion_requests SET consent_invalidated_at=NULL WHERE id=$1',[oldDue.body.id]);
+   assert.equal((await runDueDeletions(sensitivityPool,{limit:100})).completed,1,'Mutation sensitivity: removing only invalidation really allows the otherwise eligible restored request');
+   // End the mutation before regular reconciliation and reconstruct only this
+   // disposable target from its independently held exact restored rows.
+   const insert=async(table,row)=>{const keys=Object.keys(row);assert(keys.every(k=>/^[a-z_]+$/.test(k)));await sensitivityPool.query('INSERT INTO '+table+'('+keys.join(',')+') VALUES('+keys.map((_,i)=>'$'+(i+1)).join(',')+')',keys.map(k=>row[k]));};
+   await insert('connect_vaults',exactRows.find(x=>x.kind==='box').r);for(const r of exactRows.filter(x=>x.kind==='membership'))await insert('vault_memberships',r.r);for(const r of exactRows.filter(x=>x.kind==='item'))await insert('connect_items',r.r);
+   await sensitivityPool.query('DELETE FROM commercial_deletion_journal WHERE deletion_id=$1',[oldDue.body.id]);
+   await sensitivityPool.query('UPDATE commercial_data_deletion_requests SET state=$2,revision=$3,completed_at=NULL,consent_invalidated_at=$4 WHERE id=$1',[oldDue.body.id,oldRequest.state,oldRequest.revision,invalidation]);
+   await sensitivityPool.query("UPDATE passshare_restore_control.recovery SET phase='closed'");
+  }finally{await sensitivityPool.end();}
   const replayed=JSON.parse(execFileSync(process.execPath,[cli,'reapply',targetConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(replayed.ok,true);assert.equal(replayed.APIStillClosed,true);assert.equal(replayed.identityMembershipKeyQualification,false);
   const client=new pg.Client({connectionString:url.href});await client.connect();
   try{

@@ -56,11 +56,13 @@ test('only a reauthenticated explicitly scheduled Box is deleted by the due work
    }finally{await blocker.query('ROLLBACK').catch(()=>{});blocker.release();if(pending)await pending;}
    if(!cancel){await pool.query('UPDATE commercial_live_periods SET period_start=$2::date,period_end=$3::date WHERE contract_id=$1',[c.id,period.s,period.e]);assert.equal((await call(root+'/'+consent.id+'/cancel',actor,{revision:0})).status,200);}
   }
-  const recoveryConsent=await schedule();
+  const recoveryRequest={...request,requestId:randomUUID(),boxId:retainedBox.body.vaultId,confirmationBoxId:retainedBox.body.vaultId},recoveryResponse=await call(root+'/schedule-due',actor,recoveryRequest);assert.equal(recoveryResponse.status,201);const recoveryConsent=recoveryResponse.body;
   assert.equal((await call('/api/auth/recovery-key',actor,{currentPassword:password})).status,201);
   assert.equal((await call(root+'/'+recoveryConsent.id,actor)).body.requiresNewConsent,true,'The current owner can distinguish invalidated consent before a worker examines it');
+  assert.equal((await call(root+'/schedule-due',actor,recoveryRequest)).body.requiresNewConsent,true,'POST replay uses the same current-user invalidation projection as GET');
   assert.equal((await runDueDeletions(pool,{limit:5})).retained,1,'Recovery key reissue invalidates the old automatic deletion consent');
   assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[retainedBox.body.vaultId])).rows[0].n,1);
+  let acquisitionFailed=false;try{await runDueDeletions({query:pool.query.bind(pool),async connect(){throw Error('synthetic acquire failure');}},{limit:5});}catch(error){acquisitionFailed=true;assert.equal(error.deletionNextAfter,recoveryConsent.id,'Connection acquisition failures advance using the actual selected candidate identity');}assert(acquisitionFailed);
   assert.equal((await call(root+'/'+recoveryConsent.id+'/cancel',actor,{revision:0})).status,200);
   const sharedConsent=await schedule();
   const invitedEmail=randomUUID()+'@example.test';const invitation=await call('/api/auth/vaults/'+retainedBox.body.vaultId+'/invitations',actor,{email:invitedEmail,role:'member'});assert.equal(invitation.status,201);

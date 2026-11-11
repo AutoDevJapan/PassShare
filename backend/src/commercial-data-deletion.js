@@ -90,7 +90,8 @@ export async function runDueDeletions(pool,{limit=20,after=null}={}){
  await assertNotClosedRestoreTarget(pool);
  const {complete}=deletionPolicy(),rows=(await pool.query("SELECT id,box_id,user_id,contract_id FROM commercial_data_deletion_requests WHERE execution_mode='due' AND state='pending' AND not_before<=(clock_timestamp() AT TIME ZONE 'Asia/Tokyo')::date AND($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT $1",[limit,after])).rows;
  const result={examined:rows.length,completed:0,retained:0,nextAfter:rows.at(-1)?.id??null};
- for(const candidate of rows){const client=await pool.connect();try{
+ for(const candidate of rows){let client;try{
+  client=await pool.connect();
   await client.query('BEGIN');
   await client.query("SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='10s'");
   const box=(await client.query('SELECT * FROM connect_vaults WHERE id=$1 FOR UPDATE',[candidate.box_id])).rows[0];
@@ -99,7 +100,7 @@ export async function runDueDeletions(pool,{limit=20,after=null}={}){
   const row=(await client.query("SELECT *,paid_through::text paid_through,not_before::text not_before FROM commercial_data_deletion_requests WHERE id=$1 AND box_id=$2 AND user_id=$3 AND contract_id=$4 AND state='pending' AND execution_mode='due' AND not_before<=(clock_timestamp() AT TIME ZONE 'Asia/Tokyo')::date FOR UPDATE",[candidate.id,candidate.box_id,candidate.user_id,candidate.contract_id])).rows[0];
   if(!row||!user||!contract||row.consent_invalidated_at!==null||consentCredential(user)!==row.consent_credential_fingerprint)throw failure(409,'Due deletion consent is no longer current');
   await complete(client,row,contract,box);await client.query('COMMIT');result.completed++;
- }catch(error){await client.query('ROLLBACK').catch(()=>{});if(![401,403,404,409].includes(error?.status)){error.deletionNextAfter=candidate.id;throw error;}result.retained++;}finally{client.release();}}
+ }catch(error){if(client)await client.query('ROLLBACK').catch(()=>{});if(![401,403,404,409].includes(error?.status)){error.deletionNextAfter=candidate.id;throw error;}result.retained++;}finally{client?.release();}}
  return result;
 }
 
@@ -136,7 +137,7 @@ export function registerDataDeletionRoutes(router,{pool,authStore,loginGuardStor
   const proof=await reauthenticate(req),result=await transaction(req,body.boxId,proof,async(client,contract,box,user)=>{
    if(contract.quote_hash!==body.quoteHash)throw failure(409,'Contract quote changed');
    const fingerprint=digest(JSON.stringify({mode:'due',contract:contract.id,owner:req.auth.userId,box:body.boxId,quote:body.quoteHash,content:body.expectedContentVersion,attribute:body.expectedAttributeVersion,revision:body.expectedStateRevision,epoch:body.expectedKeyEpoch}));
-   const previous=(await client.query('SELECT *,paid_through::text paid_through,not_before::text not_before FROM commercial_data_deletion_requests WHERE user_id=$1 AND request_id=$2',[req.auth.userId,body.requestId])).rows[0];if(previous){if(previous.fingerprint!==fingerprint)throw failure(409,'Deletion request changed');return view(previous);}
+   const previous=(await client.query('SELECT *,paid_through::text paid_through,not_before::text not_before FROM commercial_data_deletion_requests WHERE user_id=$1 AND request_id=$2',[req.auth.userId,body.requestId])).rows[0];if(previous){if(previous.fingerprint!==fingerprint)throw failure(409,'Deletion request changed');return view(previous,user);}
    const state=await snapshot(client,box,req.auth.userId),entitlement=await ended(client,contract,true);
    if(state.content!==body.expectedContentVersion||state.attribute!==body.expectedAttributeVersion||String(state.revision)!==String(body.expectedStateRevision)||String(state.epoch)!==String(body.expectedKeyEpoch))throw failure(409,'Password box version changed');
    return view((await client.query("INSERT INTO commercial_data_deletion_requests(id,contract_id,user_id,request_id,box_id,quote_hash,fingerprint,data_fingerprint,content_version,attribute_version,encrypted_state_revision,encrypted_key_epoch,paid_through,not_before,execution_mode,consent_credential_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::date,$14::date,'due',$15) RETURNING *,paid_through::text paid_through,not_before::text not_before",[randomUUID(),contract.id,req.auth.userId,body.requestId,box.id,contract.quote_hash,fingerprint,state.fingerprint,state.content,state.attribute,state.revision,state.epoch,entitlement.paidThrough,entitlement.exportWindow.endExclusive,consentCredential(user)])).rows[0]);
