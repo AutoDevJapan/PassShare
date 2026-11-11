@@ -14,6 +14,7 @@ export function createCloudApi(authFetch: CloudFetch) {
 
   async function getCommercialExportPage(contractId: string, boxId: string,
     pin: {keyEpoch: number; snapshotRevision: number}, after: string | null, signal: AbortSignal): Promise<{envelopes: EncryptedEnvelope[]; nextCursor: string | null; attachmentsIncluded: false}> {
+    pin = {keyEpoch: pin.keyEpoch, snapshotRevision: pin.snapshotRevision};
     if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(contractId) || !validId(boxId) ||
       !positiveInteger(pin.keyEpoch) || !positiveInteger(pin.snapshotRevision) || (after !== null && !validId(after))) throw new CloudApiError(400);
     const url = `/api/commercial-contracts/${contractId}/export/boxes/${boxId}/items?epoch=${pin.keyEpoch}&revision=${pin.snapshotRevision}${after === null ? '' : `&after=${after}`}`;

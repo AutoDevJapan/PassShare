@@ -6,7 +6,7 @@ test('contract-window export returns real ciphertext while rechecking current me
  const admin=new pg.Pool({connectionString:process.env.DATABASE_URL}),name='ps_export_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+name);
  const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});const closePool=trackPoolShutdown(pool);
  const secret='whsec_export_fixture',account='acct_exportfixture';Object.assign(process.env,{PASSSHARE_ENCRYPTED_STORAGE:'true',PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true',PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account});
- const {createApp}=await import('../src/app.js');const {app}=await createApp({pool});const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
+ const {createApp}=await import('../src/app.js');const {app}=await createApp({pool});let server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));let base='http://127.0.0.1:'+server.address().port;
  const call=async(p,t,b,method=b===undefined?'GET':'POST')=>{const r=await fetch(base+p,{method,headers:{'content-type':'application/json','x-passshare-client':'mobile',...(t?{authorization:'Bearer '+t}:{})},body:b===undefined?undefined:JSON.stringify(b)});return {status:r.status,body:await r.json().catch(()=>null)}};
  const quote=async a=>{const q=await call('/api/commercial-contracts',a.refreshToken,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(q.status,201);await call('/api/commercial-contracts/'+q.body.id+'/accept',a.refreshToken,{quoteHash:q.body.quoteHash});return q.body;};
  const pay=async(a,q)=>{const event={id:'evt_'+randomUUID().replaceAll('-',''),account,type:'payment_intent.succeeded',livemode:true,created:Math.floor((Date.now()-35*86400000)/1000),data:{object:{id:'pi_'+randomUUID().replaceAll('-',''),object:'payment_intent',status:'succeeded',currency:'jpy',amount:980,amount_received:980,livemode:true,metadata:{contractId:q.id,ownerId:a.user.id,quoteHash:q.quoteHash,cycle:'1'}}}},payload=JSON.stringify(event);const r=await fetch(base+'/api/commercial-events/stripe-live',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload,secret})},body:payload});assert.equal(r.status,200);};
@@ -89,14 +89,19 @@ test('contract-window export returns real ciphertext while rechecking current me
   const saved=(await pool.query('SELECT period_start::text s,period_end::text e FROM commercial_live_periods WHERE contract_id=$1',[q.id])).rows[0];
   await pool.query("UPDATE commercial_live_periods SET period_start=CURRENT_DATE-100,period_end=CURRENT_DATE-31 WHERE contract_id=$1",[q.id]);assert.equal((await call(endpoint,a.refreshToken)).status,403);
   await pool.query('UPDATE commercial_live_periods SET period_start=$2::date,period_end=$3::date WHERE contract_id=$1',[q.id,saved.s,saved.e]);
+  // Separate the expanded client/export acceptance from the lock-race fixture's
+  // per-app 30/min counter. Production limits remain unchanged; the same real DB,
+  // sessions and ciphertext survive this ordinary API restart.
+  server.closeAllConnections();await new Promise(r=>server.close(r));
+  const restarted=await createApp({pool});server=restarted.app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;
   // Revoke while the export is demonstrably queued at the real box lock.
   async function blocked(change,status){
    const blocker=await pool.connect();let pending;
    try{
     await blocker.query('BEGIN');await blocker.query('SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE',[boxId]);
-    pending=call(endpoint,a.refreshToken);
+    let early;pending=call(endpoint,a.refreshToken).then(r=>{early=r;return r;});
     let waiting=false;for(let i=0;i<100;i++){if((await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM connect_vaults%'")).rowCount){waiting=true;break;}await new Promise(r=>setTimeout(r,10));}
-    assert.equal(waiting,true);await change(blocker);await blocker.query('COMMIT');
+    assert.equal(waiting,true,`Export must reach the Box lock; early HTTP status: ${early?.status??'pending'}`);await change(blocker);await blocker.query('COMMIT');
    }finally{await blocker.query('ROLLBACK').catch(()=>{});blocker.release();}
    assert.equal((await pending).status,status);
   }
