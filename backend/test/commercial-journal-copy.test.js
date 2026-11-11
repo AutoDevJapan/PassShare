@@ -6,6 +6,15 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+test('formal verify-copy reads retained bytes without original export or DB and rejects altered binding',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'passshare-verify-copy-')),copy=path.join(dir,'copy.json'),config=path.join(dir,'config.json'),cli=fileURLToPath(new URL('../scripts/deletion-recovery.mjs',import.meta.url));
+ const sourceId='11111111-1111-4111-8111-111111111111',bytes=Buffer.from(JSON.stringify({format:'passshare-deletion-journal-v1',sourceId,entries:[]})),sha=createHash('sha256').update(bytes).digest('hex');
+ const invoke=()=>spawnSync(process.execPath,[cli,'verify-copy',config],{encoding:'utf8',windowsHide:true,timeout:10000});
+ const configure=(digest=sha,source=sourceId)=>fs.writeFileSync(config,JSON.stringify({format:'passshare-deletion-copy-v1',sourceId:source,copyPath:copy,trustedJournalSha256:digest}));
+ try{fs.writeFileSync(copy,bytes);configure();const r=invoke();assert.equal(r.status,0,r.stderr);assert.deepEqual(JSON.parse(r.stdout),{ok:true,operation:'verify-copy',sha256:sha,sourceId,bytes:bytes.length,offHostRetentionProven:false,currentQualificationProven:false,automaticReopen:false});assert(!r.stdout.includes(dir));assert.deepEqual(fs.readFileSync(copy),bytes);
+ for(const changed of [Buffer.concat([bytes,Buffer.from('extra')]),Buffer.from('{}')]){fs.writeFileSync(copy,changed);const bad=invoke();assert.equal(bad.status,1);assert.equal(bad.stdout,'');assert(!bad.stderr.includes(dir));assert.deepEqual(fs.readFileSync(copy),changed);}fs.writeFileSync(copy,bytes);configure('0'.repeat(64));assert.equal(invoke().status,1);configure(sha,'22222222-2222-4222-8222-222222222222');assert.equal(invoke().status,1);configure();fs.unlinkSync(copy);assert.equal(invoke().status,1);
+ }finally{for(const p of[copy,config])if(fs.existsSync(p))fs.unlinkSync(p);fs.rmdirSync(dir);}
+});
 test('independent journal copy survives original loss and refuses overwrite or altered binding',async()=>{
  const {preserveJournalCopy}=await import('../src/commercial-journal-copy.js');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'passshare-journal-copy-')),target=path.join(dir,'current.json'),original=path.join(dir,'export.json');

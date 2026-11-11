@@ -12,6 +12,8 @@ CLIの現在正本・復元先の接続にも通常backendと同じDB接続方�
 
 ### 明示した別保存先への検証付きコピー
 
+保存後の読み戻しは`node backend/scripts/deletion-recovery.mjs verify-copy <設定JSON絶対path>`で行う。設定は同じ`format`、`sourceId`、`copyPath`、独立した信頼済み`trustedJournalSha256`を使用し、元exportやDB資格を必要としない。16MiB上限で読み取った同一bytesを構造・source・digestへ照合し、失敗時は非0、保存先の上書き・削除は行わない。成功は現在読めたコピーの一致だけを表し、別障害領域の配置・保持期間・最新性・復元後の現資格は別途確認する。`offHostRetentionProven:false`・`currentQualificationProven:false`・`automaticReopen:false`を維持する。
+
 `node backend/scripts/deletion-recovery.mjs preserve-copy <設定JSON絶対path>`は、DBへ接続せず、取得済み最小journalを明示した新規ファイルへ保存する。設定は`format:"passshare-deletion-copy-v1"`、`sourceId`、`journalPath`、`copyPath`、独立した信頼済み`trustedJournalSha256`を持つ。保存前の構造・digest照合、排他的作成、fsync、同じファイルhandleからの全bytes読み返しを行う。既存コピーは上書きしない。
 
 これはローカルの検証付きコピーであり、別障害領域への永続保全・保存期間・現在正本の喪失後の資格再承認を証明しない。古いarchiveと同時に巻き戻る保存先を独立保全と呼ばない。復元時の現資格・所属・鍵の全gateは引き続き閉じたままとする。この候補の実PG組合せはDocker起動障害のため未実施であり、運用保全完成とは扱わない。
