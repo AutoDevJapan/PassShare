@@ -30,9 +30,9 @@ for mode in first fallback allfail; do
    set +e; eval "$loop"; exit 98
   fi
   eval "$loop"
-  [[ "$installed" == true && "$installs" == 1 ]]
-  if [[ "$mode" == first ]]; then [[ "$updates" == 1 ]]; else [[ "$updates" == 2 ]]; fi
+  [[ "$installed" == true && "$installs" == 1 ]] || exit 96
+  if [[ "$mode" == first ]]; then [[ "$updates" == 1 ]] || exit 96; else [[ "$updates" == 2 ]] || exit 96; fi
  ) && status=0 || status=$?
- if [[ "$mode" == allfail ]]; then [[ "$status" == 100 ]]; else [[ "$status" == 0 ]]; fi
+ if [[ "$mode" == allfail ]]; then [[ "$status" == 100 ]] || exit 1; else [[ "$status" == 0 ]] || exit 1; fi
 done
 printf 'Signed archive finite fallback: 3 cases PASS\n'
