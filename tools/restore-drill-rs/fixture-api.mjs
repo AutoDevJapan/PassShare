@@ -9,4 +9,8 @@ const {refundProviderFixture,liveRefundProviderFixture}=await import('./test/hel
 const provider=await refundProviderFixture('acct_restorefixture','connect',{port:8999,stateControl:true});
 const liveProvider=await liveRefundProviderFixture('acct_restorelive','connect',{port:8998,stateControl:true});
 const {app}=await createApp({testRefundLookup:provider.lookup,liveRefundLookup:liveProvider.lookup});
+if(db.pathname==='/drill_restored'&&existsSync('/tmp/passshare-drill-current-qualified')){
+ const {Pool}=await import('pg'),pool=new Pool({connectionString:process.env.DATABASE_URL}),{runDueDeletions}=await import('./src/commercial-data-deletion.js');
+ try{const result=await runDueDeletions(pool,{limit:100});if(result.completed!==0)throw Error('Old restored automatic deletion consent must not run before current reapproval');}finally{await pool.end();}
+}
 app.listen(Number(process.env.PORT??8080));

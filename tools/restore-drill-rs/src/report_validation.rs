@@ -45,6 +45,7 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "restored_completed_deletion_journal_survives_retirement",
     "source_due_deletion_consent_nonempty",
     "restored_due_deletion_consent_values",
+    "restored_due_worker_keeps_old_consent_closed",
     "source_deletion_requests_nonempty",
     "source_retired_deletion_request_nonempty",
     "restored_deletion_request_values",

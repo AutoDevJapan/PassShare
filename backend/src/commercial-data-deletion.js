@@ -6,7 +6,7 @@ import {verifyPassword} from './auth/password.js';
 import {createLoginGuard,resolveClientIp} from './auth/login-guard.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {loadEntitlement} from './commercial-live.js';
-import {migrateDeletionJournal,recordCompletedDeletion} from './commercial-deletion-journal.js';
+import {migrateDeletionJournal,recordCompletedDeletion,assertNotClosedRestoreTarget} from './commercial-deletion-journal.js';
 
 export const DATA_DELETION_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_data_deletion_requests (
  id UUID PRIMARY KEY,contract_id UUID NOT NULL REFERENCES commercial_contracts(id) ON DELETE CASCADE,
@@ -24,9 +24,20 @@ export const DATA_DELETION_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_data_de
  OR(state='completed' AND completed_at IS NOT NULL AND canceled_at IS NULL AND revision=1)));
  ALTER TABLE commercial_data_deletion_requests ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'manual' CHECK(execution_mode IN('manual','due'));
  ALTER TABLE commercial_data_deletion_requests ADD COLUMN IF NOT EXISTS consent_credential_fingerprint TEXT;
+ ALTER TABLE commercial_data_deletion_requests ADD COLUMN IF NOT EXISTS consent_invalidated_at TIMESTAMPTZ;
  DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='commercial_data_deletion_requests'::regclass AND conname='deletion_due_credential') THEN
  ALTER TABLE commercial_data_deletion_requests ADD CONSTRAINT deletion_due_credential CHECK((execution_mode='manual' AND consent_credential_fingerprint IS NULL) OR(execution_mode='due' AND consent_credential_fingerprint ~ '^[a-f0-9]{64}$' AND consent_credential_fingerprint IS NOT NULL));
- END IF; END $$;`;
+ END IF; END $$;
+ CREATE OR REPLACE FUNCTION passshare_invalidate_due_deletion_consent() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+ DECLARE target VARCHAR(26); BEGIN
+ target:=CASE WHEN TG_OP='DELETE' THEN OLD.vault_id ELSE NEW.vault_id END;
+ UPDATE commercial_data_deletion_requests SET consent_invalidated_at=clock_timestamp()
+ WHERE box_id=target AND execution_mode='due' AND state='pending' AND consent_invalidated_at IS NULL;
+ RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END; END $$;
+ DROP TRIGGER IF EXISTS passshare_due_membership_changed ON vault_memberships;
+ CREATE TRIGGER passshare_due_membership_changed AFTER INSERT OR UPDATE OR DELETE ON vault_memberships FOR EACH ROW EXECUTE FUNCTION passshare_invalidate_due_deletion_consent();
+ DROP TRIGGER IF EXISTS passshare_due_invitation_changed ON vault_invitations;
+ CREATE TRIGGER passshare_due_invitation_changed AFTER INSERT OR UPDATE OR DELETE ON vault_invitations FOR EACH ROW EXECUTE FUNCTION passshare_invalidate_due_deletion_consent();`;
 export const migrateDataDeletion=async pool=>{await applySchemaWithAdvisoryLock(pool,4820138,DATA_DELETION_SCHEMA);await migrateDeletionJournal(pool);};
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
 const boxId=value=>typeof value==='string'&&/^[a-z0-9]{26}$/.test(value);
@@ -76,6 +87,7 @@ function deletionPolicy(){
 
 export async function runDueDeletions(pool,{limit=20,after=null}={}){
  if(!pool||!Number.isInteger(limit)||limit<1||limit>100||after!==null&&!uuid(after))throw Error('Bounded persistent due deletion worker required');
+ await assertNotClosedRestoreTarget(pool);
  const {complete}=deletionPolicy(),rows=(await pool.query("SELECT id,box_id,user_id,contract_id FROM commercial_data_deletion_requests WHERE execution_mode='due' AND state='pending' AND not_before<=(clock_timestamp() AT TIME ZONE 'Asia/Tokyo')::date AND($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT $1",[limit,after])).rows;
  const result={examined:rows.length,completed:0,retained:0,nextAfter:rows.at(-1)?.id??null};
  for(const candidate of rows){const client=await pool.connect();try{
@@ -85,9 +97,9 @@ export async function runDueDeletions(pool,{limit=20,after=null}={}){
   const user=(await client.query('SELECT id,password_hash,recovery_hash FROM users WHERE id=$1 FOR UPDATE',[candidate.user_id])).rows[0];
   const contract=(await client.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[candidate.contract_id,candidate.user_id])).rows[0];
   const row=(await client.query("SELECT *,paid_through::text paid_through,not_before::text not_before FROM commercial_data_deletion_requests WHERE id=$1 AND box_id=$2 AND user_id=$3 AND contract_id=$4 AND state='pending' AND execution_mode='due' AND not_before<=(clock_timestamp() AT TIME ZONE 'Asia/Tokyo')::date FOR UPDATE",[candidate.id,candidate.box_id,candidate.user_id,candidate.contract_id])).rows[0];
-  if(!row||!user||!contract||consentCredential(user)!==row.consent_credential_fingerprint)throw failure(409,'Due deletion consent is no longer current');
+  if(!row||!user||!contract||row.consent_invalidated_at!==null||consentCredential(user)!==row.consent_credential_fingerprint)throw failure(409,'Due deletion consent is no longer current');
   await complete(client,row,contract,box);await client.query('COMMIT');result.completed++;
- }catch(error){await client.query('ROLLBACK').catch(()=>{});if(![401,403,404,409].includes(error?.status))throw error;result.retained++;}finally{client.release();}}
+ }catch(error){await client.query('ROLLBACK').catch(()=>{});if(![401,403,404,409].includes(error?.status)){error.deletionNextAfter=candidate.id;throw error;}result.retained++;}finally{client.release();}}
  return result;
 }
 

@@ -1324,6 +1324,9 @@ impl Runner {
             "reopen_gate_credentials_and_current_accounts_clean",
             reopen_state_clean(&state),
         )?;
+        // Fixed synthetic-container marker only after the current-credential
+        // gate. The earlier unsafe demonstration must not run the due worker.
+        std::fs::write("/tmp/passshare-drill-current-qualified",b"synthetic-current-qualified").map_err(|_|Failure::Io)?;
         let after_reconcile = snapshot("drill_restored")?;
         report.check(
             "reconciliation_keeps_encrypted_tables_empty",
@@ -1494,6 +1497,7 @@ impl Runner {
         let due_id=identifier(&due_request,"/id",36)?;
         let due_read=self.api.json(report,"restored_due_deletion_consent_HTTP","GET",&format!("/api/commercial-contracts/{deletion_contract}/data-deletion-requests/{due_id}"),&current_owner.session,None,200,None)?;
         report.check("restored_due_deletion_consent_values",exact_json(&due_request,&due_read)&&sql("drill_restored",&format!("SELECT count(*) FROM commercial_data_deletion_requests WHERE id='{due_id}' AND execution_mode='due' AND consent_credential_fingerprint ~ '^[a-f0-9]{{64}}$';"))?.trim()=="1")?;
+        report.check("restored_due_worker_keeps_old_consent_closed",sql("drill_restored",&format!("SELECT count(*) FROM connect_vaults WHERE id='{deletion_box}';"))?.trim()=="1"&&due_read["state"]=="pending")?;
         let canceled=self.api.json(report,"restored_deletion_cancel_HTTP","POST",&format!("{deletion_path}/cancel"),&current_owner.session,Some(&json!({"revision":0})),200,None)?;
         report.check("restored_deletion_cancel_preserves_box",canceled["state"]=="canceled"&&canceled["dataDeleted"]==false&&sql("drill_restored",&format!("SELECT count(*) FROM connect_vaults WHERE id='{deletion_box}';"))?.trim()=="1")?;
         report.check("restored_deleted_creation_tombstone",sql("drill_restored",&format!("SELECT count(*) FROM mutation_operations WHERE actor='{}' AND resource='{}' AND operation='box' AND request_key='restore-deleted-creation-0001' AND request_hash='' AND result='{{\"deleted\":true}}'::jsonb;",owner.id,owner.id))?.trim()=="1")?;

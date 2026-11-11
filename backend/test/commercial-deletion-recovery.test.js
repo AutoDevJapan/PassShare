@@ -12,7 +12,7 @@ import {createMemoryLoginGuardStore} from '../src/auth/login-guard-store.js';
 test('an older real archive cannot revive a completed explicitly selected Box deletion', {skip:process.env.PASSSHARE_DELETION_RECOVERY_PG!=='true'},async()=>{
  const url=new URL(process.env.DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.username,'passshare');assert.equal(url.pathname,'/passshare');
  const container=process.env.PASSSHARE_DELETION_RECOVERY_CONTAINER;assert.match(container??'',/^[a-f0-9]{64}$/);
- const label=execFileSync('docker',['inspect','--format','{{index .Config.Labels "passshare.fixture"}}',container],{encoding:'utf8',windowsHide:true}).trim();assert.equal(label,'deletion-reconciliation');
+ const label=execFileSync('docker',['inspect','--format','{{index .Config.Labels "passshare.fixture"}}',container],{encoding:'utf8',windowsHide:true}).trim();assert(['deletion-reconciliation','deletion-due'].includes(label));
  const admin=new pg.Pool({connectionString:url.href}),sourceName='ps_delete_source_'+randomUUID().replaceAll('-',''),targetName='ps_delete_target_'+randomUUID().replaceAll('-','');
  await admin.query('CREATE DATABASE '+sourceName);await admin.query('CREATE DATABASE '+targetName);url.pathname='/'+sourceName;
  const source=new pg.Pool({connectionString:url.href}),closeSource=trackPoolShutdown(source);url.pathname='/'+targetName;const target=new pg.Pool({connectionString:url.href}),closeTarget=trackPoolShutdown(target);
@@ -30,11 +30,13 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   await source.query('INSERT INTO commercial_live_contracts(contract_id,contract_start,cancel_after_cycle,cancel_requested_at) VALUES($1,CURRENT_DATE-65,1,clock_timestamp())',[contract.id]);
   await source.query("INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_redelete','evt_redelete',$1,1,CURRENT_DATE-65,CURRENT_DATE-35,980,'pi_redelete','synthetic-redelete','provider_live')",[contract.id]);
   const route='/api/commercial-contracts/'+contract.id+'/data-deletion-requests',request=await call(route,owner,{requestId:randomUUID(),boxId,quoteHash:contract.quoteHash,expectedContentVersion:1,expectedAttributeVersion:1,expectedStateRevision:null,expectedKeyEpoch:null,confirmationBoxId:boxId,currentPassword:password});assert.equal(request.status,201);
+  const oldDue=await call(route+'/schedule-due',owner,{requestId:randomUUID(),boxId,quoteHash:contract.quoteHash,expectedContentVersion:1,expectedAttributeVersion:1,expectedStateRevision:null,expectedKeyEpoch:null,confirmationBoxId:boxId,currentPassword:password});assert.equal(oldDue.status,201);
   // Capture the real pre-journal schema, not a new archive whose journal table
   // is merely removed afterwards. Only this owned fixture is changed here.
   await source.query('DROP TABLE commercial_deletion_journal');
   const dump=execFileSync('docker',['exec',container,'pg_dump','-U','passshare','-d',sourceName,'-Fc','--no-owner','--no-acl'],{windowsHide:true,maxBuffer:16*1024*1024});assert.equal(dump.subarray(0,5).toString(),'PGDMP');fs.writeFileSync(archive,dump,{flag:'wx',mode:0o600});
   const {migrateDeletionJournal}=await import('../src/commercial-deletion-journal.js');await migrateDeletionJournal(source);
+  assert.equal((await call(route+'/'+oldDue.body.id+'/cancel',owner,{revision:0})).status,200);
   const completed=await call(route+'/'+request.body.id+'/execute',owner,{revision:0,currentPassword:password,confirmationBoxId:boxId});assert.equal(completed.status,200);assert.equal(completed.body.dataDeleted,true);
   assert.equal((await source.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[boxId])).rows[0].n,0);
   assert.equal((await call('/api/auth/account',owner,{currentPassword:password,confirmationEmail:owner.email},'DELETE')).status,204);
@@ -61,6 +63,7 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   const fresh=await target.connect();fresh.release();await closeTarget();
   const prepared=JSON.parse(execFileSync(process.execPath,[cli,'prepare-closed',targetConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(prepared.closed,true);
   const transientTarget=new pg.Pool({connectionString:url.href});try{await assert.rejects(createApp({pool:transientTarget,loginGuardStore:createMemoryLoginGuardStore()}),/RESTORE_TARGET_CLOSED/);assert.equal(await completedDeletionGate(transientTarget,options),false,'Old archive cannot qualify itself as current');}finally{await transientTarget.end();}
+  const oldConsentPool=new pg.Pool({connectionString:url.href});try{const row=(await oldConsentPool.query('SELECT state,consent_invalidated_at FROM commercial_data_deletion_requests WHERE id=$1',[oldDue.body.id])).rows[0];assert.equal(row.state,'pending','The actual old archive really revived a later canceled automatic request');assert(row.consent_invalidated_at,'Closed restore preparation invalidates archive-era automatic approval');const{runDueDeletions}=await import('../src/commercial-data-deletion.js');await assert.rejects(runDueDeletions(oldConsentPool),/RESTORE_TARGET_CLOSED/);}finally{await oldConsentPool.end();}
   const replayed=JSON.parse(execFileSync(process.execPath,[cli,'reapply',targetConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(replayed.ok,true);assert.equal(replayed.APIStillClosed,true);assert.equal(replayed.identityMembershipKeyQualification,false);
   const client=new pg.Client({connectionString:url.href});await client.connect();
   try{
