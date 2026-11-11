@@ -42,3 +42,56 @@ test('a mutated caller pin cannot authorize an unsolicited in-flight snapshot',a
  const pin={keyEpoch:2,snapshotRevision:3};const pending=api.getCommercialExportPage(contract,box,pin,null,new AbortController().signal);
  pin.keyEpoch=9;pin.snapshotRevision=10;release();await assert.rejects(pending);
 });
+test('contract attachment export obtains the parent snapshot with the same pinned scope',async()=>{
+ const itemId='b'.repeat(26),context={passwordBoxId:box,itemId,itemVersion:2,keyEpoch:2};
+ const envelope={format:1,context,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(16).toString('base64')};
+ const calls:string[]=[];const api=createCloudApi(async p=>{calls.push(p);return Response.json(reply(envelope));});
+ assert.deepEqual(JSON.parse(await api.getCommercialAttachmentItemSnapshot(contract,context,3,new AbortController().signal)),envelope);
+ assert.equal(calls[0],`/api/commercial-contracts/${contract}/export/boxes/${box}/items/${itemId}/attachment-snapshot?epoch=2&revision=3`);
+});
+test('contract attachment body is pinned to its authenticated parent and version',async()=>{
+ const context={passwordBoxId:box,itemId:'b'.repeat(26),attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+ const envelope={format:1,context,contentBytes:0,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(20).toString('base64')};
+ const api=createCloudApi(async()=>Response.json(reply(envelope)));
+ assert.deepEqual(JSON.parse(await api.getCommercialEncryptedAttachment(contract,context,3,new AbortController().signal)),envelope);
+ for(const changed of [{...context,attachmentId:'d'.repeat(26)},{...context,attachmentVersion:2}]){
+  await assert.rejects(api.getCommercialEncryptedAttachment(contract,changed,3,new AbortController().signal));
+ }
+});
+
+test('attachment export rejects response snapshot and authenticated context mismatches',async()=>{
+ const item={passwordBoxId:box,itemId:'b'.repeat(26),itemVersion:2,keyEpoch:2};
+ const attachment={passwordBoxId:box,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+ const parent={format:1,context:item,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(16).toString('base64')};
+ const file={format:1,context:attachment,contentBytes:1,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(21).toString('base64')};
+ for(const kind of ['parent','file'] as const){
+  const envelope=kind==='parent'?parent:file;
+  const invoke=(api:ReturnType<typeof createCloudApi>)=>kind==='parent'?api.getCommercialAttachmentItemSnapshot(contract,item,3,new AbortController().signal):api.getCommercialEncryptedAttachment(contract,attachment,3,new AbortController().signal);
+  for(const changed of [{snapshotRevision:4},{keyEpoch:3},{boxId:'d'.repeat(26)},{ciphertextOnly:false},{restoresIdentityMembershipOrKeys:true}]){
+   const api=createCloudApi(async()=>Response.json({...reply(envelope),...changed}));
+   await assert.rejects(invoke(api),(error:any)=>error.status===502);
+  }
+  const contexts=kind==='parent'?[{...item,itemVersion:3},{...item,itemId:'d'.repeat(26)}]:[{...attachment,itemId:'d'.repeat(26)},{...attachment,attachmentVersion:2},{...attachment,keyEpoch:3}];
+  for(const context of contexts){
+   const api=createCloudApi(async()=>Response.json(reply({...envelope,context})));
+   await assert.rejects(invoke(api),(error:any)=>error.status===502);
+  }
+ }
+});
+
+test('both attachment entrances keep the original context across an in-flight caller mutation',async()=>{
+ for(const kind of ['parent','file'] as const){
+  for(const unsolicited of [false,true]){
+   const item={passwordBoxId:box,itemId:'b'.repeat(26),itemVersion:2,keyEpoch:2};
+   const attachment={passwordBoxId:box,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+   const expected=kind==='parent'?item:attachment;
+   const original={...expected};let release!:()=>void;
+   const gate=new Promise<void>(resolve=>{release=resolve;});
+   const api=createCloudApi(async()=>{await gate;const context=unsolicited?{...expected}:original;return Response.json(reply(kind==='parent'?{format:1,context,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(16).toString('base64')}:{format:1,context,contentBytes:0,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(20).toString('base64')}));});
+   const pending=kind==='parent'?api.getCommercialAttachmentItemSnapshot(contract,item,3,new AbortController().signal):api.getCommercialEncryptedAttachment(contract,attachment,3,new AbortController().signal);
+   expected.itemId='d'.repeat(26);release();
+   if(unsolicited)await assert.rejects(pending,(error:any)=>error.status===502);
+   else assert.deepEqual(JSON.parse(await pending).context,original);
+  }
+ }
+});

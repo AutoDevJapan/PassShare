@@ -21,9 +21,21 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
    try{await worker.decrypt(JSON.stringify(page.envelopes[0]),{...context,itemId:'c'.repeat(26)});}catch(error){if(!(error instanceof CloudWorkerError))throw error;wrongContextRejected=true;}
    const liveAfter=!worker.isClosed;
    const after=JSON.parse(await worker.decrypt(JSON.stringify(page.envelopes[0]),context));
+   const attachmentContext={passwordBoxId:boxId,itemId,attachmentId:'d'.repeat(26),attachmentVersion:1,keyEpoch:1};
+   const originalBytes=new Uint8Array([0,1,254,255,7,0]);
+   const attachment=await worker.encryptAttachment('添付.bin',originalBytes.slice(),attachmentContext);
+   const parent={...plain,attachments:[{attachmentId:attachmentContext.attachmentId,attachmentVersion:1,keyEpoch:1}]};
+   const parentEnvelope=await worker.encrypt(JSON.stringify(parent),context);
+   const attachmentApi=createCloudApi(async path=>Response.json({format:'passshare-encrypted-export-v1',receiptId:'33333333-3333-4333-8333-333333333333',boxId,keyEpoch:1,snapshotRevision:2,ciphertextOnly:true,restoresIdentityMembershipOrKeys:false,data:JSON.parse(path.includes('attachment-snapshot')?parentEnvelope:attachment)}));
+   const fetchedParent=await attachmentApi.getCommercialAttachmentItemSnapshot(contractId,context,2,new AbortController().signal);
+   const fetchedAttachment=await attachmentApi.getCommercialEncryptedAttachment(contractId,attachmentContext,2,new AbortController().signal);
+   const source={itemEnvelope:fetchedParent,expectedItemContext:context,itemSnapshotRevision:2,attachmentSnapshotRevision:2};
+   const file=await worker.decryptAttachment(fetchedAttachment,attachmentContext,source);
+   const attachmentMatches=file.name==='添付.bin'&&file.bytes.length===originalBytes.length&&file.bytes.every((b,i)=>b===originalBytes[i]);
+   worker.releaseAttachment(file);
    const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
-   return {matches:JSON.stringify(canonical(decrypted))===JSON.stringify(canonical(plain)),afterMatches:JSON.stringify(canonical(after))===JSON.stringify(canonical(plain)),items:page.envelopes.length,wrongContextRejected,liveBefore,liveAfter};
+   return {matches:JSON.stringify(canonical(decrypted))===JSON.stringify(canonical(plain)),afterMatches:JSON.stringify(canonical(after))===JSON.stringify(canonical(plain)),attachmentMatches,items:page.envelopes.length,wrongContextRejected,liveBefore,liveAfter};
   }finally{worker.dispose();await worker.closed;}
  });
- expect(result).toEqual({matches:true,afterMatches:true,items:1,wrongContextRejected:true,liveBefore:true,liveAfter:true});
+ expect(result).toEqual({matches:true,afterMatches:true,attachmentMatches:true,items:1,wrongContextRejected:true,liveBefore:true,liveAfter:true});
 });

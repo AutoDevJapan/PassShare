@@ -280,6 +280,13 @@ contextで復号・検証する。エラーは固定コードだけでSQLや秘�
 既に保持する鍵・信頼済みcontextによる既存Core/worker検証を引き続き必要とする。
 この接続だけで一括ファイル・添付の取得・全client UIの受入を完了とはしない。
 
+共有clientの添付取得は`getCommercialAttachmentItemSnapshot`と
+`getCommercialEncryptedAttachment`を同一の独立したrevision/epochで利用する。
+親itemのversion/contextと添付ID/version/contentBytesを照合し、既存workerの
+`decryptAttachment`へ親envelopeと両snapshot revisionを渡す。shape一致だけを
+暗号認証成功とはせず、workerが認証した名前・全bytesを利用後に解放する。
+実HTTP/PG/Coreと、模擬HTTPを使う実browser worker受入は別証拠として保持する。
+
 既存の暗号化dump/restore受入では、復元再開を判断する現在の正本に商用契約・
 支払期間・増席台帳も含める。復元先の契約期間が異なる場合は再開を拒否する。
 同じ受入で復元後の所有者と残留メンバーが新export経路から全暗号文を取得し、
