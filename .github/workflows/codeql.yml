@@ -50,9 +50,7 @@ jobs:
 
       - name: Install Linux dependencies
         if: matrix.language == 'rust' || matrix.language == 'java-kotlin'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: bash .github/scripts/install-ubuntu-deps.sh libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Set up Go
         if: matrix.language == 'go'

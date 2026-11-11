@@ -24,8 +24,7 @@ jobs:
           node-version: '22'
       - name: Install native runtime and driver dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11 at-spi2-core
+          bash .github/scripts/install-ubuntu-deps.sh libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11 at-spi2-core
           cargo install tauri-driver --version 2.1.0 --locked
       - name: Build actual frontend assets and finite Rust acceptance
         run: |
