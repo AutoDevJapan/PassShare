@@ -58,3 +58,23 @@ test('contract attachment body is pinned to its authenticated parent and version
   await assert.rejects(api.getCommercialEncryptedAttachment(contract,changed,3,new AbortController().signal));
  }
 });
+
+test('attachment export rejects response snapshot and authenticated context mismatches',async()=>{
+ const item={passwordBoxId:box,itemId:'b'.repeat(26),itemVersion:2,keyEpoch:2};
+ const attachment={passwordBoxId:box,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+ const parent={format:1,context:item,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(16).toString('base64')};
+ const file={format:1,context:attachment,contentBytes:1,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(21).toString('base64')};
+ for(const kind of ['parent','file'] as const){
+  const envelope=kind==='parent'?parent:file;
+  const invoke=(api:ReturnType<typeof createCloudApi>)=>kind==='parent'?api.getCommercialAttachmentItemSnapshot(contract,item,3,new AbortController().signal):api.getCommercialEncryptedAttachment(contract,attachment,3,new AbortController().signal);
+  for(const changed of [{snapshotRevision:4},{keyEpoch:3},{boxId:'d'.repeat(26)},{ciphertextOnly:false},{restoresIdentityMembershipOrKeys:true}]){
+   const api=createCloudApi(async()=>Response.json({...reply(envelope),...changed}));
+   await assert.rejects(invoke(api),(error:any)=>error.status===502);
+  }
+  const contexts=kind==='parent'?[{...item,itemVersion:3},{...item,itemId:'d'.repeat(26)}]:[{...attachment,itemId:'d'.repeat(26)},{...attachment,attachmentVersion:2},{...attachment,keyEpoch:3}];
+  for(const context of contexts){
+   const api=createCloudApi(async()=>Response.json(reply({...envelope,context})));
+   await assert.rejects(invoke(api),(error:any)=>error.status===502);
+  }
+ }
+});
