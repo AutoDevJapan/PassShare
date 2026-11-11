@@ -12,6 +12,33 @@ export class CloudApiError extends Error {
 
 export function createCloudApi(authFetch: CloudFetch) {
 
+  async function getCommercialExportPage(contractId: string, boxId: string,
+    pin: {keyEpoch: number; snapshotRevision: number}, after: string | null, signal: AbortSignal): Promise<{envelopes: EncryptedEnvelope[]; nextCursor: string | null; attachmentsIncluded: false}> {
+    pin = {keyEpoch: pin.keyEpoch, snapshotRevision: pin.snapshotRevision};
+    if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(contractId) || !validId(boxId) ||
+      !positiveInteger(pin.keyEpoch) || !positiveInteger(pin.snapshotRevision) || (after !== null && !validId(after))) throw new CloudApiError(400);
+    const url = `/api/commercial-contracts/${contractId}/export/boxes/${boxId}/items?epoch=${pin.keyEpoch}&revision=${pin.snapshotRevision}${after === null ? '' : `&after=${after}`}`;
+    const text = await itemRequest(url, {signal}, 200, 5 * 1024 * 1024);
+    let result: any;
+    try { result = JSON.parse(text); } catch { throw new CloudApiError(502); }
+    if (!fields(result, ['format','receiptId','boxId','keyEpoch','snapshotRevision','ciphertextOnly','restoresIdentityMembershipOrKeys','data']) ||
+      result.format !== 'passshare-encrypted-export-v1' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(result.receiptId) ||
+      result.boxId !== boxId || result.keyEpoch !== pin.keyEpoch || result.snapshotRevision !== pin.snapshotRevision ||
+      result.ciphertextOnly !== true || result.restoresIdentityMembershipOrKeys !== false ||
+      !fields(result.data, ['envelopes','nextCursor','attachmentsIncluded']) || !Array.isArray(result.data.envelopes) ||
+      result.data.envelopes.length > 10 || result.data.attachmentsIncluded !== false ||
+      (result.data.nextCursor !== null && !validId(result.data.nextCursor))) throw new CloudApiError(502);
+    const seen = new Set<string>();
+    const envelopes: EncryptedEnvelope[] = result.data.envelopes.map((value: unknown) => {
+      const envelope = readItemEnvelope(JSON.stringify(value));
+      if (envelope.context.passwordBoxId !== boxId || envelope.context.keyEpoch !== pin.keyEpoch || seen.has(envelope.context.itemId) ||
+        (after !== null && envelope.context.itemId <= after) || (seen.size > 0 && envelope.context.itemId <= Array.from(seen).at(-1)!)) throw new CloudApiError(502);
+      seen.add(envelope.context.itemId); return envelope;
+    });
+    if (result.data.nextCursor !== null && (envelopes.length === 0 || result.data.nextCursor !== envelopes[envelopes.length - 1].context.itemId || result.data.nextCursor === after)) throw new CloudApiError(502);
+    return {envelopes,nextCursor:result.data.nextCursor,attachmentsIncluded:false};
+  }
+
   const path = (boxId: string) => `/api/encrypted/boxes/${encodeURIComponent(boxId)}`;
   async function request(url: string, init?: RequestInit) {
     const response = await authFetch(url, { cache: "no-store", redirect: "error", ...init });
@@ -289,6 +316,6 @@ export function createCloudApi(authFetch: CloudFetch) {
     return revision + 2;
   }
 
-  return Object.freeze({ getBoxState, getAttachmentState, getOwnerBundle, putOwnerBundle, setupBox, bundleText, sameBundle, readPendingBundle, savePendingBundle, clearPendingBundle, validateItemContext, publicOwnerBundle, readItemEnvelope, listEncryptedItems, getEncryptedItem, putEncryptedItem, deleteEncryptedItem, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment });
+  return Object.freeze({ getCommercialExportPage, getBoxState, getAttachmentState, getOwnerBundle, putOwnerBundle, setupBox, bundleText, sameBundle, readPendingBundle, savePendingBundle, clearPendingBundle, validateItemContext, publicOwnerBundle, readItemEnvelope, listEncryptedItems, getEncryptedItem, putEncryptedItem, deleteEncryptedItem, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment });
 }
 export type CloudApi = ReturnType<typeof createCloudApi>;
