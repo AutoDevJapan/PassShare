@@ -1510,7 +1510,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     for (name, bytes) in [
         ("先頭-名前🦀.bin", vec![0xff, 0, 1, 0, 0xfe]),
         ("空\0Unicode", Vec::new()),
-        ("third.txt", "本文\0éЖ🦀".as_bytes().to_vec()),
+        ("本文-Ж🦀.txt", "本文\0éЖ🦀".as_bytes().to_vec()),
     ] {
         let f = File::new(&old, &a, &item, name, bytes);
         dto["attachments"]
@@ -2083,6 +2083,31 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         a.box_id, extra
     ));
     waiting_auth(db, p, &a, &b, &rotation);
+    // Billing is an isolated SQL fixture, never a provider payment. Preserve
+    // these contracts in the archive so the real export route must combine
+    // restored ciphertext with the current owner/member authorization.
+    let mut export_contracts = Vec::new();
+    for actor in [&a, &d] {
+        let quote = send(
+            p,
+            actor,
+            "POST",
+            "/api/commercial-contracts",
+            &json!({"requestId":operation_id(db),"currency":"JPY","plan":{"type":"personal","users":1},"setup":{"installationCompanies":0,"supportHours":0,"maintenanceMonthlyJpy":null}}),
+            201,
+        );
+        let cid = text_field(&quote, "id");
+        send(
+            p,
+            actor,
+            "POST",
+            &format!("/api/commercial-contracts/{cid}/accept"),
+            &json!({"quoteHash":quote["quoteHash"]}),
+            200,
+        );
+        db.sql(&format!("INSERT INTO commercial_live_contracts(contract_id,contract_start) VALUES('{cid}',CURRENT_DATE-35); INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_attachment_restore_export','evt_{cid}','{cid}',1,CURRENT_DATE-35,CURRENT_DATE-5,980,'pi_{cid}','synthetic-attachment-export-window','provider_live')"));
+        export_contracts.push(cid);
+    }
     // Reuse the formal all-public-table archive path, including live bytes,
     // tombstones and pending ciphertext stages, into another OWNED database.
     let restored = encrypted_restore::attachment_roundtrip(db, network);
@@ -2101,6 +2126,131 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     for file in &files {
         get_file(&restored, restore_host.port, &a, &item, file, &old, 1);
     }
+    let export_root = format!(
+        "/api/commercial-contracts/{}/export/boxes/{}",
+        export_contracts[0], a.box_id
+    );
+    let audit_count = || {
+        restored
+            .sql("SELECT count(*) FROM commercial_export_events")
+            .parse::<u64>()
+            .unwrap()
+    };
+    let successful_reads_before = audit_count();
+    let successful_box_state = state_hash(&restored, true);
+    let export_state = send(
+        restore_host.port,
+        &a,
+        "GET",
+        &format!("{export_root}/state"),
+        &Value::Null,
+        200,
+    );
+    let selector = format!(
+        "epoch=1&revision={}",
+        export_state["snapshotRevision"]
+            .as_u64()
+            .expect("restored export revision")
+    );
+    let index = send(
+        restore_host.port,
+        &a,
+        "GET",
+        &format!("{export_root}/items/{item}/attachment-snapshot?{selector}"),
+        &Value::Null,
+        200,
+    );
+    check(
+        index["ciphertextOnly"] == true && index["restoresIdentityMembershipOrKeys"] == false,
+        "restored export cannot recreate identity, membership or keys",
+    );
+    let parent_envelope = checked(
+        serde_json::from_value(index["data"].clone()),
+        "restored export parent envelope",
+    );
+    let parent_dto = checked(
+        old.decrypt_item(&parent_envelope, &context(&a, &item, item_v, 1)),
+        "restored export parent open",
+    );
+    check(
+        parent_dto == client_dto(&dto, &a, &item, item_v),
+        "restored export preserves all authenticated attachment references and item fields",
+    );
+    check(
+        files.len() >= 3,
+        "restored export has independent empty, binary and Unicode fixtures",
+    );
+    check(
+        files[2].name == "本文-Ж🦀.txt" && files[2].bytes == "本文\0éЖ🦀".as_bytes(),
+        "the exported Unicode filename and nonempty Unicode bytes belong to the same original attachment",
+    );
+    for file in &files[..3] {
+        let exported = send(
+            restore_host.port,
+            &a,
+            "GET",
+            &format!(
+                "{export_root}/items/{item}/attachments/{}?{selector}",
+                file.id
+            ),
+            &Value::Null,
+            200,
+        );
+        check(
+            exported["data"] == file.sealed,
+            "restored export returns every original attachment envelope field",
+        );
+        file.verify(&old, &a, &item, &exported["data"], 1);
+        check(restored.sql(&format!("SELECT count(*) FROM commercial_export_events WHERE id='{}' AND contract_id='{}' AND actor_id='{}' AND box_id='{}' AND kind='attachment' AND item_id='{item}' AND attachment_id='{}' AND key_epoch=1 AND snapshot_revision={}",text_field(&exported,"receiptId"),export_contracts[0],a.id,a.box_id,file.id,number(&export_state,"snapshotRevision"))) == "1",
+            "successful restored attachment export has exactly its matching private audit receipt");
+    }
+    check(
+        audit_count() == successful_reads_before + 5,
+        "state, parent snapshot and three attachment exports each persist one audit receipt",
+    );
+    check(
+        state_hash(&restored, true) == successful_box_state,
+        "successful restored exports preserve all box, key, membership and staged rows/xmin",
+    );
+    let denied_audits_before = audit_count();
+    reject(
+        &restored,
+        restore_host.port,
+        &d,
+        "GET",
+        &format!("{export_root}/state"),
+        &Value::Null,
+        404,
+    );
+    reject(
+        &restored,
+        restore_host.port,
+        &d,
+        "GET",
+        &format!(
+            "/api/commercial-contracts/{}/export/boxes/{}/state",
+            export_contracts[1], a.box_id
+        ),
+        &Value::Null,
+        403,
+    );
+    restored.sql(&format!("UPDATE commercial_live_periods SET period_start=CURRENT_DATE-61,period_end=CURRENT_DATE-31 WHERE contract_id='{}'",export_contracts[0]));
+    reject(
+        &restored,
+        restore_host.port,
+        &a,
+        "GET",
+        &format!("{export_root}/state"),
+        &Value::Null,
+        403,
+    );
+    check(
+        audit_count() == denied_audits_before,
+        "foreign, unauthorized and expired exports persist no success audit receipt",
+    );
+    check(restored.sql(&format!("SELECT count(*) FROM encrypted_attachments WHERE box_id='{}'",a.box_id)) == files.len().to_string(),
+        "expired commercial export preserves every restored attachment and its independent storage authority");
+    println!("restored attachment commercial export: three representative original envelopes and all their names/bytes recovered from {} restored attachments; foreign contract and unconfirmed member denied; billing synthetic SQL only",files.len());
     drop(restore_host);
     drop(restored);
     let before = state_hash(db, true);
