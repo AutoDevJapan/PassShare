@@ -168,6 +168,9 @@ jobs:
   frontend:
     name: Web (Playwright + build)
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --ipc=host
     env:
       PASSSHARE_MUTATIONS_BIN: ${{ github.workspace }}/backend/native/target/release/passshare-mutations
     steps:
@@ -198,8 +201,10 @@ jobs:
         run: pnpm --dir frontend exec tsc --noEmit
       - name: Build frontend
         run: pnpm --dir frontend run build
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install chromium --with-deps
+      - name: Verify pinned Playwright browser and dependency image
+        run: |
+          node -e "if(require('@playwright/test/package.json').version!=='1.61.1')process.exit(1)"
+          pnpm exec playwright --version
       - name: Run Playwright E2E
         env:
           CI: "true"
@@ -212,6 +217,9 @@ jobs:
   extension:
     name: Extension (unit + E2E smoke)
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --ipc=host
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -239,8 +247,10 @@ jobs:
       - name: Run extension auth API tests
         working-directory: backend
         run: node --test test/extension-auth.test.js
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium --with-deps
+      - name: Verify pinned Playwright browser and dependency image
+        run: |
+          node -e "if(require('@playwright/test/package.json').version!=='1.61.1')process.exit(1)"
+          pnpm exec playwright --version
       - name: Run extension E2E smoke
         env:
           PLAYWRIGHT_SKIP_WEBSERVER: "true"
@@ -254,9 +264,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
       - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: bash .github/scripts/install-ubuntu-deps.sh libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 10.11.0
