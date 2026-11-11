@@ -5,7 +5,7 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
  // unauthenticated-session logout effect, without disabling worker lock policy.
  await page.goto('/cloud-crypto/boot.mjs');
  const result=await page.evaluate(async()=>{
-  const {CloudWorker}=await import('/src/lib/cloud-worker.ts');
+  const {CloudWorker,CloudWorkerError}=await import('/src/lib/cloud-worker.ts');
   const {createCloudApi}=await import('/src/lib/cloud-api.ts');
   const boxId='a'.repeat(26),itemId='b'.repeat(26),ownerAccountId='11111111-1111-4111-8111-111111111111',contractId='22222222-2222-4222-8222-222222222222';
   const worker=new CloudWorker();
@@ -18,7 +18,7 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
    const page=await api.getCommercialExportPage(contractId,boxId,{keyEpoch:1,snapshotRevision:2},null,new AbortController().signal);
    const decrypted=JSON.parse(await worker.decrypt(JSON.stringify(page.envelopes[0]),context));
    const liveBefore=!worker.isClosed;let wrongContextRejected=false;
-   try{await worker.decrypt(JSON.stringify(page.envelopes[0]),{...context,itemId:'c'.repeat(26)});}catch{wrongContextRejected=true;}
+   try{await worker.decrypt(JSON.stringify(page.envelopes[0]),{...context,itemId:'c'.repeat(26)});}catch(error){if(!(error instanceof CloudWorkerError))throw error;wrongContextRejected=true;}
    const liveAfter=!worker.isClosed;
    const after=JSON.parse(await worker.decrypt(JSON.stringify(page.envelopes[0]),context));
    const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
