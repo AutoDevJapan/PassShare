@@ -59,8 +59,9 @@ type threadEntry struct {
 	Flags                       uint32
 }
 type processTree struct {
-	job syscall.Handle
-	pid uint32
+	job             syscall.Handle
+	pid             uint32
+	beforeTerminate func()
 }
 
 func prepareTree(cmd *exec.Cmd) (*processTree, error) {
@@ -130,13 +131,18 @@ func (t *processTree) stop() error {
 	if t.job == 0 {
 		return nil
 	}
+	var before jobAccounting
+	ok, _, err := queryJob.Call(uintptr(t.job), 1, uintptr(unsafe.Pointer(&before)), unsafe.Sizeof(before), 0)
+	if ok == 0 {
+		return err
+	}
 	// Keep synchronization handles opened while each PID is still a verified
 	// member. ActiveProcesses=0 alone can precede the process's final signal.
 	var list struct {
 		Assigned, Count uint32
 		IDs             [1024]uintptr
 	}
-	ok, _, err := queryJob.Call(uintptr(t.job), 3, uintptr(unsafe.Pointer(&list)), unsafe.Sizeof(list), 0)
+	ok, _, err = queryJob.Call(uintptr(t.job), 3, uintptr(unsafe.Pointer(&list)), unsafe.Sizeof(list), 0)
 	if ok == 0 {
 		return err
 	}
@@ -169,6 +175,9 @@ func (t *processTree) stop() error {
 		}
 		handles = append(handles, handle)
 	}
+	if t.beforeTerminate != nil {
+		t.beforeTerminate()
+	}
 	ok, _, err = terminateJob.Call(uintptr(t.job), 1)
 	if ok == 0 {
 		return err
@@ -193,6 +202,9 @@ func (t *processTree) stop() error {
 				if state != syscall.WAIT_OBJECT_0 {
 					return errors.New("owned process has not signaled exit")
 				}
+			}
+			if accounting.TotalProcesses != before.TotalProcesses {
+				return errors.New("owned process inventory changed during termination")
 			}
 			return nil
 		}

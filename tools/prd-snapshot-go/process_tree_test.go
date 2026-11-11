@@ -19,6 +19,20 @@ func TestOwnedProcessFixture(t *testing.T) {
 	}
 	marker := os.Getenv("PASSSHARE_PROCESS_MARKER")
 	if mode == "parent" {
+		if os.Getenv("PASSSHARE_SPAWN_TRIGGER") != "" {
+			trigger := os.Getenv("PASSSHARE_SPAWN_TRIGGER")
+			_ = os.WriteFile(trigger+".parent-ready", []byte("ready"), 0600)
+			until := time.Now().Add(5 * time.Second)
+			for {
+				if _, err := os.Stat(trigger); err == nil {
+					break
+				}
+				if time.Now().After(until) {
+					os.Exit(8)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}
 		child := exec.Command(os.Args[0], "-test.run=^TestOwnedProcessFixture$")
 		hideWindow(child)
 		child.Env = append(os.Environ(), "PASSSHARE_PROCESS_FIXTURE=grandchild")
