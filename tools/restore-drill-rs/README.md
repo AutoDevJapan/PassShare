@@ -81,6 +81,17 @@ stale PUT returns 409, and former member reads/writes/attachment remain 403.
 The restored missing post-backup item returns 404; source full rows stay unchanged.
 RTO ends after these successful reopening/read/write/denial checks, before cleanup.
 
+Refund reviews are included in the exact table inventory and full-row comparison.
+The isolated verification API temporarily receives a synthetic existing reviewer
+ID and a private HTTP provider fixture with a fake live-mode key. Through the
+formal HTTP route it records a 400 JPY approval against a 980 JPY synthetic payment
+for both surviving and later-retired actors. The restored approval, request
+fingerprint/amount FK, stored balance and owner/private API values must match;
+the retired claim's review must cascade to zero. These are synthetic review
+records, not an actual Stripe Live read, money movement, customer approval or
+permission to execute a refund. The plaintext exercise still has empty encrypted
+tables and does not prove encrypted recovery.
+
 Reports count **executed checks**, never the legacy 24/54. They record individual
 checks/time, source/dump hashes, dump size, dump/DB-create/restore/compare/reconcile
 durations, first stop to confirmed reopen RTO, last included update's HTTP commit

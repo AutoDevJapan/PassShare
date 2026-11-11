@@ -42,6 +42,7 @@ const TABLES: &[&str] = &[
     "commercial_test_refunds",
     "commercial_test_refund_events",
     "commercial_refund_requests",
+    "commercial_refund_reviews",
 ];
 // Exact additive tables from backend/native/src/encrypted-schema.sql. This
 // legacy plaintext exercise never activates encrypted storage or stages rotation.
@@ -643,6 +644,7 @@ struct Runner {
     temporary: Temporary,
     source_created: bool,
     restored_created: bool,
+    refund_reviewer: Option<String>,
 }
 impl Runner {
     fn new() -> Result<Self> {
@@ -652,6 +654,7 @@ impl Runner {
             temporary: Temporary::create()?,
             source_created: false,
             restored_created: false,
+            refund_reviewer: None,
         })
     }
     fn start_api(&mut self, database: &str, report: &mut Report, name: &'static str) -> Result<()> {
@@ -682,6 +685,7 @@ impl Runner {
             )
             .env("PASSSHARE_STRIPE_LIVE_ACCOUNT", "acct_restorelive")
             .env("PASSSHARE_COMMERCIAL_LIVE_ENABLED", "true")
+            .env("PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS", self.refund_reviewer.as_deref().unwrap_or(""))
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         self.node = Some(OwnedChild::spawn(&mut command)?);

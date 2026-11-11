@@ -51,7 +51,18 @@ export const REFUND_REQUEST_SCHEMA=`
 export const migrateRefundRequests=pool=>applySchemaWithAdvisoryLock(pool,4820135,REFUND_REQUEST_SCHEMA);
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&typeof x==='object'&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
-const publicRow=r=>({id:r.id,requestId:r.request_id,contractId:r.contract_id,paymentIntentId:r.provider_object_id,paymentAmountJpy:Number(r.payment_amount_jpy),paymentSource:r.payment_source,paymentEvidence:'provider_live',requestedAmountJpy:Number(r.requested_amount_jpy),currency:'JPY',reason:r.reason,status:r.status,requestedAt:r.requested_at,approvalGranted:false,approvedAmountJpy:null,refundExecuted:false,meaning:'refund_request_received_not_approved_or_executed'});
+export const publicRefundRequest=r=>({id:r.id,requestId:r.request_id,contractId:r.contract_id,paymentIntentId:r.provider_object_id,paymentAmountJpy:Number(r.payment_amount_jpy),paymentSource:r.payment_source,paymentEvidence:'provider_live',requestedAmountJpy:Number(r.requested_amount_jpy),currency:'JPY',reason:r.reason,status:r.status,requestedAt:r.requested_at,approvalGranted:r.review?.decision==='approved',approvedAmountJpy:r.review?.decision==='approved'?Number(r.review.amount_jpy):null,refundExecuted:false,meaning:r.review?'refund_request_reviewed_not_executed':'refund_request_received_not_approved_or_executed',...(r.review?{review:{decision:r.review.decision,approvedAmountJpy:r.review.decision==='approved'?Number(r.review.amount_jpy):null,reason:r.review.reason,revision:r.review.revision,reviewedAt:r.review.created_at,executionAuthorized:false}}:{})});
+async function withReview(c,row){const review=(await c.query('SELECT decision,amount_jpy,reason,revision,created_at FROM commercial_refund_reviews WHERE request_id=$1 ORDER BY revision DESC LIMIT 1',[row.id])).rows[0];return publicRefundRequest({...row,review});}
+
+export async function refundPaymentBinding(c,row,contract,ownerId){
+ if(row.quote_hash!==contract.quote_hash)throw authHttpError(409,'PS015','Refund request binding changed');
+ let quoteHash=row.quote_hash;
+ if(row.payment_source==='seat_change'){
+  const seat=(await c.query('SELECT quote_hash FROM commercial_seat_changes WHERE id=$1 AND contract_id=$2',[row.seat_change_id,contract.id])).rows[0];
+  if(!seat)throw authHttpError(409,'PS015','Refund payment binding unavailable');quoteHash=seat.quote_hash;
+ }
+ return {account:row.account_id,paymentIntentId:row.provider_object_id,amountJpy:Number(row.payment_amount_jpy),contractId:contract.id,ownerId,quoteHash,requestedAmountJpy:Number(row.requested_amount_jpy)};
+}
 
 // Historical signed payment evidence identifies a claim, not a currently
 // refundable balance. Intake never invokes a provider or changes entitlements.
@@ -77,9 +88,9 @@ export function registerRefundRequestRoutes(router,persist,lookup){
    const requestId=b.requestId.toLowerCase();
    const fingerprint=createHash('sha256').update(JSON.stringify({requestId,contractId:contract.id,account:payment.account_id,event:payment.event_id,paymentIntent:b.paymentIntentId,paymentAmount:payment.amount_jpy,paymentHash:payment.event_hash,quoteHash:contract.quote_hash,requestedAmount:b.amountJpy,reason:b.reason})).digest('hex');
    const old=(await c.query('SELECT * FROM commercial_refund_requests WHERE contract_id=$1 AND request_id=$2',[contract.id,requestId])).rows[0];
-   if(old){if(old.request_fingerprint!==fingerprint)throw authHttpError(409,'PS015','Refund request changed');return old;}
-   return (await c.query('INSERT INTO commercial_refund_requests(id,contract_id,request_id,request_fingerprint,account_id,payment_event_id,provider_object_id,payment_amount_jpy,payment_event_hash,quote_hash,requested_amount_jpy,reason,payment_source,period_event_id,seat_change_id,exception_event_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *',[randomUUID(),contract.id,requestId,fingerprint,payment.account_id,payment.event_id,payment.provider_object_id,payment.amount_jpy,payment.event_hash,contract.quote_hash,b.amountJpy,b.reason,payment.payment_source,payment.period_event_id,payment.seat_change_id,payment.exception_event_id])).rows[0];
-  });res.status(201).json(publicRow(result));
+   if(old){if(old.request_fingerprint!==fingerprint)throw authHttpError(409,'PS015','Refund request changed');return withReview(c,old);}
+   const row=(await c.query('INSERT INTO commercial_refund_requests(id,contract_id,request_id,request_fingerprint,account_id,payment_event_id,provider_object_id,payment_amount_jpy,payment_event_hash,quote_hash,requested_amount_jpy,reason,payment_source,period_event_id,seat_change_id,exception_event_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *',[randomUUID(),contract.id,requestId,fingerprint,payment.account_id,payment.event_id,payment.provider_object_id,payment.amount_jpy,payment.event_hash,contract.quote_hash,b.amountJpy,b.reason,payment.payment_source,payment.period_event_id,payment.seat_change_id,payment.exception_event_id])).rows[0];return withReview(c,row);
+  });res.status(201).json(result);
  }catch(e){sendAuthError(res,e);}});
  router.get('/:id/refund-requests/:request',async(req,res)=>{try{
   if(!uuid(req.params.id)||!uuid(req.params.request))throw authHttpError(404,'PS022','Refund request not found');
@@ -87,8 +98,8 @@ export function registerRefundRequestRoutes(router,persist,lookup){
    const contract=(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
    if(!contract)throw authHttpError(404,'PS022','Refund request not found');
    const row=(await c.query('SELECT * FROM commercial_refund_requests WHERE contract_id=$1 AND id=$2',[contract.id,req.params.request])).rows[0];
-   if(!row)throw authHttpError(404,'PS022','Refund request not found');return row;
-  });res.json(publicRow(result));
+   if(!row)throw authHttpError(404,'PS022','Refund request not found');return withReview(c,row);
+  });res.json(result);
  }catch(e){sendAuthError(res,e);}});
  router.post('/:id/refund-requests/:request/reconcile',requireCsrf,async(req,res)=>{try{
   if(!uuid(req.params.id)||!uuid(req.params.request))throw authHttpError(404,'PS022','Refund request not found');
@@ -98,19 +109,14 @@ export function registerRefundRequestRoutes(router,persist,lookup){
    if(!contract)throw authHttpError(404,'PS022','Refund request not found');
    const row=(await c.query('SELECT * FROM commercial_refund_requests WHERE contract_id=$1 AND id=$2',[contract.id,req.params.request])).rows[0];
    if(!row)throw authHttpError(404,'PS022','Refund request not found');
-   if(row.quote_hash!==contract.quote_hash)throw authHttpError(409,'PS015','Refund request binding changed');
-   let providerQuoteHash=row.quote_hash;
-   if(row.payment_source==='seat_change'){
-    const seat=(await c.query('SELECT quote_hash FROM commercial_seat_changes WHERE id=$1 AND contract_id=$2',[row.seat_change_id,contract.id])).rows[0];
-    if(!seat)throw authHttpError(409,'PS015','Refund payment binding unavailable');providerQuoteHash=seat.quote_hash;
-   }
+   const binding=await refundPaymentBinding(c,row,contract,req.auth.userId);
    const active=await c.query('SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()',[req.auth.sessionId,req.auth.userId]);
    if(!active.rowCount)throw authHttpError(401,'PS024','Session expired');
    let current=null;
    try{if(typeof lookup==='function')current=await lookup({account:row.account_id,paymentIntentId:row.provider_object_id});}catch{}
-   const balance=liveRefundBalance({account:row.account_id,paymentIntentId:row.provider_object_id,amountJpy:Number(row.payment_amount_jpy),contractId:contract.id,ownerId:req.auth.userId,quoteHash:providerQuoteHash,requestedAmountJpy:Number(row.requested_amount_jpy)},current);
+   const balance=liveRefundBalance(binding,current);
    const checkedAt=balance.qualified?(await c.query('SELECT clock_timestamp() AS now')).rows[0].now:null;
-   return {...publicRow(row),balance:{...balance,checkedAt},meaning:'current_refund_balance_observed_not_approval_reservation_or_execution'};
+   return {...await withReview(c,row),balance:{...balance,checkedAt},meaning:'current_refund_balance_observed_not_approval_reservation_or_execution'};
   });res.json(result);
  }catch(e){sendAuthError(res,e);}});
 }

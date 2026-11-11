@@ -443,3 +443,33 @@ statusと一覧の扱いはStripe公式の[Refund object](https://docs.stripe.co
 [List refunds](https://docs.stripe.com/api/refunds/list)を参照する。隔離DBと署名fixture、
 private HTTP provider simulatorでこのAPIの正常・拒否・期限切れを検証する。
 本番live資格の設定、販売有効化、実課金・実返金、法定保存期間の確定はこの変更に含めない。
+
+### 返金担当者の審査記録
+
+`PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS`に明示した既存user IDだけが、
+有効なsessionで`GET /api/commercial-contracts/refund-review/:request`と
+`POST .../:request/decisions`を利用できる。未設定では403で閉じ、メールアドレスや
+本文の自己申告、契約所有者であることだけでは担当者資格を取得しない。
+この設定の失効は実runtimeへの反映と403の確認までを完了条件とする。
+
+決定は`operationId`、`expectedRevision`、`decision`、`amountJpy`、`reason`だけを受ける。
+`approved`は申請額以下の正の整数JPYと、重複・未提供期間・法定権利を確認した理由、
+`declined`は0円と証拠不足または自己都合日割り返金対象外の理由を記録する。
+これは担当者の判断記録であり、分類だけで法令上の権利を否定する自動判定ではない。
+担当者は原申請の理由や署名付き支払い正本・見積hash・受付額を変更できない。
+
+担当者と契約所有者の現在identityを固定順でロックし、担当者session・契約・申請を
+取得してから期限を再確認する。承認時は直前に現在provider残額を照合し、他の申請の
+最新承認額と今回額の合計が残額を超える場合は409。契約行で直列化し、同一申請の
+決定版競合は409とする。同じ操作ID・担当者・同じ内容の再送は元のIDと日時を返す。
+過去の承認を再送しても最新決定を戻したり、現在残額や返金実行権限を再認可しない。
+
+`commercial_refund_reviews`は原申請の指紋・契約・申請額へ複合FKを持ち、
+決定・承認額・担当者・版・確認した残額・DB日時を保存する。申請者のGETには最新の
+決定を返し、他人には公開しない。担当者削除時は履歴行を保ち担当者IDをnullとする。
+申請/契約の退会cascadeは架空fixtureで検査するが、有料契約の法定保存期間の確定は別である。
+
+`approvalGranted`は記録済みの審査結果を表し、`executionAuthorized:false`と
+`refundExecuted:false`を維持する。外部providerとの複数読取りはatomicではないため、
+実行経路では承認版・現在資格・現在残額・他の実行・同じprovider冪等キーを再検証する。
+この変更は返金API、実返金、通知配送、販売有効化、Box所属/暗号鍵の変更を行わない。

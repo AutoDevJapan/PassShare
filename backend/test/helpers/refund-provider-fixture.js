@@ -7,8 +7,8 @@ export async function refundProviderFixture(account,scope='connect',options={}){
  return startFixture(account,scope,options,false);
 }
 
-export async function liveRefundProviderFixture(account,scope='connect'){
- return startFixture(account,scope,{},true);
+export async function liveRefundProviderFixture(account,scope='connect',options={}){
+ return startFixture(account,scope,options,true);
 }
 
 async function startFixture(account,scope,options,live){
@@ -19,10 +19,10 @@ async function startFixture(account,scope,options,live){
   const json=(status,data)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(data))};
   if(req.headers.authorization!=='Bearer '+key||req.headers['stripe-account']!==account)return json(401,{error:{type:'authentication_error',message:'Fixture credentials required'}});
   if(control.fail)return json(503,{error:{type:'api_error',message:'Fixture unavailable'}});
-  if(!live&&options.stateControl===true&&req.method==='POST'&&u.pathname==='/fixture/state'){
+  if(options.stateControl===true&&req.method==='POST'&&u.pathname==='/fixture/state'){
    const chunks=[];let size=0;
    req.on('data',chunk=>{size+=chunk.length;if(size<=65536)chunks.push(chunk)});
-   req.on('end',()=>{try{if(size>65536)return json(413,{error:{message:'Fixture too large'}});const input=JSON.parse(Buffer.concat(chunks).toString());if(input.payment?.livemode!==false||input.payment?.currency!=='jpy'||!Array.isArray(input.refunds)||input.refunds.some(r=>r.payment_intent!==input.payment.id||r.currency!=='jpy'))return json(400,{error:{message:'Synthetic test scope required'}});payments.set(input.payment.id,input.payment);for(const r of input.refunds)refunds.set(r.id,r);return json(200,{fixtureStored:true})}catch{return json(400,{error:{message:'Invalid fixture'}})}});return;
+   req.on('end',()=>{try{if(size>65536)return json(413,{error:{message:'Fixture too large'}});const input=JSON.parse(Buffer.concat(chunks).toString());if(input.payment?.livemode!==live||input.payment?.currency!=='jpy'||!Array.isArray(input.refunds)||input.refunds.some(r=>r.payment_intent!==input.payment.id||r.currency!=='jpy'))return json(400,{error:{message:'Synthetic fixture mode required'}});payments.set(input.payment.id,input.payment);for(const r of input.refunds)refunds.set(r.id,r);return json(200,{fixtureStored:true})}catch{return json(400,{error:{message:'Invalid fixture'}})}});return;
   }
   if(req.method!=='GET')return json(405,{error:{message:'Read only fixture'}});
   if(u.pathname.startsWith('/v1/payment_intents/')){const p=payments.get(decodeURIComponent(u.pathname.slice('/v1/payment_intents/'.length)));return p?json(200,p):json(404,{error:{message:'Fixture payment not found'}})}
