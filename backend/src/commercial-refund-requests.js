@@ -93,7 +93,7 @@ export function registerRefundRequestRoutes(router,persist,lookup){
  router.post('/:id/refund-requests/:request/reconcile',requireCsrf,async(req,res)=>{try{
   if(!uuid(req.params.id)||!uuid(req.params.request))throw authHttpError(404,'PS022','Refund request not found');
   if(!exact(req.body,[]))throw authHttpError(400,'PS018','No client financial state is accepted');
-  const result=await persist(req,async c=>{
+  const capture=async c=>{
    const contract=(await c.query('SELECT id,quote_hash FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
    if(!contract)throw authHttpError(404,'PS022','Refund request not found');
    const row=(await c.query('SELECT * FROM commercial_refund_requests WHERE contract_id=$1 AND id=$2',[contract.id,req.params.request])).rows[0];
@@ -106,11 +106,17 @@ export function registerRefundRequestRoutes(router,persist,lookup){
    }
    const active=await c.query('SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()',[req.auth.sessionId,req.auth.userId]);
    if(!active.rowCount)throw authHttpError(401,'PS024','Session expired');
-   let current=null;
-   try{if(typeof lookup==='function')current=await lookup({account:row.account_id,paymentIntentId:row.provider_object_id});}catch{}
-   const balance=liveRefundBalance({account:row.account_id,paymentIntentId:row.provider_object_id,amountJpy:Number(row.payment_amount_jpy),contractId:contract.id,ownerId:req.auth.userId,quoteHash:providerQuoteHash,requestedAmountJpy:Number(row.requested_amount_jpy)},current);
-   const checkedAt=balance.qualified?(await c.query('SELECT clock_timestamp() AS now')).rows[0].now:null;
-   return {...publicRow(row),balance:{...balance,checkedAt},meaning:'current_refund_balance_observed_not_approval_reservation_or_execution'};
+   return {row,binding:{account:row.account_id,paymentIntentId:row.provider_object_id,amountJpy:Number(row.payment_amount_jpy),contractId:contract.id,ownerId:req.auth.userId,quoteHash:providerQuoteHash,requestedAmountJpy:Number(row.requested_amount_jpy)}};
+  };
+  // Capture authority under locks, release the connection before external I/O,
+  // then acquire fresh authority and exact payment binding before disclosure.
+  const captured=await persist(req,capture);let current=null;
+  try{if(typeof lookup==='function')current=await lookup({account:captured.binding.account,paymentIntentId:captured.binding.paymentIntentId});}catch{}
+  const result=await persist(req,async c=>{
+   const fresh=await capture(c);
+   if(fresh.row.id!==captured.row.id||fresh.row.request_fingerprint!==captured.row.request_fingerprint||fresh.row.payment_event_hash!==captured.row.payment_event_hash||JSON.stringify(fresh.binding)!==JSON.stringify(captured.binding))throw authHttpError(409,'PS015','Refund payment binding changed during lookup');
+   const balance=liveRefundBalance(fresh.binding,current),checkedAt=balance.qualified?(await c.query('SELECT clock_timestamp() AS now')).rows[0].now:null;
+   return {...publicRow(fresh.row),balance:{...balance,checkedAt},meaning:'current_refund_balance_observed_not_approval_reservation_or_execution'};
   });res.json(result);
  }catch(e){sendAuthError(res,e);}});
 }
