@@ -92,6 +92,17 @@ export function registerRefundRequestRoutes(router,persist,lookup){
    const row=(await c.query('INSERT INTO commercial_refund_requests(id,contract_id,request_id,request_fingerprint,account_id,payment_event_id,provider_object_id,payment_amount_jpy,payment_event_hash,quote_hash,requested_amount_jpy,reason,payment_source,period_event_id,seat_change_id,exception_event_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *',[randomUUID(),contract.id,requestId,fingerprint,payment.account_id,payment.event_id,payment.provider_object_id,payment.amount_jpy,payment.event_hash,contract.quote_hash,b.amountJpy,b.reason,payment.payment_source,payment.period_event_id,payment.seat_change_id,payment.exception_event_id])).rows[0];return withReview(c,row);
   });res.status(201).json(result);
  }catch(e){sendAuthError(res,e);}});
+ router.get('/:id/refund-requests',async(req,res)=>{try{
+  if(!uuid(req.params.id))throw authHttpError(404,'PS022','Contract not found');
+  if(Object.keys(req.query).some(k=>k!=='after')||(req.query.after!==undefined&&!uuid(req.query.after)))throw authHttpError(400,'PS018','Invalid refund history cursor');
+  const result=await persist(req,async c=>{
+   if(!(await c.query('SELECT id FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rowCount)throw authHttpError(404,'PS022','Contract not found');
+   const rows=(await c.query(`SELECT r.*,latest.review FROM commercial_refund_requests r
+    LEFT JOIN LATERAL (SELECT to_jsonb(v) review FROM commercial_refund_reviews v WHERE v.request_id=r.id ORDER BY v.revision DESC LIMIT 1) latest ON true
+    WHERE r.contract_id=$1 AND ($2::uuid IS NULL OR r.id>$2) ORDER BY r.id LIMIT 101`,[req.params.id,req.query.after??null])).rows;
+   const page=rows.slice(0,100);return {requests:page.map(publicRefundRequest),nextCursor:rows.length>100?page.at(-1).id:null,refundExecuted:false};
+  });res.json(result);
+ }catch(e){sendAuthError(res,e)}});
  router.get('/:id/refund-requests/:request',async(req,res)=>{try{
   if(!uuid(req.params.id)||!uuid(req.params.request))throw authHttpError(404,'PS022','Refund request not found');
   const result=await persist(req,async c=>{
