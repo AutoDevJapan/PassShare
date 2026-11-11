@@ -23,6 +23,7 @@ import { createMutationStore } from "./store/mutation-store.js";
 import { createEncryptedRouter, createPlaintextBoundary } from "./encrypted/router.js";
 import { createAccountIdentityRouter } from "./encrypted/account-identity-router.js";
 import { createSharingRotationRouter } from "./encrypted/sharing-rotation-router.js";
+import {assertNotClosedRestoreTarget} from './commercial-deletion-journal.js';
 
 // Best-effort DB pool warm-up: open the first connection during startup so the
 // first real request after a Railway cold-start (idle wake / fresh deploy) does
@@ -87,6 +88,9 @@ export async function createApp(options = {}) {
   // Warm the connection early so the first post-cold-start request is served by
   // an already-established connection rather than a cold one.
   await warmUpPool(pool);
+  // Production owns both concrete DB stores. Injected memory/test adapters do
+  // not represent a restored database and retain the existing warm-up contract.
+  if(!options.store&&!options.authStore)await assertNotClosedRestoreTarget(pool);
 
   const connectStore = options.store ?? (await createStore(pool));
   const authStore = options.authStore ?? (await createAuthStore(pool));
