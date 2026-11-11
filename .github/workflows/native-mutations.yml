@@ -82,7 +82,7 @@ jobs:
           POSTGRES_PASSWORD: passshare
           POSTGRES_DB: passshare
         ports: ['5432:5432']
-        options: --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15
+        options: --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 15 --label passshare.fixture=deletion-reconciliation
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -104,6 +104,8 @@ jobs:
         env:
           DATABASE_URL: postgresql://passshare:passshare@127.0.0.1:5432/passshare
           PASSSHARE_RECEIPTS_PG: "true"
+          PASSSHARE_DELETION_RECOVERY_PG: "true"
+          PASSSHARE_DELETION_RECOVERY_CONTAINER: ${{ job.services.postgres.id }}
           PASSSHARE_MUTATIONS_BIN: ${{ github.workspace }}/backend/native/target/release/passshare-mutations
       - name: Verify atomic PostgreSQL operations and restart
         run: backend/native/target/release/acceptance

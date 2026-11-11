@@ -118,6 +118,7 @@ fn inventory_accepts_exact_known_schema_and_rejects_unknown_missing_or_duplicate
     let expected = json!([
         "commercial_contracts",
         "commercial_data_deletion_requests",
+        "commercial_deletion_journal",
         "commercial_export_events",
         "commercial_live_contracts",
         "commercial_live_periods",

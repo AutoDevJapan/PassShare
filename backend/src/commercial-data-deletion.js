@@ -6,6 +6,7 @@ import {verifyPassword} from './auth/password.js';
 import {createLoginGuard,resolveClientIp} from './auth/login-guard.js';
 import {applySchemaWithAdvisoryLock} from './db/migration-lock.js';
 import {loadEntitlement} from './commercial-live.js';
+import {migrateDeletionJournal,recordCompletedDeletion} from './commercial-deletion-journal.js';
 
 export const DATA_DELETION_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_data_deletion_requests (
  id UUID PRIMARY KEY,contract_id UUID NOT NULL REFERENCES commercial_contracts(id) ON DELETE CASCADE,
@@ -21,7 +22,7 @@ export const DATA_DELETION_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_data_de
  CHECK((state='pending' AND canceled_at IS NULL AND completed_at IS NULL AND revision=0)
  OR(state='canceled' AND canceled_at IS NOT NULL AND completed_at IS NULL AND revision=1)
  OR(state='completed' AND completed_at IS NOT NULL AND canceled_at IS NULL AND revision=1)));`;
-export const migrateDataDeletion=pool=>applySchemaWithAdvisoryLock(pool,4820138,DATA_DELETION_SCHEMA);
+export const migrateDataDeletion=async pool=>{await applySchemaWithAdvisoryLock(pool,4820138,DATA_DELETION_SCHEMA);await migrateDeletionJournal(pool);};
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
 const boxId=value=>typeof value==='string'&&/^[a-z0-9]{26}$/.test(value);
 const exact=(body,keys)=>body&&typeof body==='object'&&!Array.isArray(body)&&Object.keys(body).length===keys.length&&keys.every(key=>Object.hasOwn(body,key));
@@ -106,6 +107,7 @@ export function registerDataDeletionRoutes(router,{pool,authStore,loginGuardStor
    if(state.content!==row.content_version||state.attribute!==row.attribute_version||String(state.revision)!==String(row.encrypted_state_revision)||String(state.epoch)!==String(row.encrypted_key_epoch)||state.fingerprint!==row.data_fingerprint)throw failure(409,'Password box changed; review a new deletion request');
    // A confirmed Box deletion is not account retirement. Do not revoke tokens
    // for the owner's other boxes or alter independent core/self-hosted access.
+   await recordCompletedDeletion(client,row);
    await client.query('DELETE FROM mutation_operations WHERE resource=$1',[row.box_id]);
    await client.query("UPDATE mutation_operations SET request_hash='',result='{\"deleted\":true}'::jsonb WHERE operation='box' AND result->>'vaultId'=$1",[row.box_id]);
    await client.query('DELETE FROM connect_vaults WHERE id=$1',[row.box_id]);

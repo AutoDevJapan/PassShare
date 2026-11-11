@@ -988,6 +988,20 @@ impl Runner {
             let created=self.api.json(report,if retired {"source_retired_deletion_request_HTTP"}else{"source_deletion_request_HTTP"},"POST",&format!("/api/commercial-contracts/{cid}/data-deletion-requests"),&actor.session,Some(&json!({"requestId":request_id,"boxId":bid,"quoteHash":quote["quoteHash"],"expectedContentVersion":1,"expectedAttributeVersion":1,"expectedStateRevision":null,"expectedKeyEpoch":null,"confirmationBoxId":bid,"currentPassword":password})),201,None)?;
             for row in paid.as_array().ok_or(Failure::Shape)? {let account=text(row,"/account")?;let event=text(row,"/event")?;let start=text(row,"/start")?;let end=text(row,"/end")?;if ![account.as_str(),event.as_str(),start.as_str(),end.as_str()].iter().all(|value|value.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')){return Err(Failure::Shape);}sql("drill_source",&format!("UPDATE commercial_live_periods SET period_start='{start}'::date,period_end='{end}'::date WHERE account_id='{account}' AND event_id='{event}';"))?;}
             let rid=identifier(&created,"/id",36)?;
+            if retired {
+                // A separately confirmed Box is actually deleted through HTTP.
+                // Its minimal barrier must survive this account's retirement.
+                let completed_box=self.api.json(report,"source_completed_deletion_box_HTTP","POST","/api/auth/vaults",&actor.session,Some(&json!({"name":"synthetic completed deletion barrier"})),201,None)?;
+                let completed_bid=identifier(&completed_box,"/vaultId",26)?;
+                let completed_id="efefefef-efef-4fef-8fef-efefefefefef";
+                // Restore unrelated paid windows only after this explicit case.
+                sql("drill_source",&format!("UPDATE commercial_live_periods p SET period_start=CURRENT_DATE-100,period_end=CURRENT_DATE-60 FROM commercial_contracts c WHERE p.contract_id=c.id AND c.user_id='{}' AND c.id<>'{cid}';",actor.id))?;
+                let consent=self.api.json(report,"source_completed_deletion_request_HTTP","POST",&format!("/api/commercial-contracts/{cid}/data-deletion-requests"),&actor.session,Some(&json!({"requestId":completed_id,"boxId":completed_bid,"quoteHash":quote["quoteHash"],"expectedContentVersion":1,"expectedAttributeVersion":1,"expectedStateRevision":null,"expectedKeyEpoch":null,"confirmationBoxId":completed_bid,"currentPassword":password})),201,None)?;
+                let consent_id=identifier(&consent,"/id",36)?;
+                self.api.json(report,"source_completed_deletion_execute_HTTP","POST",&format!("/api/commercial-contracts/{cid}/data-deletion-requests/{consent_id}/execute"),&actor.session,Some(&json!({"revision":0,"confirmationBoxId":completed_bid,"currentPassword":password})),200,None)?;
+                report.check("source_completed_deletion_journal_nonempty",sql("drill_source",&format!("SELECT count(*) FROM commercial_deletion_journal WHERE deletion_id='{consent_id}' AND box_id='{completed_bid}' AND completed_at IS NOT NULL;"))?.trim()=="1")?;
+                for row in paid.as_array().ok_or(Failure::Shape)? {let account=text(row,"/account")?;let event=text(row,"/event")?;let start=text(row,"/start")?;let end=text(row,"/end")?;sql("drill_source",&format!("UPDATE commercial_live_periods SET period_start='{start}'::date,period_end='{end}'::date WHERE account_id='{account}' AND event_id='{event}';"))?;}
+            }
             if retired {retired_deletion_id=rid;report.check("source_retired_deletion_request_nonempty",created["state"]=="pending"&&created["dataDeleted"]==false)?;}
             else {deletion_contract=cid;deletion_box=bid;source_deletion=created;}
         }
@@ -1202,6 +1216,7 @@ impl Runner {
             "restore_refund_reviews_full_rows",
             "restore_test_refund_operations_full_rows",
             "restore_data_deletion_requests_full_rows",
+            "restore_deletion_journal_full_rows",
         ];
         if names.len() != TABLES.len() {
             return Err(Failure::Shape);
@@ -1470,6 +1485,7 @@ impl Runner {
         let deletion_read=self.api.json(report,"restored_deletion_request_owner_HTTP","GET",&deletion_path,&current_owner.session,None,200,None)?;
         report.check("restored_deletion_request_values",exact_json(&source_deletion,&deletion_read))?;
         report.check("restored_deletion_request_retired_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_data_deletion_requests WHERE id='{retired_deletion_id}';"))?.trim()=="0")?;
+        report.check("restored_completed_deletion_journal_survives_retirement",sql("drill_restored","SELECT count(*) FROM commercial_deletion_journal j WHERE completed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM connect_vaults v WHERE v.id=j.box_id);")?.trim()=="1")?;
         let canceled=self.api.json(report,"restored_deletion_cancel_HTTP","POST",&format!("{deletion_path}/cancel"),&current_owner.session,Some(&json!({"revision":0})),200,None)?;
         report.check("restored_deletion_cancel_preserves_box",canceled["state"]=="canceled"&&canceled["dataDeleted"]==false&&sql("drill_restored",&format!("SELECT count(*) FROM connect_vaults WHERE id='{deletion_box}';"))?.trim()=="1")?;
         report.check("restored_deleted_creation_tombstone",sql("drill_restored",&format!("SELECT count(*) FROM mutation_operations WHERE actor='{}' AND resource='{}' AND operation='box' AND request_key='restore-deleted-creation-0001' AND request_hash='' AND result='{{\"deleted\":true}}'::jsonb;",owner.id,owner.id))?.trim()=="1")?;
