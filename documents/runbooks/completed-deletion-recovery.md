@@ -10,6 +10,12 @@ CLIの現在正本・復元先の接続にも通常backendと同じDB接続方�
 
 ## 実行する順序
 
+### 明示した別保存先への検証付きコピー
+
+`node backend/scripts/deletion-recovery.mjs preserve-copy <設定JSON絶対path>`は、DBへ接続せず、取得済み最小journalを明示した新規ファイルへ保存する。設定は`format:"passshare-deletion-copy-v1"`、`sourceId`、`journalPath`、`copyPath`、独立した信頼済み`trustedJournalSha256`を持つ。保存前の構造・digest照合、排他的作成、fsync、同じファイルhandleからの全bytes読み返しを行う。既存コピーは上書きしない。
+
+これはローカルの検証付きコピーであり、別障害領域への永続保全・保存期間・現在正本の喪失後の資格再承認を証明しない。古いarchiveと同時に巻き戻る保存先を独立保全と呼ばない。復元時の現資格・所属・鍵の全gateは引き続き閉じたままとする。この候補の実PG組合せはDocker起動障害のため未実施であり、運用保全完成とは扱わない。
+
 時刻はPostgreSQLのマイクロ秒6桁UTC表現のまま出力・比較し、JavaScript Dateのミリ秒変換で差を落とさない。再開gateは入力にある行だけでなく、現在の正本と復元先の全journal行・時刻の一致も検査する。余分な行や1マイクロ秒の差も合格にしない。正本はDB名だけで識別せず、正規運用記録にあるPostgreSQL clusterのsystem identifierとdatabase OIDを実接続で照合する。古いコピーへ接続した後に、その識別子を「信頼済み」として採用し直さない。物理cloneがcluster IDも複製する場合は正規接続先の照合も必要で、この数値だけであらゆる複製を認証できるとはしない。
 
 reapply設定には正規運用記録の`currentSourceSystemIdentifier`と`currentSourceDatabaseOid`を文字列で指定する。照会できる既存DB権限がなければ資格を増設せず、その手順を未達として扱う。gateは正本・target双方のjournalとtargetのBox/冪等記録をロックして照合し、別client接続を検出した場合も合格にしない。

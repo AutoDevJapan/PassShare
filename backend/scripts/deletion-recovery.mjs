@@ -3,6 +3,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import pg from 'pg';
 import {resolveDbPoolConfig} from '../src/config/db-ssl.js';
+import {preserveJournalCopy} from '../src/commercial-journal-copy.js';
 import {exportDeletionJournal,reconcileCompletedDeletions,completedDeletionGate,prepareClosedDeletionRestore} from '../src/commercial-deletion-journal.js';
 
 // An offline maintenance caller, never an HTTP endpoint. DB credentials stay in
@@ -12,8 +13,12 @@ const fail=()=>{console.error(JSON.stringify({ok:false,error:'deletion_recovery_
 const readBounded=(file,limit)=>{const fd=fs.openSync(file,'r');try{const bytes=Buffer.alloc(limit+1);let n=0;while(n<bytes.length){const count=fs.readSync(fd,bytes,n,bytes.length-n,null);if(!count)break;n+=count;}if(n>limit)throw Error();return bytes.subarray(0,n);}finally{fs.closeSync(fd);}};
 let client,currentSource;
 try{
- if(!['export','prepare-closed','reapply'].includes(operation)||!configPath||process.argv.length!==4||!path.isAbsolute(configPath))throw Error();
+ if(!['export','preserve-copy','prepare-closed','reapply'].includes(operation)||!configPath||process.argv.length!==4||!path.isAbsolute(configPath))throw Error();
  const c=JSON.parse(readBounded(configPath,16384));
+ if(operation==='preserve-copy'){
+  if(c.format!=='passshare-deletion-copy-v1'||!path.isAbsolute(c.journalPath??'')||!path.isAbsolute(c.copyPath??'')||path.resolve(c.journalPath)===path.resolve(c.copyPath))throw Error();
+  const r=preserveJournalCopy(readBounded(c.journalPath,16*1024*1024),{expectedSha256:c.trustedJournalSha256,expectedSourceId:c.sourceId,target:c.copyPath});console.log(JSON.stringify({ok:true,operation,...r,automaticReopen:false}));
+ }else{
  if(c.format!=='passshare-deletion-recovery-v1'||!/^PASSSHARE_[A-Z0-9_]+_DATABASE_URL$/.test(c.databaseUrlEnv??'')||typeof process.env[c.databaseUrlEnv]!=='string')throw Error();
  client=new pg.Client({...resolveDbPoolConfig(process.env[c.databaseUrlEnv]),statement_timeout:15000,query_timeout:20000,application_name:'passshare-offline-deletion-recovery'});await client.connect();
  if(operation==='export'){
@@ -28,5 +33,6 @@ try{
   const options={bytes,expectedSha256:c.trustedJournalSha256,expectedSourceId:c.sourceId,expectedTargetDatabase:c.targetDatabase,restoreOperationId:c.restoreOperationId,currentSource,expectedSourceDatabase:c.currentSourceDatabase,expectedSourceSystemIdentifier:c.currentSourceSystemIdentifier,expectedSourceDatabaseOid:c.currentSourceDatabaseOid};
   const r=await reconcileCompletedDeletions(client,options),qualified=await completedDeletionGate(client,options);if(!qualified)throw Error();
   console.log(JSON.stringify({ok:true,operation:'reapply',...r,deletionGateQualified:true,APIStillClosed:true,identityMembershipKeyQualification:false,automaticReopen:false}));
+ }
  }
 }catch{fail();}finally{if(client)await client.end().catch(()=>{process.exitCode=1;});if(currentSource)await currentSource.end().catch(()=>{process.exitCode=1;});}
