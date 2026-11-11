@@ -1510,7 +1510,7 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
     for (name, bytes) in [
         ("先頭-名前🦀.bin", vec![0xff, 0, 1, 0, 0xfe]),
         ("空\0Unicode", Vec::new()),
-        ("third.txt", "本文\0éЖ🦀".as_bytes().to_vec()),
+        ("本文-Ж🦀.txt", "本文\0éЖ🦀".as_bytes().to_vec()),
     ] {
         let f = File::new(&old, &a, &item, name, bytes);
         dto["attachments"]
@@ -2130,6 +2130,14 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         "/api/commercial-contracts/{}/export/boxes/{}",
         export_contracts[0], a.box_id
     );
+    let audit_count = || {
+        restored
+            .sql("SELECT count(*) FROM commercial_export_events")
+            .parse::<u64>()
+            .unwrap()
+    };
+    let successful_reads_before = audit_count();
+    let successful_box_state = state_hash(&restored, true);
     let export_state = send(
         restore_host.port,
         &a,
@@ -2172,6 +2180,10 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         files.len() >= 3,
         "restored export has independent empty, binary and Unicode fixtures",
     );
+    check(
+        files[2].name == "本文-Ж🦀.txt" && files[2].bytes == "本文\0éЖ🦀".as_bytes(),
+        "the exported Unicode filename and nonempty Unicode bytes belong to the same original attachment",
+    );
     for file in &files[..3] {
         let exported = send(
             restore_host.port,
@@ -2189,8 +2201,20 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
             "restored export returns every original attachment envelope field",
         );
         file.verify(&old, &a, &item, &exported["data"], 1);
+        check(restored.sql(&format!("SELECT count(*) FROM commercial_export_events WHERE id='{}' AND contract_id='{}' AND actor_id='{}' AND box_id='{}' AND kind='attachment' AND item_id='{item}' AND attachment_id='{}' AND key_epoch=1 AND snapshot_revision={}",text_field(&exported,"receiptId"),export_contracts[0],a.id,a.box_id,file.id,number(&export_state,"snapshotRevision"))) == "1",
+            "successful restored attachment export has exactly its matching private audit receipt");
     }
-    send(
+    check(
+        audit_count() == successful_reads_before + 5,
+        "state, parent snapshot and three attachment exports each persist one audit receipt",
+    );
+    check(
+        state_hash(&restored, true) == successful_box_state,
+        "successful restored exports preserve all box, key, membership and staged rows/xmin",
+    );
+    let denied_audits_before = audit_count();
+    reject(
+        &restored,
         restore_host.port,
         &d,
         "GET",
@@ -2198,7 +2222,8 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         &Value::Null,
         404,
     );
-    send(
+    reject(
+        &restored,
         restore_host.port,
         &d,
         "GET",
@@ -2210,13 +2235,18 @@ pub(crate) fn run(db: &Database, network: &Network, mode: &Mode) {
         403,
     );
     restored.sql(&format!("UPDATE commercial_live_periods SET period_start=CURRENT_DATE-61,period_end=CURRENT_DATE-31 WHERE contract_id='{}'",export_contracts[0]));
-    send(
+    reject(
+        &restored,
         restore_host.port,
         &a,
         "GET",
         &format!("{export_root}/state"),
         &Value::Null,
         403,
+    );
+    check(
+        audit_count() == denied_audits_before,
+        "foreign, unauthorized and expired exports persist no success audit receipt",
     );
     check(restored.sql(&format!("SELECT count(*) FROM encrypted_attachments WHERE box_id='{}'",a.box_id)) == files.len().to_string(),
         "expired commercial export preserves every restored attachment and its independent storage authority");
