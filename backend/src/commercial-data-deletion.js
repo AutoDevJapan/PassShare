@@ -37,6 +37,9 @@ export function registerDataDeletionRoutes(router,{pool,authStore,loginGuardStor
   const user=await authStore.findUserById(req.auth.userId);if(!user)throw failure(401,'Session expired');
   const ip=resolveClientIp(req);await guard.assertIpAllowed(ip);await guard.recordIpRequest(ip);await guard.assertNotLocked(user.email);
   if(!await verifyPassword(user.password_hash,parsePassword(req.body.currentPassword))){await guard.recordFailure(user.email);throw failure(401,'Invalid credentials');}
+  // Auxiliary counter storage must succeed before any irreversible work. A
+  // failure after commit must not turn a completed deletion into an HTTP500.
+  await guard.clearFailures(user.email);
   return {hash:digest(user.password_hash),email:user.email};
  };
  const transaction=async(req,selectedBox,proof,work)=>{
@@ -86,7 +89,7 @@ export function registerDataDeletionRoutes(router,{pool,authStore,loginGuardStor
    const state=await snapshot(client,box,req.auth.userId),entitlement=await ended(client,contract);
    if(state.content!==body.expectedContentVersion||state.attribute!==body.expectedAttributeVersion||String(state.revision)!==String(body.expectedStateRevision)||String(state.epoch)!==String(body.expectedKeyEpoch))throw failure(409,'Password box version changed');
    return view((await client.query('INSERT INTO commercial_data_deletion_requests(id,contract_id,user_id,request_id,box_id,quote_hash,fingerprint,data_fingerprint,content_version,attribute_version,encrypted_state_revision,encrypted_key_epoch,paid_through,not_before) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::date,$14::date) RETURNING *,paid_through::text paid_through,not_before::text not_before',[randomUUID(),contract.id,req.auth.userId,body.requestId,box.id,contract.quote_hash,fingerprint,state.fingerprint,state.content,state.attribute,state.revision,state.epoch,entitlement.paidThrough,entitlement.exportWindow.endExclusive])).rows[0]);
-  });await guard.clearFailures(proof.email);res.status(201).json(result);
+  });res.status(201).json(result);
  }catch(error){sendAuthError(res,error?.code==='23505'&&error.constraint==='commercial_data_deletion_requests_user_id_request_id_key'?failure(409,'Deletion request identity changed'):error);}});
  router.get('/:id/data-deletion-requests/:request',async(req,res)=>{try{res.json(await transaction(req,null,null,async client=>view(await read(client,req))));}catch(error){sendAuthError(res,error);}});
  router.post('/:id/data-deletion-requests/:request/cancel',requireCsrf,async(req,res)=>{try{
@@ -106,6 +109,6 @@ export function registerDataDeletionRoutes(router,{pool,authStore,loginGuardStor
    await client.query('DELETE FROM mutation_operations WHERE resource=$1',[row.box_id]);
    await client.query('DELETE FROM connect_vaults WHERE id=$1',[row.box_id]);
    return view((await client.query("UPDATE commercial_data_deletion_requests SET state='completed',revision=1,completed_at=clock_timestamp() WHERE id=$1 RETURNING *,paid_through::text paid_through,not_before::text not_before",[row.id])).rows[0]);
-  });await guard.clearFailures(proof.email);res.json(result);
+  });res.json(result);
  }catch(error){sendAuthError(res,error);}});
 }

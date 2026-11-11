@@ -4,14 +4,17 @@ import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import Stripe from 'stripe';
 import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
+import {createMemoryLoginGuardStore} from '../src/auth/login-guard-store.js';
 
 test('explicit ended-contract deletion is durable cancelable and deletes only the unchanged solely-owned box after30days',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
  const url=new URL(process.env.DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.username,'passshare');assert.equal(url.pathname,'/passshare');
  const admin=new pg.Pool({connectionString:url.href}),name='ps_data_deletion_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+name);url.pathname='/'+name;
  const pool=new pg.Pool({connectionString:url.href}),close=trackPoolShutdown(pool),secret='whsec_deletion_fixture',account='acct_deletionfixture',password='fixture-password-4431!';
  const keys=['PASSSHARE_COMMERCIAL_LIVE_ENABLED','PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT'],saved=Object.fromEntries(keys.map(key=>[key,process.env[key]]));Object.assign(process.env,{PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true',PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account});
- let server,base;
- const start=async()=>{const {createApp}=await import('../src/app.js'),{app}=await createApp({pool});server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base='http://127.0.0.1:'+server.address().port;};
+ let server,base,failFailureCleanup=false;
+ const loginGuardStore=createMemoryLoginGuardStore(),originalClear=loginGuardStore.clearEmailFailures.bind(loginGuardStore);
+ loginGuardStore.clearEmailFailures=async email=>{if(failFailureCleanup)throw Error('Synthetic login counter cleanup failure');return originalClear(email);};
+ const start=async()=>{const {createApp}=await import('../src/app.js'),{app}=await createApp({pool,loginGuardStore});server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base='http://127.0.0.1:'+server.address().port;};
  const stop=async()=>{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));server=null;}};
  const call=async(path,actor,body,method=body===undefined?'GET':'POST')=>{const response=await fetch(base+path,{method,signal:AbortSignal.timeout(15000),headers:{'content-type':'application/json','x-passshare-client':'mobile',...(actor?{authorization:'Bearer '+actor.refreshToken}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,body:await response.json().catch(()=>null),cache:response.headers.get('cache-control')};};
  try{
@@ -85,6 +88,11 @@ test('explicit ended-contract deletion is durable cancelable and deletes only th
   }finally{await blocker.query('ROLLBACK').catch(()=>{});blocker.release();if(waiting)await waiting;}
   const finalRequest=await call(route,owner,{...request,requestId:randomUUID()});assert.equal(finalRequest.status,201);
   const finalPath=route+'/'+finalRequest.body.id;
+  failFailureCleanup=true;
+  try{assert.equal((await call(finalPath+'/execute',owner,{revision:0,currentPassword:password,confirmationBoxId:boxId})).status,500);}
+  finally{failFailureCleanup=false;}
+  assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[boxId])).rows[0].n,1,'Auxiliary login cleanup failure must happen before irreversible deletion');
+  assert.equal((await call(finalPath,owner)).body.state,'pending');
   const simultaneous=await Promise.all([call(finalPath+'/execute',owner,{revision:0,currentPassword:password,confirmationBoxId:boxId}),call(finalPath+'/cancel',owner,{revision:0})]);
   // Whichever operation reaches the contract/request lock first wins. Accept
   // either valid outcome without claiming which scheduler was used by the OS.
