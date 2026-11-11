@@ -66,17 +66,25 @@ export function registerRefundReviewRoutes(router,{pool,lookup,reviewerIds=[]}){
   const b=req.body;
   if(!uuid(req.params.request)||!exact(b,['operationId','expectedRevision','decision','amountJpy','reason'])||!uuid(b.operationId)||!Number.isSafeInteger(b.expectedRevision)||b.expectedRevision<0||b.expectedRevision>=2147483647||!Number.isSafeInteger(b.amountJpy)||b.amountJpy<0||!((b.decision==='approved'&&b.amountJpy>0&&['duplicate_confirmed','unprovided_period_confirmed','statutory_right_confirmed'].includes(b.reason))||(b.decision==='declined'&&b.amountJpy===0&&['insufficient_evidence','self_cancellation_no_proration'].includes(b.reason))))throw authHttpError(400,'PS018','Invalid refund review');
   const operation=b.operationId.toLowerCase(),fingerprint=createHash('sha256').update(JSON.stringify({request:req.params.request.toLowerCase(),reviewer:req.auth.userId,operationId:operation,expectedRevision:b.expectedRevision,decision:b.decision,amountJpy:b.amountJpy,reason:b.reason})).digest('hex');
-  const result=await transaction(req,async(c,contract,request,assertCurrent)=>{
+  const inspect=async(c,contract,request)=>{
    const old=(await c.query('SELECT * FROM commercial_refund_reviews WHERE request_id=$1 AND operation_id=$2',[request.id,operation])).rows[0];
-   if(old){if(old.decision_fingerprint!==fingerprint)throw conflict('Refund review operation changed');return out(old)}
+   if(old){if(old.decision_fingerprint!==fingerprint)throw conflict('Refund review operation changed');return {old}}
    const latest=(await c.query('SELECT revision FROM commercial_refund_reviews WHERE request_id=$1 ORDER BY revision DESC LIMIT 1',[request.id])).rows[0];
    if((latest?.revision??0)!==b.expectedRevision)throw conflict('Refund review revision changed');
    if(b.amountJpy>Number(request.requested_amount_jpy))throw authHttpError(400,'PS018','Review amount exceeds this request');
+   return {request,contract,binding:b.decision==='approved'?await refundPaymentBinding(c,request,contract,contract.user_id):null};
+  };
+  const captured=await transaction(req,inspect);
+  if(captured.old){res.status(201).json(out(captured.old));return}
+  let current=null;
+  if(b.decision==='approved')try{if(typeof lookup==='function')current=await lookup({account:captured.binding.account,paymentIntentId:captured.binding.paymentIntentId})}catch{}
+  const result=await transaction(req,async(c,contract,request,assertCurrent)=>{
+   const fresh=await inspect(c,contract,request);
+   if(fresh.old)return out(fresh.old);
+   if(request.request_fingerprint!==captured.request.request_fingerprint||request.payment_event_hash!==captured.request.payment_event_hash||JSON.stringify(fresh.binding)!==JSON.stringify(captured.binding))throw conflict('Refund review binding changed during lookup');
    let balance=null;
    if(b.decision==='approved'){
-    const binding=await refundPaymentBinding(c,request,contract,contract.user_id);let current=null;
-    await assertCurrent();try{if(typeof lookup==='function')current=await lookup({account:request.account_id,paymentIntentId:request.provider_object_id})}catch{}
-    balance=liveRefundBalance(binding,current);await assertCurrent();
+    balance=liveRefundBalance(fresh.binding,current);await assertCurrent();
     if(!balance.qualified||b.amountJpy>balance.availableRefundJpy)throw conflict('Current refund balance does not qualify this review');
     // All claims for this contract serialize on its row. Count only each
     // other request's latest decision, never historical superseded approvals.
