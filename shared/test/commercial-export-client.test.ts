@@ -78,3 +78,20 @@ test('attachment export rejects response snapshot and authenticated context mism
   }
  }
 });
+
+test('both attachment entrances keep the original context across an in-flight caller mutation',async()=>{
+ for(const kind of ['parent','file'] as const){
+  for(const unsolicited of [false,true]){
+   const item={passwordBoxId:box,itemId:'b'.repeat(26),itemVersion:2,keyEpoch:2};
+   const attachment={passwordBoxId:box,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+   const expected=kind==='parent'?item:attachment;
+   const original={...expected};let release!:()=>void;
+   const gate=new Promise<void>(resolve=>{release=resolve;});
+   const api=createCloudApi(async()=>{await gate;const context=unsolicited?{...expected}:original;return Response.json(reply(kind==='parent'?{format:1,context,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(16).toString('base64')}:{format:1,context,contentBytes:0,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(20).toString('base64')}));});
+   const pending=kind==='parent'?api.getCommercialAttachmentItemSnapshot(contract,item,3,new AbortController().signal):api.getCommercialEncryptedAttachment(contract,attachment,3,new AbortController().signal);
+   expected.itemId='d'.repeat(26);release();
+   if(unsolicited)await assert.rejects(pending,(error:any)=>error.status===502);
+   else assert.deepEqual(JSON.parse(await pending).context,original);
+  }
+ }
+});
