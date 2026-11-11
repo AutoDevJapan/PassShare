@@ -37,6 +37,13 @@ const REQUIRED_POSITIVE: &[&str] = &[
     "restore_test_refunds_full_rows",
     "restore_test_refund_events_full_rows",
     "restore_refund_requests_full_rows",
+    "restore_refund_reviews_full_rows",
+    "source_refund_review_HTTP",
+    "source_refund_review_nonempty",
+    "source_retired_refund_review_nonempty",
+    "restored_refund_review_nonempty",
+    "retired_refund_reviews_cascaded",
+    "restored_refund_review_exact_values",
     "source_refund_request_nonempty",
     "source_retired_refund_request_nonempty",
     "restored_refund_request_nonempty",
@@ -111,6 +118,15 @@ pub(super) fn validate(report: &Value, negative: bool) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn required_scenario_check_names_are_emitted_once() {
+        let source=include_str!("scenario.rs");
+        for name in REQUIRED_POSITIVE {
+            let literal=format!("\"{name}\"");
+            assert_eq!(source.match_indices(&literal).count(),1,"missing or duplicated scenario result: {name}");
+        }
+    }
 
     fn negative_fixture() -> Value {
         let mut checks = vec![

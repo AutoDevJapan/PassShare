@@ -403,11 +403,11 @@ sandbox台帳を支払済みの根拠にしない。受け口の本番有効化�
 `GET .../refund-requests/:request` は同じ契約所有者だけにno-storeで返す。
 行ロック待ちの後にもsession期限を確認し、失効した資格は401、他人の契約は404。
 
-受付は `received`、`approvalGranted:false`、`approvedAmountJpy:null`、
+審査記録がない初回受付は `received`、`approvalGranted:false`、`approvedAmountJpy:null`、
 `refundExecuted:false` を返す。記録済みの支払額は署名イベント当時の事実であり、
 現在の返金可能残額の照会や返金承認ではない。申請の合計を実行済み返金へ加算しない。
-プロバイダへの返金API、担当者による審査・承認・通知、live返金状態の照合と実行時の
-上限確認は引き続き未達である。支払済み期間・席数・所有権・暗号鍵は変更しない。
+担当者の審査・承認記録と現在残額照合は後述の経路で扱う。プロバイダへの返金API、
+通知配送、実行時の上限確認は引き続き未達である。支払済み期間・席数・所有権・暗号鍵は変更しない。
 
 受付は元支払い・契約・金額・イベントhashを複合FKで保持する。合成復元fixtureでは
 非空の申請を正式HTTP経路で作り、全行・値・FK対応と退会cascadeを検証する。
@@ -442,10 +442,44 @@ GETだけで、live mode、同じaccount/PI、JPY受領額、元の所有者・�
 合計とし、failed/canceledは予約から外す。`availableRefundJpy`は元受領額から予約合計を
 引いた観測値で、申請額がこの範囲にあるかを `requestAmountAvailable` に返す。
 これは複数API読取りの観測結果であり、atomicな残額予約・法的な承認・返金実行ではない。
-`approvalGranted:false`、`approvedAmountJpy:null`、`refundExecuted:false`を維持する。
+審査記録がない申請では `approvalGranted:false`、`approvedAmountJpy:null`を返す。
+記録がある申請では初回受付の再送・本人のGET・残額照合の応答に最新決定を反映する。
+いずれも `refundExecuted:false`を維持し、審査記録の `executionAuthorized:false`を返す。
 実行経路では別途、現在権限・残額・冪等性を再確認する必要がある。
 
 statusと一覧の扱いはStripe公式の[Refund object](https://docs.stripe.com/api/refunds/object)と
 [List refunds](https://docs.stripe.com/api/refunds/list)を参照する。隔離DBと署名fixture、
 private HTTP provider simulatorでこのAPIの正常・拒否・期限切れを検証する。
 本番live資格の設定、販売有効化、実課金・実返金、法定保存期間の確定はこの変更に含めない。
+
+### 返金担当者の審査記録
+
+`PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS`に明示した既存user IDだけが、
+有効なsessionで`GET /api/commercial-contracts/refund-review/:request`と
+`POST .../:request/decisions`を利用できる。未設定では403で閉じ、メールアドレスや
+本文の自己申告、契約所有者であることだけでは担当者資格を取得しない。
+この設定の失効は実runtimeへの反映と403の確認までを完了条件とする。
+
+決定は`operationId`、`expectedRevision`、`decision`、`amountJpy`、`reason`だけを受ける。
+`approved`は申請額以下の正の整数JPYと、重複・未提供期間・法定権利を確認した理由、
+`declined`は0円と証拠不足または自己都合日割り返金対象外の理由を記録する。
+これは担当者の判断記録であり、分類だけで法令上の権利を否定する自動判定ではない。
+担当者は原申請の理由や署名付き支払い正本・見積hash・受付額を変更できない。
+
+担当者と契約所有者の現在identityを固定順でロックし、担当者session・契約・申請を
+取得してから期限を再確認する。承認のprovider待ちはDB接続と契約行lockを保持せず行い、
+返却後に担当者資格・session・申請/元支払いbinding・決定版を新しいtransactionで再確認する。
+この最終transactionで他の申請の
+最新承認額と今回額の合計が残額を超える場合は409。契約行で直列化し、同一申請の
+決定版競合は409とする。同じ操作ID・担当者・同じ内容の再送は元のIDと日時を返す。
+過去の承認を再送しても最新決定を戻したり、現在残額や返金実行権限を再認可しない。
+
+`commercial_refund_reviews`は原申請の指紋・契約・申請額へ複合FKを持ち、
+決定・承認額・担当者・版・確認した残額・DB日時を保存する。申請者のGETには最新の
+決定を返し、他人には公開しない。担当者削除時は履歴行を保ち担当者IDをnullとする。
+申請/契約の退会cascadeは架空fixtureで検査するが、有料契約の法定保存期間の確定は別である。
+
+`approvalGranted`は記録済みの審査結果を表し、`executionAuthorized:false`と
+`refundExecuted:false`を維持する。外部providerとの複数読取りはatomicではないため、
+実行経路では承認版・現在資格・現在残額・他の実行・同じprovider冪等キーを再検証する。
+この変更は返金API、実返金、通知配送、販売有効化、Box所属/暗号鍵の変更を行わない。

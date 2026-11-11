@@ -861,6 +861,29 @@ impl Runner {
             }
         }
         report.check("source_refund_requests_all_paid_sources",sql("drill_source","SELECT string_agg(payment_source||':'||n,',' ORDER BY payment_source) FROM (SELECT payment_source,count(*) n FROM commercial_refund_requests GROUP BY payment_source) s")?.trim()=="payment_exception:2,period:2,seat_change:4")?;
+        // An explicit synthetic reviewer is enrolled only in the isolated image
+        // runtime. Production deployment configuration stays untouched.
+        self.stop_api(report, "source_API_closed_before_fixture_reviewer_enrollment")?;
+        self.refund_reviewer = Some(member.id.clone());
+        self.start_api("drill_source", report, "source_API_ready_with_fixture_reviewer")?;
+        let mut source_refund_review = Value::Null;
+        for (retired, session, id) in [
+            (false, &owner.session, &live_id),
+            (true, &deleted.session, &retired_live_id),
+        ] {
+            let claim = self.api.json(report, if retired {"source_retired_review_request_replay"} else {"source_review_request_replay"}, "POST", &format!("/api/commercial-contracts/{id}/refund-requests"),session,Some(&json!({"requestId":"45454545-4545-4545-8545-454545454545","paymentIntentId":format!("pi_live1{}",id.replace('-',"")),"amountJpy":400,"reason":"service_unprovided"})),201,None)?;
+            let rid=identifier(&claim,"/id",36)?;
+            let denied=self.api.request("GET",&format!("/api/commercial-contracts/refund-review/{rid}"),session,None,None)?;
+            report.check(if retired {"source_retired_owner_not_reviewer"} else {"source_owner_not_reviewer"},denied.0==403)?;
+            let key=id.replace('-',"");
+            let seed=json!({"payment":{"id":format!("pi_live1{key}"),"object":"payment_intent","livemode":true,"status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"metadata":{"contractId":id,"ownerId":if retired {&deleted.id} else {&owner.id},"quoteHash":if retired {&retired_live["quoteHash"]} else {&live_draft["quoteHash"]},"cycle":"1"}},"refunds":[]});
+            let seed_script=r#"fetch('http://127.0.0.1:8998/fixture/state',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer rk_live_refund_http_fixture','stripe-account':'acct_restorelive'},body:process.argv[1]}).then(r=>{if(r.status!==200)process.exitCode=1}).catch(()=>process.exitCode=1)"#;
+            let mut command=clean_command("/usr/local/bin/node");command.arg("-e").arg(seed_script).arg(seed.to_string());
+            report.check(if retired {"source_retired_refund_review_provider_seed"} else {"source_refund_review_provider_seed"},command_output(command,None).is_ok())?;
+            let decision=self.api.json(report,if retired {"source_retired_refund_review_HTTP"} else {"source_refund_review_HTTP"},"POST",&format!("/api/commercial-contracts/refund-review/{rid}/decisions"),&member.session,Some(&json!({"operationId":"67676767-6767-4767-8767-676767676767","expectedRevision":0,"decision":"approved","amountJpy":400,"reason":"unprovided_period_confirmed"})),201,None)?;
+            report.check(if retired {"source_retired_refund_review_nonempty"} else {"source_refund_review_nonempty"},decision["decision"]=="approved" && decision["revision"]==1 && decision["approvedAmountJpy"]==400 && decision["refundExecuted"]==false && sql("drill_source",&format!("SELECT count(*) FROM commercial_refund_reviews v JOIN commercial_refund_requests r ON (v.request_id,v.contract_id,v.request_fingerprint,v.requested_amount_jpy)=(r.id,r.contract_id,r.request_fingerprint,r.requested_amount_jpy) WHERE v.request_id='{rid}' AND v.revision=1 AND v.decision='approved' AND v.reason='unprovided_period_confirmed' AND v.amount_jpy=400 AND v.requested_amount_jpy=400 AND v.reviewer_id='{}' AND v.balance->>'qualified'='true' AND v.balance->>'availableRefundJpy'='980' AND v.created_at IS NOT NULL",member.id))?.trim()=="1")?;
+            if !retired { source_refund_review=decision;source_refund_request=self.api.json(report,"source_review_owner_read","GET",&format!("/api/commercial-contracts/{id}/refund-requests/{rid}"),session,None,200,None)?; }
+        }
         self.api.json(
             report,
             "source_unpaid_acceptance_canceled",
@@ -1088,6 +1111,7 @@ impl Runner {
             "restore_test_refunds_full_rows",
             "restore_test_refund_events_full_rows",
             "restore_refund_requests_full_rows",
+            "restore_refund_reviews_full_rows",
         ];
         if names.len() != TABLES.len() {
             return Err(Failure::Shape);
@@ -1460,7 +1484,11 @@ impl Runner {
         )?;
         report.check("restored_refund_request_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_requests r JOIN commercial_live_periods p ON (r.account_id,r.payment_event_id,r.contract_id,r.provider_object_id,r.payment_amount_jpy,r.payment_event_hash)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id,p.amount_jpy,p.event_hash) JOIN commercial_contracts c ON c.id=r.contract_id WHERE r.contract_id='{live_id}' AND p.cycle=1 AND r.requested_amount_jpy=400 AND r.payment_amount_jpy=980 AND r.quote_hash=c.quote_hash AND r.status='received' AND r.reason='service_unprovided'"))?.trim()=="1")?;
         report.check("retired_refund_requests_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_requests WHERE contract_id='{retired_live_id}'"))?.trim()=="0")?;
+        report.check("restored_refund_review_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_reviews v JOIN commercial_refund_requests r ON (v.request_id,v.contract_id,v.request_fingerprint,v.requested_amount_jpy)=(r.id,r.contract_id,r.request_fingerprint,r.requested_amount_jpy) WHERE r.contract_id='{live_id}' AND v.revision=1 AND v.decision='approved' AND v.reason='unprovided_period_confirmed' AND v.amount_jpy=400 AND v.requested_amount_jpy=400 AND v.reviewer_id='{}' AND v.balance->>'qualified'='true' AND v.balance->>'availableRefundJpy'='980' AND v.created_at IS NOT NULL",member.id))?.trim()=="1")?;
+        report.check("retired_refund_reviews_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_reviews WHERE contract_id='{retired_live_id}'"))?.trim()=="0")?;
         let refund_request_id = identifier(&source_refund_request, "/id", 36)?;
+        let restored_review=self.api.json(report,"restored_refund_review_reviewer_HTTP","GET",&format!("/api/commercial-contracts/refund-review/{refund_request_id}"),&current_member.session,None,200,None)?;
+        report.check("restored_refund_review_exact_values",exact_json(&source_refund_review,&restored_review["review"]) && restored_review["reviewRevision"]==1)?;
         let restored_refund_request = self.api.json(
             report,
             "restored_refund_request_owner_API",
@@ -1475,8 +1503,9 @@ impl Runner {
             "restored_refund_request_owner_values",
             exact_json(&source_refund_request, &restored_refund_request)
                 && restored_refund_request["refundExecuted"] == false
-                && restored_refund_request["approvalGranted"] == false
-                && restored_refund_request["approvedAmountJpy"].is_null(),
+                && restored_refund_request["approvalGranted"] == true
+                && restored_refund_request["approvedAmountJpy"]==400
+                && restored_refund_request["review"]["executionAuthorized"]==false,
         )?;
         for (cid, source, api_name, value_name) in &additional_refund_requests {
             let rid = identifier(source, "/id", 36)?;
@@ -1520,7 +1549,7 @@ impl Runner {
             )?;
         }
         report.check("restored_live_periods_anchored_nonempty", sql("drill_restored",&format!("SELECT string_agg(cycle||':'||period_start||'>'||period_end||':'||amount_jpy||':'||evidence, ',' ORDER BY cycle) FROM commercial_live_periods WHERE contract_id='{live_id}' AND disposition='effective'"))?.trim()=="1:2026-01-31>2026-02-28:980:provider_live,2:2026-02-28>2026-03-31:980:provider_live,3:2026-03-31>2026-04-30:980:provider_live")?;
-        report.check("restored_refund_review_nonempty", sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{live_id}' AND cycle=4 AND disposition='refund_review' AND amount_jpy=980"))?.trim()=="1")?;
+        report.check("restored_late_payment_refund_disposition_nonempty", sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{live_id}' AND cycle=4 AND disposition='refund_review' AND amount_jpy=980"))?.trim()=="1")?;
         report.check("restored_reconciled_paid_evidence",sql("drill_restored",&format!("SELECT count(*) FROM commercial_live_periods WHERE contract_id='{live_id}' AND cycle=3 AND disposition='effective' AND disposition_reason='paid_before_cancellation' AND provider_event_created IS NOT NULL AND reconciled_at IS NOT NULL"))?.trim()=="1")?;
         report.check("restored_live_contract_anchor", sql("drill_restored",&format!("SELECT contract_start::text FROM commercial_live_contracts WHERE contract_id='{live_id}'"))?.trim()=="2026-01-31")?;
         report.check("restored_seat_change_nonempty_applied",sql("drill_restored",&format!("SELECT count(*) FROM commercial_seat_changes WHERE contract_id='{seat_contract_id}' AND state='applied' AND accepted_at IS NOT NULL AND applied_at IS NOT NULL AND provider_object_id IS NOT NULL"))?.trim()=="1")?;
