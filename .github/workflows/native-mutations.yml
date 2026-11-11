@@ -95,8 +95,14 @@ jobs:
       - run: pnpm --dir backend install --frozen-lockfile
       - name: Install the PostgreSQL acceptance client
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes postgresql-client
+          # Hosted images may already provide the versioned client. Do not
+          # download a redundant metapackage before running the real PG tests.
+          if ! command -v psql >/dev/null 2>&1; then
+            bash .github/scripts/install-ubuntu-deps.sh postgresql-client
+          fi
+          psql_path="$(command -v psql)"
+          printf 'PostgreSQL client command: %s\n' "$psql_path"
+          printf 'PostgreSQL client resolved path: %s\n' "$(readlink -f -- "$psql_path")"
           psql --version
       - run: cargo build --manifest-path backend/native/Cargo.toml --release --locked
       - name: Verify persistent support receipts and actor isolation

@@ -15,6 +15,11 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    # Exact package/browser/system-dependency closure, without an apt download
+    # from the hosted image's temporarily unresolvable Ubuntu archive mirrors.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --ipc=host
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -53,8 +58,10 @@ jobs:
         working-directory: backend
         run: node --test test/extension-auth.test.js
 
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium --with-deps
+      - name: Verify pinned Playwright browser and dependency image
+        run: |
+          node -e "if(require('@playwright/test/package.json').version!=='1.61.1')process.exit(1)"
+          pnpm exec playwright --version
 
       - name: Run extension E2E smoke
         env:
