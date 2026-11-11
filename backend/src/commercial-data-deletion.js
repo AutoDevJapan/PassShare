@@ -32,6 +32,7 @@ const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-
 const boxId=value=>typeof value==='string'&&/^[a-z0-9]{26}$/.test(value);
 const exact=(body,keys)=>body&&typeof body==='object'&&!Array.isArray(body)&&Object.keys(body).length===keys.length&&keys.every(key=>Object.hasOwn(body,key));
 const digest=value=>createHash('sha256').update(value).digest('hex');
+const consentCredential=user=>digest(JSON.stringify({password:user.password_hash,recovery:user.recovery_hash??null}));
 const failure=(status,message)=>authHttpError(status,status===401?'PS024':status===403?'PS032':status===404?'PS022':status===409?'PS015':'PS018',message);
 const view=row=>({id:row.id,contractId:row.contract_id,boxId:row.box_id,state:row.state,revision:row.revision,requestedAt:row.requested_at,canceledAt:row.canceled_at,completedAt:row.completed_at,notBefore:row.not_before,paidThrough:row.paid_through,executionMode:row.execution_mode??'manual',dataDeleted:row.state==='completed',accountDeleted:false,financialRecordsDeleted:false,localFilesDeleted:false,meaning:'explicit_solely_owned_hosted_box_request_not_account_or_billing_deletion'});
 
@@ -81,10 +82,10 @@ export async function runDueDeletions(pool,{limit=20,after=null}={}){
   await client.query('BEGIN');
   await client.query("SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='10s'");
   const box=(await client.query('SELECT * FROM connect_vaults WHERE id=$1 FOR UPDATE',[candidate.box_id])).rows[0];
-  const user=(await client.query('SELECT id,password_hash FROM users WHERE id=$1 FOR UPDATE',[candidate.user_id])).rows[0];
+  const user=(await client.query('SELECT id,password_hash,recovery_hash FROM users WHERE id=$1 FOR UPDATE',[candidate.user_id])).rows[0];
   const contract=(await client.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[candidate.contract_id,candidate.user_id])).rows[0];
   const row=(await client.query("SELECT *,paid_through::text paid_through,not_before::text not_before FROM commercial_data_deletion_requests WHERE id=$1 AND box_id=$2 AND user_id=$3 AND contract_id=$4 AND state='pending' AND execution_mode='due' AND not_before<=(clock_timestamp() AT TIME ZONE 'Asia/Tokyo')::date FOR UPDATE",[candidate.id,candidate.box_id,candidate.user_id,candidate.contract_id])).rows[0];
-  if(!row||!user||!contract||digest(user.password_hash)!==row.consent_credential_fingerprint)throw failure(409,'Due deletion consent is no longer current');
+  if(!row||!user||!contract||consentCredential(user)!==row.consent_credential_fingerprint)throw failure(409,'Due deletion consent is no longer current');
   await complete(client,row,contract,box);await client.query('COMMIT');result.completed++;
  }catch(error){await client.query('ROLLBACK').catch(()=>{});if(![401,403,404,409].includes(error?.status))throw error;result.retained++;}finally{client.release();}}
  return result;
@@ -109,24 +110,24 @@ export function registerDataDeletionRoutes(router,{pool,authStore,loginGuardStor
    await client.query('BEGIN');
    // Match existing encrypted operations and retirement: Box before identities.
    const box=selectedBox?(await client.query('SELECT * FROM connect_vaults WHERE id=$1 FOR UPDATE',[selectedBox])).rows[0]:null;
-   const user=(await client.query('SELECT id,password_hash FROM users WHERE id=$1 '+(selectedBox?'FOR UPDATE':'FOR SHARE'),[req.auth.userId])).rows[0];
+   const user=(await client.query('SELECT id,password_hash,recovery_hash FROM users WHERE id=$1 '+(selectedBox?'FOR UPDATE':'FOR SHARE'),[req.auth.userId])).rows[0];
    if(!user)throw failure(401,'Session expired');
    const session=await client.query('SELECT id FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE',[req.auth.sessionId,req.auth.userId]);if(!session.rowCount)throw failure(401,'Session expired');
    const contract=(await client.query('SELECT * FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];if(!contract)throw failure(404,'Contract not found');
    const live=async()=>{if(!(await client.query('SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()',[req.auth.sessionId,req.auth.userId])).rowCount)throw failure(401,'Session expired');if(proof&&digest(user.password_hash)!==proof.hash)throw failure(401,'Credentials changed');};
-   await live();const result=await work(client,contract,box);await live();await client.query('COMMIT');return result;
+   await live();const result=await work(client,contract,box,user);await live();await client.query('COMMIT');return result;
   }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}finally{client.release();}
  };
  const {snapshot,eligible:ended,complete}=deletionPolicy();
  router.post('/:id/data-deletion-requests/schedule-due',requireCsrf,async(req,res)=>{try{
   const body=req.body;if(!exact(body,['requestId','boxId','quoteHash','expectedContentVersion','expectedAttributeVersion','expectedStateRevision','expectedKeyEpoch','confirmationBoxId','currentPassword'])||!uuid(body.requestId)||!boxId(body.boxId)||body.confirmationBoxId!==body.boxId||!/^[a-f0-9]{64}$/.test(body.quoteHash??'')||![body.expectedContentVersion,body.expectedAttributeVersion].every(v=>Number.isSafeInteger(v)&&v>0)||![body.expectedStateRevision,body.expectedKeyEpoch].every(v=>v===null||Number.isSafeInteger(v)&&v>0))throw failure(400,'Invalid explicit due deletion consent');
-  const proof=await reauthenticate(req),result=await transaction(req,body.boxId,proof,async(client,contract,box)=>{
+  const proof=await reauthenticate(req),result=await transaction(req,body.boxId,proof,async(client,contract,box,user)=>{
    if(contract.quote_hash!==body.quoteHash)throw failure(409,'Contract quote changed');
    const fingerprint=digest(JSON.stringify({mode:'due',contract:contract.id,owner:req.auth.userId,box:body.boxId,quote:body.quoteHash,content:body.expectedContentVersion,attribute:body.expectedAttributeVersion,revision:body.expectedStateRevision,epoch:body.expectedKeyEpoch}));
    const previous=(await client.query('SELECT *,paid_through::text paid_through,not_before::text not_before FROM commercial_data_deletion_requests WHERE user_id=$1 AND request_id=$2',[req.auth.userId,body.requestId])).rows[0];if(previous){if(previous.fingerprint!==fingerprint)throw failure(409,'Deletion request changed');return view(previous);}
    const state=await snapshot(client,box,req.auth.userId),entitlement=await ended(client,contract,true);
    if(state.content!==body.expectedContentVersion||state.attribute!==body.expectedAttributeVersion||String(state.revision)!==String(body.expectedStateRevision)||String(state.epoch)!==String(body.expectedKeyEpoch))throw failure(409,'Password box version changed');
-   return view((await client.query("INSERT INTO commercial_data_deletion_requests(id,contract_id,user_id,request_id,box_id,quote_hash,fingerprint,data_fingerprint,content_version,attribute_version,encrypted_state_revision,encrypted_key_epoch,paid_through,not_before,execution_mode,consent_credential_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::date,$14::date,'due',$15) RETURNING *,paid_through::text paid_through,not_before::text not_before",[randomUUID(),contract.id,req.auth.userId,body.requestId,box.id,contract.quote_hash,fingerprint,state.fingerprint,state.content,state.attribute,state.revision,state.epoch,entitlement.paidThrough,entitlement.exportWindow.endExclusive,proof.hash])).rows[0]);
+   return view((await client.query("INSERT INTO commercial_data_deletion_requests(id,contract_id,user_id,request_id,box_id,quote_hash,fingerprint,data_fingerprint,content_version,attribute_version,encrypted_state_revision,encrypted_key_epoch,paid_through,not_before,execution_mode,consent_credential_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::date,$14::date,'due',$15) RETURNING *,paid_through::text paid_through,not_before::text not_before",[randomUUID(),contract.id,req.auth.userId,body.requestId,box.id,contract.quote_hash,fingerprint,state.fingerprint,state.content,state.attribute,state.revision,state.epoch,entitlement.paidThrough,entitlement.exportWindow.endExclusive,consentCredential(user)])).rows[0]);
   });res.status(201).json(result);
  }catch(error){sendAuthError(res,error?.code==='23505'?failure(409,'Deletion request identity changed'):error);}});
  const read=async(client,req)=>{if(!uuid(req.params.request))throw failure(404,'Deletion request not found');const row=(await client.query('SELECT *,paid_through::text paid_through,not_before::text not_before FROM commercial_data_deletion_requests WHERE id=$1 AND contract_id=$2 AND user_id=$3 FOR UPDATE',[req.params.request,req.params.id,req.auth.userId])).rows[0];if(!row)throw failure(404,'Deletion request not found');return row;};
