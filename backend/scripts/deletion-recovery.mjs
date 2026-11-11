@@ -35,4 +35,4 @@ try{
   console.log(JSON.stringify({ok:true,operation:'reapply',...r,deletionGateQualified:true,APIStillClosed:true,identityMembershipKeyQualification:false,automaticReopen:false}));
  }
  }
-}catch{fail();}finally{if(client)await client.end().catch(()=>{process.exitCode=1;});if(currentSource)await currentSource.end().catch(()=>{process.exitCode=1;});}
+}catch(error){if(error?.copyMayRemain){console.error(JSON.stringify({ok:false,error:'journal_copy_requires_owner_verification',copyMayRemain:true,cleanupRequired:true,overwriteRetryAllowed:false,reopenPerformed:false}));process.exitCode=1;}else fail();}finally{if(client)await client.end().catch(()=>{process.exitCode=1;});if(currentSource)await currentSource.end().catch(()=>{process.exitCode=1;});}
