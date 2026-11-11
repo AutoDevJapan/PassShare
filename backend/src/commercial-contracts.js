@@ -19,6 +19,7 @@ import {migrateRefundRequests,registerRefundRequestRoutes} from './commercial-re
 import {migrateRefundReviews,registerRefundReviewRoutes} from './commercial-refund-review.js';
 import {migrateTestRefundOperations,registerTestRefundOperationRoutes} from './commercial-test-refund-operations.js';
 import {createTestRefundExecutor} from './commercial-test-refund-executor.js';
+import {migrateDataDeletion,registerDataDeletionRoutes} from './commercial-data-deletion.js';
 
 export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  id UUID PRIMARY KEY, user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -28,11 +29,11 @@ export const CONTRACT_SCHEMA=`CREATE TABLE IF NOT EXISTS commercial_contracts (
  UNIQUE(user_id,request_id));
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ;
  ALTER TABLE commercial_contracts ADD COLUMN IF NOT EXISTS lifecycle_revision INTEGER NOT NULL DEFAULT 0;`;
-export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);await migrateCommercialLive(pool);await migrateCommercialSeats(pool);await migrateSeatDecreases(pool);await migrateExportAudit(pool);await migrateTestRefunds(pool);await migrateRefundRequests(pool);await migrateRefundReviews(pool);await migrateTestRefundOperations(pool);};
+export const migrateCommercialContracts=async pool=>{await applySchemaWithAdvisoryLock(pool,4820128,CONTRACT_SCHEMA);await migrateCommercialEvents(pool);await migrateCommercialLive(pool);await migrateCommercialSeats(pool);await migrateSeatDecreases(pool);await migrateExportAudit(pool);await migrateTestRefunds(pool);await migrateRefundRequests(pool);await migrateRefundReviews(pool);await migrateTestRefundOperations(pool);await migrateDataDeletion(pool);};
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(x);
 const exact=(x,keys)=>x&&!Array.isArray(x)&&Object.keys(x).length===keys.length&&keys.every(k=>Object.hasOwn(x,k));
 const publicRow=r=>({id:r.id,state:r.state,quote:r.quote,quoteHash:r.quote_hash,currentPlan:r.current_plan??r.quote.plan,seatRevision:r.seat_revision??0,createdAt:r.created_at,acceptedAt:r.accepted_at,cancellationRequestedAt:r.cancellation_requested_at??null,lifecycleRevision:r.lifecycle_revision??0,paid:false,entitlementsGranted:false,meaning:'quote_acceptance_not_payment_or_service_activation'});
-export function createCommercialContractRouter({pool,authStore,refundLookup=createTestRefundLookup(),liveRefundLookup=createLiveRefundLookup(),testRefundExecutor=createTestRefundExecutor(),refundReviewerIds=(process.env.PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS??'').split(',')}){
+export function createCommercialContractRouter({pool,authStore,loginGuardStore,refundLookup=createTestRefundLookup(),liveRefundLookup=createLiveRefundLookup(),testRefundExecutor=createTestRefundExecutor(),refundReviewerIds=(process.env.PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS??'').split(',')}){
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:'draft-6',legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_q,r,next)=>{r.set('Cache-Control','no-store');next();});
  const persist=async(req,run)=>{
@@ -56,6 +57,7 @@ export function createCommercialContractRouter({pool,authStore,refundLookup=crea
  registerTestRefundOperationRoutes(router,{pool,executor:testRefundExecutor,lookup:refundLookup,reviewerIds:refundReviewerIds});
  registerRefundRequestRoutes(router,persist,liveRefundLookup);
  registerRefundReviewRoutes(router,{pool,lookup:liveRefundLookup,reviewerIds:refundReviewerIds});
+ registerDataDeletionRoutes(router,{pool,authStore,loginGuardStore});
  router.post('/',requireCsrf,async(req,res)=>{try{
   const b=req.body;if(!exact(b,['requestId','currency','plan','setup'])||!uuid(b.requestId))throw authHttpError(400,'PS018','Invalid contract quote');
   const quote=await nativeMutation({command:'commercial-quote',currency:b.currency,plan:b.plan,setup:b.setup});
