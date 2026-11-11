@@ -37,6 +37,8 @@ case_check backend-pr pull_request "$base" false true backend/src/commercial-liv
 case_check backend-main-push push "$base" false true backend/src/commercial-live.js
 case_check backend-verification-docs pull_request "$base" false true backend/test/commercial-seat-decreases.test.js tools/restore-drill-rs/src/scenario.rs tools/encrypted-storage-acceptance/src/encrypted_restore.rs documents/spec/commercial-lifecycle.md
 case_check verification-only push "$base" false false tools/restore-drill-rs/Cargo.toml
+case_check private-snapshot-helper pull_request "$base" false false tools/prd-snapshot-go/main.go .github/workflows/private-prd-snapshot.yml
+case_check production-deployment push "$base" false false .github/workflows/deploy-prd.yml
 case_check desktop pull_request "$base" true false apps/desktop/src/main.ts
 case_check shared-rust pull_request "$base" true true crates/passshare-connect/src/lib.rs
 case_check cargo-lock push "$base" true true Cargo.lock
@@ -55,4 +57,4 @@ else
   status=$?
   [[ "$status" == 47 && ! -s "$GITHUB_OUTPUT" ]]
 fi
-printf 'scope controls: 16 passed\n'
+printf 'scope controls: 18 passed\n'

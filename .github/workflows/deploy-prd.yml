@@ -55,6 +55,8 @@ jobs:
               StrictHostKeyChecking yes
               BatchMode yes
               IdentitiesOnly yes
+              ConnectTimeout 15
+              ConnectionAttempts 1
           EOF
           chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
           ssh-keygen -lf tools/prd-snapshot-go/railway_known_hosts
