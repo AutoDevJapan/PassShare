@@ -28,9 +28,24 @@ export async function consumeCommercialBox(
  consumeAttachment:(file:AttachmentPlaintext,context:AttachmentContext)=>Promise<void>,
 ):Promise<void>{
  pin={...pin};let after:string|null=null;const seen=new Set<string>();
+ // A contract export has a 30/minute server budget. Retry only the rejected GET,
+ // never a delivered sink callback, and keep cancellation responsive while waiting.
+ const request=async<T>(run:()=>Promise<T>):Promise<T>=>{
+  try{return await run();}catch(error){
+   if(!(error instanceof CloudApiError)||error.status!==429)throw error;
+   await new Promise<void>((resolve,reject)=>{
+    if(signal.aborted){reject(new CloudApiError(409));return;}
+    const abort=()=>{clearTimeout(timer);reject(new CloudApiError(409));};
+    const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},61000);
+    signal.addEventListener('abort',abort,{once:true});
+   });
+   return run();
+  }
+ };
+ const limitedApi={getCommercialAttachmentItemSnapshot:(...args:Parameters<CloudApi['getCommercialAttachmentItemSnapshot']>)=>request(()=>api.getCommercialAttachmentItemSnapshot(...args)),getCommercialEncryptedAttachment:(...args:Parameters<CloudApi['getCommercialEncryptedAttachment']>)=>request(()=>api.getCommercialEncryptedAttachment(...args))};
  const current=()=>{if(signal.aborted)throw new CloudApiError(409);};
  do{
-  current();const page=await api.getCommercialExportPage(contractId,boxId,pin,after,signal);current();
+  current();const page=await request(()=>api.getCommercialExportPage(contractId,boxId,pin,after,signal));current();
   for(const envelope of page.envelopes){
    const context={...envelope.context};
    if(seen.has(context.itemId)||(after!==null&&context.itemId<=after))throw new CloudApiError(502);
@@ -39,7 +54,7 @@ export async function consumeCommercialBox(
    const item=JSON.parse(plain);await consumeItem(plain,{...context});current();
    for(const ref of item.attachments??[]){
     const attachment={passwordBoxId:boxId,itemId:context.itemId,attachmentId:ref.attachmentId,attachmentVersion:ref.attachmentVersion,keyEpoch:ref.keyEpoch};
-    await consumeCommercialAttachment(api,worker,contractId,context,attachment,pin.snapshotRevision,signal,file=>consumeAttachment(file,{...attachment}));
+    await consumeCommercialAttachment(limitedApi,worker,contractId,context,attachment,pin.snapshotRevision,signal,file=>consumeAttachment(file,{...attachment}));
    }
   }
   if(page.nextCursor!==null&&(page.envelopes.length===0||page.nextCursor!==page.envelopes.at(-1)!.context.itemId||page.nextCursor===after))throw new CloudApiError(502);

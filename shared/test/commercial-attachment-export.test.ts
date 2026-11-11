@@ -46,3 +46,14 @@ test('box consumer walks multiple pages and delivers item plus attachment under 
  await consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async text=>{items.push(JSON.parse(text).id);},async file=>{files.push([...file.bytes]);});
  assert.deepEqual(items,ids);assert.deepEqual(files,[[0,255]]);assert.deepEqual(pins,[4,4]);assert.equal(released,1);
 });
+
+test('rate-limited GET retries without repeating already delivered items',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const {consumeCommercialBox}=await import('../cloud/commercial-attachment-export.ts');const {CloudApiError}=await import('../cloud/cloud-api.ts');
+ const item={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2};let bodyCalls=0,items=0,files=0;let limited!:()=>void;const reached=new Promise<void>(r=>{limited=r;});
+ const api={getCommercialExportPage:async()=>({envelopes:[{context:item}],nextCursor:null,attachmentsIncluded:false}),getCommercialAttachmentItemSnapshot:async()=>'',getCommercialEncryptedAttachment:async()=>{bodyCalls++;if(bodyCalls===1){limited();throw new CloudApiError(429);}return '';}};
+ const worker={decrypt:async()=>JSON.stringify({attachments:[{attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2}]}),decryptAttachment:async()=>({name:'x',bytes:new Uint8Array([1])}),releaseAttachment:(v:any)=>v.bytes.fill(0)};
+ const pending=consumeCommercialBox(api as any,worker as any,'contract',item.passwordBoxId,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async()=>{items++;},async()=>{files++;});
+ await reached;await Promise.resolve();await Promise.resolve();t.mock.timers.tick(61000);await pending;
+ assert.equal(bodyCalls,2);assert.equal(items,1);assert.equal(files,1);
+});

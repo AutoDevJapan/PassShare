@@ -86,6 +86,10 @@ test('contract-window export returns real ciphertext while rechecking current me
   assert.equal(deliveredItems.length,12);assert.deepEqual(deliveredFiles,[{name:'synthetic.bin',bytes:[...fileBytes]}]);assert.equal(releases,1);
   const decrypted=box.decrypt_attachment(JSON.stringify(fileExport.body.data),JSON.stringify(attachmentContext),JSON.stringify({itemEnvelope:JSON.stringify(itemExport.body.data),expectedItemContext:itemContext,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision}));
   try{assert.deepEqual(decrypted.content(),fileBytes);assert.equal(decrypted.name(),'synthetic.bin');}finally{decrypted.free();}
+  // Keep expanded positive consumer traffic separate from the negative-selector
+  // fixture's rate budget, preserving the production 30/min policy and real DB.
+  server.closeAllConnections();await new Promise(r=>server.close(r));
+  {const restarted=await createApp({pool});server=restarted.app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;}
   assert.equal((await call(root+'/items/'+itemId+'/attachments/'+attachmentId+'?epoch=1&revision='+(revision+1),a.refreshToken)).status,409);
   assert.equal((await call(root+'/items/'+'b'.repeat(26)+'/attachments/'+attachmentId+'?epoch=1&revision='+revision,a.refreshToken)).status,404);
   assert.equal((await call(endpoint)).status,401);assert.equal((await call(endpoint,b.refreshToken)).status,404);
