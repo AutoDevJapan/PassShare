@@ -17,11 +17,13 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
    const api=createCloudApi(async()=>Response.json({format:'passshare-encrypted-export-v1',receiptId:'33333333-3333-4333-8333-333333333333',boxId,keyEpoch:1,snapshotRevision:2,ciphertextOnly:true,restoresIdentityMembershipOrKeys:false,data:{envelopes:[JSON.parse(encrypted)],nextCursor:null,attachmentsIncluded:false}}));
    const page=await api.getCommercialExportPage(contractId,boxId,{keyEpoch:1,snapshotRevision:2},null,new AbortController().signal);
    const decrypted=JSON.parse(await worker.decrypt(JSON.stringify(page.envelopes[0]),context));
-   let wrongContextRejected=false;
+   const liveBefore=!worker.isClosed;let wrongContextRejected=false;
    try{await worker.decrypt(JSON.stringify(page.envelopes[0]),{...context,itemId:'c'.repeat(26)});}catch{wrongContextRejected=true;}
+   const liveAfter=!worker.isClosed;
+   const after=JSON.parse(await worker.decrypt(JSON.stringify(page.envelopes[0]),context));
    const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
-   return {matches:JSON.stringify(canonical(decrypted))===JSON.stringify(canonical(plain)),items:page.envelopes.length,wrongContextRejected};
+   return {matches:JSON.stringify(canonical(decrypted))===JSON.stringify(canonical(plain)),afterMatches:JSON.stringify(canonical(after))===JSON.stringify(canonical(plain)),items:page.envelopes.length,wrongContextRejected,liveBefore,liveAfter};
   }finally{worker.dispose();await worker.closed;}
  });
- expect(result).toEqual({matches:true,items:1,wrongContextRejected:true});
+ expect(result).toEqual({matches:true,afterMatches:true,items:1,wrongContextRejected:true,liveBefore:true,liveAfter:true});
 });
