@@ -403,11 +403,11 @@ sandbox台帳を支払済みの根拠にしない。受け口の本番有効化�
 `GET .../refund-requests/:request` は同じ契約所有者だけにno-storeで返す。
 行ロック待ちの後にもsession期限を確認し、失効した資格は401、他人の契約は404。
 
-受付は `received`、`approvalGranted:false`、`approvedAmountJpy:null`、
+審査記録がない初回受付は `received`、`approvalGranted:false`、`approvedAmountJpy:null`、
 `refundExecuted:false` を返す。記録済みの支払額は署名イベント当時の事実であり、
 現在の返金可能残額の照会や返金承認ではない。申請の合計を実行済み返金へ加算しない。
-プロバイダへの返金API、担当者による審査・承認・通知、live返金状態の照合と実行時の
-上限確認は引き続き未達である。支払済み期間・席数・所有権・暗号鍵は変更しない。
+担当者の審査・承認記録と現在残額照合は後述の経路で扱う。プロバイダへの返金API、
+通知配送、実行時の上限確認は引き続き未達である。支払済み期間・席数・所有権・暗号鍵は変更しない。
 
 受付は元支払い・契約・金額・イベントhashを複合FKで保持する。合成復元fixtureでは
 非空の申請を正式HTTP経路で作り、全行・値・FK対応と退会cascadeを検証する。
@@ -442,7 +442,9 @@ GETだけで、live mode、同じaccount/PI、JPY受領額、元の所有者・�
 合計とし、failed/canceledは予約から外す。`availableRefundJpy`は元受領額から予約合計を
 引いた観測値で、申請額がこの範囲にあるかを `requestAmountAvailable` に返す。
 これは複数API読取りの観測結果であり、atomicな残額予約・法的な承認・返金実行ではない。
-`approvalGranted:false`、`approvedAmountJpy:null`、`refundExecuted:false`を維持する。
+審査記録がない申請では `approvalGranted:false`、`approvedAmountJpy:null`を返す。
+記録がある申請では初回受付の再送・本人のGET・残額照合の応答に最新決定を反映する。
+いずれも `refundExecuted:false`を維持し、審査記録の `executionAuthorized:false`を返す。
 実行経路では別途、現在権限・残額・冪等性を再確認する必要がある。
 
 statusと一覧の扱いはStripe公式の[Refund object](https://docs.stripe.com/api/refunds/object)と
