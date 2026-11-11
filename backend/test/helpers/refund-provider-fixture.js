@@ -13,12 +13,21 @@ export async function liveRefundProviderFixture(account,scope='connect',options=
 
 async function startFixture(account,scope,options,live){
  const key=live?'rk_live_refund_http_fixture':'rk_test_refund_http_fixture';
- const payments=new Map(),refunds=new Map(),requests=[],control={fail:false,pageSize:100};
+ const payments=new Map(),refunds=new Map(),requests=[],control={fail:false,pageSize:100},executions=new Map();
  const server=createServer((req,res)=>{
   const u=new URL(req.url,'http://127.0.0.1');requests.push({method:req.method,path:u.pathname,account:req.headers['stripe-account']??null});
   const json=(status,data)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(data))};
   if(req.headers.authorization!=='Bearer '+key||req.headers['stripe-account']!==account)return json(401,{error:{type:'authentication_error',message:'Fixture credentials required'}});
   if(control.fail)return json(503,{error:{type:'api_error',message:'Fixture unavailable'}});
+  if(!live&&options.allowTestExecution===true&&req.method==='POST'&&u.pathname==='/v1/refunds'){
+   const chunks=[];let size=0;req.on('data',chunk=>{size+=chunk.length;if(size<=65536)chunks.push(chunk)});req.on('end',()=>{
+    if(size>65536)return json(413,{error:{message:'Fixture too large'}});
+    const body=new URLSearchParams(Buffer.concat(chunks).toString()),key=req.headers['idempotency-key'];
+    if(typeof key!=='string'||!key.startsWith('passshare-test-refund-')||!payments.has(body.get('payment_intent')))return json(400,{error:{message:'Bound operation required'}});
+    if(!executions.has(key)){const r={id:'re_fixtureexecution'+executions.size,object:'refund',payment_intent:body.get('payment_intent'),currency:'jpy',amount:Number(body.get('amount')),status:'succeeded',created:Math.floor(Date.now()/1000),metadata:{operationId:body.get('metadata[operationId]'),decisionFingerprint:body.get('metadata[decisionFingerprint]')}};executions.set(key,r);refunds.set(r.id,r)}
+    return json(200,executions.get(key));
+   });return;
+  }
   if(options.stateControl===true&&req.method==='POST'&&u.pathname==='/fixture/state'){
    const chunks=[];let size=0;
    req.on('data',chunk=>{size+=chunk.length;if(size<=65536)chunks.push(chunk)});

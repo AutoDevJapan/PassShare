@@ -884,6 +884,22 @@ impl Runner {
             report.check(if retired {"source_retired_refund_review_nonempty"} else {"source_refund_review_nonempty"},decision["decision"]=="approved" && decision["revision"]==1 && decision["approvedAmountJpy"]==400 && decision["refundExecuted"]==false && sql("drill_source",&format!("SELECT count(*) FROM commercial_refund_reviews v JOIN commercial_refund_requests r ON (v.request_id,v.contract_id,v.request_fingerprint,v.requested_amount_jpy)=(r.id,r.contract_id,r.request_fingerprint,r.requested_amount_jpy) WHERE v.request_id='{rid}' AND v.revision=1 AND v.decision='approved' AND v.reason='unprovided_period_confirmed' AND v.amount_jpy=400 AND v.requested_amount_jpy=400 AND v.reviewer_id='{}' AND v.balance->>'qualified'='true' AND v.balance->>'availableRefundJpy'='980' AND v.created_at IS NOT NULL",member.id))?.trim()=="1")?;
             if !retired { source_refund_review=decision;source_refund_request=self.api.json(report,"source_review_owner_read","GET",&format!("/api/commercial-contracts/{id}/refund-requests/{rid}"),session,None,200,None)?; }
         }
+        let mut source_test_execution = Value::Null;
+        for (retired, session, id, quote_hash) in [
+            (false, &owner.session, &contract_id, &contract_draft["quoteHash"]),
+            (true, &deleted.session, &retired_contract_id, &retired_contract["quoteHash"]),
+        ] {
+            let operation="89898989-8989-4989-8989-898989898989";
+            // Each contract owns a distinct operation identity. Both are signed
+            // sandbox-payment approvals through HTTP; the executor remains off.
+            let operation=if retired {"90909090-9090-4090-8090-909090909090"} else {operation};
+            let result=self.api.json(report,if retired {"source_retired_test_refund_operation_HTTP"} else {"source_test_refund_operation_HTTP"},"POST",&format!("/api/commercial-contracts/{id}/test-refund-operations"),&member.session,Some(&json!({"operationId":operation,"paymentIntentId":format!("pi_{}",id.replace('-',"")),"quoteHash":quote_hash,"amountJpy":100,"reason":"unprovided_period_confirmed"})),201,None)?;
+            report.check(if retired {"source_retired_test_refund_operation_nonempty"} else {"source_test_refund_operation_nonempty"},result["state"]=="approved" && result["approvedAmountJpy"]==100 && result["paymentEvidence"]=="provider_test_sandbox" && result["refundExecuted"]==false && sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refund_operations o JOIN commercial_payment_events p ON (o.account_id,o.payment_event_id,o.contract_id,o.provider_object_id,o.payment_amount_jpy,o.payment_event_hash)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id,p.amount_jpy,p.event_hash) WHERE o.operation_id='{operation}' AND o.contract_id='{id}' AND o.amount_jpy=100 AND o.payment_amount_jpy=980 AND o.state='approved' AND o.evidence='provider_test_sandbox' AND o.reviewer_id='{}' AND o.provider_refund_id IS NULL AND o.approved_at IS NOT NULL",member.id))?.trim()=="1")?;
+            let closed=self.api.request("POST",&format!("/api/commercial-contracts/{id}/test-refund-operations/{operation}/execute"),&member.session,Some(&json!({})),None)?;
+            report.check(if retired {"source_retired_test_refund_executor_closed"} else {"source_test_refund_executor_closed"},closed.0==503)?;
+            let read=self.api.json(report,if retired {"source_retired_test_refund_operation_owner"} else {"source_test_refund_operation_owner"},"GET",&format!("/api/commercial-contracts/{id}/test-refund-operations/{operation}"),session,None,200,None)?;
+            if !retired {source_test_execution=read;}
+        }
         self.api.json(
             report,
             "source_unpaid_acceptance_canceled",
@@ -1112,6 +1128,7 @@ impl Runner {
             "restore_test_refund_events_full_rows",
             "restore_refund_requests_full_rows",
             "restore_refund_reviews_full_rows",
+            "restore_test_refund_operations_full_rows",
         ];
         if names.len() != TABLES.len() {
             return Err(Failure::Shape);
@@ -1486,6 +1503,10 @@ impl Runner {
         report.check("retired_refund_requests_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_requests WHERE contract_id='{retired_live_id}'"))?.trim()=="0")?;
         report.check("restored_refund_review_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_reviews v JOIN commercial_refund_requests r ON (v.request_id,v.contract_id,v.request_fingerprint,v.requested_amount_jpy)=(r.id,r.contract_id,r.request_fingerprint,r.requested_amount_jpy) WHERE r.contract_id='{live_id}' AND v.revision=1 AND v.decision='approved' AND v.reason='unprovided_period_confirmed' AND v.amount_jpy=400 AND v.requested_amount_jpy=400 AND v.reviewer_id='{}' AND v.balance->>'qualified'='true' AND v.balance->>'availableRefundJpy'='980' AND v.created_at IS NOT NULL",member.id))?.trim()=="1")?;
         report.check("retired_refund_reviews_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_refund_reviews WHERE contract_id='{retired_live_id}'"))?.trim()=="0")?;
+        report.check("restored_test_refund_operation_nonempty",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_operations o JOIN commercial_payment_events p ON (o.account_id,o.payment_event_id,o.contract_id,o.provider_object_id,o.payment_amount_jpy,o.payment_event_hash)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id,p.amount_jpy,p.event_hash) WHERE o.operation_id='89898989-8989-4989-8989-898989898989' AND o.contract_id='{contract_id}' AND o.amount_jpy=100 AND o.payment_amount_jpy=980 AND o.state='approved' AND o.evidence='provider_test_sandbox' AND o.reviewer_id='{}' AND o.provider_refund_id IS NULL",member.id))?.trim()=="1")?;
+        report.check("retired_test_refund_operations_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_operations WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
+        let restored_test_execution=self.api.json(report,"restored_test_refund_operation_owner_HTTP","GET",&format!("/api/commercial-contracts/{contract_id}/test-refund-operations/89898989-8989-4989-8989-898989898989"),&current_owner.session,None,200,None)?;
+        report.check("restored_test_refund_operation_exact_values",exact_json(&source_test_execution,&restored_test_execution))?;
         let refund_request_id = identifier(&source_refund_request, "/id", 36)?;
         let restored_review=self.api.json(report,"restored_refund_review_reviewer_HTTP","GET",&format!("/api/commercial-contracts/refund-review/{refund_request_id}"),&current_member.session,None,200,None)?;
         report.check("restored_refund_review_exact_values",exact_json(&source_refund_review,&restored_review["review"]) && restored_review["reviewRevision"]==1)?;

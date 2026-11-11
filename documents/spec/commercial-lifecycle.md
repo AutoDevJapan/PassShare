@@ -483,3 +483,34 @@ private HTTP provider simulatorでこのAPIの正常・拒否・期限切れを�
 `refundExecuted:false`を維持する。外部providerとの複数読取りはatomicではないため、
 実行経路では承認版・現在資格・現在残額・他の実行・同じprovider冪等キーを再検証する。
 この変更は返金API、実返金、通知配送、販売有効化、Box所属/暗号鍵の変更を行わない。
+
+### 公式sandbox専用の返金実行候補
+
+`POST /api/commercial-contracts/:id/test-refund-operations` は明示した既存の返金担当者だけが、
+署名検証済みsandbox支払いの契約・所有者・金額・元event hashと見積hashに結び付く承認を保存する。
+同じoperationId・同じ内容は再送でき、内容変更や他の承認との合計超過は409となる。
+この台帳は `provider_test_sandbox` の別表であり、Liveの申請・承認記録や有料権限へ昇格しない。
+本人と担当者は `GET .../test-refund-operations/:operation` で非公開・no-storeの状態を確認できる。
+
+実行は `POST .../:operation/execute`。専用 `PASSSHARE_STRIPE_TEST_REFUND_EXECUTION_KEY` が未設定なら503。
+`sk_test_`/`rk_test_` の資格だけを受け付け、Live資格はAPI呼出し前に拒否する。
+現在の担当者sessionと契約bindingをロック後のDB時刻で再確認し、変更不能な承認内容を
+`in_flight` としてcommitしてから、DB接続を保持せずproviderへ渡す。
+外部通信前に公式SDKで同accountのPaymentIntent・Refund完全一覧を再取得し、test mode、
+JPY受領額、所有者・契約・見積hashと現在残額を照合する。
+providerへの操作は保存済みの額・PaymentIntentと決定指紋から作る同一冪等キーで行う。
+同じ操作metadataを持つ返金が既に見つかれば、再作成せずその結果を照合する。
+
+応答紛失は `uncertain` として保持し、成功と扱わない。結果の保存と、
+外部待ち後のsession再認可を分け、失効した要求者へ結果を開示しない。
+同じ実行中操作の並行送信は409、確認済み結果の再送は外部操作なしで同じ結果を返す。
+[Stripe API v1の冪等キー保持期間](https://docs.stripe.com/api/idempotent_requests)を越える再実行を避け、
+初回送信から23時間を過ぎた未確定操作は新しいPOSTを行わず、`POST .../:operation/reconcile` で
+現在の同account・同paymentとoperation/decision metadataを持つ返金を読み直す。
+状態不明・未着はそのまま保留し、別operationを自動発行しない。
+
+この候補の受入は隔離HTTP/PGとprivate provider simulatorから始める。
+公式sandboxの実配送・実API結果は別に確認し、同じ公式test accountと資格の正規出所を照合する。
+test返金の成功をLive返金・販売開始・契約の有料権限付与としない。
+共同所有権・暗号鍵・支払済み期間は変更しない。長時間実行中のクラッシュ後調停、通知配送、
+法定保持/削除、本番Liveの実行承認と運用は引き続き完成条件として保持する。

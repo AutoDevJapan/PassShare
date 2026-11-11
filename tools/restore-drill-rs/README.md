@@ -125,3 +125,11 @@ results and completed synthetic RTO. Unit mutations add a premature reopening
 result or remove all cleanup results; both must be rejected.
 If DBs pre-exist, the runner fails instead of deleting them; parent must remove its
 own disposable container/volumes/network after every run (including force termination).
+
+The exact inventory also includes `commercial_test_refund_operations`. A
+configured synthetic reviewer approves100JPY against each of two signed980JPY
+sandbox payments through HTTP. The executor remains unconfigured and returns503.
+The drill compares every operation column/FK before reopening, retains the
+current owner's operation and checks the retired owner's cascade to zero.
+This proves restoration of the sandbox approval ledger, not a real provider
+refund or recovery of an uncertain external transaction.
