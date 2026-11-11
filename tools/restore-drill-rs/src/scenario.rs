@@ -27,6 +27,15 @@ fn identifier(value: &Value, pointer: &str, length: usize) -> Result<String> {
     Ok(id)
 }
 
+fn seed_pending_refund_truth(value: &Value) -> Result<()> {
+    // This endpoint exists only in the isolated verification image. It never
+    // observes Stripe and cannot authorize a new provider mutation.
+    let script=r#"fetch('http://127.0.0.1:8999/fixture/state',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer rk_test_refund_http_fixture','stripe-account':'acct_restorefixture'},body:process.argv[1]}).then(r=>{if(r.status!==200)process.exitCode=1}).catch(()=>process.exitCode=1)"#;
+    let mut command=clean_command("/usr/local/bin/node");
+    command.arg("-e").arg(script).arg(value.to_string());
+    command_output(command,None).map(|_|())
+}
+
 impl Api {
     fn account(
         &self,
@@ -900,6 +909,38 @@ impl Runner {
             let read=self.api.json(report,if retired {"source_retired_test_refund_operation_owner"} else {"source_test_refund_operation_owner"},"GET",&format!("/api/commercial-contracts/{id}/test-refund-operations/{operation}"),session,None,200,None)?;
             if !retired {source_test_execution=read;}
         }
+        // SQL simulates interrupted dispatch state; the separate HTTP/PG test
+        // injects a real result-write failure after a private provider POST.
+        let pending_operations = [
+            ("91919191-9191-4191-8191-919191919191", "uncertain", 10),
+            ("92929292-9292-4292-8292-929292929292", "in_flight", 20),
+        ];
+        for (index, (operation, state, amount)) in pending_operations.iter().enumerate() {
+            self.api.json(
+                report,
+                if index == 0 {"source_uncertain_refund_approval_HTTP"} else {"source_inflight_refund_approval_HTTP"},
+                "POST", &format!("/api/commercial-contracts/{contract_id}/test-refund-operations"),
+                &member.session,
+                Some(&json!({"operationId":operation,"paymentIntentId":format!("pi_{}",contract_id.replace('-',"")),"quoteHash":contract_draft["quoteHash"],"amountJpy":amount,"reason":"unprovided_period_confirmed"})),
+                201, None,
+            )?;
+            sql("drill_source", &format!("UPDATE commercial_test_refund_operations SET state='{state}',first_dispatched_at=clock_timestamp(),result_recorded_at=CASE WHEN '{state}'='uncertain' THEN clock_timestamp() ELSE NULL END WHERE operation_id='{operation}';"))?;
+        }
+        for (index, (operation, state, amount)) in [
+            ("93939393-9393-4393-8393-939393939393", "uncertain", 10),
+            ("94949494-9494-4494-8494-949494949494", "in_flight", 20),
+        ].iter().enumerate() {
+            self.api.json(report,if index==0 {"source_retired_uncertain_refund_approval_HTTP"} else {"source_retired_inflight_refund_approval_HTTP"},"POST",&format!("/api/commercial-contracts/{retired_contract_id}/test-refund-operations"),&member.session,Some(&json!({"operationId":operation,"paymentIntentId":format!("pi_{}",retired_contract_id.replace('-',"")),"quoteHash":retired_contract["quoteHash"],"amountJpy":amount,"reason":"unprovided_period_confirmed"})),201,None)?;
+            sql("drill_source",&format!("UPDATE commercial_test_refund_operations SET state='{state}',first_dispatched_at=clock_timestamp() WHERE operation_id='{operation}';"))?;
+        }
+        report.check("source_retired_pending_refund_operation_states",sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refund_operations WHERE contract_id='{retired_contract_id}' AND ((operation_id='93939393-9393-4393-8393-939393939393' AND state='uncertain' AND amount_jpy=10) OR (operation_id='94949494-9494-4494-8494-949494949494' AND state='in_flight' AND amount_jpy=20)) AND first_dispatched_at IS NOT NULL AND provider_refund_id IS NULL;"))?.trim()=="2")?;
+        let source_uncertain_refund=self.api.json(report,"source_uncertain_refund_owner_HTTP","GET",&format!("/api/commercial-contracts/{contract_id}/test-refund-operations/{}",pending_operations[0].0),&owner.session,None,200,None)?;
+        let source_inflight_refund=self.api.json(report,"source_inflight_refund_owner_HTTP","GET",&format!("/api/commercial-contracts/{contract_id}/test-refund-operations/{}",pending_operations[1].0),&owner.session,None,200,None)?;
+        report.check("source_pending_refund_operation_states",
+            source_uncertain_refund["state"]=="uncertain" && source_uncertain_refund["approvedAmountJpy"]==10 && source_uncertain_refund["refundExecuted"]==false &&
+            source_inflight_refund["state"]=="in_flight" && source_inflight_refund["approvedAmountJpy"]==20 && source_inflight_refund["refundExecuted"]==false &&
+            sql("drill_source",&format!("SELECT count(*) FROM commercial_test_refund_operations WHERE contract_id='{contract_id}' AND operation_id IN ('{}','{}') AND state IN ('uncertain','in_flight') AND first_dispatched_at IS NOT NULL AND provider_refund_id IS NULL AND approved_at IS NOT NULL AND reviewer_id='{}';",pending_operations[0].0,pending_operations[1].0,member.id))?.trim()=="2"
+        )?;
         self.api.json(
             report,
             "source_unpaid_acceptance_canceled",
@@ -1507,6 +1548,35 @@ impl Runner {
         report.check("retired_test_refund_operations_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_operations WHERE contract_id='{retired_contract_id}'"))?.trim()=="0")?;
         let restored_test_execution=self.api.json(report,"restored_test_refund_operation_owner_HTTP","GET",&format!("/api/commercial-contracts/{contract_id}/test-refund-operations/89898989-8989-4989-8989-898989898989"),&current_owner.session,None,200,None)?;
         report.check("restored_test_refund_operation_exact_values",exact_json(&source_test_execution,&restored_test_execution))?;
+        report.check("restored_pending_refund_operation_states",sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_operations o JOIN commercial_payment_events p ON (o.account_id,o.payment_event_id,o.contract_id,o.provider_object_id,o.payment_amount_jpy,o.payment_event_hash)=(p.account_id,p.event_id,p.contract_id,p.provider_object_id,p.amount_jpy,p.event_hash) WHERE o.contract_id='{contract_id}' AND o.first_dispatched_at IS NOT NULL AND o.provider_refund_id IS NULL AND ((o.operation_id='{}' AND o.state='uncertain' AND o.amount_jpy=10 AND o.result_recorded_at IS NOT NULL) OR (o.operation_id='{}' AND o.state='in_flight' AND o.amount_jpy=20 AND o.result_recorded_at IS NULL));",pending_operations[0].0,pending_operations[1].0))?.trim()=="2")?;
+        report.check("retired_pending_refund_operations_cascaded",sql("drill_restored","SELECT count(*) FROM commercial_test_refund_operations WHERE operation_id IN ('93939393-9393-4393-8393-939393939393','94949494-9494-4494-8494-949494949494');")?.trim()=="0")?;
+        let pending_before=sql("drill_restored",&format!("SELECT row_to_json(o) FROM commercial_test_refund_operations o WHERE operation_id='{}';",pending_operations[0].0))?;
+        sql("drill_restored",&format!("DO $validation$ BEGIN BEGIN UPDATE commercial_test_refund_operations SET payment_event_hash=repeat('0',64) WHERE operation_id='{}'; RAISE EXCEPTION 'Expected original event FK rejection'; EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $validation$;",pending_operations[0].0))?;
+        report.check("restored_pending_refund_invalid_binding_rejected",pending_before==sql("drill_restored",&format!("SELECT row_to_json(o) FROM commercial_test_refund_operations o WHERE operation_id='{}';",pending_operations[0].0))?)?;
+        sql("drill_restored",&format!("DO $validation$ BEGIN BEGIN UPDATE commercial_test_refund_operations SET state='succeeded' WHERE operation_id='{}'; RAISE EXCEPTION 'Expected missing provider result rejection'; EXCEPTION WHEN check_violation THEN NULL; END; END $validation$;",pending_operations[0].0))?;
+        report.check("restored_pending_refund_invalid_success_rejected",pending_before==sql("drill_restored",&format!("SELECT row_to_json(o) FROM commercial_test_refund_operations o WHERE operation_id='{}';",pending_operations[0].0))?)?;
+        let restored_uncertain_refund=self.api.json(report,"restored_uncertain_refund_owner_HTTP","GET",&format!("/api/commercial-contracts/{contract_id}/test-refund-operations/{}",pending_operations[0].0),&current_owner.session,None,200,None)?;
+        let restored_inflight_refund=self.api.json(report,"restored_inflight_refund_owner_HTTP","GET",&format!("/api/commercial-contracts/{contract_id}/test-refund-operations/{}",pending_operations[1].0),&current_owner.session,None,200,None)?;
+        report.check("restored_uncertain_refund_exact_values",exact_json(&source_uncertain_refund,&restored_uncertain_refund))?;
+        report.check("restored_inflight_refund_exact_values",exact_json(&source_inflight_refund,&restored_inflight_refund))?;
+        let pending_path=format!("/api/commercial-contracts/{contract_id}/test-refund-operations/{}",pending_operations[0].0);
+        let missing=self.api.request("POST",&format!("{pending_path}/reconcile"),&current_member.session,Some(&json!({})),None)?;
+        report.check("restored_pending_refund_missing_truth_409",missing.0==409)?;
+        let pending_rows:Value=serde_json::from_str(&sql("drill_restored",&format!("SELECT jsonb_agg(jsonb_build_object('operation',operation_id,'fingerprint',decision_fingerprint,'amount',amount_jpy) ORDER BY operation_id) FROM commercial_test_refund_operations WHERE operation_id IN ('{}','{}');",pending_operations[0].0,pending_operations[1].0))?).map_err(|_|Failure::Json)?;
+        let rows=pending_rows.as_array().filter(|rows|rows.len()==2).ok_or(Failure::Shape)?;
+        let payment=json!({"id":format!("pi_{}",contract_id.replace('-',"")),"object":"payment_intent","livemode":false,"status":"succeeded","currency":"jpy","amount":980,"amount_received":980,"metadata":{"contractId":contract_id,"ownerId":owner.id,"quoteHash":contract_draft["quoteHash"]}});
+        let refunds=rows.iter().enumerate().map(|(index,row)|json!({"id":format!("re_restoredpending{index}"),"object":"refund","payment_intent":payment["id"],"amount":row["amount"],"currency":"jpy","status":"succeeded","metadata":{"operationId":row["operation"],"decisionFingerprint":row["fingerprint"]}})).collect::<Vec<_>>();
+        let mut mismatched=refunds.clone();mismatched[0]["metadata"]["decisionFingerprint"]=json!("0".repeat(64));
+        seed_pending_refund_truth(&json!({"payment":payment,"refunds":mismatched}))?;
+        let wrong=self.api.request("POST",&format!("{pending_path}/reconcile"),&current_member.session,Some(&json!({})),None)?;
+        report.check("restored_pending_refund_wrong_decision_409",wrong.0==409 && sql("drill_restored",&format!("SELECT count(*) FROM commercial_test_refund_operations WHERE operation_id='{}' AND state='uncertain' AND provider_refund_id IS NULL;",pending_operations[0].0))?.trim()=="1")?;
+        seed_pending_refund_truth(&json!({"payment":payment,"refunds":refunds}))?;
+        let mut reconciled=true;
+        for (index,(operation,_,amount)) in pending_operations.iter().enumerate() {
+            let current=self.api.json(report,if index==0 {"restored_uncertain_refund_reconcile_HTTP"} else {"restored_inflight_refund_reconcile_HTTP"},"POST",&format!("/api/commercial-contracts/{contract_id}/test-refund-operations/{operation}/reconcile"),&current_member.session,Some(&json!({})),200,None)?;
+            reconciled &= current["state"]=="succeeded" && current["approvedAmountJpy"]==*amount && current["providerRefundId"]==format!("re_restoredpending{index}") && current["liveRefundExecuted"]==false && current["entitlementsGranted"]==false;
+        }
+        report.check("restored_pending_refund_metadata_reconciled",reconciled)?;
         let refund_request_id = identifier(&source_refund_request, "/id", 36)?;
         let restored_review=self.api.json(report,"restored_refund_review_reviewer_HTTP","GET",&format!("/api/commercial-contracts/refund-review/{refund_request_id}"),&current_member.session,None,200,None)?;
         report.check("restored_refund_review_exact_values",exact_json(&source_refund_review,&restored_review["review"]) && restored_review["reviewRevision"]==1)?;

@@ -131,5 +131,16 @@ configured synthetic reviewer approves100JPY against each of two signed980JPY
 sandbox payments through HTTP. The executor remains unconfigured and returns503.
 The drill compares every operation column/FK before reopening, retains the
 current owner's operation and checks the retired owner's cascade to zero.
-This proves restoration of the sandbox approval ledger, not a real provider
-refund or recovery of an uncertain external transaction.
+This part proves restoration of the sandbox approval ledger. It does not prove
+a real provider refund or recovery of an uncertain external transaction.
+
+The follow-up exercise also retains separate nonempty `uncertain` and `in_flight`
+operations. HTTP creates each approval; SQL simulates the interrupted dispatch
+states before the dump. Every column, payment FK, timestamp and owner response
+must survive the actual dump/restore. Missing provider truth and mismatched
+decision metadata remain 409. Only exact private simulator refund metadata can
+reconcile those rows after reopening; the executor remains unconfigured, so this
+step never issues another refund POST. A separate HTTP/PostgreSQL test injects a
+real result-write failure after one simulated provider POST, restarts the API,
+and verifies one-refund read-only reconciliation. Neither fixture uses Stripe or
+establishes recovery of an operation for which no exact provider result exists.

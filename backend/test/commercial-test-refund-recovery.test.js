@@ -1,0 +1,58 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import pg from 'pg';
+import Stripe from 'stripe';
+import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
+import {refundProviderFixture} from './helpers/refund-provider-fixture.js';
+import {createTestRefundExecutor} from '../src/commercial-test-refund-executor.js';
+
+test('a committed sandbox refund survives result-write failure and is reconciled after API restart without another POST',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
+ const url=new URL(process.env.DATABASE_URL);
+ assert.equal(url.hostname,'127.0.0.1');assert.equal(url.username,'passshare');assert.equal(url.pathname,'/passshare');
+ const admin=new pg.Pool({connectionString:url.href}),db='ps_test_refund_recovery_'+randomUUID().replaceAll('-','');
+ await admin.query('CREATE DATABASE '+db);url.pathname='/'+db;
+ const pool=new pg.Pool({connectionString:url.href}),close=trackPoolShutdown(pool);
+ const keys=['PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS','PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET','PASSSHARE_STRIPE_TEST_ACCOUNT','PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE'];
+ const saved=Object.fromEntries(keys.map(key=>[key,process.env[key]])),account='acct_recoveryfixture',secret='whsec_recoveryfixture',password='fixture-'+randomUUID();
+ const provider=await refundProviderFixture(account,'direct',{allowTestExecution:true});
+ Object.assign(process.env,{PASSSHARE_STRIPE_TEST_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_TEST_ACCOUNT:account,PASSSHARE_STRIPE_TEST_ENDPOINT_SCOPE:'direct'});
+ delete process.env.PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS;
+ let server,base;
+ const stop=async()=>{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));server=null;}};
+ const start=async()=>{const {createApp}=await import('../src/app.js');const {app}=await createApp({pool,testRefundLookup:provider.lookup,testRefundExecutor:createTestRefundExecutor({key:'rk_test_refund_http_fixture',account,scope:'direct',fetchImpl:provider.fetchImpl})});server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base='http://127.0.0.1:'+server.address().port;};
+ const call=async(path,actor,body,method=body===undefined?'GET':'POST')=>{const response=await fetch(base+path,{method,signal:AbortSignal.timeout(10000),headers:{'content-type':'application/json','x-passshare-client':'mobile',...(actor?{authorization:'Bearer '+actor.refreshToken}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,body:await response.json().catch(()=>null)};};
+ try{
+  await start();const actors=[];
+  for(let i=0;i<3;i++){const email=randomUUID()+'@example.test',reply=await call('/api/auth/signup',null,{email,password});assert.equal(reply.status,201);actors.push({...reply.body,email});}
+  const [owner,reviewer,other]=actors;
+  const quote=await call('/api/commercial-contracts',owner,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(quote.status,201);const contract=quote.body;
+  assert.equal((await call('/api/commercial-contracts/'+contract.id+'/accept',owner,{quoteHash:contract.quoteHash})).status,200);
+  const payment={id:'pi_'+randomUUID().replaceAll('-',''),object:'payment_intent',livemode:false,status:'succeeded',currency:'jpy',amount:980,amount_received:980,metadata:{contractId:contract.id,ownerId:owner.user.id,quoteHash:contract.quoteHash}};
+  const event={id:'evt_'+randomUUID().replaceAll('-',''),type:'payment_intent.succeeded',livemode:false,created:Math.floor(Date.now()/1000),data:{object:payment}},payload=JSON.stringify(event);
+  assert.equal((await fetch(base+'/api/commercial-events/stripe-test',{method:'POST',headers:{'content-type':'application/json','stripe-signature':Stripe.webhooks.generateTestHeaderString({payload,secret})},body:payload})).status,200);
+  provider.payments.set(payment.id,payment);process.env.PASSSHARE_COMMERCIAL_REFUND_REVIEWER_IDS=reviewer.user.id;await stop();await start();
+  const operationId=randomUUID(),route='/api/commercial-contracts/'+contract.id+'/test-refund-operations',operation=route+'/'+operationId;
+  const approval=await call(route,reviewer,{operationId,paymentIntentId:payment.id,quoteHash:contract.quoteHash,amountJpy:100,reason:'unprovided_period_confirmed'});assert.equal(approval.status,201);assert.equal(approval.body.state,'approved');
+  await pool.query("CREATE FUNCTION fail_refund_result_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='succeeded' THEN RAISE EXCEPTION 'synthetic result write failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_result_write BEFORE UPDATE ON commercial_test_refund_operations FOR EACH ROW EXECUTE FUNCTION fail_refund_result_write()");
+  const failed=await call(operation+'/execute',reviewer,{});assert.equal(failed.status,500);assert.ok(!JSON.stringify(failed.body).includes('synthetic result write failure'));
+  const row=(await pool.query('SELECT * FROM commercial_test_refund_operations WHERE operation_id=$1',[operationId])).rows[0];
+  assert.equal(row.state,'in_flight');assert.ok(row.first_dispatched_at);assert.equal(row.provider_refund_id,null);
+  const posts=()=>provider.requests.filter(request=>request.method==='POST').length;
+  assert.equal(posts(),1);assert.equal(provider.refunds.size,1);const refund=[...provider.refunds.values()][0];
+  assert.equal(refund.amount,100);assert.equal(refund.metadata.operationId,operationId);assert.equal(refund.metadata.decisionFingerprint,row.decision_fingerprint);
+  await pool.query('DROP TRIGGER fail_result_write ON commercial_test_refund_operations; DROP FUNCTION fail_refund_result_write()');
+  await stop();await start();
+  assert.equal((await call(operation,owner)).body.state,'in_flight');assert.equal((await call(operation,other)).status,404);
+  assert.equal((await call(operation+'/execute',reviewer,{})).status,409);assert.equal(posts(),1,'Restart must not resend an in-flight operation');
+  assert.equal((await call(operation+'/reconcile',reviewer,{state:'succeeded'})).status,400);
+  assert.equal((await call(operation+'/reconcile',owner,{})).status,403);
+  const reconciled=await call(operation+'/reconcile',reviewer,{});assert.equal(reconciled.status,200);assert.equal(reconciled.body.state,'succeeded');assert.equal(reconciled.body.providerRefundId,refund.id);assert.equal(reconciled.body.liveRefundExecuted,false);assert.equal(reconciled.body.entitlementsGranted,false);
+  assert.equal(posts(),1);assert.equal(provider.refunds.size,1);
+  const replay=await call(operation+'/execute',reviewer,{});assert.equal(replay.status,200);assert.deepEqual(replay.body,reconciled.body);assert.equal(posts(),1);
+  const unchanged=(await call('/api/commercial-contracts/'+contract.id,owner)).body;assert.equal(unchanged.paid,false);assert.equal(unchanged.entitlement.effective,false);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_live_periods')).rows[0].n,0);
+  for(const actor of [reviewer,owner,other])assert.equal((await call('/api/auth/account',actor,{currentPassword:password,confirmationEmail:actor.email},'DELETE')).status,204);
+  assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_test_refund_operations')).rows[0].n,0);
+ }finally{await stop();await provider.close();await close();await admin.query('DROP DATABASE '+db+' WITH (FORCE)');await admin.end();for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+});
