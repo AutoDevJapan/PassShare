@@ -49,6 +49,9 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   const exported=JSON.parse(execFileSync(process.execPath,[cli,'export',sourceConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(exported.ok,true);
   const journal=fs.readFileSync(journalFile),expectedSha256=createHash('sha256').update(journal).digest('hex'),expectedSourceId=sourceId;assert.equal(exported.sha256,expectedSha256);
   const parsed=parseDeletionJournal(journal,{expectedSha256,expectedSourceId});assert.equal(parsed.entries.length,1,'Completed deletion journal survives owner/contract/receipt retirement');
+  const copyFile=path.join(scratch,'independent-journal.private.json'),copyConfig=path.join(scratch,'copy.private.json');
+  fs.writeFileSync(copyConfig,JSON.stringify({format:'passshare-deletion-copy-v1',sourceId,journalPath:journalFile,copyPath:copyFile,trustedJournalSha256:expectedSha256}),{flag:'wx'});
+  const preserved=JSON.parse(execFileSync(process.execPath,[cli,'preserve-copy',copyConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(preserved.ok,true);assert.equal(preserved.offHostRetentionProven,false);fs.unlinkSync(journalFile);assert.deepEqual(fs.readFileSync(copyFile),journal,'Independent copy survives actual original export removal');fs.renameSync(copyFile,journalFile);fs.unlinkSync(copyConfig);
   assert.deepEqual(Object.keys(parsed.entries[0]),['deletionId','boxId','completedAt']);assert(!journal.includes('never-journal-this'));assert(!journal.includes('discarded-secret'));assert(!journal.includes(owner.user.id));assert(!journal.includes(contract.id));
   execFileSync('docker',['exec','-i',container,'pg_restore','-U','passshare','-d',targetName,'--no-owner','--no-acl','--exit-on-error'],{input:dump,windowsHide:true,maxBuffer:16*1024*1024});
   assert.equal((await target.query('SELECT count(*)::int n FROM connect_items WHERE id=$1',[itemId])).rows[0].n,1,'The actual old archive really contained the deleted secret fixture');
@@ -130,6 +133,6 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   }finally{await client.end();}
   assert.equal((await call('/api/auth/account',other,{currentPassword:password,confirmationEmail:other.email},'DELETE')).status,204);
  }finally{
-  if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}if(currentSource)await currentSource.end();await closeSource();await closeTarget();await admin.query('DROP DATABASE '+targetName+' WITH (FORCE)');await admin.query('DROP DATABASE '+sourceName+' WITH (FORCE)');await admin.end();for(const name of ['old-private-fixture.dump','current-deletions.private.json','source.private.json','target.private.json']){const file=path.join(scratch,name);if(fs.existsSync(file))fs.unlinkSync(file);}fs.rmdirSync(scratch);
+  if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}if(currentSource)await currentSource.end();await closeSource();await closeTarget();await admin.query('DROP DATABASE '+targetName+' WITH (FORCE)');await admin.query('DROP DATABASE '+sourceName+' WITH (FORCE)');await admin.end();for(const name of ['old-private-fixture.dump','current-deletions.private.json','source.private.json','target.private.json','independent-journal.private.json','copy.private.json']){const file=path.join(scratch,name);if(fs.existsSync(file))fs.unlinkSync(file);}fs.rmdirSync(scratch);
  }
 });
