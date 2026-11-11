@@ -3,7 +3,7 @@ import { createSupportReceiptRouter } from "./support-receipts.js";
 import {createCommercialContractRouter} from './commercial-contracts.js';
 import {commercialEventHandler} from './commercial-events.js';
 import {liveEventHandler} from './commercial-live.js';
-import {createTestRefundLookup} from './commercial-refund-provider.js';
+import {createTestRefundLookup,createLiveRefundLookup} from './commercial-refund-provider.js';
 import { rateLimit } from "express-rate-limit";
 import { createAuthRouter } from "./auth/router.js";
 import { createAuthStore } from "./auth/index.js";
@@ -64,11 +64,13 @@ async function warmUpPool(pool) {
  *   authStore?: import('./auth/index.js').AuthStore,
  *   loginGuardStore?: import('./auth/login-guard-store.js').LoginGuardStore,
  *   testRefundLookup?: Function | null,
+ *   liveRefundLookup?: Function | null,
  * }} [options]
  */
 export async function createApp(options = {}) {
   const app = express();
   const testRefundLookup=options.testRefundLookup===undefined?createTestRefundLookup():options.testRefundLookup;
+  const liveRefundLookup=options.liveRefundLookup===undefined?createLiveRefundLookup():options.liveRefundLookup;
   const appEnv = process.env.APP_ENV ?? "local";
 
   // Derive req.ip from a fixed number of trusted proxy hops so the per-IP login
@@ -182,7 +184,7 @@ export async function createApp(options = {}) {
   );
   const mutateOnce = await createMutationStore({ store: connectStore, authStore, pool });
   app.use("/api/support-receipts", await createSupportReceiptRouter({pool,authStore}));
-  app.use('/api/commercial-contracts',createCommercialContractRouter({pool,authStore,refundLookup:testRefundLookup}));
+  app.use('/api/commercial-contracts',createCommercialContractRouter({pool,authStore,refundLookup:testRefundLookup,liveRefundLookup}));
   app.use("/api/auth", createAuthRouter({ authStore, connectStore, appEnv, loginGuardStore, mutateOnce }));
   // Keep an unfinished client/key migration off existing hosted accounts.
   const encryptedEnabled = process.env.PASSSHARE_ENCRYPTED_STORAGE === "true";

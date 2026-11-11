@@ -413,3 +413,39 @@ sandbox台帳を支払済みの根拠にしない。受け口の本番有効化�
 非空の申請を正式HTTP経路で作り、全行・値・FK対応と退会cascadeを検証する。
 この退会cascadeは現時点の架空データの挙動であり、有料契約の法定保存義務を
 確定したものではない。保存期間を含む販売条件の受入は継続する。
+
+### 返金申請の現在残額照合
+
+`POST .../refund-requests/:request/reconcile` は現在有効な契約所有者のsessionと
+空の本文を要求し、保存済みの申請・元支払い・契約・所有者・金額・見積hashに
+結び付けて現在残額を照会する。月額期間と支払例外では契約の見積hash、増席では
+元の増席見積hashを照合する。行ロック待ちの後はAPI呼出し前に、API待ちの後は
+結果返却前に、DB時刻でsession期限を再確認し、
+失効した資格へ結果を返さない。Box所属・鍵・支払済み期間を変更しない。
+
+現在資格と支払いbindingを短いtransactionで取得し、DB接続と契約行ロックを解放してから
+providerを照会する。同じ契約の並行照会が外部待ちで共有poolを占有しない。
+返却後は新しいtransactionで現在session・所有者・申請指紋・元イベントhash・契約/見積と
+支払いbindingを再取得し、変化があれば401/404/409で拒否する。照会結果の再利用や
+読み取りの外に出したことによる承認・返金実行権限の省略は行わない。
+
+Live読取りは `PASSSHARE_STRIPE_LIVE_READ_KEY`、既存のlive accountとendpoint scopeを
+使い、test読取りとは別に構成する。providerへの呼出しはPaymentIntentとRefund一覧の
+GETだけで、live mode、同じaccount/PI、JPY受領額、元の所有者・契約・見積を照合する。
+一覧は最大10ページ・各100件を5秒の総期限内で読み、切れた一覧は残額0の根拠にしない。
+資格なし・取得不能・不正な値・重複ID・未知status・不完全な一覧は
+`qualified:false`、`statusBasis:status_review`、金額0、`checkedAt:null`を返す。
+前回の成功結果や署名通知当時の額を、現在残額へ流用しない。
+
+照合できた場合は `qualified:true`、`statusBasis:provider_api_live` とDBの確認日時を返す。
+`confirmedRefundedJpy`はsucceeded、`reservedRefundJpy`はsucceeded/pending/requires_actionの
+合計とし、failed/canceledは予約から外す。`availableRefundJpy`は元受領額から予約合計を
+引いた観測値で、申請額がこの範囲にあるかを `requestAmountAvailable` に返す。
+これは複数API読取りの観測結果であり、atomicな残額予約・法的な承認・返金実行ではない。
+`approvalGranted:false`、`approvedAmountJpy:null`、`refundExecuted:false`を維持する。
+実行経路では別途、現在権限・残額・冪等性を再確認する必要がある。
+
+statusと一覧の扱いはStripe公式の[Refund object](https://docs.stripe.com/api/refunds/object)と
+[List refunds](https://docs.stripe.com/api/refunds/list)を参照する。隔離DBと署名fixture、
+private HTTP provider simulatorでこのAPIの正常・拒否・期限切れを検証する。
+本番live資格の設定、販売有効化、実課金・実返金、法定保存期間の確定はこの変更に含めない。

@@ -1,16 +1,25 @@
 import {createServer} from 'node:http';
-import {createTestRefundLookup} from '../../src/commercial-refund-provider.js';
+import {createTestRefundLookup,createLiveRefundLookup} from '../../src/commercial-refund-provider.js';
 
 // Independent HTTP provider simulator. Its current state is controlled by the
 // test separately from the signed webhook payload, and all credentials are fake.
 export async function refundProviderFixture(account,scope='connect',options={}){
+ return startFixture(account,scope,options,false);
+}
+
+export async function liveRefundProviderFixture(account,scope='connect'){
+ return startFixture(account,scope,{},true);
+}
+
+async function startFixture(account,scope,options,live){
+ const key=live?'rk_live_refund_http_fixture':'rk_test_refund_http_fixture';
  const payments=new Map(),refunds=new Map(),requests=[],control={fail:false,pageSize:100};
  const server=createServer((req,res)=>{
   const u=new URL(req.url,'http://127.0.0.1');requests.push({method:req.method,path:u.pathname,account:req.headers['stripe-account']??null});
   const json=(status,data)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(data))};
-  if(req.headers.authorization!=='Bearer rk_test_refund_http_fixture'||req.headers['stripe-account']!==account)return json(401,{error:{type:'authentication_error',message:'Fixture credentials required'}});
+  if(req.headers.authorization!=='Bearer '+key||req.headers['stripe-account']!==account)return json(401,{error:{type:'authentication_error',message:'Fixture credentials required'}});
   if(control.fail)return json(503,{error:{type:'api_error',message:'Fixture unavailable'}});
-  if(options.stateControl===true&&req.method==='POST'&&u.pathname==='/fixture/state'){
+  if(!live&&options.stateControl===true&&req.method==='POST'&&u.pathname==='/fixture/state'){
    const chunks=[];let size=0;
    req.on('data',chunk=>{size+=chunk.length;if(size<=65536)chunks.push(chunk)});
    req.on('end',()=>{try{if(size>65536)return json(413,{error:{message:'Fixture too large'}});const input=JSON.parse(Buffer.concat(chunks).toString());if(input.payment?.livemode!==false||input.payment?.currency!=='jpy'||!Array.isArray(input.refunds)||input.refunds.some(r=>r.payment_intent!==input.payment.id||r.currency!=='jpy'))return json(400,{error:{message:'Synthetic test scope required'}});payments.set(input.payment.id,input.payment);for(const r of input.refunds)refunds.set(r.id,r);return json(200,{fixtureStored:true})}catch{return json(400,{error:{message:'Invalid fixture'}})}});return;
@@ -27,5 +36,5 @@ export async function refundProviderFixture(account,scope='connect',options={}){
  });
  server.listen(options.port??0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port;
  const fetchImpl=(target,options)=>{const u=new URL(target);if(u.origin!=='https://api.stripe.com')throw Error('Unexpected provider origin');return fetch(base+u.pathname+u.search,options)};
- return {payments,refunds,requests,control,lookup:createTestRefundLookup({key:'rk_test_refund_http_fixture',account,scope,fetchImpl}),fetchImpl,async close(){server.closeAllConnections();await new Promise(r=>server.close(r))}};
+ return {payments,refunds,requests,control,lookup:(live?createLiveRefundLookup:createTestRefundLookup)({key,account,scope,fetchImpl}),fetchImpl,async close(){server.closeAllConnections();await new Promise(r=>server.close(r))}};
 }

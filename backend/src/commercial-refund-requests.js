@@ -55,7 +55,7 @@ const publicRow=r=>({id:r.id,requestId:r.request_id,contractId:r.contract_id,pay
 
 // Historical signed payment evidence identifies a claim, not a currently
 // refundable balance. Intake never invokes a provider or changes entitlements.
-export function registerRefundRequestRoutes(router,persist){
+export function registerRefundRequestRoutes(router,persist,lookup){
  router.post('/:id/refund-requests',requireCsrf,async(req,res)=>{try{
   const b=req.body;
   if(!uuid(req.params.id)||!exact(b,['requestId','paymentIntentId','amountJpy','reason'])||!uuid(b.requestId)||typeof b.paymentIntentId!=='string'||!/^pi_[A-Za-z0-9]{1,252}$/.test(b.paymentIntentId)||!Number.isSafeInteger(b.amountJpy)||b.amountJpy<1||!['duplicate_charge','service_unprovided','statutory_right','other'].includes(b.reason))throw authHttpError(400,'PS018','Invalid refund request');
@@ -90,4 +90,52 @@ export function registerRefundRequestRoutes(router,persist){
    if(!row)throw authHttpError(404,'PS022','Refund request not found');return row;
   });res.json(publicRow(result));
  }catch(e){sendAuthError(res,e);}});
+ router.post('/:id/refund-requests/:request/reconcile',requireCsrf,async(req,res)=>{try{
+  if(!uuid(req.params.id)||!uuid(req.params.request))throw authHttpError(404,'PS022','Refund request not found');
+  if(!exact(req.body,[]))throw authHttpError(400,'PS018','No client financial state is accepted');
+  const capture=async c=>{
+   const contract=(await c.query('SELECT id,quote_hash FROM commercial_contracts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
+   if(!contract)throw authHttpError(404,'PS022','Refund request not found');
+   const row=(await c.query('SELECT * FROM commercial_refund_requests WHERE contract_id=$1 AND id=$2',[contract.id,req.params.request])).rows[0];
+   if(!row)throw authHttpError(404,'PS022','Refund request not found');
+   if(row.quote_hash!==contract.quote_hash)throw authHttpError(409,'PS015','Refund request binding changed');
+   let providerQuoteHash=row.quote_hash;
+   if(row.payment_source==='seat_change'){
+    const seat=(await c.query('SELECT quote_hash FROM commercial_seat_changes WHERE id=$1 AND contract_id=$2',[row.seat_change_id,contract.id])).rows[0];
+    if(!seat)throw authHttpError(409,'PS015','Refund payment binding unavailable');providerQuoteHash=seat.quote_hash;
+   }
+   const active=await c.query('SELECT id FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp()',[req.auth.sessionId,req.auth.userId]);
+   if(!active.rowCount)throw authHttpError(401,'PS024','Session expired');
+   return {row,binding:{account:row.account_id,paymentIntentId:row.provider_object_id,amountJpy:Number(row.payment_amount_jpy),contractId:contract.id,ownerId:req.auth.userId,quoteHash:providerQuoteHash,requestedAmountJpy:Number(row.requested_amount_jpy)}};
+  };
+  // Capture authority under locks, release the connection before external I/O,
+  // then acquire fresh authority and exact payment binding before disclosure.
+  const captured=await persist(req,capture);let current=null;
+  try{if(typeof lookup==='function')current=await lookup({account:captured.binding.account,paymentIntentId:captured.binding.paymentIntentId});}catch{}
+  const result=await persist(req,async c=>{
+   const fresh=await capture(c);
+   if(fresh.row.id!==captured.row.id||fresh.row.request_fingerprint!==captured.row.request_fingerprint||fresh.row.payment_event_hash!==captured.row.payment_event_hash||JSON.stringify(fresh.binding)!==JSON.stringify(captured.binding))throw authHttpError(409,'PS015','Refund payment binding changed during lookup');
+   const balance=liveRefundBalance(fresh.binding,current),checkedAt=balance.qualified?(await c.query('SELECT clock_timestamp() AS now')).rows[0].now:null;
+   return {...publicRow(fresh.row),balance:{...balance,checkedAt},meaning:'current_refund_balance_observed_not_approval_reservation_or_execution'};
+  });res.json(result);
+ }catch(e){sendAuthError(res,e);}});
+}
+
+// An observed provider inventory is not an atomic reservation or a promise to
+// refund. Approval/execution must recheck its own current authority and balance.
+export function liveRefundBalance(binding,current){
+ const unknown={qualified:false,confirmedRefundedJpy:0,reservedRefundJpy:0,availableRefundJpy:0,requestAmountAvailable:false,statusBasis:'status_review'};
+ const p=current?.payment,m=p?.metadata;
+ if(current?.inventoryComplete!==true||current.account!==binding.account||p?.object!=='payment_intent'||p.id!==binding.paymentIntentId||p.livemode!==true||p.status!=='succeeded'||p.currency!=='jpy'||p.amount!==binding.amountJpy||p.amount_received!==binding.amountJpy||typeof m?.ownerId!=='string'||m.ownerId.toLowerCase()!==binding.ownerId||typeof m?.contractId!=='string'||m.contractId.toLowerCase()!==binding.contractId||m?.quoteHash!==binding.quoteHash||!Array.isArray(current.refunds)||!Number.isSafeInteger(binding.amountJpy)||binding.amountJpy<1||!Number.isSafeInteger(binding.requestedAmountJpy)||binding.requestedAmountJpy<1||binding.requestedAmountJpy>binding.amountJpy)return unknown;
+ let confirmed=0n,reserved=0n;const seen=new Set();
+ for(const r of current.refunds){
+  const paymentIntent=typeof r?.payment_intent==='string'?r.payment_intent:r?.payment_intent?.id;
+  if(r?.object!=='refund'||typeof r.id!=='string'||!/^((re|pyr)_[A-Za-z0-9]+)$/.test(r.id)||seen.has(r.id)||paymentIntent!==binding.paymentIntentId||r.currency!=='jpy'||!Number.isSafeInteger(r.amount)||r.amount<1||r.amount>binding.amountJpy||!['succeeded','pending','requires_action','failed','canceled'].includes(r.status))return unknown;
+  seen.add(r.id);
+  if(r.status==='succeeded')confirmed+=BigInt(r.amount);
+  if(['succeeded','pending','requires_action'].includes(r.status))reserved+=BigInt(r.amount);
+ }
+ if(reserved>BigInt(binding.amountJpy))return unknown;
+ const available=BigInt(binding.amountJpy)-reserved;
+ return {qualified:true,confirmedRefundedJpy:Number(confirmed),reservedRefundJpy:Number(reserved),availableRefundJpy:Number(available),requestAmountAvailable:BigInt(binding.requestedAmountJpy)<=available,statusBasis:'provider_api_live'};
 }
