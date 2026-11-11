@@ -1,5 +1,6 @@
 import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import assert from 'node:assert/strict';import {test} from 'node:test';import pg from 'pg';import Stripe from 'stripe';import {randomUUID} from 'node:crypto';import fs from 'node:fs/promises';
+import {stripTypeScriptTypes} from 'node:module';
 test('contract-window export returns real ciphertext while rechecking current membership, session and key epoch',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
  assert.match(process.env.DATABASE_URL,/^postgresql:\/\/passshare:passshare@127\.0\.0\.1:(5432|15431)\/passshare$/);
  const admin=new pg.Pool({connectionString:process.env.DATABASE_URL}),name='ps_export_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+name);
@@ -21,6 +22,12 @@ test('contract-window export returns real ciphertext while rechecking current me
   const originals=new Map(),context=i=>({passwordBoxId:boxId,itemId:i,itemVersion:1,keyEpoch:1});
   for(let n=0;n<12;n++){const id=String.fromCharCode(97+n).repeat(26),plain={id,version:1,vault:{id:boxId},title:'Synthetic export '+n,fields:[{type:'CONCEALED',value:'synthetic-private-'+n}],attachments:[]},env=JSON.parse(box.encrypt_item(JSON.stringify(plain),JSON.stringify(context(id))));originals.set(id,{plain,env});assert.equal((await call('/api/encrypted/boxes/'+boxId+'/items/'+id,a.refreshToken,{expectedVersion:0,envelope:env},'PUT')).status,200);}
   const root='/api/commercial-contracts/'+q.id+'/export/boxes/'+boxId;
+  // Load the actual shared client source, not a second implementation of its
+  // selector/response checks. Type-only imports disappear during transformation.
+  const sharedSource=await fs.readFile(new URL('../../shared/cloud/cloud-api.ts',import.meta.url),'utf8');
+  const {createCloudApi}=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(sharedSource,{mode:'transform'})).toString('base64'));
+  const clientFor=token=>createCloudApi((p,init)=>fetch(base+p,{...init,headers:{'x-passshare-client':'mobile',authorization:'Bearer '+token}}));
+  const sharedClient=clientFor(a.refreshToken);
   const initialState=await call('/api/encrypted/boxes/'+boxId+'/attachment-state',a.refreshToken);
   let endpoint=root+'/items?epoch=1&revision='+initialState.body.stateRevision;
   assert.equal((await call(endpoint,a.refreshToken)).status,403); // no paid period: existing encrypted routes remain unchanged
@@ -31,9 +38,16 @@ test('contract-window export returns real ciphertext while rechecking current me
   const page=await call(endpoint,a.refreshToken);assert.equal(page.status,200);assert.equal(page.body.data.envelopes.length,10);assert.equal(page.body.ciphertextOnly,true);assert.equal(page.body.restoresIdentityMembershipOrKeys,false);
   assert.equal(JSON.stringify(page.body).includes('synthetic-private-'),false);assert.equal(JSON.stringify(page.body).includes('fixture-encryption-password'),false);
   const page2=await call(endpoint+'&after='+page.body.data.nextCursor,a.refreshToken);assert.equal(page2.status,200);assert.equal(page2.body.data.envelopes.length,2);assert.equal(page2.body.data.nextCursor,null);
+  const pin={keyEpoch:1,snapshotRevision:initialState.body.stateRevision};
+  const clientPage=await sharedClient.getCommercialExportPage(q.id,boxId,pin,null,new AbortController().signal);
+  const clientPage2=await sharedClient.getCommercialExportPage(q.id,boxId,pin,clientPage.nextCursor,new AbortController().signal);
+  assert.equal(clientPage.envelopes.length+clientPage2.envelopes.length,12);
+  for(const envelope of [...clientPage.envelopes,...clientPage2.envelopes]){const expected=originals.get(envelope.context.itemId);assert.deepEqual(envelope,expected.env);const plain=box.decrypt_item(JSON.stringify(envelope),JSON.stringify(context(envelope.context.itemId)));assert.deepEqual(typeof plain==='string'?JSON.parse(plain):plain,expected.plain);}
+  await assert.rejects(clientFor(b.refreshToken).getCommercialExportPage(q.id,boxId,pin,null,new AbortController().signal),e=>e.status===404);
+  await assert.rejects(sharedClient.getCommercialExportPage(q.id,boxId,{...pin,snapshotRevision:pin.snapshotRevision+1},null,new AbortController().signal),e=>e.status===409);
   assert.match(page.body.receiptId,/^[a-f0-9-]{36}$/);
   const auditPath='/api/commercial-contracts/'+q.id+'/export-events';
-  const audit=await call(auditPath,a.refreshToken);assert.equal(audit.status,200);assert.equal(audit.body.events.length,3);
+  const audit=await call(auditPath,a.refreshToken);assert.equal(audit.status,200);assert.equal(audit.body.events.length,5);
   assert.ok(audit.body.events.some(e=>e.id===page.body.receiptId&&e.actor_id===a.user.id&&e.box_id===boxId));
   const serializedAudit=JSON.stringify(audit.body);
   assert.equal(serializedAudit.includes('ciphertext'),false);assert.equal(serializedAudit.includes('synthetic-private-'),false);assert.equal(serializedAudit.includes(a.refreshToken),false);

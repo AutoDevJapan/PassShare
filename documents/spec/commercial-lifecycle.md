@@ -273,6 +273,13 @@ contextで復号・検証する。エラーは固定コードだけでSQLや秘�
 この経路はページごとの取得であり、クライアントの一括ファイル生成・永続監査台帳・
 終了30日後の単独データ削除は別の未完工程として保持する。
 
+共有`createCloudApi`の`getCommercialExportPage`は既存の認証transportでこのitem経路を取得し、
+独立して取得したBox・key epoch・snapshot revisionを応答と照合する。最大10件のenvelopeを
+検査し、異なるcontext・重複・逆順cursor・scope不一致を拒否する。WebのAPI入口とnativeの
+既存CloudSessionから同じ処理を利用できる。暗号文のshape検査は復号成功ではなく、利用者が
+既に保持する鍵・信頼済みcontextによる既存Core/worker検証を引き続き必要とする。
+この接続だけで一括ファイル・添付の取得・全client UIの受入を完了とはしない。
+
 既存の暗号化dump/restore受入では、復元再開を判断する現在の正本に商用契約・
 支払期間・増席台帳も含める。復元先の契約期間が異なる場合は再開を拒否する。
 同じ受入で復元後の所有者と残留メンバーが新export経路から全暗号文を取得し、
