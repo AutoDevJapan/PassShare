@@ -107,6 +107,7 @@ export function registerDataDeletionRoutes(router,{pool,authStore,loginGuardStor
    // A confirmed Box deletion is not account retirement. Do not revoke tokens
    // for the owner's other boxes or alter independent core/self-hosted access.
    await client.query('DELETE FROM mutation_operations WHERE resource=$1',[row.box_id]);
+   await client.query("UPDATE mutation_operations SET request_hash='',result='{\"deleted\":true}'::jsonb WHERE operation='box' AND result->>'vaultId'=$1",[row.box_id]);
    await client.query('DELETE FROM connect_vaults WHERE id=$1',[row.box_id]);
    return view((await client.query("UPDATE commercial_data_deletion_requests SET state='completed',revision=1,completed_at=clock_timestamp() WHERE id=$1 RETURNING *,paid_through::text paid_through,not_before::text not_before",[row.id])).rows[0]);
   });res.json(result);

@@ -21,7 +21,10 @@ test('explicit ended-contract deletion is durable cancelable and deletes only th
   await start();const actors=[];for(let i=0;i<2;i++){const email=randomUUID()+'@example.test',reply=await call('/api/auth/signup',null,{email,password});assert.equal(reply.status,201);actors.push({...reply.body,email});}
   const [owner,other]=actors,quote=await call('/api/commercial-contracts',owner,{requestId:randomUUID(),currency:'JPY',plan:{type:'personal',users:1},setup:{installationCompanies:0,supportHours:0,maintenanceMonthlyJpy:null}});assert.equal(quote.status,201);const contract=quote.body;
   assert.equal((await call('/api/commercial-contracts/'+contract.id+'/accept',owner,{quoteHash:contract.quoteHash})).status,200);
-  const boxId=(await call('/v1/vaults',{refreshToken:owner.connectAccessToken})).body[0].id;
+  const creationKey=randomUUID(),boxName='owned deletion target',createBox=async(actor,key,name)=>{const response=await fetch(base+'/api/auth/vaults',{method:'POST',signal:AbortSignal.timeout(15000),headers:{'content-type':'application/json','x-passshare-client':'mobile',authorization:'Bearer '+actor.refreshToken,'idempotency-key':key},body:JSON.stringify({name})});return {status:response.status,body:await response.json()};};
+  const made=await createBox(owner,creationKey,boxName);assert.equal(made.status,201);const boxId=made.body.vaultId;
+  const retainedKey=randomUUID(),retained=await createBox(owner,retainedKey,'other owned Box');assert.equal(retained.status,201);
+  const otherScope=await createBox(other,creationKey,'independent owner scope');assert.equal(otherScope.status,201);
   const itemId='a'.repeat(26);await pool.query('INSERT INTO connect_items(id,vault_id,document) VALUES($1,$2,$3::jsonb)',[itemId,boxId,JSON.stringify({id:itemId,title:'owned deletion fixture',version:1})]);
   const route='/api/commercial-contracts/'+contract.id+'/data-deletion-requests',request={requestId:randomUUID(),boxId,quoteHash:contract.quoteHash,expectedContentVersion:1,expectedAttributeVersion:1,expectedStateRevision:null,expectedKeyEpoch:null,confirmationBoxId:boxId,currentPassword:password};
   assert.equal((await call(route,owner,request)).status,409,'Unpaid acceptance alone cannot authorize post-contract deletion');
@@ -104,10 +107,19 @@ test('explicit ended-contract deletion is durable cancelable and deletes only th
   const completionPath=route+'/'+last.body.id;
   const completed=finalState.state==='completed'?simultaneous[0]:await call(completionPath+'/execute',owner,{revision:0,currentPassword:password,confirmationBoxId:boxId});assert.equal(completed.status,200);assert.equal(completed.body.state,'completed');assert.equal(completed.body.dataDeleted,true);
   assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[boxId])).rows[0].n,0);assert.equal((await pool.query('SELECT count(*)::int n FROM connect_items WHERE id=$1',[itemId])).rows[0].n,0);
+  const tombstone=(await pool.query("SELECT request_hash,result FROM mutation_operations WHERE actor=$1 AND resource=$1 AND operation='box' AND request_key=$2",[owner.user.id,creationKey])).rows[0];
+  assert.deepEqual(tombstone,{request_hash:'',result:{deleted:true}},'Deleted target creation record contains only a replay barrier, not targetID or content hash');
+  assert.equal((await createBox(owner,creationKey,boxName)).status,409,'Old creation request cannot recreate the deleted Box');
+  assert.equal((await createBox(owner,creationKey,'changed target name')).status,409);
+  assert.deepEqual((await createBox(owner,retainedKey,'other owned Box')).body,retained.body);
+  assert.deepEqual((await createBox(other,creationKey,'independent owner scope')).body,otherScope.body);
   assert.deepEqual((await call(completionPath+'/execute',owner,{revision:0,currentPassword:password,confirmationBoxId:boxId})).body,completed.body);
   assert.equal((await call(completionPath+'/cancel',owner,{revision:0})).status,409);assert.deepEqual((await call(completionPath,owner)).body,completed.body);
   assert.equal((await pool.query('SELECT count(*)::int n FROM commercial_contracts WHERE id=$1',[contract.id])).rows[0].n,1,'Financial contract retained independently of box deletion');
-  assert.equal((await call('/v1/vaults',{refreshToken:other.connectAccessToken})).body.length,1,'Unrelated owner data remains');
+  assert.equal((await call('/v1/vaults',{refreshToken:other.connectAccessToken})).body.length,1,'The existing token keeps its original scoped Box');
+  const currentToken=(await call('/api/auth/connect-token',other)).body.accessToken;
+  assert.equal((await call('/v1/vaults',{refreshToken:currentToken})).body.length,2,'Fresh authority includes both unrelated surviving Boxes');
+  assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=ANY($1::varchar[])',[[retained.body.vaultId,otherScope.body.vaultId]])).rows[0].n,2);
   for(const actor of [owner,other])assert.equal((await call('/api/auth/account',actor,{currentPassword:password,confirmationEmail:actor.email},'DELETE')).status,204);
  }finally{await stop();await close();await admin.query('DROP DATABASE '+name+' WITH (FORCE)');await admin.end();for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 });

@@ -976,6 +976,10 @@ impl Runner {
             self.api.json(report,if retired {"source_retired_deletion_accept_HTTP"}else{"source_deletion_accept_HTTP"},"POST",&format!("/api/commercial-contracts/{cid}/accept"),&actor.session,Some(&json!({"quoteHash":quote["quoteHash"]})),200,None)?;
             let box_reply=self.api.json(report,if retired {"source_retired_deletion_box_HTTP"}else{"source_deletion_box_HTTP"},"POST","/api/auth/vaults",&actor.session,Some(&json!({"name":"synthetic deletion consent only"})),201,None)?;
             let bid=identifier(&box_reply,"/vaultId",26)?;
+            // Dedicated already-deleted creation scope: terminal barrier retains
+            // neither target identity nor content/request digest. Its original
+            // scope key must remain after dump/restore to refuse old replay.
+            sql("drill_source",&format!("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES('{}','{}','box','restore-deleted-creation-0001','','{{\"deleted\":true}}'::jsonb);",actor.id,actor.id))?;
             sql("drill_source",&format!("INSERT INTO commercial_live_contracts(contract_id,contract_start,cancel_after_cycle,cancel_requested_at) VALUES('{cid}',CURRENT_DATE-100,1,clock_timestamp()); INSERT INTO commercial_live_periods(account_id,event_id,contract_id,cycle,period_start,period_end,amount_jpy,provider_object_id,event_hash,evidence) VALUES('acct_deletion_restore','evt_{cid}','{cid}',1,CURRENT_DATE-100,CURRENT_DATE-60,980,'pi_{cid}','synthetic-restore-only','provider_live');"))?;
             // Other unrelated synthetic accepted periods are temporarily closed
             // under a rollback-free fixture update, then restored exactly.
@@ -988,6 +992,7 @@ impl Runner {
             else {deletion_contract=cid;deletion_box=bid;source_deletion=created;}
         }
         report.check("source_deletion_requests_nonempty",sql("drill_source","SELECT count(*) FROM commercial_data_deletion_requests WHERE state='pending' AND revision=0 AND canceled_at IS NULL AND completed_at IS NULL AND not_before=paid_through+30 AND content_version=1 AND attribute_version=1 AND length(data_fingerprint)=64;")?.trim()=="2")?;
+        report.check("source_deleted_creation_tombstones",sql("drill_source","SELECT count(*) FROM mutation_operations WHERE operation='box' AND request_key='restore-deleted-creation-0001' AND request_hash='' AND result='{\"deleted\":true}'::jsonb;")?.trim()=="2")?;
         // This final fixture write populates both login guard tables, not fabricated rows.
         // Bracket its committed update; no API mutations occur between this and dump.
         let last_update_begin = unix_ms();
@@ -1467,6 +1472,10 @@ impl Runner {
         report.check("restored_deletion_request_retired_cascaded",sql("drill_restored",&format!("SELECT count(*) FROM commercial_data_deletion_requests WHERE id='{retired_deletion_id}';"))?.trim()=="0")?;
         let canceled=self.api.json(report,"restored_deletion_cancel_HTTP","POST",&format!("{deletion_path}/cancel"),&current_owner.session,Some(&json!({"revision":0})),200,None)?;
         report.check("restored_deletion_cancel_preserves_box",canceled["state"]=="canceled"&&canceled["dataDeleted"]==false&&sql("drill_restored",&format!("SELECT count(*) FROM connect_vaults WHERE id='{deletion_box}';"))?.trim()=="1")?;
+        report.check("restored_deleted_creation_tombstone",sql("drill_restored",&format!("SELECT count(*) FROM mutation_operations WHERE actor='{}' AND resource='{}' AND operation='box' AND request_key='restore-deleted-creation-0001' AND request_hash='' AND result='{{\"deleted\":true}}'::jsonb;",owner.id,owner.id))?.trim()=="1")?;
+        let box_count=sql("drill_restored","SELECT count(*) FROM connect_vaults;")?;
+        let replay=self.api.request("POST","/api/auth/vaults",&current_owner.session,Some(&json!({"name":"must not recreate deleted result"})),Some("restore-deleted-creation-0001"))?;
+        report.check("restored_deleted_creation_replay_409",replay.0==409&&box_count==sql("drill_restored","SELECT count(*) FROM connect_vaults;")?)?;
         let current_receipt = self.api.json(
             report,
             "restored_receipt_current_owner_read",

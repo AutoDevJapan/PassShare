@@ -14,6 +14,9 @@ export async function createMutationStore({ store, authStore, pool }) {
   }
 
   async function execute(input, transactionStore, client, existing) {
+    if (existing?.result?.deleted === true) {
+      throw connectHttpError(409, "PS015: Creation result was deleted; use a new operation");
+    }
     async function requireCurrentMembership(boxId) {
       // Sharing, retirement and ciphertext activation lock the parent first.
       if (client) await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[boxId]);
