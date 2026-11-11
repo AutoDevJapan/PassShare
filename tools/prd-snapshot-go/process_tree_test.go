@@ -47,7 +47,10 @@ func TestOwnedProcessFixture(t *testing.T) {
 		os.Exit(0)
 	}
 	if mode == "grandchild" {
-		if os.WriteFile(marker+".ready", []byte(fmt.Sprint(os.Getpid())), 0600) != nil {
+		if os.WriteFile(marker+".ready.pending", []byte(fmt.Sprint(os.Getpid())), 0600) != nil {
+			os.Exit(4)
+		}
+		if os.Rename(marker+".ready.pending", marker+".ready") != nil {
 			os.Exit(4)
 		}
 		if os.Getenv("PASSSHARE_LINGER_CHILD") == "true" {
