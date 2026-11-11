@@ -37,10 +37,11 @@ const (
 
 type runner func(context.Context, string, ...string) ([]byte, error)
 type commandFailure struct {
-	command string
-	code    int
-	class   string
-	phase   string
+	command             string
+	code                int
+	class               string
+	phase               string
+	recoveryUnconfirmed bool
 }
 
 func (e *commandFailure) Error() string {
@@ -62,14 +63,18 @@ func (b *capBuffer) Write(p []byte) (int, error) {
 
 func execute(ctx context.Context, name string, args ...string) ([]byte, error) {
 	name = nativeCommand(name)
-	cmd := exec.CommandContext(ctx, name, args...)
-	hideWindow(cmd)
+	cmd := exec.Command(name, args...)
 	cmd.WaitDelay = 3 * time.Second
 	var stdout capBuffer
 	var stderr capBuffer
 	// Child stderr may include database diagnostics. Never copy it to CI logs.
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	if err := runOwnedCommand(ctx, cmd); err != nil {
+		// A failed tree recovery can leave output-copy goroutines alive. Do not
+		// inspect their buffers or release credential state as though EOF arrived.
+		if errors.Is(err, errProcessRecovery) {
+			return nil, &commandFailure{command: filepath.Base(name), code: -1, class: "owned-process-recovery-unconfirmed", recoveryUnconfirmed: true}
+		}
 		code := -1
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
@@ -120,6 +125,9 @@ func waitForSSH(ctx context.Context, run runner, args []string, diagnostics io.W
 		var failure *commandFailure
 		if errors.As(err, &failure) {
 			class = failure.class
+			if failure.recoveryUnconfirmed {
+				return fmt.Errorf("private SSH readiness cannot confirm process recovery: %w", failure)
+			}
 		}
 		if ctx.Err() != nil {
 			class = "cancelled-or-deadline"
@@ -290,7 +298,13 @@ func snapshotWithDiagnostics(ctx context.Context, output string, run runner, exi
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		var failure *commandFailure
+		if errors.As(returnErr, &failure) && failure.recoveryUnconfirmed {
+			return
+		}
+		_ = os.RemoveAll(dir)
+	}()
 	c := client{run: run, dir: dir}
 	var scope struct {
 		Project struct {
@@ -311,6 +325,10 @@ func snapshotWithDiagnostics(ctx context.Context, output string, run runner, exi
 		identity = filepath.Join(dir, "identity")
 		name := "PassShare-prd-snapshot-" + filepath.Base(dir)
 		if _, err = run(ctx, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", identity); err != nil {
+			var failure *commandFailure
+			if errors.As(err, &failure) {
+				return fmt.Errorf("temporary snapshot identity could not be generated: %w", failure)
+			}
 			return errors.New("temporary snapshot identity could not be generated")
 		}
 		pub, err := os.ReadFile(identity + ".pub")
@@ -340,6 +358,12 @@ func snapshotWithDiagnostics(ctx context.Context, output string, run runner, exi
 		defer func() {
 			recovery.KeyID = keyID
 			info, _ := json.Marshal(recovery)
+			var unsafeProcess *commandFailure
+			if errors.As(returnErr, &unsafeProcess) && unsafeProcess.recoveryUnconfirmed {
+				_ = os.WriteFile(recoveryPath, info, 0600)
+				returnErr = fmt.Errorf("process recovery unconfirmed; temporary identity and registration retained for scoped recovery; descriptor=%s: %w", info, returnErr)
+				return
+			}
 			if keyID != "" {
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 				defer cancel()
@@ -347,6 +371,12 @@ func snapshotWithDiagnostics(ctx context.Context, output string, run runner, exi
 					Deleted bool `json:"sshPublicKeyDelete"`
 				}
 				cleanupErr := c.query(cleanupCtx, `mutation($id:String!){sshPublicKeyDelete(id:$id)}`, map[string]string{"id": keyID}, &deleted)
+				var cleanupProcess *commandFailure
+				if errors.As(cleanupErr, &cleanupProcess) && cleanupProcess.recoveryUnconfirmed {
+					_ = os.WriteFile(recoveryPath, info, 0600)
+					returnErr = fmt.Errorf("identity revocation process recovery unconfirmed; descriptor=%s: %w", info, cleanupErr)
+					return
+				}
 				if cleanupErr == nil && deleted.Deleted {
 					if err := os.Remove(recoveryPath); err != nil {
 						returnErr = errors.New("revoked key recovery record could not be removed")
@@ -369,7 +399,7 @@ func snapshotWithDiagnostics(ctx context.Context, output string, run runner, exi
 			} `json:"sshPublicKeyCreate"`
 		}
 		if err = c.query(ctx, `mutation($input:SshPublicKeyCreateInput!){sshPublicKeyCreate(input:$input){id}}`, map[string]any{"input": map[string]string{"workspaceId": workspaceID, "name": name, "publicKey": strings.TrimSpace(string(pub))}}, &created); err != nil {
-			return errors.New("temporary key registration reply failed")
+			return fmt.Errorf("temporary key registration reply failed: %w", err)
 		}
 		keyID = created.Key.ID
 		if keyID == "" {

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,6 +230,35 @@ func TestReadinessFailurePreservesUnconfirmedRevocationDescriptor(t *testing.T) 
 	info, readErr := os.ReadFile(out + ".ssh-key-recovery.json")
 	if err == nil || readErr != nil || !strings.Contains(err.Error(), "temporary key recovery unconfirmed") || !strings.Contains(err.Error(), "ssh-identity-rejected") || !strings.Contains(string(info), `"key_id":"this-run-only-key"`) || f.probes != 1 || f.captures != 0 || f.revoked != 1 {
 		t.Fatal("failed readiness hid unconfirmed revocation or lost its recovery scope")
+	}
+}
+
+func TestUnconfirmedProcessRecoveryPreservesIdentityBeforeRevoke(t *testing.T) {
+	for _, duringCapture := range []bool{false, true} {
+		t.Run(fmt.Sprint(duringCapture), func(t *testing.T) {
+			unconfirmed := &commandFailure{command: "railway", code: -1, class: "owned-process-recovery-unconfirmed", recoveryUnconfirmed: true}
+			f := &fake{root: t.TempDir()}
+			if duringCapture {
+				f.captureError = unconfirmed
+			} else {
+				f.readinessErrors = []error{unconfirmed}
+			}
+			out := filepath.Join(t.TempDir(), "snapshot.dump")
+			err := snapshot(context.Background(), out, f.run, "")
+			if err == nil || f.revoked != 0 || !strings.Contains(err.Error(), "temporary identity and registration retained") {
+				t.Fatal("unconfirmed process released its credential")
+			}
+			dirs, _ := filepath.Glob(filepath.Join(filepath.Dir(out), "passshare-prd-ssh-*"))
+			if len(dirs) != 1 {
+				t.Fatal("recovery directory was not retained")
+			}
+			if _, err := os.Stat(filepath.Join(dirs[0], "identity")); err != nil {
+				t.Fatal("identity disappeared before process quiescence")
+			}
+			if _, err := os.Stat(out + ".ssh-key-recovery.json"); err != nil {
+				t.Fatal("scoped recovery record lost")
+			}
+		})
 	}
 }
 
