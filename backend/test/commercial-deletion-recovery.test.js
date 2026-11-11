@@ -16,7 +16,7 @@ test('an older real archive cannot revive a completed explicitly selected Box de
  const admin=new pg.Pool({connectionString:url.href}),sourceName='ps_delete_source_'+randomUUID().replaceAll('-',''),targetName='ps_delete_target_'+randomUUID().replaceAll('-','');
  await admin.query('CREATE DATABASE '+sourceName);await admin.query('CREATE DATABASE '+targetName);url.pathname='/'+sourceName;
  const source=new pg.Pool({connectionString:url.href}),closeSource=trackPoolShutdown(source);url.pathname='/'+targetName;const target=new pg.Pool({connectionString:url.href}),closeTarget=trackPoolShutdown(target);
- let server;const sourceId=randomUUID(),restoreOperationId=randomUUID(),scratch=fs.mkdtempSync(path.join(os.tmpdir(),'passshare-deletion-recovery-')),archive=path.join(scratch,'old-private-fixture.dump');
+ let server,currentSource;const sourceId=randomUUID(),restoreOperationId=randomUUID(),scratch=fs.mkdtempSync(path.join(os.tmpdir(),'passshare-deletion-recovery-')),archive=path.join(scratch,'old-private-fixture.dump');
  try{
   const {createApp}=await import('../src/app.js'),{app}=await createApp({pool:source,loginGuardStore:createMemoryLoginGuardStore()});server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
   const base='http://127.0.0.1:'+server.address().port,password='deletion-recovery-fixture4431!',actors=[];
@@ -47,10 +47,12 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   assert.equal((await target.query('SELECT count(*)::int n FROM connect_items WHERE id=$1',[itemId])).rows[0].n,1,'The actual old archive really contained the deleted secret fixture');
   const unrelated=async()=>JSON.stringify((await target.query('SELECT to_jsonb(v) r,v.xmin::text x FROM connect_vaults v WHERE id<>$1 ORDER BY id',[boxId])).rows);
   const unaffected=await unrelated();
-  const options={bytes:journal,expectedSha256,expectedSourceId,expectedTargetDatabase:targetName,restoreOperationId};
+  currentSource=new pg.Client({connectionString:sourceUrl.href});await currentSource.connect();
+  const options={bytes:journal,expectedSha256,expectedSourceId,expectedTargetDatabase:targetName,restoreOperationId,currentSource,expectedSourceDatabase:sourceName};
   await assert.rejects(reconcileCompletedDeletions(source,options),/Wrong restore database/);
   const tampered=Buffer.from(journal);tampered[tampered.length-2]^=1;await assert.rejects(reconcileCompletedDeletions(target,{...options,bytes:tampered}),/trusted current digest/);
-  fs.writeFileSync(targetConfig,JSON.stringify({format:'passshare-deletion-recovery-v1',databaseUrlEnv:'PASSSHARE_RECOVERY_TARGET_DATABASE_URL',journalPath:journalFile,trustedJournalSha256:expectedSha256,sourceId,targetDatabase:targetName,restoreOperationId}),{flag:'wx'});
+  await target.query('DROP TABLE commercial_deletion_journal');
+  fs.writeFileSync(targetConfig,JSON.stringify({format:'passshare-deletion-recovery-v1',databaseUrlEnv:'PASSSHARE_RECOVERY_TARGET_DATABASE_URL',currentSourceDatabaseUrlEnv:'PASSSHARE_RECOVERY_SOURCE_DATABASE_URL',currentSourceDatabase:sourceName,journalPath:journalFile,trustedJournalSha256:expectedSha256,sourceId,targetDatabase:targetName,restoreOperationId}),{flag:'wx'});
   const fresh=await target.connect();fresh.release();await closeTarget();
   const prepared=JSON.parse(execFileSync(process.execPath,[cli,'prepare-closed',targetConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(prepared.closed,true);
   const transientTarget=new pg.Pool({connectionString:url.href});try{await assert.rejects(createApp({pool:transientTarget,loginGuardStore:createMemoryLoginGuardStore()}),/RESTORE_TARGET_CLOSED/);assert.equal(await completedDeletionGate(transientTarget,options),false,'Old archive cannot qualify itself as current');}finally{await transientTarget.end();}
@@ -64,12 +66,22 @@ test('an older real archive cannot revive a completed explicitly selected Box de
    assert.equal(JSON.stringify((await client.query('SELECT to_jsonb(v) r,v.xmin::text x FROM connect_vaults v WHERE id<>$1 ORDER BY id',[boxId])).rows),unaffected,'Unrelated full Box rows and xmin remain unchanged');
    assert.deepEqual((await client.query("SELECT request_hash,result FROM mutation_operations WHERE actor=$1 AND operation='box' AND request_key=$2",[owner.user.id,creationKey])).rows[0],{request_hash:'',result:{deleted:true}});
    assert.equal(await completedDeletionGate(client,options),true);
+   assert.match(parsed.entries[0].completedAt,/\.\d{6}Z$/);
+   await client.query("UPDATE commercial_deletion_journal SET completed_at=completed_at+interval '1 microsecond'");
+   assert.equal(await completedDeletionGate(client,options),false,'A one-microsecond target timestamp mismatch is not lost by the JS pg parser');
+   await client.query('UPDATE commercial_deletion_journal SET completed_at=$1',[parsed.entries[0].completedAt]);
+   const extraId=randomUUID();await client.query('INSERT INTO commercial_deletion_journal(deletion_id,box_id) VALUES($1,$2)',[extraId,'x'.repeat(26)]);
+   assert.equal(await completedDeletionGate(client,options),false,'Gate rejects a target journal entry not present in the trusted current source');
+   await client.query('DELETE FROM commercial_deletion_journal WHERE deletion_id=$1',[extraId]);
    const once=JSON.stringify((await client.query('SELECT to_jsonb(j) r,j.xmin::text x FROM commercial_deletion_journal j ORDER BY box_id')).rows);
    await reconcileCompletedDeletions(client,options);assert.equal(JSON.stringify((await client.query('SELECT to_jsonb(j) r,j.xmin::text x FROM commercial_deletion_journal j ORDER BY box_id')).rows),once,'Reapply preserves barrier row/xmin and cannot repeat the deletion');
+   const later=randomUUID();await source.query('INSERT INTO commercial_deletion_journal(deletion_id,box_id) VALUES($1,$2)',[later,'y'.repeat(26)]);
+   try{await assert.rejects(reconcileCompletedDeletions(client,options),/no longer current/,'An authentic historical export cannot qualify after the authoritative journal advances');assert.equal(await completedDeletionGate(client,options),false,'The partial deletion gate also rejects an authentic but no longer current journal');}
+   finally{await source.query('DELETE FROM commercial_deletion_journal WHERE deletion_id=$1',[later]);}
    assert.equal((await client.query('SELECT phase FROM passshare_restore_control.recovery')).rows[0].phase,'closed','Deletion qualification alone never opens API or revives old credentials');
   }finally{await client.end();}
   assert.equal((await call('/api/auth/account',other,{currentPassword:password,confirmationEmail:other.email},'DELETE')).status,204);
  }finally{
-  if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}await closeSource();await closeTarget();await admin.query('DROP DATABASE '+targetName+' WITH (FORCE)');await admin.query('DROP DATABASE '+sourceName+' WITH (FORCE)');await admin.end();for(const name of ['old-private-fixture.dump','current-deletions.private.json','source.private.json','target.private.json']){const file=path.join(scratch,name);if(fs.existsSync(file))fs.unlinkSync(file);}fs.rmdirSync(scratch);
+  if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}if(currentSource)await currentSource.end();await closeSource();await closeTarget();await admin.query('DROP DATABASE '+targetName+' WITH (FORCE)');await admin.query('DROP DATABASE '+sourceName+' WITH (FORCE)');await admin.end();for(const name of ['old-private-fixture.dump','current-deletions.private.json','source.private.json','target.private.json']){const file=path.join(scratch,name);if(fs.existsSync(file))fs.unlinkSync(file);}fs.rmdirSync(scratch);
  }
 });
