@@ -14,6 +14,19 @@ export async function createMutationStore({ store, authStore, pool }) {
   }
 
   async function execute(input, transactionStore, client, existing) {
+    if (client && input.operation === "box" && existing?.result?.vaultId) {
+      // Deletion locks the Box before changing this creation scope. A record
+      // read before that wait is not current evidence after the lock returns.
+      await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[existing.result.vaultId]);
+      const scope = await nativeMutation({ ...input, command: "scope" });
+      existing = (await client.query("SELECT request_hash,result FROM mutation_operations WHERE actor=$1 AND resource=$2 AND operation=$3 AND request_key=$4",scope.parts)).rows[0];
+    }
+    const currentSession = async () => {
+      if (client && input.sessionId && !(await client.query("SELECT s.id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND u.id=$2 AND s.expires_at>clock_timestamp() FOR SHARE OF u,s",[input.sessionId,input.actor])).rowCount) {
+        throw connectHttpError(401,"PS024: Session is invalid or expired");
+      }
+    };
+    await currentSession();
     if (existing?.result?.deleted === true) {
       throw connectHttpError(409, "PS015: Creation result was deleted; use a new operation");
     }
@@ -35,7 +48,7 @@ export async function createMutationStore({ store, authStore, pool }) {
       } catch (error) { if (error?.status !== 404) throw error; }
     }
     const plan = await nativeMutation({ ...input, command: "create", existing: existing ?? null, live });
-    if (plan.action === "replay") return plan.result;
+    if (plan.action === "replay") { await currentSession(); return plan.result; }
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
@@ -53,6 +66,7 @@ export async function createMutationStore({ store, authStore, pool }) {
     const record = await nativeMutation({ ...input, command: "record", result });
     if (client) await client.query("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES($1,$2,$3,$4,$5,$6::jsonb)", [...scope.parts,record.request_hash,JSON.stringify(record.result)]);
     else records.set(scope.lock, record);
+    await currentSession();
     return result;
   }
 

@@ -12,7 +12,7 @@ test('explicit ended-contract deletion is durable cancelable and deletes only th
  const pool=new pg.Pool({connectionString:url.href}),close=trackPoolShutdown(pool),secret='whsec_deletion_fixture',account='acct_deletionfixture',password='fixture-password-4431!';
  const keys=['PASSSHARE_COMMERCIAL_LIVE_ENABLED','PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET','PASSSHARE_STRIPE_LIVE_ACCOUNT'],saved=Object.fromEntries(keys.map(key=>[key,process.env[key]]));Object.assign(process.env,{PASSSHARE_COMMERCIAL_LIVE_ENABLED:'true',PASSSHARE_STRIPE_LIVE_WEBHOOK_SECRET:secret,PASSSHARE_STRIPE_LIVE_ACCOUNT:account});
  let server,base,failFailureCleanup=false;
- const loginGuardStore=createMemoryLoginGuardStore(),originalClear=loginGuardStore.clearEmailFailures.bind(loginGuardStore);
+ let loginGuardStore=createMemoryLoginGuardStore();const originalClear=loginGuardStore.clearEmailFailures.bind(loginGuardStore);
  loginGuardStore.clearEmailFailures=async email=>{if(failFailureCleanup)throw Error('Synthetic login counter cleanup failure');return originalClear(email);};
  const start=async()=>{const {createApp}=await import('../src/app.js'),{app}=await createApp({pool,loginGuardStore});server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));base='http://127.0.0.1:'+server.address().port;};
  const stop=async()=>{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));server=null;}};
@@ -120,6 +120,36 @@ test('explicit ended-contract deletion is durable cancelable and deletes only th
   const currentToken=(await call('/api/auth/connect-token',other)).body.accessToken;
   assert.equal((await call('/v1/vaults',{refreshToken:currentToken})).body.length,2,'Fresh authority includes both unrelated surviving Boxes');
   assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=ANY($1::varchar[])',[[retained.body.vaultId,otherScope.body.vaultId]])).rows[0].n,2);
+  const raceKey=randomUUID(),raceName='creation replay and deletion race',raceBox=await createBox(owner,raceKey,raceName);assert.equal(raceBox.status,201);
+  const raceRequest=await call(route,owner,{...request,requestId:randomUUID(),boxId:raceBox.body.vaultId,confirmationBoxId:raceBox.body.vaultId});assert.equal(raceRequest.status,201);
+  let releaseRead,readReached,lateReplay;
+  const reached=new Promise(resolve=>{readReached=resolve;}),resume=new Promise(resolve=>{releaseRead=resolve;}),connect=pool.connect.bind(pool);
+  pool.connect=function(callback){if(typeof callback==='function')return connect(callback);return connect().then(client=>{const query=client.query,release=client.release;client.query=async(sql,params)=>{const result=await query.call(client,sql,params);if(typeof sql==='string'&&sql.startsWith('SELECT request_hash,result FROM mutation_operations WHERE actor=')&&params?.[3]===raceKey){readReached();await resume;}return result;};client.release=(...args)=>{client.query=query;client.release=release;return release.apply(client,args);};return client;});};
+  let timer;
+  try{
+   lateReplay=createBox(owner,raceKey,raceName);await Promise.race([reached,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Old creation replay did not reach its real PG record')),5000);})]);clearTimeout(timer);
+   const raceExecution=await call(route+'/'+raceRequest.body.id+'/execute',owner,{revision:0,currentPassword:password,confirmationBoxId:raceBox.body.vaultId});assert.equal(raceExecution.status,200);assert.equal(raceExecution.body.dataDeleted,true);
+   releaseRead();assert.equal((await lateReplay).status,409,'A replay with an earlier result snapshot must recheck the deletion barrier after its Box wait');lateReplay=null;
+   assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[raceBox.body.vaultId])).rows[0].n,0);
+  }finally{clearTimeout(timer);releaseRead();if(lateReplay)await lateReplay;pool.connect=connect;}
+  const boxBlocker=await pool.connect();let expiredReplay;
+  try{
+   await boxBlocker.query('BEGIN');await boxBlocker.query('SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE',[retained.body.vaultId]);
+   expiredReplay=createBox(owner,retainedKey,'other owned Box');
+   let waiting=false;const deadline=Date.now()+5000;
+   while(Date.now()<deadline){if((await pool.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM connect_vaults WHERE id=%'")).rowCount){waiting=true;break;}await new Promise(resolve=>setTimeout(resolve,10));}assert(waiting,'A normal creation replay must reach its real Box lock');
+   await boxBlocker.query("UPDATE sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE user_id=$1",[owner.user.id]);await boxBlocker.query('COMMIT');
+   assert.equal((await expiredReplay).status,401,'Session expired during the Box wait cannot replay a result');expiredReplay=null;
+   assert.equal((await pool.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[retained.body.vaultId])).rows[0].n,1);
+  }finally{await boxBlocker.query('ROLLBACK').catch(()=>{});boxBlocker.release();if(expiredReplay)await expiredReplay;}
+  // The many negative authorization cases deliberately consume the real auth
+  // budget. Cleanup has a separate test-only counter, not a relaxed policy.
+  await stop();loginGuardStore=createMemoryLoginGuardStore();await start();
+  owner.refreshToken=(await call('/api/auth/login',null,{email:owner.email,password})).body.refreshToken;
   for(const actor of [owner,other])assert.equal((await call('/api/auth/account',actor,{currentPassword:password,confirmationEmail:actor.email},'DELETE')).status,204);
+  for(const table of ['users','sessions','connect_tokens','commercial_contracts','commercial_data_deletion_requests']){
+   const column=table==='users'?'id':'user_id';
+   assert.equal((await pool.query('SELECT count(*)::int n FROM '+table+' WHERE '+column+'=ANY($1::uuid[])',[[owner.user.id,other.user.id]])).rows[0].n,0,'Owned fixture rows must be absent from '+table);
+  }
  }finally{await stop();await close();await admin.query('DROP DATABASE '+name+' WITH (FORCE)');await admin.end();for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 });
