@@ -16,6 +16,11 @@ const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
 const box=v=>typeof v==='string'&&/^[a-z0-9]{26}$/.test(v);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const timestampSql="to_char(completed_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')";
+async function verifyCurrentSource(client,{expectedSourceDatabase,expectedSourceSystemIdentifier,expectedSourceDatabaseOid}){
+ if(!/^[a-z][a-z0-9_]{0,62}$/.test(expectedSourceDatabase??'')||!/^\d{1,20}$/.test(expectedSourceSystemIdentifier??'')||!/^\d{1,10}$/.test(expectedSourceDatabaseOid??''))throw Error('Trusted source cluster/database identity required');
+ const r=(await client.query('SELECT current_database() name,(pg_control_system()).system_identifier::text system_id,(SELECT oid::text FROM pg_database WHERE datname=current_database()) database_oid')).rows[0];
+ if(r.name!==expectedSourceDatabase||r.system_id!==expectedSourceSystemIdentifier||r.database_oid!==expectedSourceDatabaseOid)throw Error('Current source cluster/database identity does not match trusted binding');
+}
 
 export async function exportDeletionJournal(client,sourceId){
  if(!uuid(sourceId))throw Error('Explicit current journal source identity required');
@@ -39,13 +44,13 @@ export function parseDeletionJournal(bytes,{expectedSha256,expectedSourceId}){
 // Only the trusted, stopped restore process holds this role and purpose marker.
 // Presence of a marker is necessary but not itself proof of an external network
 // stop; the caller must stop all API/worker connections before invoking this.
-export async function reconcileCompletedDeletions(client,{bytes,expectedSha256,expectedSourceId,expectedTargetDatabase,restoreOperationId,currentSource,expectedSourceDatabase}){
+export async function reconcileCompletedDeletions(client,{bytes,expectedSha256,expectedSourceId,expectedTargetDatabase,restoreOperationId,currentSource,expectedSourceDatabase,expectedSourceSystemIdentifier,expectedSourceDatabaseOid}){
  const journal=parseDeletionJournal(bytes,{expectedSha256,expectedSourceId});
  const expected=new Map(journal.entries.map(e=>[e.boxId,e]));
  if(typeof expectedTargetDatabase!=='string'||!/^([a-z][a-z0-9_]{0,62})$/.test(expectedTargetDatabase)||!uuid(restoreOperationId)||!currentSource||!/^[a-z][a-z0-9_]{0,62}$/.test(expectedSourceDatabase??'')||expectedSourceDatabase===expectedTargetDatabase)throw Error('Explicit current source and isolated restore identities required');
  await currentSource.query('BEGIN');let targetStarted=false;
  try{
-  if((await currentSource.query('SELECT current_database() name')).rows[0].name!==expectedSourceDatabase)throw Error('Wrong current source database');
+  await verifyCurrentSource(currentSource,{expectedSourceDatabase,expectedSourceSystemIdentifier,expectedSourceDatabaseOid});
   // Prevent any new deletion barrier from committing until the target and its
   // partial gate have been reconciled. A captured-but-no-longer-current journal
   // cannot qualify an older archive, even if its historical digest is genuine.
@@ -77,25 +82,26 @@ export async function reconcileCompletedDeletions(client,{bytes,expectedSha256,e
  }catch(e){if(targetStarted)await client.query('ROLLBACK').catch(()=>{});await currentSource.query('ROLLBACK').catch(()=>{});throw e;}
 }
 
-export async function completedDeletionGate(client,{bytes,expectedSha256,expectedSourceId,restoreOperationId,currentSource,expectedSourceDatabase}){
+export async function completedDeletionGate(client,{bytes,expectedSha256,expectedSourceId,restoreOperationId,currentSource,expectedSourceDatabase,expectedSourceSystemIdentifier,expectedSourceDatabaseOid}){
  const journal=parseDeletionJournal(bytes,{expectedSha256,expectedSourceId});
  if(!currentSource||typeof expectedSourceDatabase!=='string')return false;
  await currentSource.query('BEGIN');let targetStarted=false;
  try{
- if((await currentSource.query('SELECT current_database() name')).rows[0].name!==expectedSourceDatabase)return false;
+ try{await verifyCurrentSource(currentSource,{expectedSourceDatabase,expectedSourceSystemIdentifier,expectedSourceDatabaseOid});}catch{return false;}
  await currentSource.query('LOCK TABLE commercial_deletion_journal IN SHARE MODE');
  if(hash(await exportDeletionJournal(currentSource,expectedSourceId))!==expectedSha256)return false;
  await client.query('BEGIN');targetStarted=true;
  if(!(await client.query("SELECT to_regclass('public.commercial_deletion_journal') IS NOT NULL present")).rows[0].present)return false;
- await client.query('LOCK TABLE commercial_deletion_journal IN SHARE MODE');
+ await client.query('LOCK TABLE connect_vaults,mutation_operations,commercial_deletion_journal IN SHARE MODE');
  if(hash(await exportDeletionJournal(client,expectedSourceId))!==expectedSha256)return false;
- const control=(await client.query('SELECT operation_id,source_id,phase,deletion_journal_sha256 FROM passshare_restore_control.recovery WHERE singleton=true')).rows;
+ const control=(await client.query('SELECT operation_id,source_id,phase,deletion_journal_sha256 FROM passshare_restore_control.recovery WHERE singleton=true FOR SHARE')).rows;
  if(control.length!==1||control[0].operation_id!==restoreOperationId||control[0].source_id!==expectedSourceId||control[0].phase!=='closed'||control[0].deletion_journal_sha256!==expectedSha256)return false;
  for(const e of journal.entries){
   if((await client.query('SELECT 1 FROM connect_vaults WHERE id=$1',[e.boxId])).rowCount)return false;
   if(!(await client.query('SELECT 1 FROM commercial_deletion_journal WHERE deletion_id=$1 AND box_id=$2',[e.deletionId,e.boxId])).rowCount)return false;
   if((await client.query("SELECT 1 FROM mutation_operations WHERE resource=$1 OR (operation='box' AND result->>'vaultId'=$1)",[e.boxId])).rowCount)return false;
  }
+ if((await client.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'")).rows[0].n!==0)return false;
  return true;
  }finally{if(targetStarted)await client.query('ROLLBACK');await currentSource.query('ROLLBACK');}
 }

@@ -52,11 +52,12 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   const unrelated=async()=>JSON.stringify((await target.query('SELECT to_jsonb(v) r,v.xmin::text x FROM connect_vaults v WHERE id<>$1 ORDER BY id',[boxId])).rows);
   const unaffected=await unrelated();
   currentSource=new pg.Client({connectionString:sourceUrl.href});await currentSource.connect();
-  const options={bytes:journal,expectedSha256,expectedSourceId,expectedTargetDatabase:targetName,restoreOperationId,currentSource,expectedSourceDatabase:sourceName};
+  const identity=(await currentSource.query('SELECT (pg_control_system()).system_identifier::text system_id,(SELECT oid::text FROM pg_database WHERE datname=current_database()) database_oid')).rows[0];
+  const options={bytes:journal,expectedSha256,expectedSourceId,expectedTargetDatabase:targetName,restoreOperationId,currentSource,expectedSourceDatabase:sourceName,expectedSourceSystemIdentifier:identity.system_id,expectedSourceDatabaseOid:identity.database_oid};
   await assert.rejects(reconcileCompletedDeletions(source,options),/Wrong restore database/);
   const tampered=Buffer.from(journal);tampered[tampered.length-2]^=1;await assert.rejects(reconcileCompletedDeletions(target,{...options,bytes:tampered}),/trusted current digest/);
   assert.equal((await target.query("SELECT to_regclass('public.commercial_deletion_journal') IS NULL missing")).rows[0].missing,true,'The old real archive has no journal table');
-  fs.writeFileSync(targetConfig,JSON.stringify({format:'passshare-deletion-recovery-v1',databaseUrlEnv:'PASSSHARE_RECOVERY_TARGET_DATABASE_URL',currentSourceDatabaseUrlEnv:'PASSSHARE_RECOVERY_SOURCE_DATABASE_URL',currentSourceDatabase:sourceName,journalPath:journalFile,trustedJournalSha256:expectedSha256,sourceId,targetDatabase:targetName,restoreOperationId}),{flag:'wx'});
+  fs.writeFileSync(targetConfig,JSON.stringify({format:'passshare-deletion-recovery-v1',databaseUrlEnv:'PASSSHARE_RECOVERY_TARGET_DATABASE_URL',currentSourceDatabaseUrlEnv:'PASSSHARE_RECOVERY_SOURCE_DATABASE_URL',currentSourceDatabase:sourceName,currentSourceSystemIdentifier:identity.system_id,currentSourceDatabaseOid:identity.database_oid,journalPath:journalFile,trustedJournalSha256:expectedSha256,sourceId,targetDatabase:targetName,restoreOperationId}),{flag:'wx'});
   const fresh=await target.connect();fresh.release();await closeTarget();
   const prepared=JSON.parse(execFileSync(process.execPath,[cli,'prepare-closed',targetConfig],{encoding:'utf8',env:cliEnv,windowsHide:true,timeout:20000}));assert.equal(prepared.closed,true);
   const transientTarget=new pg.Pool({connectionString:url.href});try{await assert.rejects(createApp({pool:transientTarget,loginGuardStore:createMemoryLoginGuardStore()}),/RESTORE_TARGET_CLOSED/);assert.equal(await completedDeletionGate(transientTarget,options),false,'Old archive cannot qualify itself as current');}finally{await transientTarget.end();}
@@ -64,6 +65,9 @@ test('an older real archive cannot revive a completed explicitly selected Box de
   const client=new pg.Client({connectionString:url.href});await client.connect();
   try{
    assert.equal(await completedDeletionGate(client,options),true,'Actual offline caller persisted the deletion gate without reopening API');
+   assert.equal(await completedDeletionGate(client,{...options,expectedSourceSystemIdentifier:String(BigInt(identity.system_id)+1n)}),false,'A same-named source on a different cluster does not match the trusted current source identity');
+   assert.equal(await completedDeletionGate(client,{...options,expectedSourceDatabaseOid:String(Number(identity.database_oid)+1)}),false,'A replaced same-name database does not inherit the trusted DB OID');
+   await assert.rejects(reconcileCompletedDeletions(client,{...options,expectedSourceSystemIdentifier:'1'}),/identity does not match/);
    assert.deepEqual(await reconcileCompletedDeletions(client,options),{reconciledEntries:1,closed:true,journalSha256:expectedSha256});
    assert.equal((await client.query('SELECT count(*)::int n FROM connect_vaults WHERE id=$1',[boxId])).rows[0].n,0,'A restored API must not revive the completed Box deletion');
    assert.equal((await client.query('SELECT count(*)::int n FROM connect_items WHERE id=$1',[itemId])).rows[0].n,0);
@@ -77,6 +81,16 @@ test('an older real archive cannot revive a completed explicitly selected Box de
    const extraId=randomUUID();await client.query('INSERT INTO commercial_deletion_journal(deletion_id,box_id) VALUES($1,$2)',[extraId,'x'.repeat(26)]);
    assert.equal(await completedDeletionGate(client,options),false,'Gate rejects a target journal entry not present in the trusted current source');
    await client.query('DELETE FROM commercial_deletion_journal WHERE deletion_id=$1',[extraId]);
+   const originalQuery=client.query.bind(client);let reached,release,gate,write,writer;
+   const atRead=new Promise(r=>{reached=r;}),resume=new Promise(r=>{release=r;});
+   client.query=async(sql,params)=>{const result=await originalQuery(sql,params);if(sql==='SELECT 1 FROM connect_vaults WHERE id=$1'&&params[0]===boxId){reached();await resume;}return result;};
+   try{
+    gate=completedDeletionGate(client,options);let timer;try{await Promise.race([atRead,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Deletion gate did not reach its real target read')),5000);})]);}finally{clearTimeout(timer);}
+    writer=new pg.Client({connectionString:url.href});await writer.connect();write=writer.query('INSERT INTO connect_vaults(id,name) VALUES($1,$2)',[boxId,'synthetic concurrent resurrection']);
+    let waited=false;for(let i=0;i<100;i++){if((await source.query("SELECT 1 FROM pg_stat_activity WHERE datname=$1 AND wait_event_type='Lock' AND query LIKE 'INSERT INTO connect_vaults%'",[targetName])).rowCount){waited=true;break;}await new Promise(r=>setTimeout(r,10));}
+    assert(waited,'A target writer must actually wait on the gate snapshot lock');release();assert.equal(await gate,false,'A concurrent target writer cannot receive a successful deletion qualification');gate=null;await write;write=null;await writer.end();writer=null;
+   }finally{release();if(gate)await gate;if(write)await write;if(writer)await writer.end();client.query=originalQuery;}
+   assert.equal(await completedDeletionGate(client,options),false,'A later target resurrection must also fail the gate');await reconcileCompletedDeletions(client,options);assert.equal(await completedDeletionGate(client,options),true);
    const once=JSON.stringify((await client.query('SELECT to_jsonb(j) r,j.xmin::text x FROM commercial_deletion_journal j ORDER BY box_id')).rows);
    await reconcileCompletedDeletions(client,options);assert.equal(JSON.stringify((await client.query('SELECT to_jsonb(j) r,j.xmin::text x FROM commercial_deletion_journal j ORDER BY box_id')).rows),once,'Reapply preserves barrier row/xmin and cannot repeat the deletion');
    const later=randomUUID();await source.query('INSERT INTO commercial_deletion_journal(deletion_id,box_id) VALUES($1,$2)',[later,'y'.repeat(26)]);

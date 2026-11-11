@@ -8,7 +8,9 @@
 
 ## 実行する順序
 
-時刻はPostgreSQLのマイクロ秒6桁UTC表現のまま出力・比較し、JavaScript Dateのミリ秒変換で差を落とさない。再開gateは入力にある行だけでなく、現在の正本と復元先の全journal行・時刻の一致も検査する。余分な行や1マイクロ秒の差も合格にしない。
+時刻はPostgreSQLのマイクロ秒6桁UTC表現のまま出力・比較し、JavaScript Dateのミリ秒変換で差を落とさない。再開gateは入力にある行だけでなく、現在の正本と復元先の全journal行・時刻の一致も検査する。余分な行や1マイクロ秒の差も合格にしない。正本はDB名だけで識別せず、正規運用記録にあるPostgreSQL clusterのsystem identifierとdatabase OIDを実接続で照合する。古いコピーへ接続した後に、その識別子を「信頼済み」として採用し直さない。物理cloneがcluster IDも複製する場合は正規接続先の照合も必要で、この数値だけであらゆる複製を認証できるとはしない。
+
+reapply設定には正規運用記録の`currentSourceSystemIdentifier`と`currentSourceDatabaseOid`を文字列で指定する。照会できる既存DB権限がなければ資格を増設せず、その手順を未達として扱う。gateは正本・target双方のjournalとtargetのBox/冪等記録をロックして照合し、別client接続を検出した場合も合格にしない。
 
 1. 現在の正本DBと既存の復元一覧から、復元元・時点・現在の削除記録のsource ID、停止した復元先DB名、復元操作IDを照合する。古いarchiveに付属するjournalやchecksumを「現在」の根拠にしない。
 2. DB資格をコマンド引数へ渡さず、正規の秘密環境変数へ設定する。設定JSONには値ではなく`databaseUrlEnv`名を指定する。CLIは`PASSSHARE_..._DATABASE_URL`名だけを受ける。

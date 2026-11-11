@@ -24,7 +24,7 @@ try{
   if(!path.isAbsolute(c.journalPath??''))throw Error();const bytes=readBounded(c.journalPath,16*1024*1024);
   if(!/^PASSSHARE_[A-Z0-9_]+_DATABASE_URL$/.test(c.currentSourceDatabaseUrlEnv??'')||typeof process.env[c.currentSourceDatabaseUrlEnv]!=='string'||c.currentSourceDatabaseUrlEnv===c.databaseUrlEnv)throw Error();
   currentSource=new pg.Client({connectionString:process.env[c.currentSourceDatabaseUrlEnv],statement_timeout:15000,query_timeout:20000,application_name:'passshare-current-deletion-journal'});await currentSource.connect();
-  const options={bytes,expectedSha256:c.trustedJournalSha256,expectedSourceId:c.sourceId,expectedTargetDatabase:c.targetDatabase,restoreOperationId:c.restoreOperationId,currentSource,expectedSourceDatabase:c.currentSourceDatabase};
+  const options={bytes,expectedSha256:c.trustedJournalSha256,expectedSourceId:c.sourceId,expectedTargetDatabase:c.targetDatabase,restoreOperationId:c.restoreOperationId,currentSource,expectedSourceDatabase:c.currentSourceDatabase,expectedSourceSystemIdentifier:c.currentSourceSystemIdentifier,expectedSourceDatabaseOid:c.currentSourceDatabaseOid};
   const r=await reconcileCompletedDeletions(client,options),qualified=await completedDeletionGate(client,options);if(!qualified)throw Error();
   console.log(JSON.stringify({ok:true,operation:'reapply',...r,deletionGateQualified:true,APIStillClosed:true,identityMembershipKeyQualification:false,automaticReopen:false}));
  }
