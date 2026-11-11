@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import pg from 'pg';
 import {resolveDbPoolConfig} from '../src/config/db-ssl.js';
 import {preserveJournalCopy} from '../src/commercial-journal-copy.js';
-import {exportDeletionJournal,reconcileCompletedDeletions,completedDeletionGate,prepareClosedDeletionRestore} from '../src/commercial-deletion-journal.js';
+import {exportDeletionJournal,parseDeletionJournal,reconcileCompletedDeletions,completedDeletionGate,prepareClosedDeletionRestore} from '../src/commercial-deletion-journal.js';
 
 // An offline maintenance caller, never an HTTP endpoint. DB credentials stay in
 // a named process environment variable; neither arguments nor results carry it.
@@ -13,9 +13,13 @@ const fail=()=>{console.error(JSON.stringify({ok:false,error:'deletion_recovery_
 const readBounded=(file,limit)=>{const fd=fs.openSync(file,'r');try{const bytes=Buffer.alloc(limit+1);let n=0;while(n<bytes.length){const count=fs.readSync(fd,bytes,n,bytes.length-n,null);if(!count)break;n+=count;}if(n>limit)throw Error();return bytes.subarray(0,n);}finally{fs.closeSync(fd);}};
 let client,currentSource;
 try{
- if(!['export','preserve-copy','prepare-closed','reapply'].includes(operation)||!configPath||process.argv.length!==4||!path.isAbsolute(configPath))throw Error();
+ if(!['export','preserve-copy','verify-copy','prepare-closed','reapply'].includes(operation)||!configPath||process.argv.length!==4||!path.isAbsolute(configPath))throw Error();
  const c=JSON.parse(readBounded(configPath,16384));
- if(operation==='preserve-copy'){
+ if(operation==='verify-copy'){
+  if(c.format!=='passshare-deletion-copy-v1'||!path.isAbsolute(c.copyPath??''))throw Error();
+  const bytes=readBounded(c.copyPath,16*1024*1024);parseDeletionJournal(bytes,{expectedSha256:c.trustedJournalSha256,expectedSourceId:c.sourceId});
+  console.log(JSON.stringify({ok:true,operation,sha256:c.trustedJournalSha256,sourceId:c.sourceId,bytes:bytes.length,offHostRetentionProven:false,currentQualificationProven:false,automaticReopen:false}));
+ }else if(operation==='preserve-copy'){
   if(c.format!=='passshare-deletion-copy-v1'||!path.isAbsolute(c.journalPath??'')||!path.isAbsolute(c.copyPath??'')||path.resolve(c.journalPath)===path.resolve(c.copyPath))throw Error();
   const r=preserveJournalCopy(readBounded(c.journalPath,16*1024*1024),{expectedSha256:c.trustedJournalSha256,expectedSourceId:c.sourceId,target:c.copyPath});console.log(JSON.stringify({ok:true,operation,...r,automaticReopen:false}));
  }else{
