@@ -12,6 +12,17 @@ export class CloudApiError extends Error {
 
 export function createCloudApi(authFetch: CloudFetch) {
 
+  async function getCommercialEncryptedAttachment(contractId: string, expected: AttachmentContext, revision: number, signal: AbortSignal): Promise<string> {
+    expected={...expected};
+    if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(contractId)||!validId(expected.passwordBoxId)||!validId(expected.itemId)||!validId(expected.attachmentId)||!positiveInteger(expected.attachmentVersion)||!positiveInteger(expected.keyEpoch)||!positiveInteger(revision))throw new CloudApiError(400);
+    const text=await itemRequest(`/api/commercial-contracts/${contractId}/export/boxes/${expected.passwordBoxId}/items/${expected.itemId}/attachments/${expected.attachmentId}?epoch=${expected.keyEpoch}&revision=${revision}`,{signal},200,2*1024*1024);
+    let result:any;try{result=JSON.parse(text);}catch{throw new CloudApiError(502);}
+    if(!fields(result,['format','receiptId','boxId','keyEpoch','snapshotRevision','ciphertextOnly','restoresIdentityMembershipOrKeys','data'])||result.format!=='passshare-encrypted-export-v1'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(result.receiptId)||result.boxId!==expected.passwordBoxId||result.keyEpoch!==expected.keyEpoch||result.snapshotRevision!==revision||result.ciphertextOnly!==true||result.restoresIdentityMembershipOrKeys!==false)throw new CloudApiError(502);
+    const value=result.data;
+    if(!fields(value,['format','context','contentBytes','nonce','ciphertext'])||value.format!==1||!fields(value.context,['passwordBoxId','itemId','attachmentId','attachmentVersion','keyEpoch'])||Object.entries(expected).some(([key,v])=>value.context[key]!==v)||!Number.isSafeInteger(value.contentBytes)||value.contentBytes<0||value.contentBytes>1048576||!base64Size(value.nonce,24,24)||!base64Size(value.ciphertext,20+value.contentBytes,4116+value.contentBytes))throw new CloudApiError(502);
+    return JSON.stringify(value);
+  }
+
   async function getCommercialAttachmentItemSnapshot(contractId: string, expected: ItemContext, revision: number, signal: AbortSignal): Promise<string> {
     expected = {...expected}; validateItemContext(expected);
     if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(contractId) || !positiveInteger(revision)) throw new CloudApiError(400);
@@ -328,6 +339,6 @@ export function createCloudApi(authFetch: CloudFetch) {
     return revision + 2;
   }
 
-  return Object.freeze({ getCommercialAttachmentItemSnapshot, getCommercialExportPage, getBoxState, getAttachmentState, getOwnerBundle, putOwnerBundle, setupBox, bundleText, sameBundle, readPendingBundle, savePendingBundle, clearPendingBundle, validateItemContext, publicOwnerBundle, readItemEnvelope, listEncryptedItems, getEncryptedItem, putEncryptedItem, deleteEncryptedItem, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment });
+  return Object.freeze({ getCommercialEncryptedAttachment, getCommercialAttachmentItemSnapshot, getCommercialExportPage, getBoxState, getAttachmentState, getOwnerBundle, putOwnerBundle, setupBox, bundleText, sameBundle, readPendingBundle, savePendingBundle, clearPendingBundle, validateItemContext, publicOwnerBundle, readItemEnvelope, listEncryptedItems, getEncryptedItem, putEncryptedItem, deleteEncryptedItem, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment });
 }
 export type CloudApi = ReturnType<typeof createCloudApi>;

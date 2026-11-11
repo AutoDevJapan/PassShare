@@ -49,3 +49,12 @@ test('contract attachment export obtains the parent snapshot with the same pinne
  assert.deepEqual(JSON.parse(await api.getCommercialAttachmentItemSnapshot(contract,context,3,new AbortController().signal)),envelope);
  assert.equal(calls[0],`/api/commercial-contracts/${contract}/export/boxes/${box}/items/${itemId}/attachment-snapshot?epoch=2&revision=3`);
 });
+test('contract attachment body is pinned to its authenticated parent and version',async()=>{
+ const context={passwordBoxId:box,itemId:'b'.repeat(26),attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+ const envelope={format:1,context,contentBytes:0,nonce:Buffer.alloc(24).toString('base64'),ciphertext:Buffer.alloc(20).toString('base64')};
+ const api=createCloudApi(async()=>Response.json(reply(envelope)));
+ assert.deepEqual(JSON.parse(await api.getCommercialEncryptedAttachment(contract,context,3,new AbortController().signal)),envelope);
+ for(const changed of [{...context,attachmentId:'d'.repeat(26)},{...context,attachmentVersion:2}]){
+  await assert.rejects(api.getCommercialEncryptedAttachment(contract,changed,3,new AbortController().signal));
+ }
+});

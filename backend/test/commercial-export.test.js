@@ -71,6 +71,11 @@ test('contract-window export returns real ciphertext while rechecking current me
   endpoint=root+'/items?epoch=1&revision='+revision;
   const itemExport=await call(root+'/items/'+itemId+'/attachment-snapshot?epoch=1&revision='+revision,a.refreshToken);assert.equal(itemExport.status,200);assert.deepEqual(itemExport.body.data,updatedEnvelope);
   const fileExport=await call(root+'/items/'+itemId+'/attachments/'+attachmentId+'?epoch=1&revision='+revision,a.refreshToken);assert.equal(fileExport.status,200);assert.deepEqual(fileExport.body.data,fileEnvelope);
+  const clientItem=await sharedClient.getCommercialAttachmentItemSnapshot(q.id,itemContext,revision,new AbortController().signal);
+  const clientFile=await sharedClient.getCommercialEncryptedAttachment(q.id,attachmentContext,revision,new AbortController().signal);
+  assert.deepEqual(JSON.parse(clientItem),updatedEnvelope);assert.deepEqual(JSON.parse(clientFile),fileEnvelope);
+  const clientPlain=box.decrypt_attachment(clientFile,JSON.stringify(attachmentContext),JSON.stringify({itemEnvelope:clientItem,expectedItemContext:itemContext,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision}));
+  try{assert.deepEqual(clientPlain.content(),fileBytes);assert.equal(clientPlain.name(),'synthetic.bin');}finally{clientPlain.free();}
   const decrypted=box.decrypt_attachment(JSON.stringify(fileExport.body.data),JSON.stringify(attachmentContext),JSON.stringify({itemEnvelope:JSON.stringify(itemExport.body.data),expectedItemContext:itemContext,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision}));
   try{assert.deepEqual(decrypted.content(),fileBytes);assert.equal(decrypted.name(),'synthetic.bin');}finally{decrypted.free();}
   assert.equal((await call(root+'/items/'+itemId+'/attachments/'+attachmentId+'?epoch=1&revision='+(revision+1),a.refreshToken)).status,409);
