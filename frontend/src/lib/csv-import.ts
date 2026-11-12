@@ -80,7 +80,7 @@ export function parseOnepasswordCsv(csvData: string): ItemFormValues[] {
   for (const row of rows) {
     const title = row.title ?? "";
     const password = row.password ?? "";
-    if (!title || !password) {
+    if (!title.trim() || !password.trim()) {
       continue;
     }
 
