@@ -61,3 +61,8 @@ test('cancelled host run resumes through a new store and new sink with the same 
  await assert.rejects(saveCommercialExport(root,api as any,worker as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},c.signal,progress));stop=false;
  const done=await saveCommercialExport(root,api as any,worker as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);assert.equal(done.saved,true);assert.equal(done.attachments,1);assert.deepEqual([...await readFile(join(root,`attachment-${context.itemId}-${attachment.attachmentId}-v1.bin`))],[1,0,255]);
 }));
+
+test('published bytes do not hide a non-cancellation cleanup failure',()=>fixture(async(store)=>{
+ const publish=store.publishNew;store.publishNew=async(n,b,s)=>{await publish(n,b,s);throw Object.assign(new Error('cleanup failed'),{code:'EACCES'});};
+ await assert.rejects(createVerifiedExportSink(store).item('{}',context,new AbortController().signal),(e:any)=>e.code==='EACCES');
+}));

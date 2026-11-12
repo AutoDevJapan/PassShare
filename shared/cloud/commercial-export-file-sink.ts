@@ -17,6 +17,7 @@ export function createVerifiedExportSink(store:VerifiedExportStore){
    const prior=await store.read(name);check(signal);
    if(prior!==null){try{if(!same(prior,expected))throw new Error('Export output differs');return;}finally{prior.fill(0);}}
    try{await store.publishNew(name,expected,signal);}catch(error){
+    if((error as {code?:string})?.code!=='EEXIST'&&!(signal.aborted&&error===signal.reason))throw error;
     // Another writer may have committed the same deterministic output. Reconcile
     // by full bytes, never infer ownership from an empty file or erase its data.
     const actual=await store.read(name);
