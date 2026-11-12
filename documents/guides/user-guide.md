@@ -1,7 +1,7 @@
 # PassShare ユーザーガイド
 
 > Issue [#111](https://github.com/AutoDevJapan/PassShare/issues/111)  
-> 関連するWeb画面: `/docs/user-guide`（別の翻訳contentを表示。このMarkdownを自動配信しません）  
+> 関連するWeb画面: `/docs/user-guide`（別の翻訳contentを表示。このMarkdownを自動配信しません）
 > 最終更新: 2026-11-13
 
 ## 概要
