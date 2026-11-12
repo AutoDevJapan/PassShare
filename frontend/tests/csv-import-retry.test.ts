@@ -51,3 +51,12 @@ test('real handler does not report success when a completed row was deleted befo
  const c={connectClient:{createItem:async(_v,_body,key)=>{keys.push(key);calls++;if(calls===2)throw Error('partial');if(deleted)throw Object.assign(Error('changed or deleted'),{status:409});created++;}},itemsReady:true,busyRef:{current:false},activeScope:{current:'deleted-owner:box'},vaultId:'box',ensureCompatibility:async()=>{},parseOnepasswordCsv:()=>[{},{}],connectItemToCreateBody:x=>x,setError:()=>{},setImportMessage:value=>{if(value)success++;},setBusy:()=>{},labels:{importSuccess:'{count}'},loadGeneration:{current:0},loadItems:async()=>{c.loadGeneration.current++;},t:()=>'{count}',csvAttempt:{current:null},importAttempt,importFingerprint,saveImportAttempt,finishImportAttempt,acquireImportAttempt,releaseImportAttempt};vm.createContext(c);vm.runInContext(stripTypeScriptTypes(body)+';globalThis.run=handleCsvImport',c);
  const file={text:async()=> 'deleted fixture'};await c.run(file);deleted=true;await c.run(file);assert.equal(created,1);assert.equal(success,0);assert.equal(keys[0],keys[2]);assert.equal(calls,3);
 });
+test('duplicate stored row UUIDs are rejected and failed completion remains retryable',()=>{
+ const id=crypto.randomUUID();
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:()=>JSON.stringify({keys:[id,id],completed:[]})}});
+ try{assert.throws(()=>importAttempt(null,'duplicate-owner:box','digest',2),/Invalid saved/);}finally{delete (globalThis as any).sessionStorage;}
+ const a=importAttempt(null,'finish-owner:box','digest',2);let fail=true;
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{removeItem:()=>{if(fail)throw Error('remove unavailable');}}});
+ try{assert.throws(()=>finishImportAttempt(a),/remove unavailable/);assert.equal(importAttempt(null,a.scope,a.fingerprint,2),a);fail=false;finishImportAttempt(a);}finally{delete (globalThis as any).sessionStorage;}
+ const b=importAttempt(null,a.scope,a.fingerprint,2);assert.notEqual(b.keys[0],a.keys[0]);finishImportAttempt(b);
+});

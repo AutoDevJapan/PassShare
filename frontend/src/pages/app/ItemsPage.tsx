@@ -247,9 +247,9 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
         if (!alreadyCompleted) imported += 1;
       }
       if (scope !== activeScope.current) return;
-      setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
       finishImportAttempt(attempt);
       csvAttempt.current = null;
+      setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
       await loadItems();
     } catch {
       if (scope === activeScope.current) {

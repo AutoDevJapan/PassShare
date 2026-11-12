@@ -19,8 +19,8 @@ export function finishImportAttempt(attempt: ImportAttempt): void {
   if(finished.has(attempt))throw new Error('Import attempt already completed');
   const key=storageKey(attempt.scope,attempt.fingerprint);
   if(attempts.get(key)!==attempt)throw new Error('Import attempt was replaced');
-  attempts.delete(key);
   if(typeof sessionStorage!=='undefined')sessionStorage.removeItem(key);
+  attempts.delete(key);
   finished.add(attempt);
 }
 
@@ -42,7 +42,7 @@ export function importAttempt(prior: ImportAttempt | null, scope: string, finger
     const raw=sessionStorage.getItem(key);
     if(raw){
       const saved=JSON.parse(raw);
-      if(!Array.isArray(saved.keys)||saved.keys.length!==rows||saved.keys.some((k:unknown)=>typeof k!=='string'||!/^[0-9a-f-]{36}$/.test(k))||!Array.isArray(saved.completed)||saved.completed.some((i:unknown)=>!Number.isInteger(i)||Number(i)<0||Number(i)>=rows))throw new Error('Invalid saved import retry');
+      if(!Array.isArray(saved.keys)||saved.keys.length!==rows||new Set(saved.keys).size!==rows||saved.keys.some((k:unknown)=>typeof k!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(k))||!Array.isArray(saved.completed)||saved.completed.some((i:unknown)=>!Number.isInteger(i)||Number(i)<0||Number(i)>=rows))throw new Error('Invalid saved import retry');
       const restored={scope,fingerprint,keys:saved.keys as string[],completed:new Set<number>(saved.completed)};
       attempts.set(key,restored);return restored;
     }
