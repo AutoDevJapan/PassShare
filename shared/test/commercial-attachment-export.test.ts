@@ -107,3 +107,10 @@ test('resume skips fully completed pages after worker re-unlock',async()=>{
  const run=()=>consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async text=>{saved.push(JSON.parse(text).id);},async()=>{},progress);
  await assert.rejects(run());locked=false;await run();assert.deepEqual(queries,[null,ids[0],ids[0]]);assert.deepEqual(saved,ids);await run();assert.equal(queries.length,3);
 });
+
+test('resume does not re-decrypt completed items inside an unfinished page',async()=>{
+ const {consumeCommercialBox,createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress(),box='a'.repeat(26),ids=['b'.repeat(26),'c'.repeat(26)];let locked=true;const decrypted:string[]=[],saved:string[]=[];
+ const api={getCommercialExportPage:async()=>({envelopes:ids.map(itemId=>({context:{passwordBoxId:box,itemId,itemVersion:1,keyEpoch:2}})),nextCursor:null,attachmentsIncluded:false})};const worker={decrypt:async(_e:any,c:any)=>{decrypted.push(c.itemId);if(locked&&c.itemId===ids[1])throw new Error('locked');return JSON.stringify({id:c.itemId,attachments:[]});}};
+ const run=()=>consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async text=>{saved.push(JSON.parse(text).id);},async()=>{},progress);
+ await assert.rejects(run());locked=false;await run();assert.deepEqual(decrypted,[ids[0],ids[1],ids[1]]);assert.deepEqual(saved,ids);
+});
