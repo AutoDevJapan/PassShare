@@ -21,3 +21,4 @@ GoDD-MCP-alpha.md
 # DB dumps/snapshots must never be committed (contain production data) — see #318
 *.dump
 passshare-snapshot-replica-*.dump
+/apps/desktop/src-tauri/binaries/

@@ -675,3 +675,7 @@ read/write/DELETEかつshare mode0で保持し、同handleへの非上書きrena
 失敗時も同handleへ削除指定し、path上の別entryをunlinkしない。公開後のbytes検証は
 その同handleから行う。Node adapterは子process終端まで排出し、成功code後にもsinkの
 readbackを行う。非Windowsのpath操作実装とWindowsの実handle受入を混同しない。
+
+Windows packagingは同sourceのrelease publisherをbuildし、target triple付きsidecarへ
+bytes/hash一致を確認してコピーする。Windows専用Tauri configでexternalBinへ含める。
+これは同梱準備であり、署名・installed IPC接続・GUI保存先選択の実受入とは区別する。
