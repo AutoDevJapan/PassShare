@@ -8,10 +8,17 @@ export function acquireImportAttempt(attempt: ImportAttempt): void {
 }
 export function releaseImportAttempt(attempt: ImportAttempt): void { active.delete(attempt); }
 const storageKey = (scope: string, fingerprint: string) => `passshare-csv-retry-v1:${scope}:${fingerprint}`;
+// Accidental-corruption detection only, not authentication against same-origin code.
+function checkpointChecksum(scope:string,fingerprint:string,keys:string[],completed:number[]):string{
+  let hash=2166136261;
+  for(const byte of new TextEncoder().encode(JSON.stringify([scope,fingerprint,keys,completed])))hash=Math.imul(hash^byte,16777619)>>>0;
+  return hash.toString(16).padStart(8,'0');
+}
 
 export function saveImportAttempt(attempt: ImportAttempt): void {
   if(finished.has(attempt))throw new Error('Import attempt already completed');
-  if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey(attempt.scope, attempt.fingerprint), JSON.stringify({keys:attempt.keys, completed:[...attempt.completed]}));
+  const completed=[...attempt.completed].sort((a,b)=>a-b);
+  if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey(attempt.scope, attempt.fingerprint), JSON.stringify({keys:attempt.keys, completed,checksum:checkpointChecksum(attempt.scope,attempt.fingerprint,attempt.keys,completed)}));
   attempts.set(storageKey(attempt.scope, attempt.fingerprint), attempt);
 }
 
@@ -43,6 +50,7 @@ export function importAttempt(prior: ImportAttempt | null, scope: string, finger
     if(raw){
       const saved=JSON.parse(raw);
       if(!Array.isArray(saved.keys)||saved.keys.length!==rows||new Set(saved.keys).size!==rows||saved.keys.some((k:unknown)=>typeof k!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(k))||!Array.isArray(saved.completed)||saved.completed.some((i:unknown)=>!Number.isInteger(i)||Number(i)<0||Number(i)>=rows))throw new Error('Invalid saved import retry');
+      if(saved.checksum!==checkpointChecksum(scope,fingerprint,saved.keys,saved.completed))throw new Error('Import retry checksum mismatch');
       const restored={scope,fingerprint,keys:saved.keys as string[],completed:new Set<number>(saved.completed)};
       attempts.set(key,restored);return restored;
     }

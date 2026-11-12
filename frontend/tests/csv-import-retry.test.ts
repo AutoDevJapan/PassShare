@@ -72,3 +72,14 @@ test('a new module instance restores the saved row keys without source data',asy
   module.finishImportAttempt(b);
  }finally{delete (globalThis as any).sessionStorage;}
 });
+test('a valid UUID character corruption is rejected before retry restore',async()=>{
+ const values=new Map<string,string>();
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}});
+ try{
+  const a=importAttempt(null,'checksum-owner:box','fixture-digest',2);
+  const entry=[...values.keys()][0],saved=JSON.parse(values.get(entry)!);
+  saved.keys[0]=(saved.keys[0][0]==='a'?'b':'a')+saved.keys[0].slice(1);values.set(entry,JSON.stringify(saved));
+  const module=await import('../src/lib/import-attempt.ts?corruption-fixture');
+  assert.throws(()=>module.importAttempt(null,a.scope,a.fingerprint,2),/checksum mismatch/);
+ }finally{delete (globalThis as any).sessionStorage;}
+});
