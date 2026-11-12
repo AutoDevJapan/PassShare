@@ -76,6 +76,12 @@ fn required_blank_rows_and_invalid_header_never_publish_partial_data() {
     assert_eq!(items[0].title, "Kept");
     assert_eq!(
         items[0]
+            .field_value_by_purpose(FieldPurpose::Username)
+            .as_deref(),
+        Some("")
+    );
+    assert_eq!(
+        items[0]
             .field_value_by_purpose(FieldPurpose::Password)
             .as_deref(),
         Some(" valid ")
