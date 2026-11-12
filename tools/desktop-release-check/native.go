@@ -228,8 +228,11 @@ func nativeCheck(root, bundle, path, version string) (string, string, error) {
 		}) != nil || len(publishers) != 1 {
 			return "", "", fail("NSIS must contain exactly one export publisher")
 		}
-		if !sameFiles(publishers[0], filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe")) {
+		if !sameFiles(publishers[0], filepath.Join(root, "target/release/passshare-export-publish.exe")) {
 			return "", "", fail("installer export publisher bytes differ")
+		}
+		if err = windowsVerify(publishers[0], ""); err != nil {
+			return "", "", err
 		}
 		if err = windowsVerify(applications[0], version); err != nil {
 			return "", "", err
