@@ -100,3 +100,9 @@ test('completed output removed or changed is detected before resume reports save
  const run=()=>saveCommercialExport(root,api as any,worker as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);
  await run();await writeFile(join(root,`item-${context.itemId}-v1.json`),'changed');await assert.rejects(run());await rm(join(root,`item-${context.itemId}-v1.json`));await assert.rejects(run());
 }));
+
+test('rejected foreign output never poisons verified receipts for a later retry',()=>fixture(async(_store,root)=>{
+ const {saveCommercialExport}=await import('../../scripts/save-commercial-export.ts');const {createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress(),out=join(root,`item-${context.itemId}-v1.json`);
+ const api={getCommercialExportPage:async()=>({envelopes:[{context}],nextCursor:null,attachmentsIncluded:false})},worker={decrypt:async()=>JSON.stringify({attachments:[]})};const run=()=>saveCommercialExport(root,api as any,worker as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);
+ await writeFile(out,'foreign');await assert.rejects(run());await rm(out);assert.equal((await run()).saved,true);assert.deepEqual(JSON.parse(await readFile(out,'utf8')),{attachments:[]});
+}));
