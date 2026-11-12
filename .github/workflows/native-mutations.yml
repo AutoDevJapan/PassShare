@@ -43,6 +43,53 @@ jobs:
           cargo test --locked -p op-cli --bin passshare-export-publish -j 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --locked -p op-cli --bin passshare-export-publish -j 2
+      - name: Verify native desktop export transport and dispatcher
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: |
+          node --experimental-transform-types --test apps/desktop/tests/native-export-store.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::tests --lib -j 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PASSSHARE_TEST_PUBLISHER = Join-Path $env:GITHUB_WORKSPACE 'target/debug/passshare-export-publish.exe'
+          cargo test --locked -p passshare-desktop export_ipc_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::publisher_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::commit_order_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::cancel_permit_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::ready_cleanup_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify authenticated contract export through Windows native storage
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: |
+          node --test --test-timeout=10000 backend/test/native-export-acceptance-host.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked -p passshare-desktop --example export_native_acceptance -j 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pg = $env:PGBIN
+          if (-not (Test-Path -LiteralPath (Join-Path $pg 'initdb.exe'))) { throw 'Runner PostgreSQL binaries unavailable' }
+          $data = Join-Path $env:RUNNER_TEMP 'passshare-native-export-pg'
+          & (Join-Path $pg 'initdb.exe') -D $data -U passshare -A trust --no-locale
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          try {
+            & (Join-Path $pg 'pg_ctl.exe') -D $data -l (Join-Path $env:RUNNER_TEMP 'native-export-pg.log') -o '-h 127.0.0.1 -p 15431' -w start
+            if ($LASTEXITCODE -ne 0) { throw 'Owned PostgreSQL fixture failed to start' }
+            & (Join-Path $pg 'createdb.exe') -h 127.0.0.1 -p 15431 -U passshare passshare
+            if ($LASTEXITCODE -ne 0) { throw 'Owned fixture database failed' }
+            $env:DATABASE_URL = 'postgresql://passshare:passshare@127.0.0.1:15431/passshare'
+            $env:PASSSHARE_NATIVE_EXPORT_PG = 'true'
+            $env:PASSSHARE_MUTATIONS_BIN = Join-Path $env:GITHUB_WORKSPACE 'backend/native/target/release/passshare-mutations.exe'
+            node --test --test-timeout=120000 backend/test/native-commercial-export.windows.test.js
+            if ($LASTEXITCODE -ne 0) { throw 'Windows authenticated native export acceptance failed' }
+          } finally {
+            & (Join-Path $pg 'pg_ctl.exe') -D $data -m immediate -w stop
+            if ($LASTEXITCODE -ne 0) { throw 'Owned PostgreSQL cleanup failed' }
+          }
       - name: Verify Windows atomic export host file lifecycle
         if: runner.os == 'Windows'
         working-directory: .

@@ -21,8 +21,10 @@ use zeroize::Zeroizing;
 #[path = "../../../../shared/native-lock.rs"]
 mod native_lock;
 use native_lock::NativeLock;
+mod commercial_export;
 
 struct AppState {
+    export_commit: Mutex<()>,
     data: Mutex<BoxSession>,
     cancellation: AtomicU64,
     recovery_active: AtomicBool,
@@ -88,6 +90,7 @@ impl AppState {
 
     fn lock(&self) -> Result<(), String> {
         // Invalidate work before waiting for an atomic Core save's mutex.
+        let _commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
         self.cancellation.fetch_add(1, Ordering::SeqCst);
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         data.session.lock();
@@ -218,7 +221,11 @@ impl AppState {
     }
 
     fn recovery_background(&self) -> Result<(), String> {
-        self.foreground.store(false, Ordering::SeqCst);
+        {
+            let _commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
+            self.foreground.store(false, Ordering::SeqCst);
+            self.cancellation.fetch_add(1, Ordering::SeqCst);
+        }
         if self.recovery_active.load(Ordering::SeqCst) {
             self.lock()?;
         }
@@ -226,12 +233,14 @@ impl AppState {
     }
 
     fn begin_recovery_session(&self) -> Result<LocalRecoverySession, String> {
+        let commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
         let ticket = self
             .cancellation
             .fetch_add(1, Ordering::SeqCst)
             .wrapping_add(1);
         self.recovery_session_ticket.store(ticket, Ordering::SeqCst);
         self.recovery_active.store(true, Ordering::SeqCst);
+        drop(commit);
         if !self.foreground.load(Ordering::SeqCst) {
             self.recovery_active.store(false, Ordering::SeqCst);
             self.lock()?;
@@ -254,7 +263,9 @@ impl AppState {
             return Ok(false);
         }
         self.recovery_active.store(false, Ordering::SeqCst);
+        let _commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
         self.cancellation.fetch_add(1, Ordering::SeqCst);
+        drop(_commit);
         if lock_on_cancel {
             self.lock()?;
         }
@@ -944,12 +955,151 @@ fn native_session_status(state: State<'_, AppState>) -> Result<NativeStatus, Str
     state.status()
 }
 
+#[tauri::command]
+async fn commercial_export_open<R: tauri::Runtime>(
+    directory: String,
+    app: tauri::AppHandle<R>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if !state.foreground.load(Ordering::SeqCst) {
+            return Err("EXPORT_FOREGROUND".into());
+        }
+        let epoch = state.cancellation.load(Ordering::SeqCst);
+        let exports = app.state::<commercial_export::ExportSessions>();
+        let token = exports.open(PathBuf::from(directory), epoch)?;
+        if !state.foreground.load(Ordering::SeqCst)
+            || state.cancellation.load(Ordering::SeqCst) != epoch
+        {
+            exports.close(&token)?;
+            return Err("EXPORT_SESSION".into());
+        }
+        Ok(token)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
+}
+#[tauri::command]
+async fn commercial_export_identity<R: tauri::Runtime>(
+    session_id: String,
+    app: tauri::AppHandle<R>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<commercial_export::ExportSessions>()
+            .identity(&session_id)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
+}
+#[tauri::command]
+async fn commercial_export_cancel<R: tauri::Runtime>(
+    session_id: String,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        app.state::<commercial_export::ExportSessions>()
+            .cancel(&session_id, &state.export_commit)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
+}
+#[tauri::command]
+async fn commercial_export_recover<R: tauri::Runtime>(
+    session_id: String,
+    app: tauri::AppHandle<R>,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<commercial_export::ExportSessions>()
+            .recover(&session_id)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
+}
+#[tauri::command]
+async fn commercial_export_close<R: tauri::Runtime>(
+    session_id: String,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<commercial_export::ExportSessions>()
+            .close(&session_id)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
+}
+#[tauri::command]
+async fn commercial_export_read<R: tauri::Runtime>(
+    session_id: String,
+    name: String,
+    app: tauri::AppHandle<R>,
+) -> Result<Option<Vec<u8>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if !state.foreground.load(Ordering::SeqCst) {
+            return Err("EXPORT_FOREGROUND".into());
+        }
+        let epoch = state.cancellation.load(Ordering::SeqCst);
+        let mut result =
+            app.state::<commercial_export::ExportSessions>()
+                .read(&session_id, &name, epoch)?;
+        if !state.foreground.load(Ordering::SeqCst)
+            || state.cancellation.load(Ordering::SeqCst) != epoch
+        {
+            if let Some(bytes) = result.as_mut() {
+                use zeroize::Zeroize;
+                bytes.zeroize();
+            }
+            return Err("EXPORT_SESSION".into());
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|_| "EXPORT_READ".to_string())?
+}
+#[tauri::command]
+async fn commercial_export_publish<R: tauri::Runtime>(
+    session_id: String,
+    name: String,
+    bytes: Vec<u8>,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if !state.foreground.load(Ordering::SeqCst) {
+            return Err("EXPORT_FOREGROUND".into());
+        }
+        let epoch = state.cancellation.load(Ordering::SeqCst);
+        let executable = std::env::current_exe().map_err(|_| "EXPORT_PUBLISHER")?;
+        let publisher = executable
+            .parent()
+            .ok_or("EXPORT_PUBLISHER")?
+            .join("passshare-export-publish.exe");
+        app.state::<commercial_export::ExportSessions>()
+            .publish_ordered(
+                &session_id,
+                &name,
+                bytes,
+                epoch,
+                &publisher,
+                || {
+                    state.foreground.load(Ordering::SeqCst)
+                        && state.cancellation.load(Ordering::SeqCst) == epoch
+                },
+                &state.export_commit,
+            )
+    })
+    .await
+    .map_err(|_| "EXPORT_PUBLISH".to_string())?
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_biometry::init())
+        .manage(commercial_export::ExportSessions::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
+            export_commit: Mutex::new(()),
             data: Mutex::new(BoxSession::default()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(false),
@@ -985,6 +1135,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commercial_export_open,
+            commercial_export_identity,
+            commercial_export_recover,
+            commercial_export_cancel,
+            commercial_export_close,
+            commercial_export_read,
+            commercial_export_publish,
             get_state,
             create_password_box,
             open_password_box,
@@ -1019,6 +1176,7 @@ mod smoke_tests {
 
     fn recovery_state() -> AppState {
         AppState {
+            export_commit: Mutex::new(()),
             data: Mutex::new(BoxSession::default()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(true),
@@ -1563,6 +1721,7 @@ mod smoke_tests {
         let mut session = NativeLock::default();
         assert!(session.unlock(session.begin_unlock(), start));
         let state = AppState {
+            export_commit: Mutex::new(()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(false),
             recovery_session_ticket: AtomicU64::new(0),
@@ -1603,6 +1762,7 @@ mod smoke_tests {
         let (dir, path) = temp_box("pending-open");
         let pb = PasswordBox::create(&path, &master_password).expect("create");
         let state = AppState {
+            export_commit: Mutex::new(()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(false),
             recovery_session_ticket: AtomicU64::new(0),
@@ -2067,5 +2227,135 @@ mod smoke_tests {
         assert!(pb.list_connect_items().expect("final list").is_empty());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod export_ipc_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires exact packaged publisher fixture; run explicitly with PASSSHARE_TEST_PUBLISHER"]
+    fn actual_tauri_invoke_opens_reads_closes_and_rejects_expired_session() {
+        use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
+        let app = mock_builder()
+            .manage(commercial_export::ExportSessions::default())
+            .manage(AppState {
+                export_commit: Mutex::new(()),
+                data: Mutex::new(BoxSession::default()),
+                cancellation: AtomicU64::new(0),
+                recovery_active: AtomicBool::new(false),
+                recovery_session_ticket: AtomicU64::new(0),
+                foreground: AtomicBool::new(true),
+            })
+            .invoke_handler(tauri::generate_handler![
+                commercial_export_open,
+                commercial_export_identity,
+                commercial_export_recover,
+                commercial_export_cancel,
+                commercial_export_close,
+                commercial_export_read,
+                commercial_export_publish
+            ])
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let call = |cmd: &str, value: serde_json::Value| {
+            get_ipc_response(
+                &window,
+                tauri::webview::InvokeRequest {
+                    cmd: cmd.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: "http://tauri.localhost".parse().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(value),
+                    headers: Default::default(),
+                    invoke_key: INVOKE_KEY.into(),
+                },
+            )
+        };
+        let root = std::env::temp_dir().join(format!("passshare-ipc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let token = call(
+            "commercial_export_open",
+            serde_json::json!({"directory":root}),
+        )
+        .unwrap()
+        .deserialize::<String>()
+        .unwrap();
+        assert!(call(
+            "commercial_export_read",
+            serde_json::json!({"sessionId":token,"name":"item-a.json"})
+        )
+        .unwrap()
+        .deserialize::<Option<Vec<u8>>>()
+        .unwrap()
+        .is_none());
+        // The application command resolves the fixed sibling, never an executable path from IPC.
+        let source = std::env::var_os("PASSSHARE_TEST_PUBLISHER")
+            .expect("explicit publisher fixture required");
+        let publisher = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("passshare-export-publish.exe");
+        let source_bytes = std::fs::read(source).unwrap();
+        let created = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&publisher)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                f.write_all(&source_bytes).unwrap();
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                assert_eq!(std::fs::read(&publisher).unwrap(), source_bytes);
+                false
+            }
+            Err(e) => panic!("{e}"),
+        };
+        call(
+            "commercial_export_publish",
+            serde_json::json!({"sessionId":token,"name":"attachment-a-b-v1.bin","bytes":[0,255,7]}),
+        )
+        .unwrap();
+        assert_eq!(
+            call(
+                "commercial_export_read",
+                serde_json::json!({"sessionId":token,"name":"attachment-a-b-v1.bin"})
+            )
+            .unwrap()
+            .deserialize::<Option<Vec<u8>>>()
+            .unwrap(),
+            Some(vec![0, 255, 7])
+        );
+        if created {
+            std::fs::remove_file(publisher).unwrap();
+        }
+        app.state::<AppState>()
+            .cancellation
+            .fetch_add(1, Ordering::SeqCst);
+        assert!(call(
+            "commercial_export_read",
+            serde_json::json!({"sessionId":token,"name":"item-a.json"})
+        )
+        .is_err());
+        call(
+            "commercial_export_close",
+            serde_json::json!({"sessionId":token}),
+        )
+        .unwrap();
+        app.state::<AppState>()
+            .foreground
+            .store(false, Ordering::SeqCst);
+        assert!(call(
+            "commercial_export_open",
+            serde_json::json!({"directory":root})
+        )
+        .is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

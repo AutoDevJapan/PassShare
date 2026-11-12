@@ -48,9 +48,15 @@ fn run() -> std::io::Result<()> {
         .ok_or_else(|| std::io::Error::other("parent required"))?;
     let temp = parent.join(format!(".passshare-export-{}.tmp", uuid::Uuid::new_v4()));
     let mut bytes = Zeroizing::new(Vec::new());
-    std::io::stdin()
-        .take(16 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
+    let gated = std::env::args().any(|a| a == "--commit-handshake");
+    if gated {
+        bytes.resize(expected, 0);
+        std::io::stdin().read_exact(&mut bytes)?;
+    } else {
+        std::io::stdin()
+            .take(16 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+    }
     if bytes.len() != expected {
         return Err(std::io::Error::other("output too large"));
     }
@@ -95,6 +101,7 @@ fn run() -> std::io::Result<()> {
             .create_new(true)
             .access_mode(0xC0010000)
             .share_mode(0)
+            .custom_flags(0x04000000)
             .open(&temp)?;
         let result = (|| {
             f.write_all(&bytes)?;
@@ -114,6 +121,15 @@ fn run() -> std::io::Result<()> {
                     p.add(offset),
                     target.len() * 2,
                 );
+                if gated {
+                    std::io::stdout().write_all(b"R")?;
+                    std::io::stdout().flush()?;
+                    let mut permit = [0u8; 1];
+                    std::io::stdin().read_exact(&mut permit)?;
+                    if permit != [b'C'] {
+                        return Err(std::io::Error::other("publication not permitted"));
+                    }
+                }
                 if SetFileInformationByHandle(f.as_raw_handle(), 3, p.cast(), len as u32) == 0 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -140,6 +156,18 @@ fn run() -> std::io::Result<()> {
             f.read_to_end(&mut actual)?;
             if *actual != *bytes {
                 return Err(std::io::Error::other("published output differs"));
+            }
+            unsafe {
+                let keep_on_close = 8u32;
+                if SetFileInformationByHandle(
+                    f.as_raw_handle(),
+                    21,
+                    (&keep_on_close as *const u32).cast(),
+                    4,
+                ) == 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
             }
             Ok(())
         })();

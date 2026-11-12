@@ -1,0 +1,4 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {nativeExportAcceptanceHost} from '../../scripts/native-export-acceptance-host.mjs';
+test('missing host rejects pending call and closes',async()=>{const h=nativeExportAcceptanceHost('Z:/passshare-nonexistent-fixture.exe');await assert.rejects(h.invoke('open',{}));await h.close();});
+test('host exiting before request rejects without hanging',async()=>{const h=nativeExportAcceptanceHost(process.execPath,['-e','process.exit(0)']);await h.close();await assert.rejects(h.invoke('open',{}));});
+test('normal native acceptance host response and stdin close',async()=>{const h=nativeExportAcceptanceHost(process.execPath,['-e',`require('readline').createInterface({input:process.stdin}).on('line',s=>{const r=JSON.parse(s);console.log(JSON.stringify({id:r.id,ok:true,value:7}));});`]);assert.equal(await h.invoke('read',{}),7);assert.equal(await h.close(),0);});
