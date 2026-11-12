@@ -28,6 +28,22 @@ const supportApi = load('support-receipts-api.ts');
 const boxMode = load('box-mode.ts', { './cloud-api': cloudApi });
 const sessionModule = (fetch) => load('session-transport.ts', { './cloud-api': cloudApi, './sharing-api': sharingApi, './support-receipts-api': supportApi }, { fetch });
 const box = 'a'.repeat(26), owner = '11111111-1111-4111-8111-111111111111';
+test('support receipt connection uses the immutable session and stops after disposal', async () => {
+  const requests=[];
+  const request={requestId:'11111111-1111-4111-8111-111111111111',kind:'technical',version:'0.1.0',platform:'windows',errorCode:''};
+  const {createCloudSession}=sessionModule(async(url,init)=>{
+    requests.push({url:url.href,init});
+    return Response.json({id:'22222222-2222-4222-8222-222222222222',status:'received',revision:0,history:[],createdAt:'2026-11-13T00:00:00Z',request,meaning:'request_received_not_contract_or_payment_confirmation'},{status:201});
+  });
+  const session=createCloudSession('https://support.example.invalid',owner,'synthetic-session');
+  await session.support.create(request,new AbortController().signal);
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].init.headers.get('Authorization'),'Bearer synthetic-session');
+  assert.equal(requests[0].init.credentials,'omit');
+  session.dispose();
+  await assert.rejects(session.support.create(request,new AbortController().signal));
+  assert.equal(requests.length,1);
+});
 const flush = () => renderer.act(async () => { for (let n = 0; n < 10; n++) await new Promise(setImmediate); });
 function events() {
   const listeners = new Map();
