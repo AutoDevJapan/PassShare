@@ -65,13 +65,13 @@ export async function consumeCommercialBox(
    if(seen.has(context.itemId)||(after!==null&&context.itemId<=after))throw new CloudApiError(502);
    seen.add(context.itemId);
    const plain=await worker.decrypt(JSON.stringify(envelope),context);current();
-   const item=JSON.parse(plain);if(!progress.items.has(context.itemId)){await consumeItem(plain,{...context});current();progress.items.add(context.itemId);}
+   const item=JSON.parse(plain);if(!progress.items.has(context.itemId)){await consumeItem(plain,{...context});progress.items.add(context.itemId);current();}
    for(const ref of item.attachments??[]){
     const attachment={passwordBoxId:boxId,itemId:context.itemId,attachmentId:ref.attachmentId,attachmentVersion:ref.attachmentVersion,keyEpoch:ref.keyEpoch};
         const key=JSON.stringify([context.itemId,attachment.attachmentId,attachment.attachmentVersion]);
     if(!progress.attachments.has(key)){
-     await consumeCommercialAttachment(limitedApi,worker,contractId,context,attachment,pin.snapshotRevision,signal,(file,sinkSignal)=>consumeAttachment(file,{...attachment},sinkSignal));
-     current();progress.attachments.add(key);
+     await consumeCommercialAttachment(limitedApi,worker,contractId,context,attachment,pin.snapshotRevision,signal,async(file,sinkSignal)=>{await consumeAttachment(file,{...attachment},sinkSignal);progress.attachments.add(key);});
+     current();
     }
    }
   }

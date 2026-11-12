@@ -79,3 +79,10 @@ test('same-snapshot progress resumes after worker lock without redelivering comp
  const run=(revision=4)=>consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:revision},new AbortController().signal,async()=>{items++;},async file=>{files.push(file.name);},progress);
  await assert.rejects(run());assert.equal(items,1);assert.deepEqual(files,[refs[0].attachmentId]);locked=false;await run();assert.equal(items,1);assert.deepEqual(files,refs.map(r=>r.attachmentId));await assert.rejects(run(5),(e:any)=>e.status===409);
 });
+
+test('successful sink is checkpointed even if it aborts before returning',async()=>{
+ const {consumeCommercialBox,createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress();const c=new AbortController(),box='a'.repeat(26),itemId='b'.repeat(26);let calls=0;
+ const api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId,itemVersion:1,keyEpoch:2}}],nextCursor:null,attachmentsIncluded:false})};const worker={decrypt:async()=>JSON.stringify({attachments:[]})};
+ await assert.rejects(consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},c.signal,async()=>{calls++;c.abort();},async()=>{},progress));
+ await consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async()=>{calls++;},async()=>{},progress);assert.equal(calls,1);
+});
