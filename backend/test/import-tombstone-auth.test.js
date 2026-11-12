@@ -1,6 +1,16 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import {createMemoryStore} from '../src/store/memory-store.js';
+test('memory rollback compare-delete preserves edits during the deletion await',async()=>{
+ const store=createMemoryStore();const box=await store.createVault({name:'synthetic'});
+ const item=await store.createItem(box,{title:'original'});
+ const expected=JSON.stringify(item);
+ const edit=store.replaceItem(box,item.id,{title:'edited',version:item.version});
+ const remove=store.deleteItem(box,item.id,expected);
+ await edit;await assert.rejects(remove,error=>error.status===409);
+ assert.equal((await store.getItem(box,item.id)).title,'edited');
+});
 
 test('the same deleted operation is hidden from expired sessions and conflicts for current sessions',async()=>{
  const source=await fs.readFile(new URL('../src/store/mutation-store.js',import.meta.url),'utf8');

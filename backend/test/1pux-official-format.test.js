@@ -55,4 +55,10 @@ test('official URLs and section values preserve client-facing values',async()=>{
  const [formPassword]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
  assert.equal(formPassword.fields[0].type,'CONCEALED');
  assert.equal(formPassword.fields[0].value,'synthetic-form-secret');
+ original.accounts[0].vaults[0].items[0].details.loginFields[0].designation='password';
+ original.accounts[0].vaults[0].items[0].details.password='synthetic-current-secret';
+ const [passwordConflict]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
+ assert.equal(passwordConflict.fields.filter(field=>field.purpose==='PASSWORD').length,1);
+ assert.equal(passwordConflict.fields.find(field=>field.purpose==='PASSWORD').value,'synthetic-current-secret');
+ assert.equal(passwordConflict.fields.find(field=>field.value==='synthetic-form-secret').type,'CONCEALED');
 });

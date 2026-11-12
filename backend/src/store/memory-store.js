@@ -162,8 +162,11 @@ export function createMemoryStore() {
       return patched;
     },
 
-    async deleteItem(vaultId, itemId) {
+    async deleteItem(vaultId, itemId, expectedDocument) {
       await requireItem(vaultId, itemId);
+      // Re-read after the await; compare and delete without another yield.
+      const current=items.get(itemId);
+      if(expectedDocument!==undefined&&JSON.stringify(current?.document)!==expectedDocument)throw connectHttpError(409,'PS015: Pending import changed; recovery requires original item');
       items.delete(itemId);
       for (const [fileId, file] of files.entries()) {
         if (file.meta.item_id === itemId) {

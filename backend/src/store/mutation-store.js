@@ -82,7 +82,7 @@ export async function createMutationStore({ store, authStore, pool }) {
         for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
       } catch (error) {
         if(!client) {
-          try { await transactionStore.deleteItem(input.resource,result.id); }
+          try { await transactionStore.deleteItem(input.resource,result.id,JSON.stringify(result)); }
           catch(cleanupError) {
             throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error});
           }
@@ -118,7 +118,7 @@ export async function createMutationStore({ store, authStore, pool }) {
           try {
             const current=await store.getItem(rollback.resource,rollback.itemId);
             if(JSON.stringify(current)!==rollback.document)throw connectHttpError(409,'PS015: Pending import changed; recovery requires original item');
-            await store.deleteItem(rollback.resource,rollback.itemId);
+            await store.deleteItem(rollback.resource,rollback.itemId,rollback.document);
           }
           catch(error){if(error?.status!==404)throw error;}
           pendingRollback.delete(scope.lock);
