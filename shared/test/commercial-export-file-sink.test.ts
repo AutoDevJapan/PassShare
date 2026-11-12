@@ -45,3 +45,11 @@ test('file created after absence probe is preserved under exclusive writer reche
  const directory={getFileHandle:async()=>{opens++;if(opens===1)throw new DOMException('missing','NotFoundError');return {getFile:async()=>({arrayBuffer:async()=>original.slice().buffer}),createWritable:async(options:any)=>{assert.equal(options.mode,'exclusive');assert.equal(options.keepExistingData,true);return {write:async()=>{writes++;},close:async()=>{},abort:async()=>{aborts++;}};}};}};
  const sink=createVerifiedExportSink(directory as any);await assert.rejects(sink.item('{}',{passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1},new AbortController().signal));assert.equal(writes,0);assert.equal(aborts,1);assert.deepEqual([...original],[9]);
 });
+
+test('cancelled empty output resumes only through its retained file identity',async()=>{
+ let present=false,stored=new Uint8Array(),cancelWrite=true;const controller=new AbortController();
+ const handle={isSameEntry:async(other:any)=>other===handle,getFile:async()=>({arrayBuffer:async()=>stored.slice().buffer}),createWritable:async()=>{let next=new Uint8Array();return {write:async(b:Uint8Array)=>{next=b.slice();if(cancelWrite)controller.abort();},close:async()=>{stored=next;},abort:async()=>{next.fill(0);}};}};
+ const directory={getFileHandle:async(_n:string,o?:{create?:boolean})=>{if(!present&&!o?.create)throw new DOMException('missing','NotFoundError');present=true;return handle;}};
+ const sink=createVerifiedExportSink(directory as any),context={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1};
+ await assert.rejects(sink.item('{}',context,controller.signal));assert.equal(stored.length,0);cancelWrite=false;await sink.item('{}',context,new AbortController().signal);assert.equal(new TextDecoder().decode(stored),'{}');
+});
