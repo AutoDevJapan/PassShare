@@ -15,7 +15,7 @@ export async function createMutationStore({ store, authStore, pool }) {
     await applySchemaWithAdvisoryLock(pool, 4820123, await nativeMutation({ command: "schema" }));
   }
 
-  async function execute(input, transactionStore, client, existing) {
+  async function execute(input, transactionStore, client, existing, memoryScope) {
     if (client && input.operation === "box" && existing?.result?.vaultId) {
       // Deletion locks the Box before changing this creation scope. A record
       // read before that wait is not current evidence after the lock returns.
@@ -77,14 +77,13 @@ export async function createMutationStore({ store, authStore, pool }) {
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
+      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id});
       try {
         for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
       } catch (error) {
         if(!client) {
           try { await transactionStore.deleteItem(input.resource,result.id); }
           catch(cleanupError) {
-            const scope=await nativeMutation({...nativeInput(input),command:'scope'});
-            pendingRollback.set(scope.lock,{resource:input.resource,itemId:result.id});
             throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error});
           }
         }
@@ -103,7 +102,7 @@ export async function createMutationStore({ store, authStore, pool }) {
     const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
     const record = await nativeMutation({ ...nativeInput(input), command: "record", result });
     if (client) await client.query("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES($1,$2,$3,$4,$5,$6::jsonb)", [...scope.parts,record.request_hash,JSON.stringify(record.result)]);
-    else records.set(scope.lock, record);
+    else {records.set(scope.lock, record);pendingRollback.delete(memoryScope);}
     await currentSession();
     return result;
   }
@@ -118,7 +117,7 @@ export async function createMutationStore({ store, authStore, pool }) {
           catch(error){if(error?.status!==404)throw error;}
           pendingRollback.delete(scope.lock);
         }
-        return execute(input,store,null,records.get(scope.lock));
+        return execute(input,store,null,records.get(scope.lock),scope.lock);
       });
       memoryTail = pending.catch(() => {});
       return pending;

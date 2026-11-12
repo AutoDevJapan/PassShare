@@ -142,7 +142,7 @@ function extractItemsFromExport(parsed) {
       const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'||field.fieldType==='P'||field.type==='P'?'CONCEALED':'STRING',value:field.value??''}));
       for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:['concealed','totp','sshKey'].some(key=>field.value&&Object.hasOwn(field.value,key))?'CONCEALED':'STRING',value:sectionFieldValue(field.value)});
       if(item.details?.notesPlain)fields.push({label:'notes',type:'STRING',value:item.details.notesPlain});
-      if(item.details?.password!==undefined)fields.push({label:'password',purpose:'PASSWORD',type:'CONCEALED',value:sectionFieldValue(item.details.password)});
+      if(item.details?.password!==undefined&&!fields.some(field=>field.purpose==='PASSWORD'&&field.value===sectionFieldValue(item.details.password)))fields.push({label:'password',purpose:'PASSWORD',type:'CONCEALED',value:sectionFieldValue(item.details.password)});
       for(const previous of item.details?.passwordHistory??[])fields.push({label:'password history',type:'CONCEALED',value:JSON.stringify(previous)});
       const urls=(item.overview.urls??[]).map(({url,...metadata})=>({...metadata,href:url,primary:url===item.overview.url}));
       if(item.overview.url&&!urls.some(value=>value.href===item.overview.url))urls.unshift({href:item.overview.url,primary:true});
