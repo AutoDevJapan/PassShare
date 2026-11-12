@@ -1,8 +1,8 @@
 # PassShare ユーザーガイド
 
 > Issue [#111](https://github.com/AutoDevJapan/PassShare/issues/111)  
-> Web: `/docs/user-guide`  
-> 最終更新: 2026-10-11
+> 関連するWeb画面: `/docs/user-guide`（別の翻訳contentを表示。このMarkdownを自動配信しません）
+> 最終更新: 2026-11-13
 
 ## 概要
 
@@ -38,6 +38,10 @@ DesktopのConnect接続も互換モードです。CLIの明示的な暗号化モ
 ## 5. データ移行
 
 1Password から 1PUX インポートまたは CSV エクスポート → PassShare インポート。
+
+WebのCSV/1PUX取込とDesktopのConnect向け1PUX取込で途中失敗した場合は、同じアカウント・Box・元ファイルのまま再試行してください。保存済み行は同じ取込キーで照合し、変更・削除された項目を勝手に作り直しません。部分結果が出た場合は件数を確認し、元ファイルを残してください。browser sessionの終了やDesktop再起動をまたぐ再取込まで重複防止を保証するものではありません。完了後に改めて取込むと新しい項目が作られます。Desktopの端末ファイル向けCSV取込は別の経路であり、このクラウド取込キーの保証には含めません。
+
+Connect互換モードのWeb一覧は表示に必要なmetadataを読み、コピーや編集の際に最新の詳細を取得します。詳細を取得できない場合はコピー・出力を成功扱いにしません。CSV出力とDesktop同期は一覧metadataだけで済ませず、全項目の詳細を読みます。
 
 ## 6. バックアップと復旧
 

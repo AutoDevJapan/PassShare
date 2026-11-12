@@ -1,5 +1,19 @@
 # 1PUX の保存前検査（2026-10-05）
 
+## 後続実装との対応（2026-11-13）
+
+下記の2026-10-05時点の結果と未実装記述は履歴として保持する。
+その後、[PR768](https://github.com/AutoDevJapan/PassShare/pull/768)でCSV、
+[PR769](https://github.com/AutoDevJapan/PassShare/pull/769)で1PUXの同一試行・行キーによる
+部分保存後の再送照合を実装した。[PR770](https://github.com/AutoDevJapan/PassShare/pull/770)は
+公式階層とDocument添付の部分対応、[PR771](https://github.com/AutoDevJapan/PassShare/pull/771)と
+[PR772](https://github.com/AutoDevJapan/PassShare/pull/772)は一覧metadata・詳細取得・秘匿notesコピーの整合を扱う。
+
+実装側の受入では、合成ZIPを正式認証HTTP・native・隔離PostgreSQLへ通し、添付の名前とbytes、同key再送、
+他actor拒否、保存失敗rollback、変更削除行の部分結果を確認した。browser sessionまたは
+Desktop process終了後の試行寿命、全形式対応、全client GUI、署名・販売の受入は別に残る。
+現在の動作と限界は[同期・移行仕様](../spec/sync-migration.md)を参照する。
+
 1PUX の後半に不正なカテゴリがあると、エラーを返しても前半の項目が保存されていた。ファイルを修正して再取込すると前半が重複するため、全項目の変換・入力検査を保存開始前へ移した。既存 API の入力検査順序だけを修正する。関連: [Issue #598](https://github.com/AutoDevJapan/PassShare/issues/598)、製品監査 S1・M2、共有 ToDo 1163・1599。
 
 ## 実装と範囲
