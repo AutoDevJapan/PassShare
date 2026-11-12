@@ -93,3 +93,10 @@ test('a progress record refuses parallel resume while its sink is outstanding',a
  const run=()=>consumeCommercialBox(api as any,worker as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async()=>{saves++;entered();await gate;},async()=>{},progress);
  const first=run();await started;await assert.rejects(run(),(e:any)=>e.status===409);finish();await first;await run();assert.equal(saves,1);
 });
+
+test('cancelled delayed attachment save retains ownership until drained and never replays a successful write',async()=>{
+ const {consumeCommercialBox,createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress();const controller=new AbortController();let entered!:()=>void,finish!:()=>void;const started=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{finish=r;});let saves=0,releases=0;const file={name:'private',bytes:new Uint8Array([7])};
+ const api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2}}],nextCursor:null,attachmentsIncluded:false}),getCommercialAttachmentItemSnapshot:async()=>'',getCommercialEncryptedAttachment:async()=>''};const worker={decrypt:async()=>JSON.stringify({attachments:[{attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2}]}),decryptAttachment:async()=>file,releaseAttachment:(v:any)=>{releases++;v.name='';v.bytes.fill(0);}};
+ const run=(signal:AbortSignal)=>consumeCommercialBox(api as any,worker as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},signal,async()=>{},async(_f,_c,sinkSignal)=>{assert.equal(sinkSignal,signal);entered();await gate;saves++;},progress);
+ const first=run(controller.signal);await started;controller.abort();assert.equal(file.bytes[0],0);await assert.rejects(run(new AbortController().signal),(e:any)=>e.status===409);assert.equal(saves,0);finish();await assert.rejects(first);assert.equal(saves,1);assert.equal(releases,1);await run(new AbortController().signal);assert.equal(saves,1);
+});

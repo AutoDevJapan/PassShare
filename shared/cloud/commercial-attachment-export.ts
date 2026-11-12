@@ -35,7 +35,7 @@ export async function consumeCommercialBox(
  api:Pick<CloudApi,'getCommercialExportPage'|'getCommercialAttachmentItemSnapshot'|'getCommercialEncryptedAttachment'>,
  worker:Pick<CloudWorker,'decrypt'|'decryptAttachment'|'releaseAttachment'>,
  contractId:string,boxId:string,pin:{keyEpoch:number;snapshotRevision:number},signal:AbortSignal,
- consumeItem:(itemJSON:string,context:ItemContext)=>Promise<void>,
+ consumeItem:(itemJSON:string,context:ItemContext,signal:AbortSignal)=>Promise<void>,
  consumeAttachment:(file:AttachmentPlaintext,context:AttachmentContext,signal:AbortSignal)=>Promise<void>,
  progress:CommercialExportProgress=createCommercialExportProgress(),
 ):Promise<void>{
@@ -69,7 +69,7 @@ export async function consumeCommercialBox(
    if(seen.has(context.itemId)||(after!==null&&context.itemId<=after))throw new CloudApiError(502);
    seen.add(context.itemId);
    const plain=await worker.decrypt(JSON.stringify(envelope),context);current();
-   const item=JSON.parse(plain);if(!progress.items.has(context.itemId)){await consumeItem(plain,{...context});progress.items.add(context.itemId);current();}
+   const item=JSON.parse(plain);if(!progress.items.has(context.itemId)){await consumeItem(plain,{...context},signal);progress.items.add(context.itemId);current();}
    for(const ref of item.attachments??[]){
     const attachment={passwordBoxId:boxId,itemId:context.itemId,attachmentId:ref.attachmentId,attachmentVersion:ref.attachmentVersion,keyEpoch:ref.keyEpoch};
         const key=JSON.stringify([context.itemId,attachment.attachmentId,attachment.attachmentVersion]);

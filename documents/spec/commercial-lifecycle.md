@@ -634,3 +634,14 @@ consumerは平文を即解放するがcallbackの終端までは完了を返さ�
 workerの5分idle期限は延長しない。`createCommercialExportProgress`の同snapshot記録を
 保持して通常の鍵再解除後に再開でき、完了済みcallbackは再送しない。revision/epochや
 契約/Boxを変えた記録の再利用は409で拒否し、資格・鍵・所属を復活させない。
+
+#### 一括consumerの実行所有と保存確定
+同一progressの実行は1件に限定し、GET待機・復号・保存callback・取消し後の排出まで
+所有を保持する。並行再開は409。成功callbackの戻りを保存確定とし、その記録を取消し
+検査より先に更新する。失敗・結果不明の保存を自動再送して最大1回を偽装しない。
+保存先はcontext（item/attachment ID・version）とsnapshotで上書き/冪等に確定し、
+成功した書込みを例外として報告しない。callback自身が保持した平文コピーや開始済み
+外部I/Oをconsumerから強制停止することはできないため、両callbackにAbortSignalを渡し、
+保存先が停止または確定結果を返すまでPromiseを終端しない。停止不能なら実行は未終端の
+まま所有を保持し、別実行による二重保存を許さない。添付元bufferは取消し直後に消去する。
+worker idleで中断しても権限・鍵を復活させず、通常再解除後に同snapshotの成功記録から再開する。
