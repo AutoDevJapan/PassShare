@@ -115,3 +115,7 @@ go vet ./...
 ツールの最小Go版は1.25。[公式API](https://pkg.go.dev/os#Root.Symlink)では `Root.Symlink` のリンク先そのものは検証されないため、rooted書き込みだけで外部readerを安全と判断しない。`Root.MkdirAll` / `Root.Symlink` の利用に合わせてツールのgo.modを上げる。CodeQLと候補workflowは同じgo.modを参照し、CodeQLにはSDKと検査ツールの両moduleを残す。SDKのGo1.22や通常のSDK CIは変更しない。
 
 新しい回帰検査は、正常なFrameworkの前方参照・リンク先読取を正対照とし、リンクと `..` を組み合わせた脱出、既存parent link、root link、不正なmember/target、dangling・循環・複数appを拒否する。展開先の外側に置いたsentinelの存在を先に確かめ、拒否後も内容とmtimeが不変であることを検査する。これはarchive処理の検査であり、製品の実署名・公証・導入・更新・削除やCodeQLの再実行成功とは区別する。
+
+### Windows x64 publisher sidecarの署名境界
+
+既存のmain・workflow・非公開・証明書の前提をすべて満たす署名候補のみ、正確な apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe 1 pathを追加署名対象とする。任意pathは許可しない。publisherのcold release buildには45分の有限上限を使い、短命な検査コマンドの3分上限とは分ける。NSIS抽出publisherは署名後の同sidecarと全bytes一致し、同じ発行元のAuthenticode検証にも成功する必要がある。prepare時のreceipt hashは署名前コピーの整合であり、署名後hashや実配布成功を表さない。現public repoでは既存private限定workflowの前提を満たさず、この変更は署名制御を解除しない。

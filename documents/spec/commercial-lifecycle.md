@@ -679,3 +679,5 @@ readbackを行う。非Windowsのpath操作実装とWindowsの実handle受入を
 Windows packagingは同sourceのrelease publisherをbuildし、target triple付きsidecarへ
 bytes/hash一致を確認してコピーする。Windows専用Tauri configでexternalBinへ含める。
 これは同梱準備であり、署名・installed IPC接続・GUI保存先選択の実受入とは区別する。
+
+Windows x64の署名候補では、既存の署名前提を満たす場合に限り、正確なtriple付きpublisher sidecar 1 pathを署名対象に含める。任意pathへの許可ではない。NSIS抽出publisherは署名後sidecarとの全bytes一致とAuthenticodeを検証する。prepare receiptのhashは署名前のコピー整合を示し、署名後bytesの証明ではない。
