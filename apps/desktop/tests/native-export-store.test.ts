@@ -9,3 +9,9 @@ test('native output session binds destination and preserves existing-file classi
  assert.equal(calls[1].args.sessionId,'owned-session');assert.equal('directory' in calls[1].args,false);await store.close();
 });
 test('cancelled native export never opens a destination',async()=>{let calls=0;const c=new AbortController();c.abort('cancel');await assert.rejects(createNativeExportStore(async()=>{calls++;},'C:/selected',c.signal));assert.equal(calls,0);});
+
+test('close waits for an owned in-flight publish before releasing its session',async()=>{
+ let release!:()=>void;const wait=new Promise<void>(r=>release=r);let publishing=false,closed=false;
+ const store=await createNativeExportStore(async(command)=>{if(command==='commercial_export_open')return 'owned';if(command==='commercial_export_publish'){publishing=true;await wait;publishing=false;return;}if(command==='commercial_export_close'){assert.equal(publishing,false);closed=true;}},'C:/selected',new AbortController().signal);
+ const writing=store.publishNew('item-a-v1.json',new Uint8Array([1]),new AbortController().signal);await Promise.resolve();const closing=store.close();await Promise.resolve();assert.equal(closed,false);release();await writing;await closing;assert.equal(closed,true);
+});
