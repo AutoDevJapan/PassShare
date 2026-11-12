@@ -24,6 +24,7 @@ use native_lock::NativeLock;
 mod commercial_export;
 
 struct AppState {
+    export_commit: Mutex<()>,
     data: Mutex<BoxSession>,
     cancellation: AtomicU64,
     recovery_active: AtomicBool,
@@ -89,6 +90,7 @@ impl AppState {
 
     fn lock(&self) -> Result<(), String> {
         // Invalidate work before waiting for an atomic Core save's mutex.
+        let _commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
         self.cancellation.fetch_add(1, Ordering::SeqCst);
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         data.session.lock();
@@ -255,6 +257,7 @@ impl AppState {
             return Ok(false);
         }
         self.recovery_active.store(false, Ordering::SeqCst);
+        let _commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
         self.cancellation.fetch_add(1, Ordering::SeqCst);
         if lock_on_cancel {
             self.lock()?;
@@ -1053,10 +1056,18 @@ async fn commercial_export_publish<R: tauri::Runtime>(
             .ok_or("EXPORT_PUBLISHER")?
             .join("passshare-export-publish.exe");
         app.state::<commercial_export::ExportSessions>()
-            .publish_checked(&session_id, &name, bytes, epoch, &publisher, || {
-                state.foreground.load(Ordering::SeqCst)
-                    && state.cancellation.load(Ordering::SeqCst) == epoch
-            })
+            .publish_ordered(
+                &session_id,
+                &name,
+                bytes,
+                epoch,
+                &publisher,
+                || {
+                    state.foreground.load(Ordering::SeqCst)
+                        && state.cancellation.load(Ordering::SeqCst) == epoch
+                },
+                &state.export_commit,
+            )
     })
     .await
     .map_err(|_| "EXPORT_PUBLISH".to_string())?
@@ -1068,6 +1079,7 @@ pub fn run() {
         .manage(commercial_export::ExportSessions::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
+            export_commit: Mutex::new(()),
             data: Mutex::new(BoxSession::default()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(false),
@@ -1079,8 +1091,10 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::Focused(true) => state.foreground.store(true, Ordering::SeqCst),
                 tauri::WindowEvent::Focused(false) => {
+                    let commit = state.export_commit.lock();
                     state.foreground.store(false, Ordering::SeqCst);
                     state.cancellation.fetch_add(1, Ordering::SeqCst);
+                    drop(commit);
                     let _ = state.recovery_background();
                     if state.recovery_active.load(Ordering::SeqCst) {
                         if let Ok(status) = state.status() {
@@ -1145,6 +1159,7 @@ mod smoke_tests {
 
     fn recovery_state() -> AppState {
         AppState {
+            export_commit: Mutex::new(()),
             data: Mutex::new(BoxSession::default()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(true),
@@ -1689,6 +1704,7 @@ mod smoke_tests {
         let mut session = NativeLock::default();
         assert!(session.unlock(session.begin_unlock(), start));
         let state = AppState {
+            export_commit: Mutex::new(()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(false),
             recovery_session_ticket: AtomicU64::new(0),
@@ -1729,6 +1745,7 @@ mod smoke_tests {
         let (dir, path) = temp_box("pending-open");
         let pb = PasswordBox::create(&path, &master_password).expect("create");
         let state = AppState {
+            export_commit: Mutex::new(()),
             cancellation: AtomicU64::new(0),
             recovery_active: AtomicBool::new(false),
             recovery_session_ticket: AtomicU64::new(0),
@@ -2206,6 +2223,7 @@ mod export_ipc_tests {
         let app = mock_builder()
             .manage(commercial_export::ExportSessions::default())
             .manage(AppState {
+                export_commit: Mutex::new(()),
                 data: Mutex::new(BoxSession::default()),
                 cancellation: AtomicU64::new(0),
                 recovery_active: AtomicBool::new(false),

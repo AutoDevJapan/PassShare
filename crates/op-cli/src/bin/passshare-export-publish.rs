@@ -48,9 +48,15 @@ fn run() -> std::io::Result<()> {
         .ok_or_else(|| std::io::Error::other("parent required"))?;
     let temp = parent.join(format!(".passshare-export-{}.tmp", uuid::Uuid::new_v4()));
     let mut bytes = Zeroizing::new(Vec::new());
-    std::io::stdin()
-        .take(16 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
+    let gated = std::env::args().any(|a| a == "--commit-handshake");
+    if gated {
+        bytes.resize(expected, 0);
+        std::io::stdin().read_exact(&mut bytes)?;
+    } else {
+        std::io::stdin()
+            .take(16 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+    }
     if bytes.len() != expected {
         return Err(std::io::Error::other("output too large"));
     }
@@ -114,6 +120,15 @@ fn run() -> std::io::Result<()> {
                     p.add(offset),
                     target.len() * 2,
                 );
+                if gated {
+                    std::io::stdout().write_all(b"R")?;
+                    std::io::stdout().flush()?;
+                    let mut permit = [0u8; 1];
+                    std::io::stdin().read_exact(&mut permit)?;
+                    if permit != [b'C'] {
+                        return Err(std::io::Error::other("publication not permitted"));
+                    }
+                }
                 if SetFileInformationByHandle(f.as_raw_handle(), 3, p.cast(), len as u32) == 0 {
                     return Err(std::io::Error::last_os_error());
                 }

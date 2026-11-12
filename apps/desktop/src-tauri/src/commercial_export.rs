@@ -194,6 +194,26 @@ impl ExportSessions {
         publisher: &Path,
         current: impl Fn() -> bool,
     ) -> Result<(), String> {
+        self.publish_ordered(
+            token,
+            name_,
+            bytes,
+            epoch,
+            publisher,
+            current,
+            &Mutex::new(()),
+        )
+    }
+    pub fn publish_ordered(
+        &self,
+        token: &str,
+        name_: &str,
+        bytes: Vec<u8>,
+        epoch: u64,
+        publisher: &Path,
+        current: impl Fn() -> bool,
+        commit_gate: &Mutex<()>,
+    ) -> Result<(), String> {
         let bytes = Zeroizing::new(bytes);
         if !name(name_) || bytes.len() > MAX {
             return Err("EXPORT_INPUT".into());
@@ -212,7 +232,10 @@ impl ExportSessions {
         let _held = &d.directory;
         let target = d.root.join(name_);
         let mut command = Command::new(publisher);
-        command.arg(target).arg(bytes.len().to_string());
+        command
+            .arg(target)
+            .arg(bytes.len().to_string())
+            .arg("--commit-handshake");
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -221,7 +244,7 @@ impl ExportSessions {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut child = command
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| "EXPORT_PUBLISH")?;
@@ -250,9 +273,37 @@ impl ExportSessions {
         }
         let mut stdin = child.stdin.take().ok_or("EXPORT_PUBLISH")?;
         let payload = Zeroizing::new(bytes.to_vec());
-        let writer = std::thread::spawn(move || stdin.write_all(&payload));
+        let mut stdout = child.stdout.take().ok_or("EXPORT_PUBLISH")?;
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let (permit_tx, permit_rx) = std::sync::mpsc::sync_channel(1);
+        let writer = std::thread::spawn(move || {
+            stdin.write_all(&payload)?;
+            let mut ready = [0u8; 1];
+            stdout.read_exact(&mut ready)?;
+            if ready != [b'R'] {
+                return Err(std::io::Error::other("invalid publisher readiness"));
+            }
+            ready_tx
+                .send(())
+                .map_err(|_| std::io::Error::other("permit channel closed"))?;
+            let permit = permit_rx
+                .recv_timeout(std::time::Duration::from_secs(13))
+                .map_err(|_| std::io::Error::other("permit expired"))?;
+            stdin.write_all(&[permit])
+        });
+        let mut authorized = false;
+        let mut commit_guard = None;
         let mut interrupted = false;
         let status = loop {
+            if !authorized && ready_rx.try_recv().is_ok() {
+                commit_guard = Some(commit_gate.lock().map_err(|_| "EXPORT_SESSION")?);
+                if !current() {
+                    interrupted = true;
+                    break None;
+                }
+                authorized = true;
+                let _ = permit_tx.send(b'C');
+            }
             match child.try_wait() {
                 Ok(Some(status)) => break Some(status),
                 Ok(None) => {}
@@ -262,7 +313,7 @@ impl ExportSessions {
                 }
             }
             if std::time::Instant::now() + std::time::Duration::from_secs(2) >= deadline
-                || !current()
+                || (!authorized && !current())
             {
                 interrupted = true;
                 break None;
@@ -324,6 +375,7 @@ impl ExportSessions {
         if d.pending.is_some() {
             return Err("EXPORT_DRAIN_UNCONFIRMED".into());
         }
+        drop(commit_guard);
         if !current() {
             return Err("EXPORT_COMMITTED_SESSION_EXPIRED".into());
         }
@@ -522,7 +574,7 @@ mod retained_tests {
             .arg("0")
             .creation_flags(0x08000004)
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
