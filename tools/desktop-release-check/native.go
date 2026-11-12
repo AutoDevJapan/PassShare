@@ -95,8 +95,7 @@ func signWindows(path string) error {
 	if err != nil {
 		return fail("cannot resolve signing target")
 	}
-	rel, err := filepath.Rel(filepath.Join(root, "target/release"), resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !allowedWindowsSigningPath(root, resolved) {
 		return fail("signing target must stay inside candidate build output")
 	}
 	tool, err := signtool()
@@ -215,6 +214,13 @@ func nativeCheck(root, bundle, path, version string) (string, string, error) {
 		}
 		if !sameFiles(applications[0], filepath.Join(root, "target/release/passshare-desktop.exe")) {
 			return "", "", fail("installer payload and signed application bytes differ")
+		}
+		publisher, e := verifyPublisherPayload(scratch, filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe"))
+		if e != nil {
+			return "", "", e
+		}
+		if err = windowsVerify(publisher, ""); err != nil {
+			return "", "", err
 		}
 		if err = windowsVerify(applications[0], version); err != nil {
 			return "", "", err
@@ -571,4 +577,31 @@ func materializeMacLinks(root *os.Root, links map[string]string) error {
 		}
 	}
 	return nil
+}
+
+func verifyPublisherPayload(extracted, expected string) (string, error) {
+	var publishers []string
+	if filepath.WalkDir(extracted, func(p string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if !d.IsDir() && strings.EqualFold(d.Name(), "passshare-export-publish.exe") {
+			publishers = append(publishers, p)
+		}
+		return nil
+	}) != nil || len(publishers) != 1 {
+		return "", fail("NSIS must contain exactly one export publisher")
+	}
+	if !sameFiles(publishers[0], expected) {
+		return "", fail("installer export publisher bytes differ")
+	}
+	return publishers[0], nil
+}
+
+func allowedWindowsSigningPath(root, resolved string) bool {
+	rel, err := filepath.Rel(filepath.Join(root, "target/release"), resolved)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return true
+	}
+	return strings.EqualFold(resolved, filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe"))
 }

@@ -122,6 +122,37 @@ func TestSourceVersionKeyAndSHA(t *testing.T) {
 	if s, err := inspectSource(root, sha); err != nil || s.TauriVersion != "0.1.0" {
 		t.Fatalf("clean source must pass: %v", err)
 	}
+	overlay := filepath.Join(root, "apps/desktop/src-tauri/tauri.windows-export.conf.json")
+	write(t, overlay, []byte(`{"bundle":{"externalBin":["binaries/passshare-export-publish"]}}`))
+	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "export publisher overlay"}} {
+		if _, e := command(root, nil, "git", args...); e != nil {
+			t.Fatal(e)
+		}
+	}
+	updated, e := command(root, nil, "git", "rev-parse", "HEAD")
+	if e != nil {
+		t.Fatal(e)
+	}
+	sha = strings.TrimSpace(string(updated))
+	if _, e = inspectSource(root, sha); e != nil {
+		t.Fatalf("exact publisher overlay rejected: %v", e)
+	}
+	write(t, overlay, []byte(`{"bundle":{"externalBin":["binaries/passshare-export-publish"],"createUpdaterArtifacts":true}}`))
+	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "invalid committed publisher overlay"}} {
+		if _, e = command(root, nil, "git", args...); e != nil {
+			t.Fatal(e)
+		}
+	}
+	invalidHead, e := command(root, nil, "git", "rev-parse", "HEAD")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = inspectSource(root, strings.TrimSpace(string(invalidHead))); e == nil {
+		t.Fatal("modified publisher overlay accepted")
+	}
+	if _, e = command(root, nil, "git", "checkout", "HEAD~1", "--", overlay); e != nil {
+		t.Fatal(e)
+	}
 	if _, err = inspectSource(root, strings.Repeat("b", 40)); err == nil {
 		t.Fatal("wrong checkout SHA accepted")
 	}
@@ -276,5 +307,48 @@ func TestChildOutputCaptureIsBounded(t *testing.T) {
 	// io.Copy must not bypass Write through a promoted Buffer.ReadFrom method.
 	if n, err := io.Copy(&b, io.LimitReader(bytes.NewReader(make([]byte, 2*1024*1024)), 2*1024*1024)); err != nil || n != 2*1024*1024 || b.buffer.Len() != 1024*1024 {
 		t.Fatal("child output capture was not bounded")
+	}
+}
+
+func TestPublisherPayloadRequiresExactUniqueSignedBuildBytes(t *testing.T) {
+	root := scratch(t)
+	expected := filepath.Join(root, "expected.exe")
+	write(t, expected, []byte("signed-build"))
+	payload := filepath.Join(root, "payload")
+	if err := os.Mkdir(payload, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyPublisherPayload(payload, expected); err == nil {
+		t.Fatal("missing publisher accepted")
+	}
+	p := filepath.Join(payload, "passshare-export-publish.exe")
+	write(t, p, []byte("signed-build"))
+	if _, err := verifyPublisherPayload(payload, expected); err != nil {
+		t.Fatal(err)
+	}
+	write(t, p, []byte("substituted"))
+	if _, err := verifyPublisherPayload(payload, expected); err == nil {
+		t.Fatal("substituted publisher accepted")
+	}
+	write(t, p, []byte("signed-build"))
+	write(t, filepath.Join(payload, "other/passshare-export-publish.exe"), []byte("signed-build"))
+	if _, err := verifyPublisherPayload(payload, expected); err == nil {
+		t.Fatal("duplicate publisher accepted")
+	}
+}
+
+func TestSigningPathAllowsOnlyExactPublisherException(t *testing.T) {
+	root := filepath.Join(scratch(t), "repo")
+	exact := filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe")
+	if !allowedWindowsSigningPath(root, exact) {
+		t.Fatal("fixed sidecar rejected")
+	}
+	if !allowedWindowsSigningPath(root, filepath.Join(root, "target/release/passshare-desktop.exe")) {
+		t.Fatal("existing build output rejected")
+	}
+	for _, p := range []string{exact + ".other.exe", filepath.Join(root, "apps/desktop/src-tauri/binaries/other.exe"), filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-aarch64-pc-windows-msvc.exe"), filepath.Join(root, "target/release-other/file.exe")} {
+		if allowedWindowsSigningPath(root, p) {
+			t.Fatalf("unqualified signing path accepted: %s", p)
+		}
 	}
 }

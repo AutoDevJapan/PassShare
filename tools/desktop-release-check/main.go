@@ -137,6 +137,18 @@ func inspectSource(root, sha string) (source, error) {
 	}
 	for _, pattern := range []string{"apps/desktop/src-tauri/tauri.*.conf.*", "apps/desktop/src-tauri/tauri.conf.json5", "apps/desktop/src-tauri/Tauri*.toml"} {
 		paths, e := filepath.Glob(filepath.Join(root, pattern))
+		if e == nil && len(paths) == 1 && filepath.Base(paths[0]) == "tauri.windows-export.conf.json" {
+			data, readErr := os.ReadFile(paths[0])
+			var value any
+			expected := map[string]any{"bundle": map[string]any{"externalBin": []any{"binaries/passshare-export-publish"}}}
+			if readErr == nil && json.Unmarshal(data, &value) == nil {
+				actual, _ := json.Marshal(value)
+				want, _ := json.Marshal(expected)
+				if bytes.Equal(actual, want) {
+					continue
+				}
+			}
+		}
 		if e != nil || len(paths) != 0 {
 			return s, fail("additional Tauri configs require explicit verifier support")
 		}
@@ -225,7 +237,10 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 func command(dir string, extra []string, program string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	return commandWithin(3*time.Minute, dir, extra, program, args...)
+}
+func commandWithin(timeout time.Duration, dir string, extra []string, program string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, program, args...)
 	c.Dir = dir
@@ -259,6 +274,13 @@ func build(root string, src source) error {
 			return fail("cannot locate signer")
 		}
 		b["windows"] = map[string]any{"signCommand": map[string]any{"cmd": exe, "args": []string{"sign-windows", "%1"}}}
+		if _, err := commandWithin(45*time.Minute, root, nil, "cargo", "build", "--locked", "--release", "-p", "op-cli", "--bin", "passshare-export-publish"); err != nil {
+			return fail("cannot build export publisher")
+		}
+		if _, err := command(root, nil, "node", "scripts/prepare-desktop-export-publisher.mjs"); err != nil {
+			return fail("cannot prepare export publisher")
+		}
+		b["externalBin"] = []string{"binaries/passshare-export-publish"}
 		bundles = "nsis"
 	case "darwin":
 		if err := macPrerequisites(); err != nil {
