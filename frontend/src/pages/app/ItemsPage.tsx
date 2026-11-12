@@ -336,7 +336,9 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
   async function handleExportCsv() {
     if (!itemsReady || busyRef.current || !window.confirm(t("app.item.exportWarning"))) return;
     busyRef.current=true;setBusy(true);
-    try{const details=await loadItemDetails(items,currentDetail);downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(details.map(connectItemFromApi)));setExportMessage(labels.exportSuccess);}
+    const scope=activeScope.current,generation=loadGeneration.current;
+    const ensureExport=async()=>{await ensureCompatibility();if(scope!==activeScope.current||generation!==loadGeneration.current)throw new Error('Inactive export');};
+    try{const details=await loadItemDetails(items,currentDetail,ensureExport);await ensureExport();downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(details.map(connectItemFromApi)));setExportMessage(labels.exportSuccess);}
     catch{setError(t('app.item.loadError'));}finally{busyRef.current=false;setBusy(false);}
   }
 

@@ -19,6 +19,8 @@ export function nowIso() {
 
 /** @param {unknown} item */
 export function toItemOverview(item) {
+  const fields=Array.isArray(item.fields)?item.fields.filter(field=>field&&typeof field==='object'):[];
+  const value=(key,name)=>fields.find(field=>typeof field[key]==='string'&&field[key].toLowerCase()===name&&typeof field.value==='string')?.value??'';
   return {
     id: item.id,
     title: item.title,
@@ -32,10 +34,10 @@ export function toItemOverview(item) {
     tags: item.tags ?? [],
     urls: item.urls ?? [],
       favorite: Boolean(item.favorite),
-      username: item.fields?.find(field=>field.purpose?.toUpperCase()==='USERNAME')?.value ?? '',
-      hasPassword: Boolean(item.fields?.some(field=>field.purpose?.toUpperCase()==='PASSWORD'&&field.value)),
-      hasBody: Boolean(item.fields?.some(field=>['notes','body'].includes(field.label?.toLowerCase())&&field.value)),
-      bodyPreview: (item.fields?.find(field=>field.label?.toLowerCase()==='notes')?.value ?? item.fields?.find(field=>field.label?.toLowerCase()==='body')?.value ?? '').slice(0,80),
+      username: value('purpose','username'),
+      hasPassword: Boolean(value('purpose','password')),
+      hasBody: Boolean(value('label','notes')||value('label','body')),
+      bodyPreview: (value('label','notes')||value('label','body')).slice(0,80),
   };
 }
 
