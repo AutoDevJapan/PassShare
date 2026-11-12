@@ -137,7 +137,7 @@ function extractItemsFromExport(parsed) {
     const items=[];
     for(const account of parsed.accounts)for(const vault of account.vaults??[])for(const item of vault.items??[]){
       if(!item?.overview||typeof item.overview.title!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX item overview');
-      const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'?'CONCEALED':'STRING',value:field.value??''}));
+      const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'||field.fieldType==='P'||field.type==='P'?'CONCEALED':'STRING',value:field.value??''}));
       for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:field.value?.concealed!==undefined?'CONCEALED':'STRING',value:sectionFieldValue(field.value)});
       if(item.details?.notesPlain)fields.push({label:'notes',type:'STRING',value:item.details.notesPlain});
       const urls=(item.overview.urls??[]).map(({url,...metadata})=>({...metadata,href:url,primary:url===item.overview.url}));

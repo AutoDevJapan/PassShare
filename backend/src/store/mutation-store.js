@@ -76,7 +76,15 @@ export async function createMutationStore({ store, authStore, pool }) {
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
-      for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
+      try {
+        for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
+      } catch (error) {
+        if(!client) {
+          try { await transactionStore.deleteItem(input.resource,result.id); }
+          catch(cleanupError) { throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error}); }
+        }
+        throw error;
+      }
     } else {
       const vaultId = generateConnectId();
       if (client) {

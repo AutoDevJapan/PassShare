@@ -43,4 +43,8 @@ test('official URLs and section values preserve client-facing values',async()=>{
  overview.urls.push({url:overview.url,label:'primary'});
  const [primaryLast]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
  assert.equal(primaryLast.urls.find(url=>url.primary).href,overview.url);
+ original.accounts[0].vaults[0].items[0].details.loginFields=[{fieldType:'P',value:'synthetic-form-secret'}];
+ const [formPassword]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
+ assert.equal(formPassword.fields[0].type,'CONCEALED');
+ assert.equal(formPassword.fields[0].value,'synthetic-form-secret');
 });
