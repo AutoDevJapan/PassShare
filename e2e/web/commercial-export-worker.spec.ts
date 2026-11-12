@@ -6,7 +6,7 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
  await page.goto('/cloud-crypto/boot.mjs');
  const result=await page.evaluate(async()=>{
   const {CloudWorker,CloudWorkerError}=await import('/src/lib/cloud-worker.ts');
-  const {createCloudApi}=await import('/src/lib/cloud-api.ts');
+  const {createCloudApi,consumeCommercialBox}=await import('/src/lib/cloud-api.ts');
   const boxId='a'.repeat(26),itemId='b'.repeat(26),ownerAccountId='11111111-1111-4111-8111-111111111111',contractId='22222222-2222-4222-8222-222222222222';
   const worker=new CloudWorker();
   try{
@@ -33,6 +33,10 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
    const file=await worker.decryptAttachment(fetchedAttachment,attachmentContext,source);
    const attachmentMatches=file.name==='添付.bin'&&file.bytes.length===originalBytes.length&&file.bytes.every((b,i)=>b===originalBytes[i]);
    worker.releaseAttachment(file);
+   let consumedItems=0,consumedAttachments=0;
+   const bulkApi=createCloudApi(async path=>Response.json({format:'passshare-encrypted-export-v1',receiptId:'33333333-3333-4333-8333-333333333333',boxId,keyEpoch:1,snapshotRevision:2,ciphertextOnly:true,restoresIdentityMembershipOrKeys:false,data:path.includes('/attachments/')?JSON.parse(attachment):path.includes('attachment-snapshot')?JSON.parse(parentEnvelope):{envelopes:[JSON.parse(parentEnvelope)],nextCursor:null,attachmentsIncluded:false}}));
+   await consumeCommercialBox(bulkApi,worker,contractId,boxId,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,async text=>{if(JSON.parse(text).id!==itemId)throw new Error('item mismatch');consumedItems++;},async value=>{if(value.name!=='添付.bin'||!value.bytes.every((b,i)=>b===originalBytes[i])||value.bytes.length!==originalBytes.length)throw new Error('attachment mismatch');consumedAttachments++;});
+   if(consumedItems!==1||consumedAttachments!==1||worker.isClosed)throw new Error('consumer incomplete');
    const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
    return {matches:JSON.stringify(canonical(decrypted))===JSON.stringify(canonical(plain)),afterMatches:JSON.stringify(canonical(after))===JSON.stringify(canonical(plain)),attachmentMatches,items:page.envelopes.length,wrongContextRejected,liveBefore,liveAfter};
   }finally{worker.dispose();await worker.closed;}

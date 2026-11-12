@@ -621,3 +621,30 @@ sandbox台帳や未払い受諾を有料期間へ昇格しない。他の契約�
 最新削除台帳の独立保全、本番復元後の削除再適用の運用受入、法定保持期間・監査記録の
 保持契約、全クライアントの表示／受入も未完である。受付台帳の退会cascadeは架空検査の
 挙動であり、有料契約の法定保存期間を確定したものではない。本候補をM8全完としない。
+
+契約添付consumerは`consumeCommercialAttachment`で親snapshotと添付暗号文を同revisionで
+取得し、既存workerへ独立contextと両revisionを渡す。保存callbackは必要bytesを処理中に
+コピーし、返却後に保持しない。成功・保存失敗・取消しの全経路でworkerの解放を行う。
+このcallback接続は一括archive形式や全client UIの提供完了を意味しない。
+consumerの一括走査は既存30回/分制限を変更しない。429となったGETのみ61秒待機して
+最大1回再送し、配送済み保存callbackは再実行しない。待機中も取消し可能とする。
+保存callbackが失敗した場合は呼出元が部分出力を未完了として扱い、完成を示さない。
+保存callbackは取消signalを受け取り、取消時の書込み停止と部分出力の破棄を担う。
+consumerは平文を即解放するがcallbackの終端までは完了を返さず、書込みの排出を待つ。
+workerの5分idle期限は延長しない。`createCommercialExportProgress`の同snapshot記録を
+保持して通常の鍵再解除後に再開でき、完了済みcallbackは再送しない。revision/epochや
+契約/Boxを変えた記録の再利用は409で拒否し、資格・鍵・所属を復活させない。
+
+#### 一括consumerの実行所有と保存確定
+同一progressの実行は1件に限定し、GET待機・復号・保存callback・取消し後の排出まで
+所有を保持する。並行再開は409。成功callbackの戻りを保存確定とし、その記録を取消し
+検査より先に更新する。失敗・結果不明の保存を自動再送して最大1回を偽装しない。
+保存先はcontext（item/attachment ID・version）とsnapshotで上書き/冪等に確定し、
+成功した書込みを例外として報告しない。callback自身が保持した平文コピーや開始済み
+外部I/Oをconsumerから強制停止することはできないため、両callbackにAbortSignalを渡し、
+保存先が停止または確定結果を返すまでPromiseを終端しない。停止不能なら実行は未終端の
+まま所有を保持し、別実行による二重保存を許さない。添付元bufferは取消し直後に消去する。
+worker idleで中断しても権限・鍵を復活させず、通常再解除後に同snapshotの成功記録から再開する。
+取消しは`signal.reason`（通常`AbortError`）で伝播し、snapshot不一致・並行再開の409と
+区別する。fetch中の取消しも同じ理由へ正規化する。callbackが取消しを確定する場合は
+成功returnせず同取消理由をrejectし、未保存分を成功checkpointへ含めない。
