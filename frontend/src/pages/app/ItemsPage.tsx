@@ -238,13 +238,13 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
       csvAttempt.current = attempt;
       imported = attempt.completed.size;
       for (const [index, row] of parsed.entries()) {
-        if (attempt.completed.has(index)) continue;
         await ensureCompatibility();
         if (scope !== activeScope.current) return;
         await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
+        const alreadyCompleted = attempt.completed.has(index);
         attempt.completed.add(index);
         saveImportAttempt(attempt);
-        imported += 1;
+        if (!alreadyCompleted) imported += 1;
       }
       if (scope !== activeScope.current) return;
       setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
