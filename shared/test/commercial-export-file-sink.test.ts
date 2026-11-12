@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,readFile,writeFile,rm,link,unlink} from 'node:fs/promises';
-import {tmpdir} from 'node:os';import {join} from 'node:path';import {randomUUID} from 'node:crypto';
+import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {createVerifiedExportSink,type VerifiedExportStore} from '../cloud/commercial-export-file-sink.ts';
 
 async function fixture(run:(store:VerifiedExportStore,root:string)=>Promise<void>){
  const root=await mkdtemp(join(tmpdir(),'passshare-export-sink-'));
- const store:VerifiedExportStore={read:async name=>{try{return new Uint8Array(await readFile(join(root,name)));}catch(e){if((e as any).code==='ENOENT')return null;throw e;}},publishNew:async(name,b,signal)=>{
-  const temp=join(root,'.export-'+randomUUID());
-  try{await writeFile(temp,b,{flag:'wx',mode:0o600});if(signal.aborted)throw signal.reason;await link(temp,join(root,name));}finally{await unlink(temp).catch((e:any)=>{if(e.code!=='ENOENT')throw e;});}
- }};
+ const {createAtomicExportStore}=await import('../../scripts/atomic-export-store.mjs');
+ const store:VerifiedExportStore=createAtomicExportStore(root);
  try{await run(store,root);}finally{await rm(root,{recursive:true});}
 }
 const context={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1};
