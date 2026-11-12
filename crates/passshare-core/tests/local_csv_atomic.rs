@@ -4,14 +4,14 @@ use passshare_core::{PasswordBox, SavedChange};
 fn local_csv_save_precondition_failure_then_retry_preserves_items() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("retry.pbox");
-    let master = "Synthetic-local-csv-only";
-    let mut pb = PasswordBox::create(&path, master).unwrap();
+    let master = uuid::Uuid::new_v4().to_string();
+    let mut pb = PasswordBox::create(&path, &master).unwrap();
     let before = std::fs::read(&path).unwrap();
     let csv = "Title,Username,Password\nSame,user,synthetic\nSame,user,synthetic\n";
     assert!(pb
         .apply_and_save(
             SavedChange::ImportCsv("Username,Password\nuser,synthetic\n"),
-            master,
+            &master,
         )
         .is_err());
     assert!(pb.list_connect_items().unwrap().is_empty());
@@ -22,28 +22,28 @@ fn local_csv_save_precondition_failure_then_retry_preserves_items() {
     std::fs::rename(&path, &blocked).unwrap();
     std::fs::create_dir(&path).unwrap();
     assert!(pb
-        .apply_and_save(SavedChange::ImportCsv(csv), master)
+        .apply_and_save(SavedChange::ImportCsv(csv), &master)
         .is_err());
     assert!(pb.list_connect_items().unwrap().is_empty());
     assert_eq!(std::fs::read(&blocked).unwrap(), before);
     std::fs::remove_dir(&path).unwrap();
     std::fs::rename(&blocked, &path).unwrap();
     assert_eq!(
-        pb.apply_and_save(SavedChange::ImportCsv(csv), master)
+        pb.apply_and_save(SavedChange::ImportCsv(csv), &master)
             .unwrap(),
         2
     );
-    let reopened = PasswordBox::open(&path, master).unwrap();
+    let reopened = PasswordBox::open(&path, &master).unwrap();
     let items = reopened.list_connect_items().unwrap();
     assert_eq!(items.len(), 2);
     assert_ne!(items[0].id, items[1].id);
     assert_eq!(
-        pb.apply_and_save(SavedChange::ImportCsv(csv), master)
+        pb.apply_and_save(SavedChange::ImportCsv(csv), &master)
             .unwrap(),
         2
     );
     assert_eq!(
-        PasswordBox::open(&path, master)
+        PasswordBox::open(&path, &master)
             .unwrap()
             .list_connect_items()
             .unwrap()
@@ -53,7 +53,7 @@ fn local_csv_save_precondition_failure_then_retry_preserves_items() {
     let committed = std::fs::read(&path).unwrap();
     pb.lock();
     assert!(pb
-        .apply_and_save(SavedChange::ImportCsv(csv), master)
+        .apply_and_save(SavedChange::ImportCsv(csv), &master)
         .is_err());
     assert_eq!(std::fs::read(&path).unwrap(), committed);
 }
