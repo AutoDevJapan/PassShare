@@ -89,7 +89,11 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
       });
       if (generation !== loadGeneration.current) return;
       setVaultName(vault.name);
-      setItems(overviews.map(overview=>{
+      if(overviews.some(row=>(row as typeof row & {listMetadataVersion?:number}).listMetadataVersion!==1)){
+        const details=await loadItemDetails(overviews,id=>connectClient.getItem(vaultId,id),async()=>{await ensureCompatibility();if(generation!==loadGeneration.current)throw new Error('Inactive list');});
+        if(generation!==loadGeneration.current)return;
+        setItems(details.map(connectItemFromApi));
+      }else setItems(overviews.map(overview=>{
         const metadata=overview as typeof overview & {username?:string;favorite?:boolean;hasPassword?:boolean;hasBody?:boolean;bodyPreview?:string};
         return {...connectItemFromApi({...overview,fields:[]} as Item),username:metadata.username??'',favorite:metadata.favorite??false,hasPassword:metadata.hasPassword,hasBody:metadata.hasBody,body:metadata.bodyPreview};
       }));

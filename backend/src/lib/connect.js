@@ -35,6 +35,7 @@ export function toItemOverview(item) {
     tags: item.tags ?? [],
     urls: item.urls ?? [],
       favorite: Boolean(item.favorite),
+      listMetadataVersion: 1,
       username: value('purpose','username'),
       hasPassword: password,
       hasBody: Boolean(value('label','notes')||value('label','body')),
