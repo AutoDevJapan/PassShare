@@ -107,6 +107,8 @@ compares it with the currently authenticated cookie session before handling a
 receipt. A same-owner cookie change before this tab refreshes is therefore
 rejected as 401 and retires the stale factory. It grants no access; existing
 clients omitting this optional precondition retain normal session authorization.
+If an older backend omits sessionBinding, the Provider disables only its receipt
+factory. Existing Connect access remains available during deployment ordering.
 Controlled React Provider tests execute the real receipt adapter with synthetic
 HTTP responses. They do not prove browser cookies, PostgreSQL persistence or a
 visible support operation. The visible entry still requires its scoped UI answer.

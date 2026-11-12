@@ -116,11 +116,11 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!active()) return null;
     if (typeof credentials.sessionBinding !== 'string' || !credentials.sessionBinding) {
       clearSupport();
-      throw new Error('Missing authenticated receipt session binding');
+    } else {
+      if (receiptSession.current !== credentials.sessionBinding) clearSupport();
+      receiptSession.current = credentials.sessionBinding;
+      bindSupport(currentUser.id);
     }
-    if (receiptSession.current !== credentials.sessionBinding) clearSupport();
-    receiptSession.current = credentials.sessionBinding;
-    bindSupport(currentUser.id);
     // Same-account metadata refresh with the same credential preserves drafts.
     // A changed credential is a new lifetime boundary for all private handles.
     if (currentCredential.current !== null && currentCredential.current !== credentials.accessToken) {

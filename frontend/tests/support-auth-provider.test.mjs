@@ -150,3 +150,16 @@ test('receipt 401 retires the old client before a new same-owner cookie can reus
     assert.equal(h.requests.length,2);
   } finally {await h.unmount();}
 });
+
+test('an older backend without session binding disables receipts but preserves existing Connect access', async () => {
+  const h=await host();
+  try {
+    const old=h.current.supportClient;
+    h.setBinding(undefined);
+    await renderer.act(async()=>h.current.refresh());
+    assert.equal(h.current.supportClient,null);
+    assert.ok(h.current.connectClient);
+    await assert.rejects(old.create(h.request,new AbortController().signal));
+    assert.equal(h.requests.length,0);
+  } finally {await h.unmount();}
+});
