@@ -124,3 +124,8 @@ test('cancellation during the retried GET preserves AbortError',async t=>{
  const api={getCommercialExportPage:async()=>{calls++;if(calls===1){limited();throw new CloudApiError(429);}c.abort();throw new CloudApiError(0);}};
  const pending=consumeCommercialBox(api as any,{} as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},c.signal,async()=>{},async()=>{});await reached;await Promise.resolve();await Promise.resolve();t.mock.timers.tick(61000);await assert.rejects(pending,(e:any)=>e.name==='AbortError');assert.equal(calls,2);
 });
+
+test('worker failure racing cancellation preserves cancellation reason',async()=>{
+ const c=new AbortController(),reason=new DOMException('cancel','AbortError'),item={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2},attachment={passwordBoxId:item.passwordBoxId,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};const api={getCommercialAttachmentItemSnapshot:async()=>'',getCommercialEncryptedAttachment:async()=>''};const worker={decryptAttachment:async()=>{c.abort(reason);throw new Error('worker unavailable');},releaseAttachment:()=>{throw new Error('no file returned');}};
+ await assert.rejects(consumeCommercialAttachment(api as any,worker as any,'contract',item,attachment,4,c.signal,async()=>{}),e=>e===reason);
+});

@@ -16,7 +16,7 @@ export async function consumeCommercialAttachment(
  const cancelledRequest=async<T>(run:()=>Promise<T>):Promise<T>=>{try{return await run();}catch(error){if(signal.aborted)throw signal.reason??new DOMException('Export cancelled','AbortError');throw error;}};
  const parent=await cancelledRequest(()=>api.getCommercialAttachmentItemSnapshot(contractId,item,revision,signal));current();
  const body=await cancelledRequest(()=>api.getCommercialEncryptedAttachment(contractId,attachment,revision,signal));current();
- const file=await worker.decryptAttachment(body,attachment,{itemEnvelope:parent,expectedItemContext:item,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision});
+ const file=await cancelledRequest(()=>worker.decryptAttachment(body,attachment,{itemEnvelope:parent,expectedItemContext:item,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision}));
  let released=false;
  const release=()=>{if(!released){released=true;worker.releaseAttachment(file);}};
  // Abort wipes immediately, but completion still drains the sink. A caller must
@@ -72,7 +72,7 @@ export async function consumeCommercialBox(
    if(seen.has(context.itemId)||(after!==null&&context.itemId<=after))throw new CloudApiError(502);
    seen.add(context.itemId);
    if(progress.completedItems.has(context.itemId))continue;
-   const plain=await worker.decrypt(JSON.stringify(envelope),context);current();
+   const plain=await request(()=>worker.decrypt(JSON.stringify(envelope),context));current();
    const item=JSON.parse(plain);if(!progress.items.has(context.itemId)){await consumeItem(plain,{...context},signal);progress.items.add(context.itemId);current();}
    for(const ref of item.attachments??[]){
     const attachment={passwordBoxId:boxId,itemId:context.itemId,attachmentId:ref.attachmentId,attachmentVersion:ref.attachmentVersion,keyEpoch:ref.keyEpoch};
