@@ -44,6 +44,40 @@ test('recovered close retries the same owned session before opening another',asy
  assert.equal(closes,2);assert.equal(recovers,2);assert.equal(opens,2);
 });
 
+test('lost successful close response reconciles the exact closed token before resume',async()=>{
+ let opens=0,closes=0;const closed=new Set<string>(),files=new Map<string,number[]>();
+ const invoke=async(command:string,args:any)=>{
+  if(command==='commercial_export_open')return 'session-'+(++opens);
+  if(command==='commercial_export_identity')return 'volume:A';
+  if(command==='commercial_export_read')return files.get(args.name)??null;
+  if(command==='commercial_export_publish'){files.set(args.name,[...args.bytes]);return;}
+  if(command==='commercial_export_recover'){assert.equal(closed.has(args.sessionId),true);return true;}
+  if(command==='commercial_export_close'){closes++;closed.add(args.sessionId);if(closes===1)throw 'RESPONSE_LOST';}
+ };
+ const progress=createCommercialExportProgress(),box='a'.repeat(26),item='b'.repeat(26),api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:item,itemVersion:1,keyEpoch:1}}],nextCursor:null})},worker={decrypt:async()=>JSON.stringify({id:item,attachments:[]})};
+ const run=()=>saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress);
+ await assert.rejects(run());assert.equal(opens,1);
+ assert.equal((await run()).saved,true);assert.equal(opens,2);assert.equal(files.size,1);assert.equal(closes,3);
+});
+
+test('cancel during open retains the acquired session if close fails',async()=>{
+ const controller=new AbortController(),progress=createCommercialExportProgress();let opens=0,closes=0,recovers=0;
+ const invoke=async(command:string)=>{
+  if(command==='commercial_export_open'){opens++;controller.abort('original-cancel');return 'owned';}
+  if(command==='commercial_export_close'){closes++;throw 'CLOSE_FAILED';}
+  if(command==='commercial_export_recover'){recovers++;return false;}
+ };
+ const run=(signal:AbortSignal)=>saveNativeCommercialExport(invoke,'C:/selected',{} as any,{} as any,'contract','a'.repeat(26),{keyEpoch:1,snapshotRevision:2},signal,progress);
+ await assert.rejects(run(controller.signal));await assert.rejects(run(new AbortController().signal));
+ assert.equal(opens,1);assert.equal(closes,1);assert.equal(recovers,1);
+});
+
+test('cleanup failure preserves the original operation error',async()=>{
+ const operationError={code:'IDENTITY_FAILED'};
+ const invoke=async(command:string)=>{if(command==='commercial_export_open')return 'owned';if(command==='commercial_export_identity')throw operationError;if(command==='commercial_export_close')throw 'CLOSE_FAILED';};
+ await assert.rejects(saveNativeCommercialExport(invoke,'C:/selected',{} as any,{} as any,'contract','a'.repeat(26),{keyEpoch:1,snapshotRevision:2},new AbortController().signal),(error:any)=>error.operationError===operationError&&error.cause?.cause==='CLOSE_FAILED');
+});
+
 test('failed destination open releases the caller abort listener before retry',async()=>{
  const controller=new AbortController();let calls=0;
  const invoke=async()=>{calls++;throw 'EXPORT_DIRECTORY';};
