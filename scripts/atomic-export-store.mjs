@@ -27,7 +27,7 @@ export function createAtomicExportStore(root){
    if(process.platform==='win32'){
     const executable=fileURLToPath(new URL('../target/debug/passshare-export-publish.exe',import.meta.url));
     await new Promise((resolve,reject)=>{
-     const child=spawn(executable,[destination],{windowsHide:true,stdio:['pipe','ignore','pipe']});
+     const child=spawn(executable,[destination,String(bytes.length)],{windowsHide:true,stdio:['pipe','ignore','pipe']});
      let errorText='';child.stderr.on('data',b=>{if(errorText.length<1024)errorText+=b.toString();});
      child.stdin.on('error',()=>{});child.on('error',reject);
      child.on('close',code=>{if(code===0)resolve();else reject(Object.assign(new Error('Atomic export publication failed'),{code:code===17?'EEXIST':'EXPORT_PUBLISH_FAILED'}));});

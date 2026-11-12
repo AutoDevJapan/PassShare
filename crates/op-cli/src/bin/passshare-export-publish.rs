@@ -10,6 +10,14 @@ fn run() -> std::io::Result<()> {
             .nth(1)
             .ok_or_else(|| std::io::Error::other("output required"))?,
     );
+    let expected: usize = std::env::args()
+        .nth(2)
+        .ok_or_else(|| std::io::Error::other("length required"))?
+        .parse()
+        .map_err(|_| std::io::Error::other("invalid length"))?;
+    if expected > 16 * 1024 * 1024 {
+        return Err(std::io::Error::other("output too large"));
+    }
     let parent = out
         .parent()
         .ok_or_else(|| std::io::Error::other("parent required"))?;
@@ -18,7 +26,7 @@ fn run() -> std::io::Result<()> {
     std::io::stdin()
         .take(16 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() > 16 * 1024 * 1024 {
+    if bytes.len() != expected {
         return Err(std::io::Error::other("output too large"));
     }
     #[cfg(windows)]
