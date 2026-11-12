@@ -41,6 +41,7 @@ jobs:
         working-directory: .
         run: |
           cargo test --locked -p op-cli --bin passshare-export-publish -j 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --locked -p op-cli --bin passshare-export-publish -j 2
       - name: Verify Windows atomic export host file lifecycle
         if: runner.os == 'Windows'
