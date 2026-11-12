@@ -21,19 +21,21 @@ struct PendingFlight {
     child: std::process::Child,
     writer: std::thread::JoinHandle<std::io::Result<()>>,
     #[cfg(windows)]
-    tree: export_process::Tree,
+    tree: Option<export_process::Tree>,
 }
 impl PendingFlight {
     fn reclaim(&mut self) -> bool {
         #[cfg(windows)]
         {
-            let _ = self.tree.stop();
+            if let Some(tree) = self.tree.as_ref() {
+                let _ = tree.stop();
+            }
             export_process::cancel_writer(&self.writer);
         }
         let _ = self.child.kill();
         let reaped = matches!(self.child.try_wait(), Ok(Some(_)));
         #[cfg(windows)]
-        let empty = self.tree.empty();
+        let empty = self.tree.as_ref().is_none_or(|tree| tree.empty());
         #[cfg(not(windows))]
         let empty = reaped;
         reaped && empty && self.writer.is_finished()
@@ -41,6 +43,7 @@ impl PendingFlight {
 }
 #[derive(Default)]
 pub struct ExportSessions {
+    cancelled: Mutex<HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
     destinations: Mutex<HashMap<String, Destination>>,
 }
 #[cfg(windows)]
@@ -88,7 +91,23 @@ impl ExportSessions {
                     pending: None,
                 },
             );
+        self.cancelled.lock().map_err(|_| "EXPORT_SESSION")?.insert(
+            token.clone(),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
         Ok(token)
+    }
+    pub fn cancel(&self, token: &str, gate: &Mutex<()>) -> Result<(), String> {
+        let flag = self
+            .cancelled
+            .lock()
+            .map_err(|_| "EXPORT_SESSION")?
+            .get(token)
+            .cloned()
+            .ok_or("EXPORT_SESSION")?;
+        let _commit = gate.lock().map_err(|_| "EXPORT_SESSION")?;
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
     pub fn identity(&self, token: &str) -> Result<String, String> {
         let sessions = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
@@ -137,6 +156,10 @@ impl ExportSessions {
             return Err("EXPORT_DRAIN_UNCONFIRMED".into());
         }
         sessions.remove(token);
+        self.cancelled
+            .lock()
+            .map_err(|_| "EXPORT_SESSION")?
+            .remove(token);
         Ok(())
     }
     pub fn read(&self, token: &str, name_: &str, epoch: u64) -> Result<Option<Vec<u8>>, String> {
@@ -214,6 +237,15 @@ impl ExportSessions {
         current: impl Fn() -> bool,
         commit_gate: &Mutex<()>,
     ) -> Result<(), String> {
+        let cancelled = self
+            .cancelled
+            .lock()
+            .map_err(|_| "EXPORT_SESSION")?
+            .get(token)
+            .cloned()
+            .ok_or("EXPORT_SESSION")?;
+        let input_current = current;
+        let current = || input_current() && !cancelled.load(std::sync::atomic::Ordering::SeqCst);
         let bytes = Zeroizing::new(bytes);
         if !name(name_) || bytes.len() > MAX {
             return Err("EXPORT_INPUT".into());
@@ -256,24 +288,43 @@ impl ExportSessions {
                 while matches!(child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
+                if !matches!(child.try_wait(), Ok(Some(_))) {
+                    d.pending = Some(PendingFlight {
+                        child,
+                        writer: std::thread::spawn(|| Ok(())),
+                        tree: None,
+                    });
+                    return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+                }
                 return Err("EXPORT_TREE".into());
             }
         };
-        if d.pending.is_some() {
-            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
-        }
-        if !current() {
-            #[cfg(windows)]
-            let _ = tree.stop();
-            let _ = child.kill();
-            while matches!(child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(1));
+        let mut stdin = match child.stdin.take() {
+            Some(pipe) => pipe,
+            None => {
+                d.pending = Some(PendingFlight {
+                    child,
+                    writer: std::thread::spawn(|| Ok(())),
+                    #[cfg(windows)]
+                    tree: Some(tree),
+                });
+                return Err("EXPORT_DRAIN_UNCONFIRMED".into());
             }
-            return Err("EXPORT_SESSION".into());
-        }
-        let mut stdin = child.stdin.take().ok_or("EXPORT_PUBLISH")?;
+        };
         let payload = Zeroizing::new(bytes.to_vec());
-        let mut stdout = child.stdout.take().ok_or("EXPORT_PUBLISH")?;
+        let mut stdout = match child.stdout.take() {
+            Some(pipe) => pipe,
+            None => {
+                drop(stdin);
+                d.pending = Some(PendingFlight {
+                    child,
+                    writer: std::thread::spawn(|| Ok(())),
+                    #[cfg(windows)]
+                    tree: Some(tree),
+                });
+                return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+            }
+        };
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
         let (permit_tx, permit_rx) = std::sync::mpsc::sync_channel(1);
         let writer = std::thread::spawn(move || {
@@ -371,7 +422,7 @@ impl ExportSessions {
                 child,
                 writer,
                 #[cfg(windows)]
-                tree,
+                tree: Some(tree),
             });
             return Err("EXPORT_DRAIN_UNCONFIRMED".into());
         }
@@ -481,7 +532,7 @@ mod publisher_tests {
                     n == 0
                 }
             ),
-            Err("EXPORT_SESSION".into())
+            Err("EXPORT_INTERRUPTED_CHECK_OUTPUT".into())
         );
         assert!(!root.join("item-race-v1.json").exists());
         let result = sessions.publish_checked(
@@ -609,7 +660,7 @@ mod retained_tests {
             .pending = Some(PendingFlight {
             child,
             writer,
-            tree,
+            tree: Some(tree),
         });
         assert_eq!(
             sessions.close(&token),
@@ -699,6 +750,56 @@ mod commit_order_tests {
             vec![0, 255, 7]
         );
         sessions.close(&id).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod cancel_permit_tests {
+    use super::*;
+    use std::sync::Arc;
+    #[test]
+    #[ignore = "requires current handshake publisher"]
+    fn opaque_session_cancel_precedes_permit_without_affecting_other_session() {
+        let exe = PathBuf::from(std::env::var_os("PASSSHARE_TEST_PUBLISHER").unwrap());
+        let root =
+            std::env::temp_dir().join(format!("passshare-cancel-permit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let sessions = Arc::new(ExportSessions::default());
+        let token = sessions.open(root.clone(), 1).unwrap();
+        let other = sessions.open(root.clone(), 1).unwrap();
+        let gate = Arc::new(Mutex::new(()));
+        sessions.cancel(&token, &gate).unwrap();
+        assert!(sessions
+            .publish_ordered(
+                &token,
+                "item-cancelled-v1.json",
+                vec![1],
+                1,
+                &exe,
+                || true,
+                &gate
+            )
+            .is_err());
+        assert!(!root.join("item-cancelled-v1.json").exists());
+        sessions
+            .publish_ordered(
+                &other,
+                "item-other-v1.json",
+                vec![0, 255],
+                1,
+                &exe,
+                || true,
+                &gate,
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("item-other-v1.json")).unwrap(),
+            vec![0, 255]
+        );
+        assert!(sessions.cancel("unknown", &gate).is_err());
+        sessions.close(&token).unwrap();
+        sessions.close(&other).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 }
