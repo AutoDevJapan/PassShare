@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {getEventListeners} from 'node:events';
 import {createNativeExportStore} from '../src/lib/native-export-store.ts';
 test('native output session binds destination and preserves existing-file classification',async()=>{
  const calls:Array<{command:string;args:any}>=[];const invoke=async(command:string,args:any)=>{calls.push({command,args});if(command==='commercial_export_open')return 'owned-session';if(command==='commercial_export_read')return [0,255,1];if(command==='commercial_export_publish')throw 'EXPORT_EXISTS';};
@@ -23,6 +24,87 @@ test('committed native publish remains readable for success reconciliation after
 });
 import {saveNativeCommercialExport} from '../src/lib/save-native-commercial-export.ts';
 import {createCommercialExportProgress} from '../../../shared/cloud/commercial-attachment-export.ts';
+
+test('recovered close retries the same owned session before opening another',async()=>{
+ let opens=0,closes=0,recovers=0,sends=0;
+ const progress=createCommercialExportProgress();
+ const invoke=async(command:string)=>{
+  if(command==='commercial_export_open'){opens++;return 'owned';}
+  if(command==='commercial_export_identity')return 'volume:A';
+  if(command==='commercial_export_read')return null;
+  if(command==='commercial_export_publish'){sends++;throw 'EXPORT_DRAIN_UNCONFIRMED';}
+  if(command==='commercial_export_recover'){recovers++;return true;}
+  if(command==='commercial_export_close'){closes++;if(closes===1)throw 'CLOSE_TRANSPORT';}
+ };
+ const box='a'.repeat(26),item='b'.repeat(26),api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:item,itemVersion:1,keyEpoch:1}}],nextCursor:null})},worker={decrypt:async()=>JSON.stringify({id:item,attachments:[]})};
+ const run=()=>saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress);
+ await assert.rejects(run());await assert.rejects(run());
+ assert.equal(opens,1);assert.equal(sends,1);
+ await assert.rejects(run());
+ assert.equal(closes,2);assert.equal(recovers,2);assert.equal(opens,2);
+});
+
+test('lost successful close response reconciles the exact closed token before resume',async()=>{
+ let opens=0,closes=0;const closed=new Set<string>(),files=new Map<string,number[]>();
+ const invoke=async(command:string,args:any)=>{
+  if(command==='commercial_export_open')return 'session-'+(++opens);
+  if(command==='commercial_export_identity')return 'volume:A';
+  if(command==='commercial_export_read')return files.get(args.name)??null;
+  if(command==='commercial_export_publish'){files.set(args.name,[...args.bytes]);return;}
+  if(command==='commercial_export_recover'){assert.equal(closed.has(args.sessionId),true);return true;}
+  if(command==='commercial_export_close'){closes++;closed.add(args.sessionId);if(closes===1)throw 'RESPONSE_LOST';}
+ };
+ const progress=createCommercialExportProgress(),box='a'.repeat(26),item='b'.repeat(26),api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:item,itemVersion:1,keyEpoch:1}}],nextCursor:null})},worker={decrypt:async()=>JSON.stringify({id:item,attachments:[]})};
+ const run=()=>saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress);
+ await assert.rejects(run());assert.equal(opens,1);
+ assert.equal((await run()).saved,true);assert.equal(opens,2);assert.equal(files.size,1);assert.equal(closes,3);
+});
+
+test('cancel during open retains the acquired session if close fails',async()=>{
+ const controller=new AbortController(),progress=createCommercialExportProgress();let opens=0,closes=0,recovers=0;
+ const invoke=async(command:string)=>{
+  if(command==='commercial_export_open'){opens++;controller.abort('original-cancel');return 'owned';}
+  if(command==='commercial_export_close'){closes++;throw 'CLOSE_FAILED';}
+  if(command==='commercial_export_recover'){recovers++;return false;}
+ };
+ const run=(signal:AbortSignal)=>saveNativeCommercialExport(invoke,'C:/selected',{} as any,{} as any,'contract','a'.repeat(26),{keyEpoch:1,snapshotRevision:2},signal,progress);
+ await assert.rejects(run(controller.signal),(error:any)=>error.operationError===controller.signal.reason&&error.cause?.cause==='CLOSE_FAILED');await assert.rejects(run(new AbortController().signal));
+ assert.equal(opens,1);assert.equal(closes,1);assert.equal(recovers,1);
+});
+
+test('cleanup failure preserves the original operation error',async()=>{
+ const operationError={code:'IDENTITY_FAILED'};
+ const invoke=async(command:string)=>{if(command==='commercial_export_open')return 'owned';if(command==='commercial_export_identity')throw operationError;if(command==='commercial_export_close')throw 'CLOSE_FAILED';};
+ await assert.rejects(saveNativeCommercialExport(invoke,'C:/selected',{} as any,{} as any,'contract','a'.repeat(26),{keyEpoch:1,snapshotRevision:2},new AbortController().signal),(error:any)=>error.operationError===operationError&&error.cause?.cause==='CLOSE_FAILED');
+});
+
+test('same progress cannot open a second session while close is pending',async()=>{
+ let release!:(value?:unknown)=>void;const closing=new Promise(r=>release=r);let entered!:()=>void;const started=new Promise<void>(r=>entered=r);let opens=0,closes=0;
+ const files=new Map<string,number[]>(),progress=createCommercialExportProgress();
+ const invoke=async(command:string,args:any)=>{
+  if(command==='commercial_export_open'){opens++;return 'owned';}
+  if(command==='commercial_export_identity')return 'volume:A';
+  if(command==='commercial_export_read')return files.get(args.name)??null;
+  if(command==='commercial_export_publish'){files.set(args.name,[...args.bytes]);return;}
+  if(command==='commercial_export_close'){closes++;if(closes===1){entered();await closing;throw 'CLOSE_FAILED';}}
+  if(command==='commercial_export_recover')return true;
+ };
+ const box='a'.repeat(26),item='b'.repeat(26),api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:item,itemVersion:1,keyEpoch:1}}],nextCursor:null})},worker={decrypt:async()=>JSON.stringify({id:item,attachments:[]})};
+ const run=()=>saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress);
+ const first=run();const failed=assert.rejects(first);await started;
+ await assert.rejects(run(),/progress is busy/);assert.equal(opens,1);
+ release();await failed;assert.equal((await run()).saved,true);assert.equal(opens,2);assert.equal(closes,3);
+});
+
+test('failed destination open releases the caller abort listener before retry',async()=>{
+ const controller=new AbortController();let calls=0;
+ const invoke=async()=>{calls++;throw 'EXPORT_DIRECTORY';};
+ for(let retry=0;retry<3;retry++){
+  await assert.rejects(saveNativeCommercialExport(invoke,'C:/unavailable',{} as any,{} as any,'contract','a'.repeat(26),{keyEpoch:1,snapshotRevision:2},controller.signal),e=>e==='EXPORT_DIRECTORY');
+  assert.equal(getEventListeners(controller.signal,'abort').length,0);
+ }
+ assert.equal(calls,3);
+});
 test('native consumer delivers item and attachment once and verifies completed output on resume',async()=>{
  const files=new Map<string,number[]>();let sends=0,closed=0;const invoke=async(command:string,args:any)=>{if(command==='commercial_export_open')return 'session';if(command==='commercial_export_identity')return 'volume:fileA';if(command==='commercial_export_close'){closed++;return;}if(command==='commercial_export_read')return files.get(args.name)??null;if(command==='commercial_export_publish'){sends++;files.set(args.name,[...args.bytes]);}};
  const box='a'.repeat(26),item='b'.repeat(26),attachment='c'.repeat(26);const api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:item,itemVersion:1,keyEpoch:1}}],nextCursor:null}),getCommercialAttachmentItemSnapshot:async()=> 'parent',getCommercialEncryptedAttachment:async()=> 'encrypted'};const worker={decrypt:async()=>JSON.stringify({id:item,attachments:[{attachmentId:attachment,attachmentVersion:1,keyEpoch:1}]}),decryptAttachment:async()=>({name:'日本語.bin',bytes:new Uint8Array([0,255])}),releaseAttachment:(file:any)=>file.bytes.fill(0)};
