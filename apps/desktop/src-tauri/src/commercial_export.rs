@@ -296,7 +296,25 @@ impl ExportSessions {
         let mut interrupted = false;
         let status = loop {
             if !authorized && ready_rx.try_recv().is_ok() {
-                commit_guard = Some(commit_gate.lock().map_err(|_| "EXPORT_SESSION")?);
+                commit_guard = loop {
+                    match commit_gate.try_lock() {
+                        Ok(g) => break Some(g),
+                        Err(std::sync::TryLockError::WouldBlock) => {
+                            if !current()
+                                || std::time::Instant::now() + std::time::Duration::from_secs(2)
+                                    >= deadline
+                            {
+                                break None;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                        Err(_) => break None,
+                    }
+                };
+                if commit_guard.is_none() {
+                    interrupted = true;
+                    break None;
+                }
                 if !current() {
                     interrupted = true;
                     break None;
@@ -320,6 +338,7 @@ impl ExportSessions {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         };
+        drop(permit_tx);
         #[cfg(windows)]
         let stop_requested = tree.stop();
         #[cfg(not(windows))]
@@ -612,5 +631,74 @@ mod retained_tests {
         sessions.close(&token).unwrap();
         assert!(sessions.identity(&token).is_err());
         std::fs::remove_dir(root).unwrap();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod commit_order_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    #[test]
+    #[ignore = "requires current handshake publisher"]
+    fn invalidation_before_permit_leaves_no_output_and_authorized_commit_is_readable() {
+        let exe = PathBuf::from(std::env::var_os("PASSSHARE_TEST_PUBLISHER").expect("fixture"));
+        let root = std::env::temp_dir().join(format!("passshare-order-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let sessions = Arc::new(ExportSessions::default());
+        let id = sessions.open(root.clone(), 1).unwrap();
+        let gate = Arc::new(Mutex::new(()));
+        let valid = Arc::new(AtomicBool::new(true));
+        let held = gate.lock().unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let s = sessions.clone();
+        let i = id.clone();
+        let g = gate.clone();
+        let v = valid.clone();
+        let e = exe.clone();
+        let d = done.clone();
+        let worker = std::thread::spawn(move || {
+            let r = s.publish_ordered(
+                &i,
+                "item-denied-v1.json",
+                vec![1],
+                1,
+                &e,
+                || v.load(Ordering::SeqCst),
+                &g,
+            );
+            d.store(true, Ordering::SeqCst);
+            r
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!done.load(Ordering::SeqCst));
+        valid.store(false, Ordering::SeqCst);
+        drop(held);
+        assert!(worker.join().unwrap().is_err());
+        assert!(!root.join("item-denied-v1.json").exists());
+        valid.store(true, Ordering::SeqCst);
+        sessions
+            .publish_ordered(
+                &id,
+                "item-allowed-v1.json",
+                vec![0, 255, 7],
+                1,
+                &exe,
+                || valid.load(Ordering::SeqCst),
+                &gate,
+            )
+            .unwrap();
+        {
+            let _held = gate.lock().unwrap();
+            valid.store(false, Ordering::SeqCst);
+        }
+        assert_eq!(
+            std::fs::read(root.join("item-allowed-v1.json")).unwrap(),
+            vec![0, 255, 7]
+        );
+        sessions.close(&id).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

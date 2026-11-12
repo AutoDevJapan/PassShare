@@ -221,7 +221,11 @@ impl AppState {
     }
 
     fn recovery_background(&self) -> Result<(), String> {
-        self.foreground.store(false, Ordering::SeqCst);
+        {
+            let _commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
+            self.foreground.store(false, Ordering::SeqCst);
+            self.cancellation.fetch_add(1, Ordering::SeqCst);
+        }
         if self.recovery_active.load(Ordering::SeqCst) {
             self.lock()?;
         }
@@ -229,12 +233,14 @@ impl AppState {
     }
 
     fn begin_recovery_session(&self) -> Result<LocalRecoverySession, String> {
+        let commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
         let ticket = self
             .cancellation
             .fetch_add(1, Ordering::SeqCst)
             .wrapping_add(1);
         self.recovery_session_ticket.store(ticket, Ordering::SeqCst);
         self.recovery_active.store(true, Ordering::SeqCst);
+        drop(commit);
         if !self.foreground.load(Ordering::SeqCst) {
             self.recovery_active.store(false, Ordering::SeqCst);
             self.lock()?;
@@ -259,6 +265,7 @@ impl AppState {
         self.recovery_active.store(false, Ordering::SeqCst);
         let _commit = self.export_commit.lock().map_err(|_| "EXPORT_SESSION")?;
         self.cancellation.fetch_add(1, Ordering::SeqCst);
+        drop(_commit);
         if lock_on_cancel {
             self.lock()?;
         }
@@ -1091,10 +1098,6 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::Focused(true) => state.foreground.store(true, Ordering::SeqCst),
                 tauri::WindowEvent::Focused(false) => {
-                    let commit = state.export_commit.lock();
-                    state.foreground.store(false, Ordering::SeqCst);
-                    state.cancellation.fetch_add(1, Ordering::SeqCst);
-                    drop(commit);
                     let _ = state.recovery_background();
                     if state.recovery_active.load(Ordering::SeqCst) {
                         if let Ok(status) = state.status() {
