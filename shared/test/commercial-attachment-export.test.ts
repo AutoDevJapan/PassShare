@@ -86,3 +86,10 @@ test('successful sink is checkpointed even if it aborts before returning',async(
  await assert.rejects(consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},c.signal,async()=>{calls++;c.abort();},async()=>{},progress));
  await consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async()=>{calls++;},async()=>{},progress);assert.equal(calls,1);
 });
+
+test('a progress record refuses parallel resume while its sink is outstanding',async()=>{
+ const {consumeCommercialBox,createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress();let entered!:()=>void,finish!:()=>void;const started=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{finish=r;});let saves=0;
+ const api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2}}],nextCursor:null,attachmentsIncluded:false})};const worker={decrypt:async()=>JSON.stringify({attachments:[]})};
+ const run=()=>consumeCommercialBox(api as any,worker as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async()=>{saves++;entered();await gate;},async()=>{},progress);
+ const first=run();await started;await assert.rejects(run(),(e:any)=>e.status===409);finish();await first;await run();assert.equal(saves,1);
+});
