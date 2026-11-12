@@ -1,3 +1,6 @@
+#[cfg(windows)]
+#[path = "export_process.rs"]
+mod export_process;
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
@@ -144,42 +147,99 @@ impl ExportSessions {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
+            command.creation_flags(0x08000004);
         }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| "EXPORT_PUBLISH")?;
+        #[cfg(windows)]
+        let tree = match export_process::Tree::attach(&child) {
+            Ok(t) => t,
+            Err(_) => {
+                let _ = child.kill();
+                while matches!(child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                return Err("EXPORT_TREE".into());
+            }
+        };
         if !current() {
+            #[cfg(windows)]
+            let _ = tree.stop();
             let _ = child.kill();
-            let _ = child.wait();
+            while matches!(child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
             return Err("EXPORT_SESSION".into());
         }
         let mut stdin = child.stdin.take().ok_or("EXPORT_PUBLISH")?;
         let payload = Zeroizing::new(bytes.to_vec());
         let writer = std::thread::spawn(move || stdin.write_all(&payload));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(_) => {
+                    #[cfg(windows)]
+                    let _ = tree.stop();
                     let _ = child.kill();
-                    let _ = child.wait();
+                    while matches!(child.try_wait(), Ok(None))
+                        && std::time::Instant::now() < deadline
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    #[cfg(windows)]
+                    export_process::cancel_writer(&writer);
+                    while !writer.is_finished() && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    if !writer.is_finished() {
+                        return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+                    }
                     let _ = writer.join();
                     return Err("EXPORT_PUBLISH".into());
                 }
             }
-            if std::time::Instant::now() >= deadline || !current() {
+            if std::time::Instant::now() + std::time::Duration::from_secs(2) >= deadline
+                || !current()
+            {
+                #[cfg(windows)]
+                let _ = tree.stop();
                 let _ = child.kill();
-                let _ = child.wait();
+                while matches!(child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                #[cfg(windows)]
+                export_process::cancel_writer(&writer);
+                while !writer.is_finished() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                if !writer.is_finished() {
+                    return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+                }
                 let _ = writer.join();
                 return Err("EXPORT_INTERRUPTED_CHECK_OUTPUT".into());
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
+        #[cfg(windows)]
+        let _ = tree.stop();
+        while !writer.is_finished() && std::time::Instant::now() < deadline {
+            #[cfg(windows)]
+            export_process::cancel_writer(&writer);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if !writer.is_finished() {
+            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+        }
+        #[cfg(windows)]
+        if !tree.empty() {
+            return Err("EXPORT_TREE_UNCONFIRMED".into());
+        }
         if !matches!(writer.join(), Ok(Ok(()))) {
             return Err("EXPORT_PUBLISH".into());
         }
