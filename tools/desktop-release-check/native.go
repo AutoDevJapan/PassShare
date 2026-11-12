@@ -96,7 +96,8 @@ func signWindows(path string) error {
 		return fail("cannot resolve signing target")
 	}
 	rel, err := filepath.Rel(filepath.Join(root, "target/release"), resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	allowedPublisher := filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe")
+	if (err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) && !strings.EqualFold(resolved, allowedPublisher) {
 		return fail("signing target must stay inside candidate build output")
 	}
 	tool, err := signtool()
@@ -216,7 +217,7 @@ func nativeCheck(root, bundle, path, version string) (string, string, error) {
 		if !sameFiles(applications[0], filepath.Join(root, "target/release/passshare-desktop.exe")) {
 			return "", "", fail("installer payload and signed application bytes differ")
 		}
-		publisher, e := verifyPublisherPayload(scratch, filepath.Join(root, "target/release/passshare-export-publish.exe"))
+		publisher, e := verifyPublisherPayload(scratch, filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe"))
 		if e != nil {
 			return "", "", e
 		}
