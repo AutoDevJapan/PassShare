@@ -645,3 +645,6 @@ workerの5分idle期限は延長しない。`createCommercialExportProgress`の�
 保存先が停止または確定結果を返すまでPromiseを終端しない。停止不能なら実行は未終端の
 まま所有を保持し、別実行による二重保存を許さない。添付元bufferは取消し直後に消去する。
 worker idleで中断しても権限・鍵を復活させず、通常再解除後に同snapshotの成功記録から再開する。
+取消しは`signal.reason`（通常`AbortError`）で伝播し、snapshot不一致・並行再開の409と
+区別する。fetch中の取消しも同じ理由へ正規化する。callbackが取消しを確定する場合は
+成功returnせず同取消理由をrejectし、未保存分を成功checkpointへ含めない。
