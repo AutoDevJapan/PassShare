@@ -5,6 +5,7 @@ import type {AttachmentContext,AttachmentPlaintext,ItemContext} from './cloud-wo
 export interface VerifiedExportStore {
  read(name:string):Promise<Uint8Array|null>;
  publishNew(name:string,bytes:Uint8Array,signal:AbortSignal):Promise<void>;
+ verified?(name:string,bytes:Uint8Array):void;
 }
 export function createVerifiedExportSink(store:VerifiedExportStore){
  const active=new Set<string>();
@@ -15,7 +16,7 @@ export function createVerifiedExportSink(store:VerifiedExportStore){
   const expected=bytes.slice();
   try{
    const prior=await store.read(name);check(signal);
-   if(prior!==null){try{if(!same(prior,expected))throw new Error('Export output differs');return;}finally{prior.fill(0);}}
+   if(prior!==null){try{if(!same(prior,expected))throw new Error('Export output differs');store.verified?.(name,expected);return;}finally{prior.fill(0);}}
    try{await store.publishNew(name,expected,signal);}catch(error){
     if((error as {code?:string})?.code!=='EEXIST'&&!(signal.aborted&&error===signal.reason))throw error;
     // Another writer may have committed the same deterministic output. Reconcile
@@ -27,6 +28,7 @@ export function createVerifiedExportSink(store:VerifiedExportStore){
    const readback=await store.read(name);
    try{if(readback===null||!same(readback,expected))throw new Error('Export output verification failed');}
    finally{readback?.fill(0);}
+   store.verified?.(name,expected);
   }finally{expected.fill(0);active.delete(name);}
  }
  const id=(v:string)=>{if(!/^[a-z0-9]{26}$/.test(v))throw new Error('Invalid export identity');return v;};
