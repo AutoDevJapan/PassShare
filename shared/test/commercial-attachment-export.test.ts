@@ -118,3 +118,9 @@ test('resume does not re-decrypt completed items inside an unfinished page',asyn
 test('user cancellation is AbortError rather than snapshot conflict',async()=>{
  const c=new AbortController();c.abort();await assert.rejects(consumeCommercialAttachment({} as any,{} as any,'contract',{} as any,{} as any,4,c.signal,async()=>{}),(e:any)=>e.name==='AbortError'&&e.status===undefined);
 });
+
+test('cancellation during the retried GET preserves AbortError',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});const {consumeCommercialBox}=await import('../cloud/commercial-attachment-export.ts');const {CloudApiError}=await import('../cloud/cloud-api.ts');const c=new AbortController();let calls=0,limited!:()=>void;const reached=new Promise<void>(r=>{limited=r;});
+ const api={getCommercialExportPage:async()=>{calls++;if(calls===1){limited();throw new CloudApiError(429);}c.abort();throw new CloudApiError(0);}};
+ const pending=consumeCommercialBox(api as any,{} as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},c.signal,async()=>{},async()=>{});await reached;await Promise.resolve();await Promise.resolve();t.mock.timers.tick(61000);await assert.rejects(pending,(e:any)=>e.name==='AbortError');assert.equal(calls,2);
+});

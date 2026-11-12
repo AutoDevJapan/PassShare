@@ -60,7 +60,7 @@ export async function consumeCommercialBox(
     const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},61000);
     signal.addEventListener('abort',abort,{once:true});
    });
-   return run();
+   try{return await run();}catch(retryError){if(signal.aborted)throw signal.reason??new DOMException('Export cancelled','AbortError');throw retryError;}
   }
  };
  const limitedApi={getCommercialAttachmentItemSnapshot:(...args:Parameters<CloudApi['getCommercialAttachmentItemSnapshot']>)=>request(()=>api.getCommercialAttachmentItemSnapshot(...args)),getCommercialEncryptedAttachment:(...args:Parameters<CloudApi['getCommercialEncryptedAttachment']>)=>request(()=>api.getCommercialEncryptedAttachment(...args))};
