@@ -130,16 +130,6 @@ fn run() -> std::io::Result<()> {
                         return Err(std::io::Error::other("publication not permitted"));
                     }
                 }
-                let keep_on_close = 8u32;
-                if SetFileInformationByHandle(
-                    f.as_raw_handle(),
-                    21,
-                    (&keep_on_close as *const u32).cast(),
-                    4,
-                ) == 0
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
                 if SetFileInformationByHandle(f.as_raw_handle(), 3, p.cast(), len as u32) == 0 {
                     return Err(std::io::Error::last_os_error());
                 }
@@ -166,6 +156,18 @@ fn run() -> std::io::Result<()> {
             f.read_to_end(&mut actual)?;
             if *actual != *bytes {
                 return Err(std::io::Error::other("published output differs"));
+            }
+            unsafe {
+                let keep_on_close = 8u32;
+                if SetFileInformationByHandle(
+                    f.as_raw_handle(),
+                    21,
+                    (&keep_on_close as *const u32).cast(),
+                    4,
+                ) == 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
             }
             Ok(())
         })();
