@@ -7,6 +7,10 @@ test('concealed notes retain copy availability without disclosing the body previ
  const row=toItemOverview({category:'SECURE_NOTE',fields:[{label:'notes',type:'CONCEALED',value:'synthetic-only-note'}]});
  assert.equal(row.hasBody,true);assert.equal(row.bodyPreview,'');assert.equal(JSON.stringify(row).includes('synthetic-only-note'),false);
 });
+test('body availability follows the existing first matching notes and body selection',()=>{
+ assert.equal(toItemOverview({fields:[{label:'notes',value:''},{label:'notes',type:'CONCEALED',value:'hidden-later'}]}).hasBody,false);
+ assert.equal(toItemOverview({fields:[{label:'notes',value:''},{label:'body',type:'CONCEALED',value:'body'}]}).hasBody,true);
+});
 test('legacy malformed fields do not break the shared list projection',()=>{
  for(const fields of ['oops',[null],[{purpose:1}],[{label:'notes',value:123}]])assert.doesNotThrow(()=>toItemOverview({id:'synthetic',fields}));
  assert.equal(toItemOverview({fields:[{label:'notes',value:''},{label:'body',value:'body'}]}).bodyPreview,'body');

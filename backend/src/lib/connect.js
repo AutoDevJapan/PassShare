@@ -22,6 +22,7 @@ export function toItemOverview(item) {
   const fields=Array.isArray(item.fields)?item.fields.filter(field=>field&&typeof field==='object'):[];
   const value=(key,name)=>fields.find(field=>typeof field[key]==='string'&&field[key].toLowerCase()===name&&typeof field.value==='string'&&!(typeof field.type==='string'&&field.type.toUpperCase()==='CONCEALED')&&!(typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'))?.value??'';
   const password=fields.some(field=>typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'&&typeof field.value==='string'&&field.value.length>0);
+  const firstBody=name=>{const field=fields.find(field=>typeof field.label==='string'&&field.label.toLowerCase()===name);return typeof field?.value==='string'?field.value:'';};
   return {
     id: item.id,
     title: item.title,
@@ -38,7 +39,7 @@ export function toItemOverview(item) {
       listMetadataVersion: 1,
       username: value('purpose','username'),
       hasPassword: password,
-      hasBody: fields.some(field=>typeof field.label==='string'&&['notes','body'].includes(field.label.toLowerCase())&&typeof field.value==='string'&&field.value.length>0),
+      hasBody: Boolean(firstBody('notes')||firstBody('body')),
       bodyPreview: (value('label','notes')||value('label','body')).slice(0,81),
   };
 }
