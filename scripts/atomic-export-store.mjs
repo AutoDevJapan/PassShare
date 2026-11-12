@@ -31,7 +31,7 @@ export function createAtomicExportStore(root){
      let errorText='';child.stderr.on('data',b=>{if(errorText.length<1024)errorText+=b.toString();});
      child.stdin.on('error',()=>{});child.on('error',reject);
      child.on('close',code=>{if(code===0)resolve();else reject(Object.assign(new Error('Atomic export publication failed'),{code:'EXPORT_PUBLISH_FAILED'}));});
-     if(signal.aborted){child.stdin.end();}else child.stdin.end(bytes);
+     child.stdin.end(bytes);
     });
     return;
    }
