@@ -5,7 +5,7 @@ import {resolve,join,basename} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
 // Caller-selected local directory. Existing entries are never replaced.
-export function createAtomicExportStore(root){
+export function createAtomicExportStore(root,expectedRoot){
  root=resolve(root);
  const identity=(a,b)=>a.dev===b.dev&&a.ino===b.ino&&a.birthtimeNs===b.birthtimeNs;
  const path=name=>{if(typeof name!=='string'||basename(name)!==name||!/^((item|attachment)-[a-z0-9-]+\.(json|bin)|attachment-[a-z0-9-]+\.name\.json)$/.test(name))throw new Error('Invalid export filename');return join(root,name);};
@@ -26,8 +26,9 @@ export function createAtomicExportStore(root){
    const destination=path(name);
    if(process.platform==='win32'){
     const executable=fileURLToPath(new URL('../target/debug/passshare-export-publish.exe',import.meta.url));
+    const parentIdentity=expectedRoot??await stat(root);
     await new Promise((resolve,reject)=>{
-     const child=spawn(executable,[destination,String(bytes.length)],{windowsHide:true,stdio:['pipe','ignore','pipe']});
+     const child=spawn(executable,[destination,String(bytes.length),String(parentIdentity.dev),String(parentIdentity.ino)],{windowsHide:true,stdio:['pipe','ignore','pipe']});
      let errorText='';child.stderr.on('data',b=>{if(errorText.length<1024)errorText+=b.toString();});
      child.stdin.on('error',()=>{});child.on('error',reject);
      child.on('close',code=>{if(code===0)resolve();else reject(Object.assign(new Error('Atomic export publication failed'),{code:code===17?'EEXIST':'EXPORT_PUBLISH_FAILED'}));});

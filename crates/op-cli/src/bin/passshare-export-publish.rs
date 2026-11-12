@@ -33,6 +33,7 @@ fn run() -> std::io::Result<()> {
     {
         use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
         unsafe extern "system" {
+            fn GetFileInformationByHandle(h: *mut std::ffi::c_void, p: *mut u32) -> i32;
             fn GetFinalPathNameByHandleW(
                 h: *mut std::ffi::c_void,
                 p: *mut u16,
@@ -53,6 +54,20 @@ fn run() -> std::io::Result<()> {
             .share_mode(3)
             .custom_flags(0x02000000)
             .open(parent)?;
+        let expected_volume = std::env::args().nth(3).and_then(|s| s.parse::<u64>().ok());
+        let expected_index = std::env::args().nth(4).and_then(|s| s.parse::<u64>().ok());
+        if let (Some(volume), Some(index)) = (expected_volume, expected_index) {
+            let mut info = [0u32; 13];
+            if unsafe { GetFileInformationByHandle(_directory.as_raw_handle(), info.as_mut_ptr()) }
+                == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            let actual_index = ((info[11] as u64) << 32) | info[12] as u64;
+            if info[7] as u64 != volume || actual_index != index {
+                return Err(std::io::Error::other("selected directory changed"));
+            }
+        }
         let mut f = OpenOptions::new()
             .read(true)
             .write(true)
