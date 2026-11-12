@@ -8,6 +8,21 @@ import {createApp} from '../../backend/src/app.js';
 import {createMemoryAuthStore} from '../../backend/src/auth/index.js';
 import {createMemoryStore} from '../../backend/src/store/memory-store.js';
 
+test('Web receipt disposal rejects a delayed body and prevents later requests',async()=>{
+ let controller!: ReadableStreamDefaultController<Uint8Array>;
+ let cancelled=0,calls=0;
+ const adapter=fs.readFileSync(new URL('../src/lib/support-receipts-api.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/export /g,'');
+ const c=vm.createContext({Headers,Response,ReadableStream,AbortController,createSupportReceiptApi,
+  authFetch:async()=>{calls++;return new Response(new ReadableStream({start(value){controller=value;},cancel(){cancelled++;}}));}});
+ vm.runInContext(stripTypeScriptTypes(adapter)+';globalThis.make=createWebSupportReceiptApi',c);
+ const api=c.make('11111111-1111-4111-8111-111111111111',()=>true);
+ const pending=api.get('22222222-2222-4222-8222-222222222222',new AbortController().signal);
+ await new Promise(setImmediate);api.dispose();
+ await assert.rejects(pending);assert.equal(cancelled,1);
+ await assert.rejects(api.get('22222222-2222-4222-8222-222222222222',new AbortController().signal));
+ assert.equal(calls,1);void controller;
+});
+
 test('Web receipt adapter uses real cookie/CSRF transport with owner isolation and explicit replay',async()=>{
  const authStore=createMemoryAuthStore();
  const owner=await authStore.createUser({email:'web-receipt@example.test',passwordHash:'$argon2id$'+'x'.repeat(80)});
@@ -20,7 +35,7 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
  const load=(token:string,ownerId:string)=>{
   const cookies=new Map([['passshare_session',token]]);
   const source=fs.readFileSync(new URL('../src/lib/auth-api.ts',import.meta.url),'utf8').replace('import.meta.env.VITE_API_BASE_URL ?? ""',JSON.stringify(base)).replace(/export /g,'');
-  const context=vm.createContext({Headers,Response,AbortController,setTimeout,clearTimeout,
+  const context=vm.createContext({Headers,Response,ReadableStream,AbortController,setTimeout,clearTimeout,
    fetch:async(url:string,init:RequestInit)=>{
     calls++;assert.equal(init.credentials,'include');
     const headers=new Headers(init.headers);assert.equal(headers.has('Authorization'),false);
@@ -35,7 +50,7 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   vm.runInContext(stripTypeScriptTypes(source,{mode:'transform'})+';globalThis.authFetch=authFetch',context);
   const adapter=fs.readFileSync(new URL('../src/lib/support-receipts-api.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/export /g,'');
   vm.runInContext(stripTypeScriptTypes(adapter)+';globalThis.make=createWebSupportReceiptApi',context);
-  return context.make(ownerId);
+  return context.make(ownerId,()=>true);
  };
  try{
   const api=load(a.sessionToken,owner.id),signal=new AbortController().signal;
