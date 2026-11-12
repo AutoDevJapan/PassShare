@@ -11,6 +11,7 @@ import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
 import { generatePassword } from "@shared/lib/password-generator";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
+import { importAttempt, importFingerprint, type ImportAttempt } from "../../lib/import-attempt";
 import { useAuthSession } from "../../hooks/useAuthSession";
 import { useItemLabels } from "../../hooks/useItemLabels";
 import { CloudBoxGate } from "./CloudEncryptionPage";
@@ -41,6 +42,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const createOperation = useRef<string | null>(null);
+  const csvAttempt = useRef<ImportAttempt | null>(null);
   const loadGeneration = useRef(0);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"create" | "edit" | null>("create");
@@ -227,14 +229,22 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     try {
       const text = await file.text();
       const parsed = parseOnepasswordCsv(text);
-      for (const row of parsed) {
+      const fingerprint = await importFingerprint(text);
+      if (scope !== activeScope.current) return;
+      const attempt = importAttempt(csvAttempt.current, scope, fingerprint, parsed.length);
+      csvAttempt.current = attempt;
+      imported = attempt.completed.size;
+      for (const [index, row] of parsed.entries()) {
+        if (attempt.completed.has(index)) continue;
         await ensureCompatibility();
         if (scope !== activeScope.current) return;
-        await connectClient.createItem(vaultId, connectItemToCreateBody(row));
+        await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
+        attempt.completed.add(index);
         imported += 1;
       }
       if (scope !== activeScope.current) return;
       setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
+      csvAttempt.current = null;
       await loadItems();
     } catch {
       if (scope === activeScope.current) {
