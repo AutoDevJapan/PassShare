@@ -1,16 +1,27 @@
 export type ImportAttempt = { scope: string; fingerprint: string; keys: string[]; completed: Set<number> };
 const attempts = new Map<string, ImportAttempt>();
+const active = new WeakSet<ImportAttempt>();
+const finished = new WeakSet<ImportAttempt>();
+export function acquireImportAttempt(attempt: ImportAttempt): void {
+  if(active.has(attempt)||finished.has(attempt))throw new Error('Import attempt is active or completed');
+  active.add(attempt);
+}
+export function releaseImportAttempt(attempt: ImportAttempt): void { active.delete(attempt); }
 const storageKey = (scope: string, fingerprint: string) => `passshare-csv-retry-v1:${scope}:${fingerprint}`;
 
 export function saveImportAttempt(attempt: ImportAttempt): void {
+  if(finished.has(attempt))throw new Error('Import attempt already completed');
   if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey(attempt.scope, attempt.fingerprint), JSON.stringify({keys:attempt.keys, completed:[...attempt.completed]}));
   attempts.set(storageKey(attempt.scope, attempt.fingerprint), attempt);
 }
 
 export function finishImportAttempt(attempt: ImportAttempt): void {
+  if(finished.has(attempt))throw new Error('Import attempt already completed');
   const key=storageKey(attempt.scope,attempt.fingerprint);
+  if(attempts.get(key)!==attempt)throw new Error('Import attempt was replaced');
   attempts.delete(key);
   if(typeof sessionStorage!=='undefined')sessionStorage.removeItem(key);
+  finished.add(attempt);
 }
 
 // Identify a retry of one import, not duplicate content across independent items.

@@ -11,7 +11,7 @@ import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
 import { generatePassword } from "@shared/lib/password-generator";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
-import { importAttempt, importFingerprint, saveImportAttempt, finishImportAttempt, type ImportAttempt } from "../../lib/import-attempt";
+import { importAttempt, importFingerprint, saveImportAttempt, finishImportAttempt, acquireImportAttempt, releaseImportAttempt, type ImportAttempt } from "../../lib/import-attempt";
 import { useAuthSession } from "../../hooks/useAuthSession";
 import { useItemLabels } from "../../hooks/useItemLabels";
 import { CloudBoxGate } from "./CloudEncryptionPage";
@@ -226,12 +226,15 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     setBusy(true);
     const scope = activeScope.current;
     let imported = 0;
+    let ownedAttempt: ImportAttempt | null = null;
     try {
       const text = await file.text();
       const parsed = parseOnepasswordCsv(text);
       const fingerprint = await importFingerprint(text);
       if (scope !== activeScope.current) return;
       const attempt = importAttempt(csvAttempt.current, scope, fingerprint, parsed.length);
+      acquireImportAttempt(attempt);
+      ownedAttempt = attempt;
       csvAttempt.current = attempt;
       imported = attempt.completed.size;
       for (const [index, row] of parsed.entries()) {
@@ -256,6 +259,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
         if (reloadGeneration === loadGeneration.current) setError(t("app.item.importPartialError").replace("{count}", String(imported)));
       }
     } finally {
+      if (ownedAttempt) releaseImportAttempt(ownedAttempt);
       busyRef.current = false;
       setBusy(false);
     }
