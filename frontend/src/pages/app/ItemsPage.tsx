@@ -245,7 +245,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
         try {
           await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
         } catch (error) {
-          if (alreadyCompleted && typeof error === "object" && error !== null && "status" in error && error.status === 409) {
+          if (alreadyCompleted && typeof error === "object" && error !== null && "status" in error && error.status === 409 && "code" in error && error.code === "PS015") {
             changed += 1;
             continue;
           }
