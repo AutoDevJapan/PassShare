@@ -23,3 +23,13 @@ test('unfinished file retains row keys across other files and remount',async()=>
  assert.notEqual(next.keys[0],first.keys[0]);assert.equal(next.completed.size,0);
  finishImportAttempt(next);finishImportAttempt(other);
 });
+test('unavailable or corrupt session storage never silently creates a fresh retry',()=>{
+ const readError=new Error('storage read unavailable');
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:()=>{throw readError;}}});
+ try{assert.throws(()=>importAttempt(null,'storage-read:box','digest',2),e=>e===readError);}finally{delete (globalThis as any).sessionStorage;}
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:()=>'{"keys":[],"completed":[9]}'}});
+ try{assert.throws(()=>importAttempt(null,'storage-corrupt:box','digest',2),/Invalid saved import retry/);}finally{delete (globalThis as any).sessionStorage;}
+ const writeError=new Error('storage write unavailable');
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{throw writeError;}}});
+ try{for(let n=0;n<2;n++)assert.throws(()=>importAttempt(null,'storage-write:box','digest',2),e=>e===writeError);}finally{delete (globalThis as any).sessionStorage;}
+});

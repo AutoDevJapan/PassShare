@@ -3,8 +3,8 @@ const attempts = new Map<string, ImportAttempt>();
 const storageKey = (scope: string, fingerprint: string) => `passshare-csv-retry-v1:${scope}:${fingerprint}`;
 
 export function saveImportAttempt(attempt: ImportAttempt): void {
-  attempts.set(storageKey(attempt.scope, attempt.fingerprint), attempt);
   if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(storageKey(attempt.scope, attempt.fingerprint), JSON.stringify({keys:attempt.keys, completed:[...attempt.completed]}));
+  attempts.set(storageKey(attempt.scope, attempt.fingerprint), attempt);
 }
 
 export function finishImportAttempt(attempt: ImportAttempt): void {
