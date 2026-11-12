@@ -106,3 +106,12 @@ test('rejected foreign output never poisons verified receipts for a later retry'
  const api={getCommercialExportPage:async()=>({envelopes:[{context}],nextCursor:null,attachmentsIncluded:false})},worker={decrypt:async()=>JSON.stringify({attachments:[]})};const run=()=>saveCommercialExport(root,api as any,worker as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);
  await writeFile(out,'foreign');await assert.rejects(run());await rm(out);assert.equal((await run()).saved,true);assert.deepEqual(JSON.parse(await readFile(out,'utf8')),{attachments:[]});
 }));
+
+test('native rename publishes exactly the requested path across UTF16 alignment lengths',()=>fixture(async(_store,root)=>{
+ if(process.platform!=='win32')return;
+ const {spawn}=await import('node:child_process');const {fileURLToPath}=await import('node:url');
+ for(let length=1;length<=12;length++){
+  const out=join(root,'x'.repeat(length)+'.bin'),body=new Uint8Array([0,7,255]);
+  const code=await new Promise<number|null>((resolve,reject)=>{const c=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[out,String(body.length)],{windowsHide:true,stdio:['pipe','ignore','ignore']});c.on('error',reject);c.on('close',resolve);c.stdin.end(body);});assert.equal(code,0);assert.deepEqual([...await readFile(out)],[...body]);
+ }
+}));

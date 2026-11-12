@@ -33,6 +33,12 @@ fn run() -> std::io::Result<()> {
     {
         use std::os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle};
         unsafe extern "system" {
+            fn GetFinalPathNameByHandleW(
+                h: *mut std::ffi::c_void,
+                p: *mut u16,
+                n: u32,
+                flags: u32,
+            ) -> u32;
             fn SetFileInformationByHandle(
                 h: *mut std::ffi::c_void,
                 c: u32,
@@ -68,6 +74,23 @@ fn run() -> std::io::Result<()> {
                 if SetFileInformationByHandle(f.as_raw_handle(), 3, p.cast(), len as u32) == 0 {
                     return Err(std::io::Error::last_os_error());
                 }
+            }
+            let mut final_path = vec![0u16; 32768];
+            let count = unsafe {
+                GetFinalPathNameByHandleW(
+                    f.as_raw_handle(),
+                    final_path.as_mut_ptr(),
+                    final_path.len() as u32,
+                    0,
+                )
+            };
+            if count == 0 || count as usize >= final_path.len() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let actual_path = String::from_utf16_lossy(&final_path[..count as usize]);
+            let expected_path = std::fs::canonicalize(&out)?.to_string_lossy().into_owned();
+            if !actual_path.eq_ignore_ascii_case(&expected_path) {
+                return Err(std::io::Error::other("published path differs"));
             }
             f.seek(SeekFrom::Start(0))?;
             let mut actual = Zeroizing::new(Vec::new());
