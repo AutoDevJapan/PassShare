@@ -53,3 +53,10 @@ test('cancelled empty output resumes only through its retained file identity',as
  const sink=createVerifiedExportSink(directory as any),context={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1};
  await assert.rejects(sink.item('{}',context,controller.signal));assert.equal(stored.length,0);cancelWrite=false;await sink.item('{}',context,new AbortController().signal);assert.equal(new TextDecoder().decode(stored),'{}');
 });
+
+test('close-time abort and source wipe retain committed output verification',async()=>{
+ const c=new AbortController();const input=new Uint8Array([7,0,255]);let stored=new Uint8Array(),opens=0;
+ const h={getFile:async()=>({arrayBuffer:async()=>stored.slice().buffer}),createWritable:async()=>{let next=new Uint8Array();return {write:async(b:Uint8Array)=>{next=b.slice();},close:async()=>{stored=next;c.abort();input.fill(0);},abort:async()=>{}};}};
+ const d={getFileHandle:async(_n:string,o?:{create?:boolean})=>{opens++;if(!o?.create&&opens===1)throw new DOMException('missing','NotFoundError');return h;}};
+ const sink=createVerifiedExportSink(d as any);await sink.item('abc',{passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1},c.signal);assert.equal(new TextDecoder().decode(stored),'abc');
+});

@@ -9,19 +9,20 @@ export function createVerifiedExportSink(directory:FileSystemDirectoryHandle){
  const same=(a:Uint8Array,b:Uint8Array)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
  async function save(name:string,bytes:Uint8Array,signal:AbortSignal){
   check(signal);if(active.has(name))throw new Error('Export output is busy');active.add(name);
+  const expected=bytes.slice();
   try{
    let existing:FileSystemFileHandle|undefined;
    try{existing=await directory.getFileHandle(name);}catch(error){if((error as DOMException).name!=='NotFoundError'&&(error as {code?:string}).code!=='ENOENT')throw error;}
    check(signal);
-   if(existing){const prior=new Uint8Array(await (await existing.getFile()).arrayBuffer());try{if(same(prior,bytes)){check(signal);pending.delete(name);return;}const owned=pending.get(name);if(prior.length!==0||!owned||!await existing.isSameEntry(owned))throw new Error('Export output differs');}finally{prior.fill(0);}}
+   if(existing){const prior=new Uint8Array(await (await existing.getFile()).arrayBuffer());try{if(same(prior,expected)){check(signal);pending.delete(name);return;}const owned=pending.get(name);if(prior.length!==0||!owned||!await existing.isSameEntry(owned))throw new Error('Export output differs');}finally{prior.fill(0);}}
    const file=existing??await directory.getFileHandle(name,{create:true});if(!existing)pending.set(name,file);check(signal);
    const writer=await file.createWritable({keepExistingData:true,mode:"exclusive"} as FileSystemCreateWritableOptions);let closed=false;
-   try{check(signal);const current=new Uint8Array(await (await file.getFile()).arrayBuffer());try{if(current.length>0){if(!same(current,bytes))throw new Error("Export output differs");await writer.abort();closed=true;return;}}finally{current.fill(0);}await writer.write(new Uint8Array(bytes));check(signal);await writer.close();closed=true;}finally{if(!closed)await writer.abort().catch(()=>{});}
+   try{check(signal);const current=new Uint8Array(await (await file.getFile()).arrayBuffer());try{if(current.length>0){if(!same(current,expected))throw new Error("Export output differs");await writer.abort();closed=true;return;}}finally{current.fill(0);}await writer.write(new Uint8Array(expected));check(signal);await writer.close();closed=true;}finally{if(!closed)await writer.abort().catch(()=>{});}
    const readback=new Uint8Array(await (await file.getFile()).arrayBuffer());
-   try{if(!same(readback,bytes))throw new Error('Export output verification failed');}finally{readback.fill(0);}
+   try{if(!same(readback,expected))throw new Error('Export output verification failed');}finally{readback.fill(0);}
    pending.delete(name);
    // Close plus readback is a committed save even if abort arrived during close.
-  }finally{active.delete(name);}
+  }finally{expected.fill(0);active.delete(name);}
  }
  const id=(value:string)=>{if(!/^[a-z0-9]{26}$/.test(value))throw new Error('Invalid export identity');return value;};
  const version=(value:number)=>{if(!Number.isSafeInteger(value)||value<1)throw new Error('Invalid export version');return value;};
