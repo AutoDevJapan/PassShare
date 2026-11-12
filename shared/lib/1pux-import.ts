@@ -19,9 +19,10 @@ export async function import1puxFile(
   client: ConnectClient,
   vaultId: string,
   file: File,
+  operationKey?: string,
 ): Promise<Import1puxResult> {
   const buffer = await file.arrayBuffer();
-  return client.import1pux(vaultId, bufferToBase64(buffer));
+  return client.import1pux(vaultId, bufferToBase64(buffer), operationKey);
 }
 
 /** Upload 1PUX via session auth (Desktop cloud sync credentials). */
