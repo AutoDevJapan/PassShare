@@ -99,8 +99,12 @@ fn run() -> std::io::Result<()> {
     Ok(())
 }
 fn main() {
-    if run().is_err() {
+    if let Err(error) = run() {
         eprintln!("Atomic export publication failed");
-        std::process::exit(1);
+        std::process::exit(if matches!(error.raw_os_error(), Some(80 | 183)) {
+            17
+        } else {
+            1
+        });
     }
 }
