@@ -256,6 +256,13 @@ impl ExportSessions {
             return Err("EXPORT_INPUT".into());
         }
         let mut sessions = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
+        let target_root = sessions.get(token).ok_or("EXPORT_SESSION")?.root.clone();
+        if sessions
+            .values()
+            .any(|entry| entry.root == target_root && entry.pending.is_some())
+        {
+            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+        }
         let d = sessions
             .get_mut(token)
             .filter(|d| d.epoch == epoch)
@@ -643,6 +650,7 @@ mod retained_tests {
         std::fs::create_dir(&root).unwrap();
         let sessions = ExportSessions::default();
         let token = sessions.open(root.clone(), 1).unwrap();
+        let other = sessions.open(root.clone(), 1).unwrap();
         let identity = sessions.identity(&token).unwrap();
         let mut child = Command::new(exe)
             .arg("item-noread-v1.json")
@@ -675,6 +683,16 @@ mod retained_tests {
         assert!(
             matches!(sessions.open(root.clone(),1),Err(ref e) if e=="EXPORT_DRAIN_UNCONFIRMED")
         );
+        assert_eq!(
+            sessions.publish(
+                &other,
+                "item-other-v1.json",
+                vec![1],
+                1,
+                Path::new("not-launched.exe")
+            ),
+            Err("EXPORT_DRAIN_UNCONFIRMED".into())
+        );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let recovered = loop {
             if sessions.recover(&token).unwrap() {
@@ -687,6 +705,7 @@ mod retained_tests {
         };
         assert!(recovered);
         assert_eq!(sessions.identity(&token).unwrap(), identity);
+        sessions.close(&other).unwrap();
         sessions.close(&token).unwrap();
         assert!(sessions.identity(&token).is_err());
         std::fs::remove_dir(root).unwrap();
