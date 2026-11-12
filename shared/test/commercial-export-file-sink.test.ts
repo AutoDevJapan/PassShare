@@ -127,3 +127,8 @@ test('directory changed during API wait is rejected before any output write',()=
  const api={getCommercialExportPage:async()=>{await rename(root,old);moved=true;await mkdir(root);return {envelopes:[{context}],nextCursor:null,attachmentsIncluded:false};}},worker={decrypt:async()=>JSON.stringify({attachments:[]})};
  try{await assert.rejects(saveCommercialExport(root,api as any,worker as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal));await assert.rejects(readFile(join(root,`item-${context.itemId}-v1.json`)),(e:any)=>e.code==='ENOENT');}finally{if(moved)await rm(old,{recursive:true});}
 }));
+
+test('native rejects a selected directory identity mismatch before creating temporary output',()=>fixture(async(_store,root)=>{
+ if(process.platform!=='win32')return;const {spawn}=await import('node:child_process');const {fileURLToPath}=await import('node:url');const out=join(root,'item-'+context.itemId+'-v1.json');
+ const code=await new Promise<number|null>((resolve,reject)=>{const p=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[out,'1','0','0'],{windowsHide:true,stdio:['pipe','ignore','ignore']});p.on('error',reject);p.on('close',resolve);p.stdin.end(new Uint8Array([1]));});assert.notEqual(code,0);await assert.rejects(readFile(out),(e:any)=>e.code==='ENOENT');
+}));
