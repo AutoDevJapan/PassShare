@@ -115,7 +115,11 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!active()) return null;
     // Same-account metadata refresh with the same credential preserves drafts.
     // A changed credential is a new lifetime boundary for all private handles.
-    if (currentCredential.current !== null && currentCredential.current !== credentials.accessToken) lockCloudUi();
+    if (currentCredential.current !== null && currentCredential.current !== credentials.accessToken) {
+      lockCloudUi();
+      clearSupport();
+      bindSupport(currentUser.id);
+    }
     currentCredential.current = credentials.accessToken;
     const client = new ConnectClient({ host: getApiBaseUrl(), token: credentials.accessToken });
     setConnectClient(client);
