@@ -33,9 +33,9 @@ export function createSupportReceiptApi(transport: CloudFetch) {
       const reader = response.body?.getReader();
       if(!reader) throw new SupportReceiptError(502);
       let text = ''; let size = 0; const decoder = new TextDecoder('utf-8',{fatal:true});
-      try {for(;;){init.signal?.throwIfAborted();const part=await reader.read();init.signal?.throwIfAborted();if(part.done)break;size+=part.value.byteLength;if(size>65536)throw new SupportReceiptError(502);text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}
+      try {for(;;){init.signal?.throwIfAborted();const part=await reader.read();init.signal?.throwIfAborted();if(part.done)break;size+=part.value.byteLength;if(size>65536)throw new SupportReceiptError(502);try{text+=decoder.decode(part.value,{stream:true});}catch{throw new SupportReceiptError(502);}}try{text+=decoder.decode();}catch{throw new SupportReceiptError(502);}}
       finally {await reader.cancel().catch(()=>{});reader.releaseLock();}
-      const value: unknown=JSON.parse(text);
+      let value: unknown;try{value=JSON.parse(text);}catch{throw new SupportReceiptError(502);}
       if(!fields(value,['id','status','revision','history','createdAt','request','meaning']) || !uuid(value.id) ||
         !['received','in_progress','resolved'].includes(value.status) || !Number.isSafeInteger(value.revision) || value.revision<0 ||
         !Array.isArray(value.history) || !value.history.every(h=>fields(h,['status','at'])&&['received','in_progress','resolved'].includes(h.status)&&typeof h.at==='string'&&Number.isFinite(Date.parse(h.at))) ||
@@ -47,7 +47,8 @@ export function createSupportReceiptApi(transport: CloudFetch) {
   return Object.freeze({
     async create(input: SupportReceiptRequest, signal: AbortSignal) {
       if(!fields(input,['requestId','kind','version','platform','errorCode']))throw new SupportReceiptError(400);
-      const snapshot={requestId:input.requestId,kind:input.kind,version:input.version,platform:input.platform,errorCode:input.errorCode};
+      let snapshot: SupportReceiptRequest;
+      try{snapshot={requestId:input.requestId,kind:input.kind,version:input.version,platform:input.platform,errorCode:input.errorCode};}catch{throw new SupportReceiptError(400);}
       if(!validRequest(snapshot))throw new SupportReceiptError(400);
       const expected={...snapshot,requestId:snapshot.requestId.toLowerCase()};
       const receipt=await request('/api/support-receipts',{method:'POST',body:JSON.stringify(expected),signal},201);

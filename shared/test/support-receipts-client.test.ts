@@ -9,6 +9,17 @@ const input={requestId:'11111111-1111-4111-8111-111111111111',kind:'technical' a
 const id='22222222-2222-4222-8222-222222222222';
 const row=()=>({id,status:'received',revision:0,history:[],createdAt:'2026-11-13T00:00:00Z',request:{...input},meaning:'request_received_not_contract_or_payment_confirmation'});
 
+test('malformed successful responses are protocol errors and caller getter diagnostics stay private',async()=>{
+ for(const response of [new Response('{'),new Response(new Uint8Array([0xff]))]){
+  const api=createSupportReceiptApi(async()=>response);
+  await assert.rejects(api.get(id,new AbortController().signal),e=>(e as any).status===502);
+ }
+ let calls=0;const api=createSupportReceiptApi(async()=>{calls++;return Response.json(row());});
+ const bad={...input};Object.defineProperty(bad,'version',{get(){throw Error('private-value');},enumerable:true});
+ await assert.rejects(api.create(bad,new AbortController().signal),e=>(e as any).status===400&&!(e as Error).message.includes('private'));
+ assert.equal(calls,0);
+});
+
 test('validated input values are captured once before serialization',async()=>{
  let reads=0;let body='';
  const changing={...input};Object.defineProperty(changing,'errorCode',{enumerable:true,get(){return ++reads===1?'PS019':'private-value';}});
