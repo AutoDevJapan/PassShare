@@ -20,7 +20,7 @@ export function nowIso() {
 /** @param {unknown} item */
 export function toItemOverview(item) {
   const fields=Array.isArray(item.fields)?item.fields.filter(field=>field&&typeof field==='object'):[];
-  const value=(key,name)=>fields.find(field=>typeof field[key]==='string'&&field[key].toLowerCase()===name&&typeof field.value==='string'&&field.type!=='CONCEALED'&&!(typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'))?.value??'';
+  const value=(key,name)=>fields.find(field=>typeof field[key]==='string'&&field[key].toLowerCase()===name&&typeof field.value==='string'&&!(typeof field.type==='string'&&field.type.toUpperCase()==='CONCEALED')&&!(typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'))?.value??'';
   const password=fields.some(field=>typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'&&typeof field.value==='string'&&field.value.length>0);
   return {
     id: item.id,

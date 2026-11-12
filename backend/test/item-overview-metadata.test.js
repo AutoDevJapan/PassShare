@@ -6,4 +6,5 @@ test('list metadata preserves existing search and card data without passwords or
 test('legacy malformed fields do not break the shared list projection',()=>{
  for(const fields of ['oops',[null],[{purpose:1}],[{label:'notes',value:123}]])assert.doesNotThrow(()=>toItemOverview({id:'synthetic',fields}));
  assert.equal(toItemOverview({fields:[{label:'notes',value:''},{label:'body',value:'body'}]}).bodyPreview,'body');
+ for(const type of ['CONCEALED','concealed','Concealed'])assert.equal(JSON.stringify(toItemOverview({fields:[{label:'notes',type,value:'synthetic-secret'},{purpose:'USERNAME',type,value:'synthetic-secret'}]})).includes('synthetic-secret'),false);
 });
