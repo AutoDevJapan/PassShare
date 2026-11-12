@@ -11,7 +11,7 @@ import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
 import { generatePassword } from "@shared/lib/password-generator";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
-import { importAttempt, importFingerprint, type ImportAttempt } from "../../lib/import-attempt";
+import { importAttempt, importFingerprint, saveImportAttempt, finishImportAttempt, type ImportAttempt } from "../../lib/import-attempt";
 import { useAuthSession } from "../../hooks/useAuthSession";
 import { useItemLabels } from "../../hooks/useItemLabels";
 import { CloudBoxGate } from "./CloudEncryptionPage";
@@ -240,10 +240,12 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
         if (scope !== activeScope.current) return;
         await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
         attempt.completed.add(index);
+        saveImportAttempt(attempt);
         imported += 1;
       }
       if (scope !== activeScope.current) return;
       setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
+      finishImportAttempt(attempt);
       csvAttempt.current = null;
       await loadItems();
     } catch {
