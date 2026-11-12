@@ -84,6 +84,18 @@ test('contract-window export returns real ciphertext while rechecking current me
   const coreWorker={decrypt:async(e,c)=>{const p=box.decrypt_item(e,JSON.stringify(c));return typeof p==='string'?p:JSON.stringify(p);},decryptAttachment:async(e,c,s)=>{const p=box.decrypt_attachment(e,JSON.stringify(c),JSON.stringify(s));try{return {name:p.name(),bytes:new Uint8Array(p.content())};}finally{p.free();}},releaseAttachment:file=>{releases++;file.bytes.fill(0);file.name='';}};
   await consumeCommercialBox(sharedClient,coreWorker,q.id,boxId,{keyEpoch:1,snapshotRevision:revision},new AbortController().signal,async text=>{deliveredItems.push(JSON.parse(text));},async file=>{deliveredFiles.push({name:file.name,bytes:[...file.bytes]});});
   assert.equal(deliveredItems.length,12);assert.deepEqual(deliveredFiles,[{name:'synthetic.bin',bytes:[...fileBytes]}]);assert.equal(releases,1);
+  const sinkSource=await fs.readFile(new URL('../../shared/cloud/commercial-export-file-sink.ts',import.meta.url),'utf8');
+  const {createVerifiedExportSink}=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(sinkSource,{mode:'transform'})).toString('base64'));
+  const {createAtomicExportStore}=await import('../../scripts/atomic-export-store.mjs');
+  const output=await fs.mkdtemp((await import('node:os')).tmpdir()+'/passshare-real-export-');
+  try{
+   const sink=createVerifiedExportSink(createAtomicExportStore(output));
+   await consumeCommercialBox(sharedClient,coreWorker,q.id,boxId,{keyEpoch:1,snapshotRevision:revision},new AbortController().signal,sink.item,sink.attachment);
+   assert.deepEqual([...await fs.readFile(output+`/attachment-${itemId}-${attachmentId}-v1.bin`)],[...fileBytes]);
+   assert.deepEqual(JSON.parse(await fs.readFile(output+`/item-${itemId}-v2.json`,'utf8')),updated);
+   const sinkAfterRestart=createVerifiedExportSink(createAtomicExportStore(output));
+   await sinkAfterRestart.attachment({name:'synthetic.bin',bytes:fileBytes.slice()},attachmentContext,new AbortController().signal);
+  }finally{await fs.rm(output,{recursive:true});}
   const decrypted=box.decrypt_attachment(JSON.stringify(fileExport.body.data),JSON.stringify(attachmentContext),JSON.stringify({itemEnvelope:JSON.stringify(itemExport.body.data),expectedItemContext:itemContext,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision}));
   try{assert.deepEqual(decrypted.content(),fileBytes);assert.equal(decrypted.name(),'synthetic.bin');}finally{decrypted.free();}
   // Keep expanded positive consumer traffic separate from the negative-selector

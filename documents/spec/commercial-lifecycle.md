@@ -648,3 +648,30 @@ worker idleで中断しても権限・鍵を復活させず、通常再解除後
 取消しは`signal.reason`（通常`AbortError`）で伝播し、snapshot不一致・並行再開の409と
 区別する。fetch中の取消しも同じ理由へ正規化する。callbackが取消しを確定する場合は
 成功returnせず同取消理由をrejectし、未保存分を成功checkpointへ含めない。
+
+#### 出力先への保存と読み返し
+`createVerifiedExportSink`は原子的な非上書き公開を持つVerifiedExportStoreを使い、項目は安定ID/versionの
+JSON、添付はitem/attachment ID/versionのbinaryと元ファイル名metadataへ保存する。
+入力名をpathに使わない。同名既存出力は全bytes一致の場合だけ成功として再利用し、
+違う内容は上書きせず拒否する。native公開後に全bytesを読み返してから成功を返す。
+取消し・close失敗は成功にせず、writer abortとconsumerの排出契約を保つ。選択UI・権限取得の
+画面操作はこのmoduleに含めず、実browser OPFSの受入と利用者選択directoryの受入を区別する。
+
+保存境界の修正: 汎用directory handleのcreate:true/exclusiveは新規entry所有を保証しない。
+そのため実保存sinkは`VerifiedExportStore`のatomic no-replace publishを必要とし、
+任意のbrowser directoryをそのまま安全なstoreとして扱わない。未公開一時fileを作り、
+非上書き確定後に全bytesを読み返す。取消し前に確定済みなら同内容readbackで照合する。
+この境界は既存Rust CLIのcreate_new+hard_link方式と一致する。browser OPFSだけの
+先行試験は旧候補の履歴であり、現native/host storeの利用者接続完了を意味しない。
+
+原子的storeの所有はcreate-new成功時のopen handleから公開・清掃まで保持し、
+dev/inode/birthtimeの同一性を公開前・公開後・清掃前に照合する。読返しは開いた同handle
+から取得し、path identity/size/mtime変化を拒否する。任意の非協調processによるpath差替えを
+OSのhandle-relative unlinkなしで完全排除できるとは主張せず、そのWindows native接続は
+独立受入として残す。identity不一致・清掃失敗は成功へ隠さず、foreign entryを消さない。
+
+Windows hostの公開・清掃は`passshare-export-publish`を用い、create-new fileを
+read/write/DELETEかつshare mode0で保持し、同handleへの非上書きrenameで確定する。
+失敗時も同handleへ削除指定し、path上の別entryをunlinkしない。公開後のbytes検証は
+その同handleから行う。Node adapterは子process終端まで排出し、成功code後にもsinkの
+readbackを行う。非Windowsのpath操作実装とWindowsの実handle受入を混同しない。

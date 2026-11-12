@@ -4,3 +4,4 @@ export * from '@shared/cloud/cloud-api';
 export const webCloudApi = createCloudApi(authFetch);
 export const { getCommercialEncryptedAttachment, getCommercialAttachmentItemSnapshot, getCommercialExportPage, getBoxState, getAttachmentState, getOwnerBundle, putOwnerBundle, setupBox, bundleText, sameBundle, readPendingBundle, savePendingBundle, clearPendingBundle, validateItemContext, publicOwnerBundle, readItemEnvelope, listEncryptedItems, getEncryptedItem, putEncryptedItem, deleteEncryptedItem, getAttachmentItemSnapshot, getEncryptedAttachment, writeEncryptedAttachment } = webCloudApi;
 export {consumeCommercialAttachment,consumeCommercialBox,createCommercialExportProgress} from '@shared/cloud/commercial-attachment-export';
+export {createVerifiedExportSink} from '@shared/cloud/commercial-export-file-sink';
