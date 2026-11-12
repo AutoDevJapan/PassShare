@@ -78,8 +78,11 @@ export function createVaultRoutes(store, options = {}) {
       if(sourceItems.some(item=>item.importAttachments?.length)&&(!operation||!mutateOnce))throw connectHttpError(400,'PS018: Attachment import requires an operation key');
       for (const [index, body] of bodies.entries()) {
         const rowKey=createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex');
-        const importFiles=(sourceItems[index].importAttachments??[]).map((file,fileIndex)=>({id:Array.from(createHash('sha256').update(JSON.stringify([rowKey,fileIndex])).digest().subarray(0,26),byte=>String.fromCharCode(97+byte%26)).join(''),name:file.name,size:file.size,sha256:file.sha256,content:Buffer.from(file.base64,'base64')}));
-        if(importFiles.length)body.files=importFiles.map(({id,name,size,sha256})=>({id,name,size,sha256}));
+        const importFiles=(sourceItems[index].importAttachments??[]).map((file,fileIndex)=>({id:Array.from(createHash('sha256').update(JSON.stringify([req.connectAuth?.userId??'legacy',vaultUuid,rowKey,fileIndex])).digest().subarray(0,26),byte=>String.fromCharCode(97+byte%26)).join(''),name:file.name,size:file.size,sha256:file.sha256,content:Buffer.from(file.base64,'base64')}));
+        if(importFiles.length){
+          body.files=importFiles.map(({id,name,size,sha256})=>({id,name,size,sha256}));
+          body.attachments=importFiles.map(({id,name,size})=>({attachmentId:id,attachmentVersion:1,keyEpoch:1,name,contentBytes:size}));
+        }
         try {
         const item = operation && mutateOnce
           ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,importKey:operation,archiveDigest,importFiles,resource:vaultUuid,operation:'item',key:rowKey,request:body})

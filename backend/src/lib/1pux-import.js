@@ -52,7 +52,7 @@ export async function parse1puxBuffer(zipBuffer, options = {}) {
     const document=item.details?.documentAttributes;
     if(!document)continue;
     if(typeof document.documentId!=='string'||typeof document.fileName!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX document reference');
-    const matches=directory.files.filter(file=>file.path.startsWith(`files/${document.documentId}___`));
+    const matches=directory.files.filter(file=>file.path.startsWith(`files/${document.documentId}__`)&&file.path.slice(`files/${document.documentId}`.length).replace(/^_{2,3}/,'')===document.fileName);
     if(matches.length!==1)throw connectHttpError(400,'PS017: Missing or ambiguous 1PUX attachment');
     const content=await readEntryCapped(matches[0],maxDecompressedBytes-total);total+=content.length;
     if(document.decryptedSize!==content.length)throw connectHttpError(400,'PS017: 1PUX attachment size mismatch');
@@ -169,9 +169,8 @@ function extractItemsFromExport(parsed) {
  */
 function sectionFieldValue(value) {
   if (value && typeof value === 'object') {
-    for (const key of ['concealed', 'string']) {
-      if (typeof value[key] === 'string') return value[key];
-    }
+    const entries=Object.entries(value);
+    if(entries.length===1&&['string','number','boolean'].includes(typeof entries[0][1]))return String(entries[0][1]);
     return JSON.stringify(value);
   }
   return String(value ?? '');
