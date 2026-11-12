@@ -16,8 +16,8 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
  const {app}=await createApp({pool:null,authStore,store:createMemoryStore()});
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
  const base='http://127.0.0.1:'+server.address().port;
- let calls=0,posts=0,csrf=0;let stripCsrf=false,failPost=false;
- const load=(token:string)=>{
+ let calls=0,posts=0,csrf=0;let stripCsrf=false,failPost=false,switchOnCsrf=false;
+ const load=(token:string,ownerId:string)=>{
   const cookies=new Map([['passshare_session',token]]);
   const source=fs.readFileSync(new URL('../src/lib/auth-api.ts',import.meta.url),'utf8').replace('import.meta.env.VITE_API_BASE_URL ?? ""',JSON.stringify(base)).replace(/export /g,'');
   const context=vm.createContext({Headers,Response,AbortController,setTimeout,clearTimeout,
@@ -29,22 +29,33 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
     headers.set('Cookie',[...cookies].map(([k,v])=>k+'='+encodeURIComponent(v)).join('; '));
     const response=await fetch(url,{...init,headers});
     for(const value of response.headers.getSetCookie()){const pair=value.split(';')[0],at=pair.indexOf('=');cookies.set(pair.slice(0,at),decodeURIComponent(pair.slice(at+1)));}
+    if(switchOnCsrf&&url.endsWith('/csrf'))cookies.set('passshare_session',b.sessionToken);
     return response;
    },createSupportReceiptApi});
   vm.runInContext(stripTypeScriptTypes(source,{mode:'transform'})+';globalThis.authFetch=authFetch',context);
   const adapter=fs.readFileSync(new URL('../src/lib/support-receipts-api.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace(/export /g,'');
-  vm.runInContext(stripTypeScriptTypes(adapter)+';globalThis.api=webSupportReceiptApi',context);
-  return context.api;
+  vm.runInContext(stripTypeScriptTypes(adapter)+';globalThis.make=createWebSupportReceiptApi',context);
+  return context.make(ownerId);
  };
  try{
-  const api=load(a.sessionToken),signal=new AbortController().signal;
+  const api=load(a.sessionToken,owner.id),signal=new AbortController().signal;
   const input={requestId:'33333333-3333-4333-8333-333333333333',kind:'technical',version:'0.1.0',platform:'web',errorCode:''};
   const row=await api.create(input,signal);assert.equal((await api.create(input,signal)).id,row.id);assert.equal((await api.get(row.id,signal)).id,row.id);
+  const preflight=await fetch(base+'/api/support-receipts',{method:'OPTIONS',headers:{Origin:base,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'X-PassShare-Receipt-Owner'}});
+  assert.equal(preflight.status,204);assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Owner/i);
   assert.equal(posts,2);assert.equal(csrf,2);
-  await assert.rejects(load(b.sessionToken).get(row.id,signal),e=>(e as any).status===404);
+  await assert.rejects(load(b.sessionToken,other.id).get(row.id,signal),e=>(e as any).status===404);
   stripCsrf=true;await assert.rejects(api.create({...input,requestId:'44444444-4444-4444-8444-444444444444'},signal),e=>(e as any).status===403);stripCsrf=false;
   const abort=new AbortController();abort.abort();const before=calls;await assert.rejects(api.get(row.id,abort.signal));assert.equal(calls,before);
   failPost=true;const count=posts;await assert.rejects(api.create(input,signal));assert.equal(posts,count+1);failPost=false;
+  switchOnCsrf=true;
+  const switchedId='55555555-5555-4555-8555-555555555555';
+  await assert.rejects(api.create({...input,requestId:switchedId},signal),e=>(e as any).status===401);
+  switchOnCsrf=false;
+  const freshB=load(b.sessionToken,other.id);
+  const correct=await freshB.create({...input,requestId:switchedId},signal);
+  assert.equal(correct.status,'received');
+  assert.equal(correct.request.requestId,switchedId);
   await authStore.deleteSession(a.sessionId);await assert.rejects(api.get(row.id,signal),e=>(e as any).status===401);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
