@@ -66,3 +66,10 @@ test('published bytes do not hide a non-cancellation cleanup failure',()=>fixtur
  const publish=store.publishNew;store.publishNew=async(n,b,s)=>{await publish(n,b,s);throw Object.assign(new Error('cleanup failed'),{code:'EACCES'});};
  await assert.rejects(createVerifiedExportSink(store).item('{}',context,new AbortController().signal),(e:any)=>e.code==='EACCES');
 }));
+
+test('create-new temp collision leaves the foreign temporary entry unchanged',()=>fixture(async(store,root)=>{
+ const crypto=await import('node:crypto');const {syncBuiltinESMExports}=await import('node:module');const original=crypto.default.randomUUID;
+ const fixed='11111111-1111-4111-8111-111111111111',temp=join(root,'.passshare-export-'+fixed+'.tmp');await writeFile(temp,'foreign');
+ try{crypto.default.randomUUID=(()=>fixed) as any;syncBuiltinESMExports();await assert.rejects(store.publishNew(`item-${context.itemId}-v1.json`,new Uint8Array([1]),new AbortController().signal));assert.equal(await readFile(temp,'utf8'),'foreign');}
+ finally{crypto.default.randomUUID=original;syncBuiltinESMExports();}
+}));
