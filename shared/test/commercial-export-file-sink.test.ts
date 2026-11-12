@@ -75,8 +75,10 @@ test('create-new temp collision leaves the foreign temporary entry unchanged',()
 }));
 
 test('concurrent same-content publication reconciles without replacing data',()=>fixture(async(store)=>{
+ let arrivals=0,release!:()=>void;const gate=new Promise<void>(r=>{release=r;});const originalRead=store.read;let synchronized=0;
+ store.read=async name=>{const result=await originalRead(name);if(arrivals<2){arrivals++;if(arrivals===2)release();await gate;synchronized++;}return result;};
  const sinks=[createVerifiedExportSink(store),createVerifiedExportSink(store)],signal=new AbortController().signal;
- await Promise.all(sinks.map(s=>s.item('{"x":1}',context,signal)));
+ await Promise.all(sinks.map(s=>s.item('{"x":1}',context,signal)));assert.equal(arrivals,2);assert.equal(synchronized,2);
  assert.equal(new TextDecoder().decode((await store.read(`item-${context.itemId}-v1.json`))!),'{"x":1}');
 }));
 
