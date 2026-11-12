@@ -46,6 +46,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [connectLoading, setConnectLoading] = useState(false);
   const [logoutLocationKey, setLogoutLocationKey] = useState<string | null>(null);
   const generation = useRef(0);
+  const authMutation = useRef<number | null>(null);
   const mounted = useRef(true);
   const currentAccount = useRef<string | null>(null);
   const currentCredential = useRef<string | null>(null);
@@ -118,6 +119,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, [clearSupport, bindSupport]);
 
   const refreshConnect = useCallback(async () => {
+    if (authMutation.current !== null) return null;
     const token = ++generation.current;
     setLoading(currentAccount.current === null);
     setConnectLoading(true);
@@ -134,6 +136,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, [syncSession]);
 
   const refresh = useCallback(async () => {
+    if (authMutation.current !== null) return;
     const token = ++generation.current;
     // ProtectedRoute replaces its outlet while loading. Keep the current
     // account mounted until the identity check confirms a boundary change.
@@ -162,6 +165,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       const token = invalidate();
+      authMutation.current = token;
       currentAccount.current = null;
       setUser(null);
       setLoading(true);
@@ -173,6 +177,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
         setUser(currentUser);
         await syncSession(token).catch(() => null);
       } finally {
+        if (authMutation.current === token) authMutation.current = null;
         if (mounted.current && generation.current === token) { setLoading(false); setConnectLoading(false); }
       }
     },
@@ -182,6 +187,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const signup = useCallback(
     async (email: string, password: string) => {
       const token = invalidate();
+      authMutation.current = token;
       currentAccount.current = null;
       setUser(null);
       setLoading(true);
@@ -193,6 +199,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
         setUser(currentUser);
         await syncSession(token).catch(() => null);
       } finally {
+        if (authMutation.current === token) authMutation.current = null;
         if (mounted.current && generation.current === token) { setLoading(false); setConnectLoading(false); }
       }
     },
@@ -201,16 +208,21 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async (fromLocationKey?: string) => {
     const token = invalidate();
+    authMutation.current = token;
     setLoading(false);
     setConnectLoading(false);
-    await logoutRequest();
-    if (!mounted.current || generation.current !== token) return;
-    // One route guard owns the destination after confirmed sign-out. Bind it
-    // to the requesting page so a late response cannot redirect a new page.
-    setLogoutLocationKey(fromLocationKey ?? null);
-    currentAccount.current = null;
-    setUser(null);
-    await primeCsrfToken();
+    try {
+      await logoutRequest();
+      if (!mounted.current || generation.current !== token) return;
+      // One route guard owns the destination after confirmed sign-out. Bind it
+      // to the requesting page so a late response cannot redirect a new page.
+      setLogoutLocationKey(fromLocationKey ?? null);
+      currentAccount.current = null;
+      setUser(null);
+      await primeCsrfToken();
+    } finally {
+      if (authMutation.current === token) authMutation.current = null;
+    }
   }, [invalidate]);
 
   const value = useMemo(

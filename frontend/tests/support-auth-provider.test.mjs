@@ -76,6 +76,8 @@ test('Provider exposes owner-bound receipts and invalidates them before logout r
     await assert.rejects(client.create(h.request,new AbortController().signal));
     assert.equal(h.requests.length,1);
     assert.equal(h.current.supportClient,null);
+    await renderer.act(async()=>h.current.refreshConnect());
+    assert.equal(h.current.supportClient,null,'logout owns authentication until its response');
     h.finishLogout();await renderer.act(async()=>logout);
   } finally {await h.unmount();}
 });

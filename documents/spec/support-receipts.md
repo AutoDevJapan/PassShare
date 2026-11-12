@@ -89,6 +89,9 @@ AuthSessionProvider exposes supportClient for the confirmed account. Logout,
 login and signup invalidate that client before awaiting authentication I/O;
 account changes, confirmed authorization rejection and Provider unmount also
 dispose it. A same-account metadata refresh preserves the current client.
+Background refresh cannot acquire another account client while login, signup or
+logout owns an outstanding authentication transition. Only that transition's
+matching generation releases the refresh exclusion, including on failure.
 Controlled React Provider tests execute the real receipt adapter with synthetic
 HTTP responses. They do not prove browser cookies, PostgreSQL persistence or a
 visible support operation. The visible entry still requires its scoped UI answer.
