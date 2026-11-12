@@ -25,6 +25,13 @@ test('official hierarchy and document references retain source, Unicode name and
  await assert.rejects(parse1puxBuffer(zip,{maxDecompressedBytes:10}));
  const [doubleSeparator]=await parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(data))],['files/document__添付-é.bin',bytes]]));
  assert.deepEqual(Buffer.from(doubleSeparator.importAttachments[0].base64,'base64'),bytes);
+ const [differentInternalName]=await parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(data))],['files/document___payload.bin',bytes]]));
+ assert.equal(differentInternalName.importAttachments[0].name,'添付-é.bin');
+ assert.deepEqual(Buffer.from(differentInternalName.importAttachments[0].base64,'base64'),bytes);
+ await assert.rejects(parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(data))],['files/document___one.bin',bytes],['files/document___two.bin',bytes]])),/Missing or ambiguous/);
+ await assert.rejects(parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(data))],['files/document___nested/file.bin',bytes]])),/Missing or ambiguous/);
+ const wrongSize=structuredClone(data);wrongSize.accounts[0].vaults[0].items[0].details.documentAttributes.decryptedSize=7;
+ await assert.rejects(parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(wrongSize))],['files/document___payload.bin',bytes]])),/size mismatch/);
 });
 test('official URLs and section values preserve client-facing values',async()=>{
  const original={accounts:[{vaults:[{items:[{uuid:'item',categoryUuid:'001',overview:{title:'Synthetic',urls:[{url:'https://example.test/login',label:'work'}]},details:{sections:[{fields:[{id:'password',value:{concealed:'synthetic-secret'}},{id:'username',value:{string:'synthetic-user'}}]}]}}]}]}]};

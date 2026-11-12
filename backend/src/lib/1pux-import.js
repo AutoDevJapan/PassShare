@@ -51,8 +51,10 @@ export async function parse1puxBuffer(zipBuffer, options = {}) {
   for(const item of items){
     const document=item.details?.documentAttributes;
     if(!document)continue;
-    if(typeof document.documentId!=='string'||typeof document.fileName!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX document reference');
-    const matches=directory.files.filter(file=>[2,3].some(count=>file.path===`files/${document.documentId}${'_'.repeat(count)}${document.fileName}`));
+    if(typeof document.documentId!=='string'||!/^[-a-zA-Z0-9]+$/.test(document.documentId)||typeof document.fileName!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX document reference');
+    // documentId binds archive bytes; fileName is independent display metadata.
+    // Never extract paths, accept nested entries or silently choose duplicates.
+    const matches=directory.files.filter(file=>file.type!=='Directory'&&file.path.startsWith(`files/${document.documentId}__`)&&!file.path.slice(6).includes('/')&&!file.path.includes('\\')&&!file.path.includes('\0'));
     if(matches.length!==1)throw connectHttpError(400,'PS017: Missing or ambiguous 1PUX attachment');
     const content=await readEntryCapped(matches[0],maxDecompressedBytes-total);total+=content.length;
     if(document.decryptedSize!==content.length)throw connectHttpError(400,'PS017: 1PUX attachment size mismatch');
