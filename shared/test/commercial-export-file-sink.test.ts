@@ -73,3 +73,9 @@ test('create-new temp collision leaves the foreign temporary entry unchanged',()
  try{crypto.default.randomUUID=(()=>fixed) as any;syncBuiltinESMExports();const publish=store.publishNew(`item-${context.itemId}-v1.json`,new Uint8Array([1]),new AbortController().signal);if(process.platform==='win32')await publish;else await assert.rejects(publish);assert.equal(await readFile(temp,'utf8'),'foreign');}
  finally{crypto.default.randomUUID=original;syncBuiltinESMExports();}
 }));
+
+test('concurrent same-content publication reconciles without replacing data',()=>fixture(async(store)=>{
+ const sinks=[createVerifiedExportSink(store),createVerifiedExportSink(store)],signal=new AbortController().signal;
+ await Promise.all(sinks.map(s=>s.item('{"x":1}',context,signal)));
+ assert.equal(new TextDecoder().decode((await store.read(`item-${context.itemId}-v1.json`))!),'{"x":1}');
+}));
