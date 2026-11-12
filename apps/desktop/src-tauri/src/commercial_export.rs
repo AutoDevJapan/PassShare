@@ -530,6 +530,34 @@ impl ExportSessions {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn closed_history_is_bounded_and_never_registers_active_tokens() {
+        let root =
+            std::env::temp_dir().join(format!("passshare-close-limit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let sessions = super::ExportSessions::default();
+        let active = sessions.open(root.clone(), 1).unwrap();
+        let first = sessions.open(root.clone(), 1).unwrap();
+        sessions.close(&first).unwrap();
+        for _ in 0..1023 {
+            let token = sessions.open(root.clone(), 1).unwrap();
+            sessions.close(&token).unwrap();
+        }
+        assert_eq!(sessions.closed.lock().unwrap().len(), 1024);
+        assert_eq!(sessions.recover(&first), Ok(true));
+        sessions.close(&first).unwrap();
+        assert_eq!(sessions.closed.lock().unwrap().len(), 1024);
+        assert!(!sessions.closed.lock().unwrap().contains(&active));
+        let last = sessions.open(root.clone(), 1).unwrap();
+        sessions.close(&last).unwrap();
+        assert_eq!(sessions.closed.lock().unwrap().len(), 1024);
+        assert_eq!(sessions.recover(&first), Err("EXPORT_SESSION".into()));
+        assert_eq!(sessions.close(&first), Err("EXPORT_SESSION".into()));
+        assert_eq!(sessions.recover(&last), Ok(true));
+        assert!(sessions.identity(&active).is_ok());
+        sessions.close(&active).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+    #[test]
     fn closed_session_reconciles_only_its_own_token() {
         let root = std::env::temp_dir().join(format!("passshare-close-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
