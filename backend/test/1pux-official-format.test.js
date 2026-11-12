@@ -34,4 +34,11 @@ test('official URLs and section values preserve client-facing values',async()=>{
  assert.equal(body.fields[0].type,'CONCEALED');
  assert.equal(body.fields[1].value,'synthetic-user');
  assert.deepEqual(body.importedItem.details,original.accounts[0].vaults[0].items[0].details);
+ const overview=original.accounts[0].vaults[0].items[0].overview;
+ overview.url='https://primary.example.test/';
+ const [primaryOnly]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
+ assert.equal(primaryOnly.urls.find(url=>url.primary).href,overview.url);
+ overview.urls.push({url:overview.url,label:'primary'});
+ const [primaryLast]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
+ assert.equal(primaryLast.urls.find(url=>url.primary).href,overview.url);
 });
