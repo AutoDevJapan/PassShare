@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify:
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +63,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked -p passshare-desktop commercial_export::ready_cleanup_tests --lib -j 2 -- --ignored
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Restore the exact Windows browser revision cache
+        if: runner.os == 'Windows'
+        uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca
+        with:
+          path: ~/AppData/Local/ms-playwright
+          key: native-export-browser-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
       - name: Verify authenticated contract export through Windows native storage
         if: runner.os == 'Windows'
         working-directory: .
@@ -91,7 +98,7 @@ jobs:
             $env:PASSSHARE_NATIVE_EXPORT_PG = 'true'
             $env:PASSSHARE_NATIVE_EXPORT_BROWSER = 'true'
             $env:PASSSHARE_MUTATIONS_BIN = Join-Path $env:GITHUB_WORKSPACE 'backend/native/target/release/passshare-mutations.exe'
-            node --test --test-timeout=120000 backend/test/native-commercial-export.windows.test.js
+            node --test --test-force-exit --test-timeout=120000 backend/test/native-commercial-export.windows.test.js
             if ($LASTEXITCODE -ne 0) { throw 'Windows authenticated native export acceptance failed' }
           } finally {
             & (Join-Path $pg 'pg_ctl.exe') -D $data -m immediate -w stop
