@@ -108,6 +108,7 @@ test('contract-window export returns real ciphertext while rechecking current me
      owner:{passwordBoxId:boxId,ownerAccountId:a.user.id,keyEpoch:1},bundle:JSON.stringify(bundle),
      password:'fixture-encryption-password',pin:{keyEpoch:1,snapshotRevision:revision},output:browserOutput});
     assert.deepEqual([...await fs.readFile(browserOutput+`/attachment-${itemId}-${attachmentId}-v1.bin`)],[...fileBytes]);
+    assert.deepEqual(JSON.parse(await fs.readFile(browserOutput+`/attachment-${itemId}-${attachmentId}-v1.name.json`,'utf8')),{name:'synthetic.bin'});
     assert.deepEqual(JSON.parse(await fs.readFile(browserOutput+`/item-${itemId}-v2.json`,'utf8')),updated);
     for(const [id,expected] of originals){
      const version=id===itemId?2:1;
