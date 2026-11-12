@@ -141,6 +141,12 @@ test('a late earlier copy cannot overwrite the last clicked item',async({page})=
  await page.locator('li.ps-item-card').filter({hasText:'Last copy'}).getByRole('button',{name:/Copy password|パスワードをコピー/}).click();await expect.poll(()=>page.evaluate(()=>(window as any).__writes)).toEqual(['Last copy']);
  const response=page.waitForResponse(r=>r.url().endsWith(`${box.path}/${items[0].id}`));release();await response;await page.evaluate(()=>new Promise(r=>setTimeout(r,100)));expect(await page.evaluate(()=>(window as any).__writes)).toEqual(['Last copy']);
 });
+test('concealed notes are copied on demand without including secret text in metadata',async({page})=>{
+ const box=await openBox(page);await page.request.post(box.path,{headers:box.headers,data:{title:'Concealed note',category:'SECURE_NOTE',fields:[{label:'notes',type:'CONCEALED',value:'synthetic-note-body'}]}});
+ const list=await(await page.request.get(box.path,{headers:box.headers})).json();expect(list[0].hasBody).toBe(true);expect(JSON.stringify(list)).not.toContain('synthetic-note-body');
+ await page.addInitScript(()=>{(window as any).__writes=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{(window as any).__writes.push(text);}}});});
+ await page.goto(box.url);await expect(page.getByText('synthetic-note-body',{exact:true})).toHaveCount(0);await page.getByRole('button',{name:/Copy body|本文をコピー|内容をコピー/}).click();await expect.poll(()=>page.evaluate(()=>(window as any).__writes)).toEqual(['synthetic-note-body']);
+});
 
 test("CSV import reports created rows after partial failure and delete errors stay visible", async ({ page }) => {
   const box = await openBox(page);
