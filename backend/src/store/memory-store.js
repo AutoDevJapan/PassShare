@@ -196,7 +196,9 @@ export function createMemoryStore() {
     async createFile(vaultId, itemId, input = {}) {
       await requireItem(vaultId, itemId);
       if (!vaults.has(vaultId) || !items.has(itemId)) throw connectHttpError(404,"PS007: Item not found");
-      const fileId = generateConnectId();
+      if(input.id!==undefined&&!isValidConnectId(input.id))throw connectHttpError(400,'PS009: Invalid file id');
+      const fileId = input.id ?? generateConnectId();
+      if(files.has(fileId))throw connectHttpError(409,'PS015: File already exists');
       const now = nowIso();
       const content = input.content ?? Buffer.alloc(0);
       const meta = {

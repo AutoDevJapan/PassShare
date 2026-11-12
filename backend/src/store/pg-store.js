@@ -217,7 +217,8 @@ export function createPgStore(pool) {
 
     async createFile(vaultId, itemId, input = {}) {
       await requireItem(vaultId, itemId);
-      const fileId = generateConnectId();
+      if(input.id!==undefined&&!isValidConnectId(input.id))throw connectHttpError(400,'PS009: Invalid file id');
+      const fileId = input.id ?? generateConnectId();
       const now = nowIso();
       const content = input.content ?? Buffer.alloc(0);
       const name = input.name ?? "attachment";

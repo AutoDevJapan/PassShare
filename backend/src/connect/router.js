@@ -75,10 +75,14 @@ export function createVaultRoutes(store, options = {}) {
       const operation = req.headers['idempotency-key'];
       if(operation && (typeof operation!=='string'||!/^[-a-zA-Z0-9_]{16,64}$/.test(operation)))throw connectHttpError(400,'PS018: Invalid import operation');
       const archiveDigest=createHash('sha256').update(zipBuffer).digest('hex');
+      if(sourceItems.some(item=>item.importAttachments?.length)&&(!operation||!mutateOnce))throw connectHttpError(400,'PS018: Attachment import requires an operation key');
       for (const [index, body] of bodies.entries()) {
+        const rowKey=createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex');
+        const importFiles=(sourceItems[index].importAttachments??[]).map((file,fileIndex)=>({id:Array.from(createHash('sha256').update(JSON.stringify([rowKey,fileIndex])).digest().subarray(0,26),byte=>String.fromCharCode(97+byte%26)).join(''),name:file.name,size:file.size,sha256:file.sha256,content:Buffer.from(file.base64,'base64')}));
+        if(importFiles.length)body.files=importFiles.map(({id,name,size,sha256})=>({id,name,size,sha256}));
         try {
         const item = operation && mutateOnce
-          ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,importKey:operation,archiveDigest,resource:vaultUuid,operation:'item',key:createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex'),request:body})
+          ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,importKey:operation,archiveDigest,importFiles,resource:vaultUuid,operation:'item',key:rowKey,request:body})
           : await store.createItem(vaultUuid, normalizeItemBody(body));
         created.push(item);
         } catch(error) {

@@ -4,6 +4,7 @@ import { generateConnectId } from "../lib/connect.js";
 import { normalizeItemBody } from "../lib/categories.js";
 import { connectHttpError } from "../middleware/connect-errors.js";
 import { applySchemaWithAdvisoryLock } from "../db/migration-lock.js";
+function nativeInput(input){const {importFiles,...rest}=input;return rest;}
 
 // Persistence adapter only: scope, replay and payload decisions belong to Rust.
 export async function createMutationStore({ store, authStore, pool }) {
@@ -18,7 +19,7 @@ export async function createMutationStore({ store, authStore, pool }) {
       // Deletion locks the Box before changing this creation scope. A record
       // read before that wait is not current evidence after the lock returns.
       await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[existing.result.vaultId]);
-      const scope = await nativeMutation({ ...input, command: "scope" });
+      const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
       existing = (await client.query("SELECT request_hash,result FROM mutation_operations WHERE actor=$1 AND resource=$2 AND operation=$3 AND request_key=$4",scope.parts)).rows[0];
     }
     const currentSession = async () => {
@@ -64,11 +65,18 @@ export async function createMutationStore({ store, authStore, pool }) {
         else { const box = await transactionStore.getVault(existing.result.vaultId); live = { vaultId: box.id, name: box.name }; }
       } catch (error) { if (error?.status !== 404) throw error; }
     }
-    const plan = await nativeMutation({ ...input, command: "create", existing: existing ?? null, live });
-    if (plan.action === "replay") { await currentSession(); return plan.result; }
+    const plan = await nativeMutation({ ...nativeInput(input), command: "create", existing: existing ?? null, live });
+    if (plan.action === "replay") {
+      for(const file of input.importFiles??[]){
+        let content;try{content=await transactionStore.getFileContent(input.resource,plan.result.id,file.id);}catch(error){if(error?.status!==404)throw error;}
+        if(!content||!Buffer.from(content).equals(file.content))throw Object.assign(connectHttpError(409,'PS015: Imported attachment changed'),{reason:'creation_result_changed'});
+      }
+      await currentSession(); return plan.result;
+    }
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
+      for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
     } else {
       const vaultId = generateConnectId();
       if (client) {
@@ -79,8 +87,8 @@ export async function createMutationStore({ store, authStore, pool }) {
       } else { await authStore.createOwnedBox(input.actor,store,vaultId,input.request.name); }
       result = { vaultId, name: input.request.name };
     }
-    const scope = await nativeMutation({ ...input, command: "scope" });
-    const record = await nativeMutation({ ...input, command: "record", result });
+    const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
+    const record = await nativeMutation({ ...nativeInput(input), command: "record", result });
     if (client) await client.query("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES($1,$2,$3,$4,$5,$6::jsonb)", [...scope.parts,record.request_hash,JSON.stringify(record.result)]);
     else records.set(scope.lock, record);
     await currentSession();
@@ -88,7 +96,7 @@ export async function createMutationStore({ store, authStore, pool }) {
   }
 
   return async function mutateOnce(input) {
-    const scope = await nativeMutation({ ...input, command: "scope" });
+    const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
     if (!pool) {
       const pending = memoryTail.then(() => execute(input,store,null,records.get(scope.lock)));
       memoryTail = pending.catch(() => {});
