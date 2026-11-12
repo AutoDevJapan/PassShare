@@ -86,3 +86,10 @@ test('native publisher rejects truncated stdin before any output is published',(
  const code=await new Promise<number|null>((resolve,reject)=>{const c=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[output,'10'],{windowsHide:true,stdio:['pipe','ignore','ignore']});c.on('error',reject);c.on('close',resolve);c.stdin.end(new Uint8Array([1,2]));});
  assert.notEqual(code,0);await assert.rejects(readFile(output),(e:any)=>e.code==='ENOENT');
 }));
+
+test('completed progress cannot claim success in a different output directory',()=>fixture(async(_store,root)=>{
+ const {saveCommercialExport}=await import('../../scripts/save-commercial-export.ts');const {createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress();
+ const api={getCommercialExportPage:async()=>({envelopes:[],nextCursor:null,attachmentsIncluded:false})};
+ await saveCommercialExport(root,api as any,{} as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);
+ await assert.rejects(saveCommercialExport(root+'-other',api as any,{} as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress));
+}));
