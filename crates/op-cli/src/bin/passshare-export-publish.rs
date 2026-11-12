@@ -125,13 +125,6 @@ fn run() -> std::io::Result<()> {
     }
     #[cfg(not(windows))]
     {
-        // Pin the selected directory against rename/deletion throughout creation,
-        // publication and cleanup. No UI or credential capability is added.
-        let _directory = OpenOptions::new()
-            .access_mode(0)
-            .share_mode(3)
-            .custom_flags(0x02000000)
-            .open(parent)?;
         let mut f = OpenOptions::new()
             .write(true)
             .create_new(true)
