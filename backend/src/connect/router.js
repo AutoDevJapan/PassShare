@@ -134,6 +134,7 @@ export function createItemRoutes(store, { mutateOnce } = {}) {
     try {
       if (req.headers["idempotency-key"] && mutateOnce) {
         const item = await mutateOnce({ actor: req.connectAuth?.userId ?? "legacy",
+          connectTokenHash:req.connectAuth?.tokenHash,
           resource: req.params.vaultUuid, operation: "item",
           key: req.headers["idempotency-key"], request: req.body ?? {} });
         res.status(201).json(item);

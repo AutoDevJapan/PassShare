@@ -84,12 +84,12 @@ export async function createMutationStore({ store, authStore, pool }) {
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
-      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id,document:JSON.stringify(result),fileIds:(input.importFiles??[]).map(file=>file.id)});
+      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id,document:JSON.stringify(result),fileIds:(input.importFiles??[]).map(file=>file.id),files:(input.importFiles??[]).map(file=>({...file,content:Buffer.from(file.content)}))});
       try {
         for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
       } catch (error) {
         if(!client) {
-          try { await transactionStore.deleteItem(input.resource,result.id,JSON.stringify(result),(input.importFiles??[]).map(file=>file.id),recoveryAuthorization(input)); }
+          try { await transactionStore.deleteItem(input.resource,result.id,JSON.stringify(result),(input.importFiles??[]).map(file=>file.id),recoveryAuthorization(input),input.importFiles??[]); }
           catch(cleanupError) {
             throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error});
           }
@@ -125,7 +125,7 @@ export async function createMutationStore({ store, authStore, pool }) {
           try {
             const current=await store.getItem(rollback.resource,rollback.itemId);
             if(JSON.stringify(current)!==rollback.document)throw connectHttpError(409,'PS015: Pending import changed; recovery requires original item');
-            await store.deleteItem(rollback.resource,rollback.itemId,rollback.document,rollback.fileIds,recoveryAuthorization(input));
+            await store.deleteItem(rollback.resource,rollback.itemId,rollback.document,rollback.fileIds,recoveryAuthorization(input),rollback.files);
           }
           catch(error){if(error?.status!==404)throw error;}
           pendingRollback.delete(scope.lock);

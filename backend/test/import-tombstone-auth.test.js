@@ -12,6 +12,8 @@ test('memory rollback compare-delete preserves edits during the deletion await',
  assert.equal((await store.getItem(box,item.id)).title,'edited');
  const original=await store.getItem(box,item.id);
  const foreign=await store.createFile(box,item.id,{name:'foreign',content:Buffer.from([7])});
+ await assert.rejects(store.deleteItem(box,item.id,JSON.stringify(original),[foreign.id],undefined,[{id:foreign.id,name:'foreign',content:Buffer.from([8])}]),error=>error.status===409);
+ assert.deepEqual(await store.getFileContent(box,item.id,foreign.id),Buffer.from([7]));
  await assert.rejects(store.deleteItem(box,item.id,JSON.stringify(original),[]),error=>error.status===409);
  assert.deepEqual(await store.getFileContent(box,item.id,foreign.id),Buffer.from([7]));
  await assert.rejects(store.deleteItem(box,item.id,JSON.stringify(original),[foreign.id],()=>{throw Object.assign(Error('revoked'),{status:401});}),error=>error.status===401);
