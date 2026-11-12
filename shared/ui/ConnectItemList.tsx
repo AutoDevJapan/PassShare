@@ -9,6 +9,7 @@ type ConnectItemListProps = {
   onEdit: (item: ConnectItem) => void;
   onDelete: (id: string) => void;
   resolveCopy?: (item: ConnectItem) => Promise<string>;
+  assertCopyCurrent?: () => void;
 };
 
 function ItemRow({
@@ -17,12 +18,14 @@ function ItemRow({
   onEdit,
   onDelete,
   resolveCopy,
+  assertCopyCurrent,
 }: {
   item: ConnectItem;
   labels: ItemUiLabels;
   onEdit: (item: ConnectItem) => void;
   onDelete: (id: string) => void;
   resolveCopy?: (item: ConnectItem) => Promise<string>;
+  assertCopyCurrent?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -31,6 +34,7 @@ function ItemRow({
     if (!secret) {
       return;
     }
+    assertCopyCurrent?.();
     await copyTextWithAutoClear(secret);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
@@ -110,7 +114,7 @@ function ItemRow({
   );
 }
 
-export function ConnectItemList({ items, labels, onEdit, onDelete, resolveCopy }: ConnectItemListProps) {
+export function ConnectItemList({ items, labels, onEdit, onDelete, resolveCopy, assertCopyCurrent }: ConnectItemListProps) {
   if (items.length === 0) {
     return <p className="ps-text-muted">{labels.emptyList}</p>;
   }
@@ -118,7 +122,7 @@ export function ConnectItemList({ items, labels, onEdit, onDelete, resolveCopy }
   return (
     <ul className="ps-item-list">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} labels={labels} onEdit={onEdit} onDelete={onDelete} resolveCopy={resolveCopy} />
+        <ItemRow key={item.id} item={item} labels={labels} onEdit={onEdit} onDelete={onDelete} resolveCopy={resolveCopy} assertCopyCurrent={assertCopyCurrent} />
       ))}
     </ul>
   );
