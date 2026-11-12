@@ -77,7 +77,7 @@ export async function createMutationStore({ store, authStore, pool }) {
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
-      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id});
+      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id,document:JSON.stringify(result)});
       try {
         for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
       } catch (error) {
@@ -113,7 +113,13 @@ export async function createMutationStore({ store, authStore, pool }) {
       const pending = memoryTail.then(async () => {
         const rollback=pendingRollback.get(scope.lock);
         if(rollback){
-          try { await store.deleteItem(rollback.resource,rollback.itemId); }
+          if(input.actor!=='legacy'&&!(await authStore.listVaultIdsForUser(input.actor)).includes(input.resource))throw connectHttpError(403,'PS016: Access denied to password box');
+          if(input.connectTokenHash&&!await authStore.findConnectTokenByHash(input.connectTokenHash))throw connectHttpError(401,'PS011: Invalid or expired Connect token');
+          try {
+            const current=await store.getItem(rollback.resource,rollback.itemId);
+            if(JSON.stringify(current)!==rollback.document)throw connectHttpError(409,'PS015: Pending import changed; recovery requires original item');
+            await store.deleteItem(rollback.resource,rollback.itemId);
+          }
           catch(error){if(error?.status!==404)throw error;}
           pendingRollback.delete(scope.lock);
         }
