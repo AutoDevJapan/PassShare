@@ -22,6 +22,7 @@ export function createAtomicExportStore(root){
    }catch(error){if(error.code==='ENOENT')return null;throw error;}finally{await file?.close();}
   },
   publishNew:async(name,bytes,signal)=>{
+   if(signal.aborted)throw signal.reason;
    const destination=path(name);
    if(process.platform==='win32'){
     const executable=fileURLToPath(new URL('../target/debug/passshare-export-publish.exe',import.meta.url));
@@ -30,7 +31,7 @@ export function createAtomicExportStore(root){
      let errorText='';child.stderr.on('data',b=>{if(errorText.length<1024)errorText+=b.toString();});
      child.stdin.on('error',()=>{});child.on('error',reject);
      child.on('close',code=>{if(code===0)resolve();else reject(Object.assign(new Error('Atomic export publication failed'),{code:'EXPORT_PUBLISH_FAILED'}));});
-     child.stdin.end(bytes);
+     if(signal.aborted){child.stdin.end();}else child.stdin.end(bytes);
     });
     return;
    }
