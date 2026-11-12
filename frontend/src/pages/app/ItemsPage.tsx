@@ -226,6 +226,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     setBusy(true);
     const scope = activeScope.current;
     let imported = 0;
+    let changed = 0;
     let ownedAttempt: ImportAttempt | null = null;
     try {
       const text = await file.text();
@@ -236,17 +237,30 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
       acquireImportAttempt(attempt);
       ownedAttempt = attempt;
       csvAttempt.current = attempt;
-      imported = attempt.completed.size;
+      imported = 0;
       for (const [index, row] of parsed.entries()) {
         await ensureCompatibility();
         if (scope !== activeScope.current) return;
-        await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
         const alreadyCompleted = attempt.completed.has(index);
+        try {
+          await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
+        } catch (error) {
+          if (alreadyCompleted && typeof error === "object" && error !== null && "status" in error && error.status === 409) {
+            changed += 1;
+            continue;
+          }
+          throw error;
+        }
         attempt.completed.add(index);
-        if (!alreadyCompleted) imported += 1;
+        imported += 1;
         saveImportAttempt(attempt);
       }
       if (scope !== activeScope.current) return;
+      if (changed) {
+        await loadItems();
+        if (scope === activeScope.current) setError(t("app.item.importPartialError").replace("{count}", String(imported)));
+        return;
+      }
       finishImportAttempt(attempt);
       csvAttempt.current = null;
       setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
