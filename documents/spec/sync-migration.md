@@ -75,3 +75,5 @@ headerの正規化と、Title/Passwordが空の行を取込対象外とする既
 非引用のCR/LF/CRLFはレコード区切りとする。Title/Passwordの空白のみ判定は従来どおり取込対象外だが、有効な値の前後空白は除去しない。
 
 上記の値保持はCSV解析時の契約であり、保存用変換で既存のURL前後空白除去とtagsのカンマ分割・要素trimは維持する。URL内部の文字・percent encodingやnotes/username/passwordの内容をこの正規化で変えない。CSVのtags列は元からカンマを含む単一tag等を完全往復する形式ではない。
+
+DesktopのRust CSV取込もheaderのみを一律trimし、password/username/notesの有意な前後空白と引用内改行を暗号化保存・再open後も保持する。必須欄の空判定とURL/tagsの既存正規化は値保持と分離する。
