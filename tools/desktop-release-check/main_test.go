@@ -309,3 +309,30 @@ func TestChildOutputCaptureIsBounded(t *testing.T) {
 		t.Fatal("child output capture was not bounded")
 	}
 }
+
+func TestPublisherPayloadRequiresExactUniqueSignedBuildBytes(t *testing.T) {
+	root := scratch(t)
+	expected := filepath.Join(root, "expected.exe")
+	write(t, expected, []byte("signed-build"))
+	payload := filepath.Join(root, "payload")
+	if err := os.Mkdir(payload, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyPublisherPayload(payload, expected); err == nil {
+		t.Fatal("missing publisher accepted")
+	}
+	p := filepath.Join(payload, "passshare-export-publish.exe")
+	write(t, p, []byte("signed-build"))
+	if _, err := verifyPublisherPayload(payload, expected); err != nil {
+		t.Fatal(err)
+	}
+	write(t, p, []byte("substituted"))
+	if _, err := verifyPublisherPayload(payload, expected); err == nil {
+		t.Fatal("substituted publisher accepted")
+	}
+	write(t, p, []byte("signed-build"))
+	write(t, filepath.Join(payload, "other/passshare-export-publish.exe"), []byte("signed-build"))
+	if _, err := verifyPublisherPayload(payload, expected); err == nil {
+		t.Fatal("duplicate publisher accepted")
+	}
+}

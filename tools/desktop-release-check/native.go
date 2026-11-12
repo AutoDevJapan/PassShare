@@ -216,22 +216,11 @@ func nativeCheck(root, bundle, path, version string) (string, string, error) {
 		if !sameFiles(applications[0], filepath.Join(root, "target/release/passshare-desktop.exe")) {
 			return "", "", fail("installer payload and signed application bytes differ")
 		}
-		var publishers []string
-		if filepath.WalkDir(scratch, func(p string, d os.DirEntry, e error) error {
-			if e != nil {
-				return e
-			}
-			if !d.IsDir() && strings.EqualFold(d.Name(), "passshare-export-publish.exe") {
-				publishers = append(publishers, p)
-			}
-			return nil
-		}) != nil || len(publishers) != 1 {
-			return "", "", fail("NSIS must contain exactly one export publisher")
+		publisher, e := verifyPublisherPayload(scratch, filepath.Join(root, "target/release/passshare-export-publish.exe"))
+		if e != nil {
+			return "", "", e
 		}
-		if !sameFiles(publishers[0], filepath.Join(root, "target/release/passshare-export-publish.exe")) {
-			return "", "", fail("installer export publisher bytes differ")
-		}
-		if err = windowsVerify(publishers[0], ""); err != nil {
+		if err = windowsVerify(publisher, ""); err != nil {
 			return "", "", err
 		}
 		if err = windowsVerify(applications[0], version); err != nil {
@@ -589,4 +578,23 @@ func materializeMacLinks(root *os.Root, links map[string]string) error {
 		}
 	}
 	return nil
+}
+
+func verifyPublisherPayload(extracted, expected string) (string, error) {
+	var publishers []string
+	if filepath.WalkDir(extracted, func(p string, d os.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if !d.IsDir() && strings.EqualFold(d.Name(), "passshare-export-publish.exe") {
+			publishers = append(publishers, p)
+		}
+		return nil
+	}) != nil || len(publishers) != 1 {
+		return "", fail("NSIS must contain exactly one export publisher")
+	}
+	if !sameFiles(publishers[0], expected) {
+		return "", fail("installer export publisher bytes differ")
+	}
+	return publishers[0], nil
 }
