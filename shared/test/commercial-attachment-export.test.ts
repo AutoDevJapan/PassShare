@@ -129,3 +129,7 @@ test('worker failure racing cancellation preserves cancellation reason',async()=
  const c=new AbortController(),reason=new DOMException('cancel','AbortError'),item={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2},attachment={passwordBoxId:item.passwordBoxId,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};const api={getCommercialAttachmentItemSnapshot:async()=>'',getCommercialEncryptedAttachment:async()=>''};const worker={decryptAttachment:async()=>{c.abort(reason);throw new Error('worker unavailable');},releaseAttachment:()=>{throw new Error('no file returned');}};
  await assert.rejects(consumeCommercialAttachment(api as any,worker as any,'contract',item,attachment,4,c.signal,async()=>{}),e=>e===reason);
 });
+
+test('explicit null cancellation reason is not replaced',async()=>{
+ const c=new AbortController();c.abort(null);let caught=false;try{await consumeCommercialAttachment({} as any,{} as any,'contract',{} as any,{} as any,4,c.signal,async()=>{});}catch(error){caught=true;assert.equal(error,null);}assert.equal(caught,true);
+});
