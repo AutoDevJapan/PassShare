@@ -78,6 +78,14 @@ export function createMemoryAuthStore() {
       }
     },
 
+    assertImportRecoveryAccess(userId, vaultId, tokenHash) {
+      if(!memberships.some(m=>m.user_id===userId&&m.vault_id===vaultId&&(m.role==='owner'||m.confirmed_at)))throw authHttpError(403,'PS016','Access denied to password box');
+      if(tokenHash){
+        const token=connectTokensById.get(connectTokenIdByHash.get(tokenHash));
+        if(!token||token.user_id!==userId||new Date(token.expires_at).getTime()<=Date.now()||!token.vault_ids.includes(vaultId))throw authHttpError(401,'PS011','Invalid or expired Connect token');
+      }
+    },
+
     async listVaultIdsForUser(userId) {
       return memberships.filter((m) => m.user_id === userId && (m.role === "owner" || m.confirmed_at)).map((m) => m.vault_id);
     },

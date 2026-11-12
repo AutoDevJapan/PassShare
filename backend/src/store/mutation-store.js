@@ -11,6 +11,13 @@ export async function createMutationStore({ store, authStore, pool }) {
   const records = new Map();
   const pendingRollback = new Map();
   let memoryTail = Promise.resolve();
+  function recoveryAuthorization(input){
+    return ()=>{
+      if(input.actor==='legacy'&&!input.connectTokenHash)return;
+      if(typeof authStore.assertImportRecoveryAccess!=='function')throw connectHttpError(503,'PS019: Atomic import recovery authorization unavailable');
+      authStore.assertImportRecoveryAccess(input.actor,input.resource,input.connectTokenHash);
+    };
+  }
   if (pool && process.env.PASSSHARE_MUTATIONS_BIN) {
     await applySchemaWithAdvisoryLock(pool, 4820123, await nativeMutation({ command: "schema" }));
   }
@@ -77,12 +84,12 @@ export async function createMutationStore({ store, authStore, pool }) {
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
-      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id,document:JSON.stringify(result)});
+      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id,document:JSON.stringify(result),fileIds:(input.importFiles??[]).map(file=>file.id)});
       try {
         for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
       } catch (error) {
         if(!client) {
-          try { await transactionStore.deleteItem(input.resource,result.id,JSON.stringify(result)); }
+          try { await transactionStore.deleteItem(input.resource,result.id,JSON.stringify(result),(input.importFiles??[]).map(file=>file.id),recoveryAuthorization(input)); }
           catch(cleanupError) {
             throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error});
           }
@@ -118,7 +125,7 @@ export async function createMutationStore({ store, authStore, pool }) {
           try {
             const current=await store.getItem(rollback.resource,rollback.itemId);
             if(JSON.stringify(current)!==rollback.document)throw connectHttpError(409,'PS015: Pending import changed; recovery requires original item');
-            await store.deleteItem(rollback.resource,rollback.itemId,rollback.document);
+            await store.deleteItem(rollback.resource,rollback.itemId,rollback.document,rollback.fileIds,recoveryAuthorization(input));
           }
           catch(error){if(error?.status!==404)throw error;}
           pendingRollback.delete(scope.lock);

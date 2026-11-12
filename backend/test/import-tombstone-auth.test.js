@@ -10,6 +10,12 @@ test('memory rollback compare-delete preserves edits during the deletion await',
  const remove=store.deleteItem(box,item.id,expected);
  await edit;await assert.rejects(remove,error=>error.status===409);
  assert.equal((await store.getItem(box,item.id)).title,'edited');
+ const original=await store.getItem(box,item.id);
+ const foreign=await store.createFile(box,item.id,{name:'foreign',content:Buffer.from([7])});
+ await assert.rejects(store.deleteItem(box,item.id,JSON.stringify(original),[]),error=>error.status===409);
+ assert.deepEqual(await store.getFileContent(box,item.id,foreign.id),Buffer.from([7]));
+ await assert.rejects(store.deleteItem(box,item.id,JSON.stringify(original),[foreign.id],()=>{throw Object.assign(Error('revoked'),{status:401});}),error=>error.status===401);
+ assert.equal((await store.getItem(box,item.id)).title,'edited');
 });
 
 test('the same deleted operation is hidden from expired sessions and conflicts for current sessions',async()=>{
