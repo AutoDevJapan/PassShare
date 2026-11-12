@@ -10,11 +10,12 @@ export async function consumeCommercialAttachment(
  signal:AbortSignal,consume:(file:AttachmentPlaintext,signal:AbortSignal)=>Promise<void>,
 ):Promise<void>{
  item={...item};attachment={...attachment};
- const current=()=>{if(signal.aborted)throw new CloudApiError(409);};
+ const current=()=>{if(signal.aborted)throw signal.reason??new DOMException('Export cancelled','AbortError');};
  current();
  if(item.passwordBoxId!==attachment.passwordBoxId||item.itemId!==attachment.itemId||item.keyEpoch!==attachment.keyEpoch)throw new CloudApiError(400);
- const parent=await api.getCommercialAttachmentItemSnapshot(contractId,item,revision,signal);current();
- const body=await api.getCommercialEncryptedAttachment(contractId,attachment,revision,signal);current();
+ const cancelledRequest=async<T>(run:()=>Promise<T>):Promise<T>=>{try{return await run();}catch(error){if(signal.aborted)throw signal.reason??new DOMException('Export cancelled','AbortError');throw error;}};
+ const parent=await cancelledRequest(()=>api.getCommercialAttachmentItemSnapshot(contractId,item,revision,signal));current();
+ const body=await cancelledRequest(()=>api.getCommercialEncryptedAttachment(contractId,attachment,revision,signal));current();
  const file=await worker.decryptAttachment(body,attachment,{itemEnvelope:parent,expectedItemContext:item,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision});
  let released=false;
  const release=()=>{if(!released){released=true;worker.releaseAttachment(file);}};
@@ -51,10 +52,11 @@ export async function consumeCommercialBox(
  // never a delivered sink callback, and keep cancellation responsive while waiting.
  const request=async<T>(run:()=>Promise<T>):Promise<T>=>{
   try{return await run();}catch(error){
+   if(signal.aborted)throw signal.reason??new DOMException('Export cancelled','AbortError');
    if(!(error instanceof CloudApiError)||error.status!==429)throw error;
    await new Promise<void>((resolve,reject)=>{
-    if(signal.aborted){reject(new CloudApiError(409));return;}
-    const abort=()=>{clearTimeout(timer);reject(new CloudApiError(409));};
+    if(signal.aborted){reject(signal.reason??new DOMException('Export cancelled','AbortError'));return;}
+    const abort=()=>{clearTimeout(timer);reject(signal.reason??new DOMException('Export cancelled','AbortError'));};
     const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},61000);
     signal.addEventListener('abort',abort,{once:true});
    });
@@ -62,7 +64,7 @@ export async function consumeCommercialBox(
   }
  };
  const limitedApi={getCommercialAttachmentItemSnapshot:(...args:Parameters<CloudApi['getCommercialAttachmentItemSnapshot']>)=>request(()=>api.getCommercialAttachmentItemSnapshot(...args)),getCommercialEncryptedAttachment:(...args:Parameters<CloudApi['getCommercialEncryptedAttachment']>)=>request(()=>api.getCommercialEncryptedAttachment(...args))};
- const current=()=>{if(signal.aborted)throw new CloudApiError(409);};
+ const current=()=>{if(signal.aborted)throw signal.reason??new DOMException('Export cancelled','AbortError');};
  do{
   current();const page=await request(()=>api.getCommercialExportPage(contractId,boxId,pin,after,signal));current();
   for(const envelope of page.envelopes){

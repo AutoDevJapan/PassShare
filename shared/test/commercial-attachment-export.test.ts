@@ -114,3 +114,7 @@ test('resume does not re-decrypt completed items inside an unfinished page',asyn
  const run=()=>consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async text=>{saved.push(JSON.parse(text).id);},async()=>{},progress);
  await assert.rejects(run());locked=false;await run();assert.deepEqual(decrypted,[ids[0],ids[1],ids[1]]);assert.deepEqual(saved,ids);
 });
+
+test('user cancellation is AbortError rather than snapshot conflict',async()=>{
+ const c=new AbortController();c.abort();await assert.rejects(consumeCommercialAttachment({} as any,{} as any,'contract',{} as any,{} as any,4,c.signal,async()=>{}),(e:any)=>e.name==='AbortError'&&e.status===undefined);
+});
