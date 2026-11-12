@@ -1,4 +1,38 @@
 import fs from 'node:fs';import vm from 'node:vm';import {test} from 'node:test';import assert from 'node:assert/strict';import {stripTypeScriptTypes} from 'node:module';import {importAttempt,importFingerprint,saveImportAttempt,finishImportAttempt,acquireImportAttempt,releaseImportAttempt} from '../src/lib/import-attempt.ts';
+import {exportOnepasswordCsv} from '../../shared/lib/csv-export.ts';
+
+function realParser(){
+ const source=fs.readFileSync(new URL('../src/lib/csv-import.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace('export function parseOnepasswordCsv','function parseOnepasswordCsv');
+ const c=vm.createContext({emptyFormValues:()=>({})});vm.runInContext(stripTypeScriptTypes(source)+';globalThis.parse=parseOnepasswordCsv',c);return c.parse;
+}
+
+test('existing exporter roundtrip retains quoted values and intentional duplicate rows',()=>{
+ const item={id:'synthetic',category:'LOGIN' as const,favorite:false,title:'Unicode 日本語, "title"',username:' user ',password:' synthetic ',url:'',notes:'line1\r\nline "2",\nlast',tags:[]};
+ const rows=realParser()(exportOnepasswordCsv([item,item]));
+ assert.equal(rows.length,2);
+ for(const row of rows)for(const key of ['title','username','password','notes','url'])assert.equal(row[key],item[key]);
+});
+
+test('malformed later record prevents every real handler create',async()=>{
+ const source=fs.readFileSync(new URL('../src/pages/app/ItemsPage.tsx',import.meta.url),'utf8');
+ const body=source.slice(source.indexOf('  async function handleCsvImport('),source.indexOf('  async function handle1puxImport('));
+ let writes=0,errors=0;
+ const c=vm.createContext({connectClient:{createItem:async()=>{writes++;}},itemsReady:true,busyRef:{current:false},activeScope:{current:'malformed:box'},vaultId:'box',ensureCompatibility:async()=>{},parseOnepasswordCsv:realParser(),connectItemToCreateBody:x=>x,setError:()=>{errors++;},setImportMessage:()=>{},setBusy:()=>{},labels:{importSuccess:'{count}'},loadGeneration:{current:0},loadItems:async()=>{},t:()=>'{count}',csvAttempt:{current:null},importAttempt,importFingerprint,saveImportAttempt,finishImportAttempt,acquireImportAttempt,releaseImportAttempt});
+ vm.runInContext(stripTypeScriptTypes(body)+';globalThis.run=handleCsvImport',c);
+ await c.run({text:async()=> 'Title,Password,Notes\nValid,synthetic,ok\nBroken,synthetic,"unterminated'});
+ assert.equal(writes,0);assert.ok(errors>0);
+ for(const bad of ['Title,Password\n"bad"tail,synthetic','Title,Password\nbad"quote,synthetic'])assert.throws(()=>realParser()(bad),/CSV/);
+});
+
+test('real CSV parser retains quoted multiline notes, doubled quotes and record order', () => {
+ const source=fs.readFileSync(new URL('../src/lib/csv-import.ts',import.meta.url),'utf8').replace(/^import .*$/gm,'').replace('export function parseOnepasswordCsv','function parseOnepasswordCsv');
+ const c=vm.createContext({emptyFormValues:()=>({})});vm.runInContext(stripTypeScriptTypes(source)+';globalThis.parse=parseOnepasswordCsv',c);
+ const csv='Title,Username,Password,Notes\r\nFirst,user,synthetic,"line one\r\nline ""two"", kept"\r\nSecond,user,synthetic,final\r\n';
+ const rows=c.parse(csv);
+ assert.equal(rows.length,2);
+ assert.equal(rows[0].notes,'line one\r\nline "two", kept');
+ assert.equal(rows[1].title,'Second');
+});
 for(const ambiguous of [false,true])test('real CSV handler retries writes: response lost='+ambiguous,async()=>{
  const source=fs.readFileSync(new URL('../src/pages/app/ItemsPage.tsx',import.meta.url),'utf8');const body=source.slice(source.indexOf('  async function handleCsvImport('),source.indexOf('  async function handle1puxImport('));const records=new Map();let calls=0;const keys=[];const c={connectClient:{createItem:async(_v,_body,key)=>{calls++;keys.push(key);if(calls===2){if(ambiguous)records.set(key,{});throw Error('failure');}records.set(key,{});}},itemsReady:true,busyRef:{current:false},activeScope:{current:'owner:box'},vaultId:'box',ensureCompatibility:async()=>{},parseOnepasswordCsv:()=>[{},{}],connectItemToCreateBody:x=>x,setError:()=>{},setImportMessage:()=>{},setBusy:()=>{},labels:{importSuccess:'{count}'},loadGeneration:{current:0},loadItems:async()=>{c.loadGeneration.current++;},t:()=>'{count}',csvAttempt:{current:null},importAttempt,importFingerprint,saveImportAttempt,finishImportAttempt,acquireImportAttempt,releaseImportAttempt};vm.createContext(c);vm.runInContext(stripTypeScriptTypes(body)+';globalThis.run=handleCsvImport',c);const file={text:async()=> 'synthetic'};await c.run(file);await c.run(file);assert.equal(records.size,2);assert.equal(calls,4);assert.equal(keys[0],keys[2]);assert.equal(keys[1],keys[3]);await c.run(file);assert.equal(records.size,4);
 });
