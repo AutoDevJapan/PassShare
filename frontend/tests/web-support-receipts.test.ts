@@ -63,6 +63,10 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const tokens=await Promise.all([fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}}),fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}})]);
   const t1=(await tokens[0].json()).csrfToken,t2=(await tokens[1].json()).csrfToken;
   assert.equal(t1,t2);
+  const recoveryPage=await fetch(base+'/api/auth/account/recovery-key',{headers:{Cookie:cookie}});
+  assert.equal(recoveryPage.status,200);
+  const pageCookie=recoveryPage.headers.getSetCookie().find(value=>value.startsWith('passshare_csrf='));
+  assert.ok(pageCookie);assert.equal(decodeURIComponent(pageCookie.split(';')[0].slice('passshare_csrf='.length)),t1);
   const receipts=await Promise.all(['66666666-6666-4666-8666-666666666666','77777777-7777-4777-8777-777777777777'].map(requestId=>fetch(base+'/api/support-receipts',{method:'POST',headers:{Cookie:cookie+'; passshare_csrf='+t2,'X-CSRF-Token':t1,'content-type':'application/json'},body:JSON.stringify({...input,requestId})})));
   assert.equal(receipts.every(r=>r.status===201),true);
   await assert.rejects(load(b.sessionToken,other.id).get(row.id,signal),e=>(e as any).status===404);

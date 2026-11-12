@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import { rateLimit } from "express-rate-limit";
 import { generateConnectId } from "../lib/connect.js";
 import { isTokenAuthClient } from "./client.js";
-import { clearCsrfCookie, issueCsrfToken, requireCsrf, setCsrfCookie } from "./csrf.js";
+import { clearCsrfCookie, issueCsrfToken, requireCsrf } from "./csrf.js";
 import { authHttpError, sendAuthError } from "./errors.js";
 import { createLoginGuard, resolveClientIp } from "./login-guard.js";
 import { toMobileAuthResponse } from "./mobile-response.js";
@@ -28,6 +28,15 @@ import { registerLifecycleForms } from "./lifecycle-forms.js";
  */
 export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore, mutateOnce }) {
   const router = Router();
+  router.use(async (req, res, next) => {
+    try {
+      const token = parseCookies(req)[SESSION_COOKIE];
+      const session = token ? await authStore.findSessionByToken(token) : null;
+      if (session) res.locals.sessionCsrfToken = createHmac('sha256', token)
+        .update('passshare-session-csrf-v1\0').update(session.id).digest('base64url');
+      next();
+    } catch (error) { next(error); }
+  });
   router.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
   router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
     standardHeaders:"draft-6",legacyHeaders:false,
@@ -44,18 +53,8 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
     handler:(_req, _res, next) => next(authHttpError(429, "PS029", "Too many requests. Try again later.")) });
   const expiredPages = new Map();
 
-  router.get("/csrf", async (req, res) => {
-    try {
-      const token = parseCookies(req)[SESSION_COOKIE];
-      const session = token ? await authStore.findSessionByToken(token) : null;
-      // Parallel tabs in one authenticated session must not rotate each
-      // other's cookie. No raw credential or public session ID is exposed.
-      const csrfToken = session
-        ? createHmac('sha256', token).update('passshare-session-csrf-v1\0').update(session.id).digest('base64url')
-        : issueCsrfToken(res, appEnv);
-      if (session) setCsrfCookie(res, csrfToken, appEnv);
-      res.json({ csrfToken });
-    } catch (error) { sendAuthError(res, error); }
+  router.get("/csrf", (_req, res) => {
+    res.json({ csrfToken: issueCsrfToken(res, appEnv) });
   });
 
   router.post("/signup", requireCsrf, async (req, res) => {
@@ -90,6 +89,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       setSessionCookie(res, session.sessionToken, appEnv);
+      res.locals.sessionCsrfToken = createHmac('sha256', session.sessionToken).update('passshare-session-csrf-v1\0').update(session.sessionId).digest('base64url');
       const csrfToken = issueCsrfToken(res, appEnv);
       res.status(201).json({
         user: toPublicUser(user),
@@ -131,6 +131,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       setSessionCookie(res, session.sessionToken, appEnv);
+      res.locals.sessionCsrfToken = createHmac('sha256', session.sessionToken).update('passshare-session-csrf-v1\0').update(session.sessionId).digest('base64url');
       const csrfToken = issueCsrfToken(res, appEnv);
       res.json({
         user: toPublicUser(user),
