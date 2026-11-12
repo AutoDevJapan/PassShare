@@ -16,7 +16,14 @@ export async function consumeCommercialAttachment(
  const parent=await api.getCommercialAttachmentItemSnapshot(contractId,item,revision,signal);current();
  const body=await api.getCommercialEncryptedAttachment(contractId,attachment,revision,signal);current();
  const file=await worker.decryptAttachment(body,attachment,{itemEnvelope:parent,expectedItemContext:item,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision});
- try{current();await consume(file);current();}finally{worker.releaseAttachment(file);}
+ let released=false;
+ const release=()=>{if(!released){released=true;worker.releaseAttachment(file);}};
+ let onAbort:()=>void=()=>{};
+ try{
+  current();
+  const cancelled=new Promise<never>((_resolve,reject)=>{onAbort=()=>{release();reject(new CloudApiError(409));};signal.addEventListener('abort',onAbort,{once:true});});
+  await Promise.race([Promise.resolve().then(()=>{current();return consume(file);}),cancelled]);current();
+ }finally{signal.removeEventListener('abort',onAbort);release();}
 }
 
 // Pages and attachments share one immutable snapshot; delivery is sequential and backpressured.

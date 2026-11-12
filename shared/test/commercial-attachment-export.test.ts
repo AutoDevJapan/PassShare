@@ -65,3 +65,10 @@ test('rate limit wait is cancellable and never retries after abort',async t=>{
  const pending=consumeCommercialBox(api as any,{} as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},controller.signal,async()=>{},async()=>{});
  await reached;await Promise.resolve();controller.abort();await assert.rejects(pending);t.mock.timers.tick(61000);assert.equal(calls,1);
 });
+
+test('aborting a stalled sink promptly wipes plaintext and settles consumer',async()=>{
+ const controller=new AbortController();let started!:()=>void;const sinkStarted=new Promise<void>(r=>{started=r;});let releases=0;const file={name:'private',bytes:new Uint8Array([7])};const item={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2};const attachment={passwordBoxId:item.passwordBoxId,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+ const api={getCommercialAttachmentItemSnapshot:async()=>'',getCommercialEncryptedAttachment:async()=>''};const worker={decryptAttachment:async()=>file,releaseAttachment:(v:any)=>{releases++;v.name='';v.bytes.fill(0);}};
+ const pending=consumeCommercialAttachment(api as any,worker as any,'contract',item,attachment,4,controller.signal,async()=>{started();await new Promise(()=>{});});
+ await sinkStarted;controller.abort();await assert.rejects(pending);assert.equal(releases,1);assert.equal(file.bytes[0],0);assert.equal(file.name,'');
+});
