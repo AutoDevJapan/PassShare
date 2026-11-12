@@ -63,7 +63,7 @@ pub fn decide(input: &Value) -> Value {
         || input["live"].is_null()
         || existing["result"]["digest"] != digest(&input["live"])
     {
-        return json!({"status":409,"message":"PS015: Creation result changed; review it before starting another operation"});
+        return json!({"status":409,"reason":"creation_result_changed","message":"PS015: Creation result changed; review it before starting another operation"});
     }
     json!({"status":200,"body":{"action":"replay","result":input["live"]}})
 }

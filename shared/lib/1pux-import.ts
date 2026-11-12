@@ -3,6 +3,8 @@ const pendingSessionImports=new Map<string,string>();
 
 export type Import1puxResult = {
   imported: number;
+  partial?: boolean;
+  changed?: number;
 };
 
 function bufferToBase64(buffer: ArrayBuffer): string {
@@ -101,6 +103,6 @@ export async function import1puxWithSession(
   }
 
   const result=(await importRes.json()) as Import1puxResult;
-  if(pendingSessionImports.get(scope)===operationKey)pendingSessionImports.delete(scope);
+  if(!result.partial&&pendingSessionImports.get(scope)===operationKey)pendingSessionImports.delete(scope);
   return result;
 }

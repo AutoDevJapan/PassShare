@@ -34,7 +34,7 @@ export async function createMutationStore({ store, authStore, pool }) {
     };
     await currentSession();
     if (existing?.result?.deleted === true) {
-      throw connectHttpError(409, "PS015: Creation result was deleted; use a new operation");
+      throw Object.assign(connectHttpError(409, "PS015: Creation result was deleted; use a new operation"),{reason:'creation_result_changed'});
     }
     async function requireCurrentMembership(boxId) {
       // Sharing, retirement and ciphertext activation lock the parent first.

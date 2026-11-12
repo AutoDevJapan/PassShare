@@ -21,6 +21,7 @@ export async function nativeMutation(input) {
   if (reply.status !== 200) {
     const error = connectHttpError(reply.status, reply.message);
     error.code = reply.code ?? (reply.status === 409 ? "PS015" : "PS018");
+    if(reply.reason==='creation_result_changed')error.reason=reply.reason;
     throw error;
   }
   return reply.body;

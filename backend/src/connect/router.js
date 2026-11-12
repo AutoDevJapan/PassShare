@@ -71,18 +71,25 @@ export function createVaultRoutes(store, options = {}) {
       // still leave a partial import; this is not a batch transaction.
       const bodies = sourceItems.map(source => map1puxItemToConnectBody(source, {forReplay:true}));
       const created = [];
+      let changed=0;
       const operation = req.headers['idempotency-key'];
       if(operation && (typeof operation!=='string'||!/^[-a-zA-Z0-9_]{16,64}$/.test(operation)))throw connectHttpError(400,'PS018: Invalid import operation');
       const archiveDigest=createHash('sha256').update(zipBuffer).digest('hex');
       for (const [index, body] of bodies.entries()) {
+        try {
         const item = operation && mutateOnce
           ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,resource:vaultUuid,operation:'item',key:createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex'),request:body})
           : await store.createItem(vaultUuid, body);
         created.push(item);
+        } catch(error) {
+          if(operation&&error?.status===409&&error?.reason==='creation_result_changed'){changed++;continue;}
+          throw error;
+        }
       }
 
       res.status(201).json({
         imported: created.length,
+        ...(changed ? {partial:true,changed} : {}),
         items: created,
       });
     } catch (err) {

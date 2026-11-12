@@ -310,6 +310,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
       });
       const result = await import1puxFile(guardedClient, vaultId, file, attempt.keys[0]);
       if (scope !== activeScope.current) return;
+      if(result.partial){await loadItems();if(scope===activeScope.current)setError(t("app.item.importPartialError").replace("{count}",String(result.imported)));return;}
       finishImportAttempt(attempt);
       setImportMessage(labels.import1puxSuccess.replace("{count}", String(result.imported)));
       await loadItems();
