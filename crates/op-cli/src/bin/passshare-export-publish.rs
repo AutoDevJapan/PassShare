@@ -101,6 +101,7 @@ fn run() -> std::io::Result<()> {
             .create_new(true)
             .access_mode(0xC0010000)
             .share_mode(0)
+            .custom_flags(0x04000000)
             .open(&temp)?;
         let result = (|| {
             f.write_all(&bytes)?;
@@ -128,6 +129,16 @@ fn run() -> std::io::Result<()> {
                     if permit != [b'C'] {
                         return Err(std::io::Error::other("publication not permitted"));
                     }
+                }
+                let keep_on_close = 8u32;
+                if SetFileInformationByHandle(
+                    f.as_raw_handle(),
+                    21,
+                    (&keep_on_close as *const u32).cast(),
+                    4,
+                ) == 0
+                {
+                    return Err(std::io::Error::last_os_error());
                 }
                 if SetFileInformationByHandle(f.as_raw_handle(), 3, p.cast(), len as u32) == 0 {
                     return Err(std::io::Error::last_os_error());
