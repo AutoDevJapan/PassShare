@@ -206,6 +206,10 @@ jobs:
         run: pnpm --dir frontend exec tsc --noEmit
       - name: Verify partial CSV retry operation identity
         run: node --experimental-transform-types --test frontend/tests/csv-import-retry.test.ts
+      - name: Verify authenticated cross-client transport connections
+        run: |
+          pnpm --dir apps/mobile install --frozen-lockfile --ignore-scripts
+          node --test --test-timeout=15000 frontend/tests/cross-client-cloud.test.mjs
       - name: Build frontend
         run: pnpm --dir frontend run build
       - name: Verify pinned Playwright browser and dependency image
