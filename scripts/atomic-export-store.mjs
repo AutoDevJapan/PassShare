@@ -9,11 +9,11 @@ export function createAtomicExportStore(root){
  return {
   read:async name=>{try{const p=path(name);const info=await lstat(p);if(!info.isFile()||info.isSymbolicLink())throw new Error('Export output must be a regular file');return new Uint8Array(await readFile(p));}catch(error){if(error.code==='ENOENT')return null;throw error;}},
   publishNew:async(name,bytes,signal)=>{
-   const out=path(name),temp=join(root,'.passshare-export-'+randomUUID()+'.tmp');let file;
+   const out=path(name),temp=join(root,'.passshare-export-'+randomUUID()+'.tmp');let file,created=false;
    try{
-    if(signal.aborted)throw signal.reason;file=await open(temp,'wx',0o600);await file.writeFile(bytes);await file.sync();await file.close();file=undefined;
+    if(signal.aborted)throw signal.reason;file=await open(temp,'wx',0o600);created=true;await file.writeFile(bytes);await file.sync();await file.close();file=undefined;
     if(signal.aborted)throw signal.reason;await link(temp,out);
-   }finally{await file?.close();await unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+   }finally{await file?.close();if(created)await unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});}
   },
  };
 }
