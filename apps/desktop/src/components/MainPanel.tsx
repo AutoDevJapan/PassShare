@@ -50,10 +50,15 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importLifetime = useRef({ active: true, busy: false });
   useEffect(() => {
-    const lifetime = { active: true, busy: false };
+    const lifetime = { active: !enablingRecovery, busy: false };
     importLifetime.current = lifetime;
     return () => { lifetime.active = false; };
-  }, [boxPath]);
+  }, [boxPath, enablingRecovery]);
+
+  function showRecovery() {
+    importLifetime.current.active = false;
+    setEnablingRecovery(true);
+  }
 
   async function refreshItems(query = searchQuery.trim()) {
     try {
@@ -177,7 +182,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
       if (!lifetime.active || !status.unlocked) return;
       const csvData = await file.text();
       if (!lifetime.active) return;
-      const count = await importOnepasswordCsv(csvData, masterPassword, status.epoch, boxPath);
+      const count = await importOnepasswordCsv(csvData, masterPassword, status.epoch, boxPath.trim());
       if (!lifetime.active) return;
       setImportMessage(itemLabels.importSuccess.replace("{count}", String(count)));
       await refreshItems();
@@ -232,7 +237,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
         <section className="ps-card">
           <h3 className="ps-heading-3">{desktopLabels.localRecovery.enableTitle}</h3>
           <p className="ps-text-muted">{desktopLabels.localRecovery.localOnly}</p>
-          <button type="button" className="ps-button ps-button--secondary" onClick={() => setEnablingRecovery(true)}>{desktopLabels.localRecovery.enableTitle}</button>
+          <button type="button" className="ps-button ps-button--secondary" onClick={showRecovery}>{desktopLabels.localRecovery.enableTitle}</button>
         </section>
         <ClipboardClearSettings labels={desktopLabels.clipboard} />
         <BiometricUnlockSettings boxPath={boxPath} masterPassword={masterPassword} />

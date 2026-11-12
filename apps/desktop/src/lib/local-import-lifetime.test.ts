@@ -25,6 +25,20 @@ test('real desktop handler never imports a file resolved after its view is dispo
   assert.equal(saves, 0);
 });
 
+test('recovery navigation invalidates the current flight before React commits the next view', () => {
+  const source = fs.readFileSync(new URL('../components/MainPanel.tsx', import.meta.url), 'utf8');
+  const start = source.indexOf('  function showRecovery()');
+  const end = source.indexOf('\n  async function refreshItems', start);
+  const lifetime = {active: true, busy: true};
+  let observed: boolean | undefined;
+  const context = vm.createContext({importLifetime: {current: lifetime},
+    setEnablingRecovery: () => { observed = lifetime.active; }});
+  vm.runInContext(stripTypeScriptTypes(source.slice(start, end)) + ';showRecovery()', context);
+  assert.equal(observed, false);
+  assert.equal(lifetime.active, false);
+  assert.equal(lifetime.busy, true);
+});
+
 test('real handler binds epoch and Box, suppresses concurrent selection, and releases failed flights', async () => {
   const source = fs.readFileSync(new URL('../components/MainPanel.tsx', import.meta.url), 'utf8');
   const body = source.slice(source.indexOf('  async function handleImportFile('), source.indexOf('\n  if (enablingRecovery)'));
@@ -33,7 +47,7 @@ test('real handler binds epoch and Box, suppresses concurrent selection, and rel
   const calls: unknown[][] = [];
   let fail = true;
   const importLifetime = {current: {active: true, busy: false}};
-  const context = vm.createContext({importLifetime, masterPassword: 'synthetic', boxPath: 'original.pbox',
+  const context = vm.createContext({importLifetime, masterPassword: 'synthetic', boxPath: '  original.pbox  ',
     nativeImportStatus: async () => ({epoch: 7, unlocked: true}),
     importOnepasswordCsv: async (...args: unknown[]) => { calls.push(args); if (fail) throw Error('save rejected'); return 1; },
     setImportMessage: () => {}, setListError: () => {}, refreshItems: async () => {},
