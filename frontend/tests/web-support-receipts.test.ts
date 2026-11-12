@@ -44,6 +44,12 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const preflight=await fetch(base+'/api/support-receipts',{method:'OPTIONS',headers:{Origin:base,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'X-PassShare-Receipt-Owner'}});
   assert.equal(preflight.status,204);assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Owner/i);
   assert.equal(posts,2);assert.equal(csrf,2);
+  const cookie='passshare_session='+encodeURIComponent(a.sessionToken);
+  const tokens=await Promise.all([fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}}),fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}})]);
+  const t1=(await tokens[0].json()).csrfToken,t2=(await tokens[1].json()).csrfToken;
+  assert.equal(t1,t2);
+  const receipts=await Promise.all(['66666666-6666-4666-8666-666666666666','77777777-7777-4777-8777-777777777777'].map(requestId=>fetch(base+'/api/support-receipts',{method:'POST',headers:{Cookie:cookie+'; passshare_csrf='+t2,'X-CSRF-Token':t1,'content-type':'application/json'},body:JSON.stringify({...input,requestId})})));
+  assert.equal(receipts.every(r=>r.status===201),true);
   await assert.rejects(load(b.sessionToken,other.id).get(row.id,signal),e=>(e as any).status===404);
   stripCsrf=true;await assert.rejects(api.create({...input,requestId:'44444444-4444-4444-8444-444444444444'},signal),e=>(e as any).status===403);stripCsrf=false;
   const abort=new AbortController();abort.abort();const before=calls;await assert.rejects(api.get(row.id,abort.signal));assert.equal(calls,before);
