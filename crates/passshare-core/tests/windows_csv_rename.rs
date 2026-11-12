@@ -29,13 +29,17 @@ fn readable_box_with_delete_sharing_denied_preserves_data_until_retry() {
     // Establish the actual OS replacement barrier independently of the import.
     let probe = dir.path().join("replacement-probe");
     fs::write(&probe, b"owned synthetic replacement").unwrap();
-    assert!(fs::rename(&probe, &path).is_err());
+    let replacement_error = fs::rename(&probe, &path).unwrap_err();
+    assert!(matches!(replacement_error.raw_os_error(), Some(5 | 32)));
     assert_eq!(fs::read(&path).unwrap(), before);
     fs::remove_file(&probe).unwrap();
 
     let csv = "Title,Username,Password,Notes\nImported,user,synthetic,kept\nImported,user,synthetic,kept\n";
     let failure = pb.apply_and_save(SavedChange::ImportCsv(csv), &master);
-    assert!(matches!(failure, Err(PassShareError::Internal(_))));
+    assert_eq!(
+        failure,
+        Err(PassShareError::Internal(replacement_error.to_string()))
+    );
     assert_eq!(pb.list_connect_items().unwrap(), before_items);
     assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
