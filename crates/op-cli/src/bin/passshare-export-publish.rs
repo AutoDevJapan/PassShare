@@ -53,7 +53,7 @@ fn run() -> std::io::Result<()> {
             let target: Vec<u16> = out.as_os_str().encode_wide().collect();
             // FILE_RENAME_INFO: BOOLEAN + aligned HANDLE + DWORD + WCHAR[].
             let offset = std::mem::size_of::<usize>() * 2 + 4;
-            let len = offset + target.len() * 2;
+            let len = offset + (target.len() + 1) * 2;
             let mut info = vec![0usize; len.div_ceil(std::mem::size_of::<usize>())];
             let p = info.as_mut_ptr().cast::<u8>();
             unsafe {
