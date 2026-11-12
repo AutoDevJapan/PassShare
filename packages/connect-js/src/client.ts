@@ -73,9 +73,10 @@ export class ConnectClient {
     await this.request<void>(`/vaults/${vaultId}/items/${itemId}`, { method: "DELETE" });
   }
 
-  async import1pux(vaultId: string, base64Payload: string): Promise<{ imported: number }> {
-    return this.request<{ imported: number }>(`/vaults/${vaultId}/imports/1pux`, {
+  async import1pux(vaultId: string, base64Payload: string, operationKey?: string): Promise<{ imported: number; partial?: boolean; changed?: number }> {
+    return this.request<{ imported: number; partial?: boolean; changed?: number }>(`/vaults/${vaultId}/imports/1pux`, {
       method: "POST",
+      ...(operationKey ? { headers: { "Idempotency-Key": operationKey } } : {}),
       body: JSON.stringify({ base64: base64Payload }),
     });
   }

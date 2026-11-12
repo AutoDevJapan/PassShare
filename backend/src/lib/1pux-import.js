@@ -153,7 +153,7 @@ function isImportableItem(value) {
  * Map 1Password export item to Connect item create body.
  * @param {object} source
  */
-export function map1puxItemToConnectBody(source) {
+export function map1puxItemToConnectBody(source, options = {}) {
   const record = /** @type {Record<string, unknown>} */ (source);
   const category =
     typeof record.category === "string"
@@ -169,7 +169,10 @@ export function map1puxItemToConnectBody(source) {
     tags: Array.isArray(record.tags) ? record.tags.map(String) : [],
   };
 
-  return normalizeItemBody(body);
+  const normalized = normalizeItemBody(body);
+  // Validate every item up front, but keep random generated field IDs out of
+  // the idempotency request. The transaction normalizes the first insert.
+  return options.forReplay ? body : normalized;
 }
 
 /**

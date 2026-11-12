@@ -288,7 +288,14 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     busyRef.current = true;
     setBusy(true);
     const scope = activeScope.current;
+    let ownedAttempt: ImportAttempt | null = null;
     try {
+      const archiveBytes=new Uint8Array(await file.arrayBuffer());
+      let fingerprint:string;
+      try{fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',archiveBytes)),b=>b.toString(16).padStart(2,'0')).join('');}finally{archiveBytes.fill(0);}
+      if(scope!==activeScope.current)return;
+      const attempt=importAttempt(null,`${scope}:1pux`,fingerprint,1);
+      acquireImportAttempt(attempt);ownedAttempt=attempt;
       // The importer can issue several item requests; guard each request too.
       const guardedClient = new Proxy(connectClient, {
         get(target, property) {
@@ -301,8 +308,10 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
           };
         },
       });
-      const result = await import1puxFile(guardedClient, vaultId, file);
+      const result = await import1puxFile(guardedClient, vaultId, file, attempt.keys[0]);
       if (scope !== activeScope.current) return;
+      if(result.partial){await loadItems();if(scope===activeScope.current)setError(t("app.item.importPartialError").replace("{count}",String(result.imported)));return;}
+      finishImportAttempt(attempt);
       setImportMessage(labels.import1puxSuccess.replace("{count}", String(result.imported)));
       await loadItems();
     } catch {
@@ -312,6 +321,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
         if (reloadGeneration === loadGeneration.current) setError(t("app.item.import1puxError"));
       }
     } finally {
+      if(ownedAttempt)releaseImportAttempt(ownedAttempt);
       busyRef.current = false;
       setBusy(false);
     }

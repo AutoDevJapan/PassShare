@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createHash } from "node:crypto";
 import { isValidConnectId } from "../lib/connect.js";
 import {
   map1puxItemToConnectBody,
@@ -11,7 +12,7 @@ import { connectHttpError } from "../middleware/connect-errors.js";
 
 /** @param {import('../store/memory-store.js').ConnectStore} store */
 export function createVaultRoutes(store, options = {}) {
-  const { requireVaultAccess = (_req, _res, next) => next() } = options;
+  const { requireVaultAccess = (_req, _res, next) => next(), mutateOnce } = options;
   const router = Router();
 
   router.get("/", async (req, res, next) => {
@@ -68,15 +69,27 @@ export function createVaultRoutes(store, options = {}) {
       const sourceItems = await parse1puxBuffer(zipBuffer);
       // Reject invalid input before any item is persisted. Storage failures can
       // still leave a partial import; this is not a batch transaction.
-      const bodies = sourceItems.map(map1puxItemToConnectBody);
+      const bodies = sourceItems.map(source => map1puxItemToConnectBody(source, {forReplay:true}));
       const created = [];
-      for (const body of bodies) {
-        const item = await store.createItem(vaultUuid, body);
+      let changed=0;
+      const operation = req.headers['idempotency-key'];
+      if(operation && (typeof operation!=='string'||!/^[-a-zA-Z0-9_]{16,64}$/.test(operation)))throw connectHttpError(400,'PS018: Invalid import operation');
+      const archiveDigest=createHash('sha256').update(zipBuffer).digest('hex');
+      for (const [index, body] of bodies.entries()) {
+        try {
+        const item = operation && mutateOnce
+          ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,importKey:operation,archiveDigest,resource:vaultUuid,operation:'item',key:createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex'),request:body})
+          : await store.createItem(vaultUuid, normalizeItemBody(body));
         created.push(item);
+        } catch(error) {
+          if(operation&&error?.status===409&&error?.reason==='creation_result_changed'){changed++;continue;}
+          throw error;
+        }
       }
 
       res.status(201).json({
         imported: created.length,
+        ...(changed ? {partial:true,changed} : {}),
         items: created,
       });
     } catch (err) {
@@ -256,7 +269,7 @@ export function createFileRoutes(store) {
 export function createConnectRouter(store, options = {}) {
   const { requireVaultAccess = (_req, _res, next) => next(), mutateOnce } = options;
   const router = Router();
-  router.use("/vaults", createVaultRoutes(store, { requireVaultAccess }));
+  router.use("/vaults", createVaultRoutes(store, { requireVaultAccess, mutateOnce }));
   router.use(
     "/vaults/:vaultUuid/items",
     requireVaultAccess,

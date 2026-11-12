@@ -1,7 +1,10 @@
 import type { ConnectClient } from "@passshare/connect";
+const pendingSessionImports=new Map<string,string>();
 
 export type Import1puxResult = {
   imported: number;
+  partial?: boolean;
+  changed?: number;
 };
 
 function bufferToBase64(buffer: ArrayBuffer): string {
@@ -19,9 +22,10 @@ export async function import1puxFile(
   client: ConnectClient,
   vaultId: string,
   file: File,
+  operationKey?: string,
 ): Promise<Import1puxResult> {
   const buffer = await file.arrayBuffer();
-  return client.import1pux(vaultId, bufferToBase64(buffer));
+  return client.import1pux(vaultId, bufferToBase64(buffer), operationKey);
 }
 
 /** Upload 1PUX via session auth (Desktop cloud sync credentials). */
@@ -78,12 +82,17 @@ export async function import1puxWithSession(
 
   const buffer = await file.arrayBuffer();
   const base64 = bufferToBase64(buffer);
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buffer)),b=>b.toString(16).padStart(2,'0')).join('');
+  const scope=JSON.stringify([apiBaseUrl,email.trim().toLowerCase(),vaultId,digest]);
+  const operationKey=pendingSessionImports.get(scope)??crypto.randomUUID();
+  pendingSessionImports.set(scope,operationKey);
   const importRes = await fetch(`${apiBaseUrl}/v1/vaults/${vaultId}/imports/1pux`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${tokenBody.accessToken}`,
       "Content-Type": "application/json",
       Accept: "application/json",
+      "Idempotency-Key": operationKey,
     },
     body: JSON.stringify({ base64 }),
   });
@@ -93,5 +102,8 @@ export async function import1puxWithSession(
     throw new Error(body.message ?? `1PUX import failed (${importRes.status})`);
   }
 
-  return (await importRes.json()) as Import1puxResult;
+  const result=(await importRes.json()) as Import1puxResult;
+  if(result.partial)throw Object.assign(new Error('1PUX import remains partial'),{code:'IMPORT_PARTIAL',imported:result.imported,changed:result.changed});
+  if(!result.partial&&pendingSessionImports.get(scope)===operationKey)pendingSessionImports.delete(scope);
+  return result;
 }

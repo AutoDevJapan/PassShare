@@ -22,14 +22,16 @@ export async function createMutationStore({ store, authStore, pool }) {
       existing = (await client.query("SELECT request_hash,result FROM mutation_operations WHERE actor=$1 AND resource=$2 AND operation=$3 AND request_key=$4",scope.parts)).rows[0];
     }
     const currentSession = async () => {
+      if(input.connectTokenHash){
+        const token=client
+          ? (await client.query("SELECT id FROM connect_tokens WHERE token_hash=$1 AND user_id=$2 AND expires_at>clock_timestamp() AND vault_ids @> $3::jsonb FOR SHARE",[input.connectTokenHash,input.actor,JSON.stringify([input.resource])])).rowCount>0
+          : Boolean(await authStore.findConnectTokenByHash(input.connectTokenHash));
+        if(!token)throw connectHttpError(401,"PS011: Invalid or expired Connect token");
+      }
       if (client && input.sessionId && !(await client.query("SELECT s.id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND u.id=$2 AND s.expires_at>clock_timestamp() FOR SHARE OF u,s",[input.sessionId,input.actor])).rowCount) {
         throw connectHttpError(401,"PS024: Session is invalid or expired");
       }
     };
-    await currentSession();
-    if (existing?.result?.deleted === true) {
-      throw connectHttpError(409, "PS015: Creation result was deleted; use a new operation");
-    }
     async function requireCurrentMembership(boxId) {
       // Sharing, retirement and ciphertext activation lock the parent first.
       if (client) await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[boxId]);
@@ -39,6 +41,21 @@ export async function createMutationStore({ store, authStore, pool }) {
       if (!permitted) throw connectHttpError(403, "PS016: Access denied to password box");
     }
     if (input.actor !== "legacy" && input.operation === "item") await requireCurrentMembership(input.resource);
+    await currentSession();
+    if (existing?.result?.deleted === true) {
+      throw Object.assign(connectHttpError(409, "PS015: Creation result was deleted; use a new operation"),{reason:'creation_result_changed'});
+    }
+    if(input.importKey){
+      if(client){
+        await client.query("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES($1,$2,'import_binding',$3,$4,'{}'::jsonb) ON CONFLICT DO NOTHING",[input.actor,input.resource,input.importKey,input.archiveDigest]);
+        const bound=(await client.query("SELECT request_hash AS archive_digest FROM mutation_operations WHERE actor=$1 AND resource=$2 AND operation='import_binding' AND request_key=$3 FOR SHARE",[input.actor,input.resource,input.importKey])).rows[0];
+        if(bound?.archive_digest!==input.archiveDigest)throw connectHttpError(409,'PS015: Import operation archive changed');
+      }else{
+        const key=JSON.stringify(['archive',input.actor,input.resource,input.importKey]);
+        if(records.has(key)&&records.get(key)!==input.archiveDigest)throw connectHttpError(409,'PS015: Import operation archive changed');
+        records.set(key,input.archiveDigest);
+      }
+    }
     let live = null;
     if (existing) {
       try {
