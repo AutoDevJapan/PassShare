@@ -79,3 +79,10 @@ test('concurrent same-content publication reconciles without replacing data',()=
  await Promise.all(sinks.map(s=>s.item('{"x":1}',context,signal)));
  assert.equal(new TextDecoder().decode((await store.read(`item-${context.itemId}-v1.json`))!),'{"x":1}');
 }));
+
+test('native publisher rejects truncated stdin before any output is published',()=>fixture(async(_store,root)=>{
+ if(process.platform!=='win32')return;
+ const {spawn}=await import('node:child_process');const {fileURLToPath}=await import('node:url');const output=join(root,`item-${context.itemId}-v1.json`);
+ const code=await new Promise<number|null>((resolve,reject)=>{const c=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[output,'10'],{windowsHide:true,stdio:['pipe','ignore','ignore']});c.on('error',reject);c.on('close',resolve);c.stdin.end(new Uint8Array([1,2]));});
+ assert.notEqual(code,0);await assert.rejects(readFile(output),(e:any)=>e.code==='ENOENT');
+}));
