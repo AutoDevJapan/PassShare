@@ -15,3 +15,9 @@ test('close waits for an owned in-flight publish before releasing its session',a
  const store=await createNativeExportStore(async(command)=>{if(command==='commercial_export_open')return 'owned';if(command==='commercial_export_publish'){publishing=true;await wait;publishing=false;return;}if(command==='commercial_export_close'){assert.equal(publishing,false);closed=true;}},'C:/selected',new AbortController().signal);
  const writing=store.publishNew('item-a-v1.json',new Uint8Array([1]),new AbortController().signal);await Promise.resolve();const closing=store.close();await Promise.resolve();assert.equal(closed,false);release();await writing;await closing;assert.equal(closed,true);
 });
+
+test('committed native publish remains readable for success reconciliation after cancel',async()=>{
+ const c=new AbortController();let stored:number[]|null=null;
+ const store=await createNativeExportStore(async(command,args)=>{if(command==='commercial_export_open')return 'owned';if(command==='commercial_export_publish'){stored=args.bytes as number[];c.abort('cancel-after-commit');return;}if(command==='commercial_export_read')return stored;},'C:/selected',c.signal);
+ await store.publishNew('item-a-v1.json',new Uint8Array([0,255]),c.signal);assert.deepEqual([...(await store.read('item-a-v1.json'))!],[0,255]);await store.close();
+});
