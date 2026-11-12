@@ -946,9 +946,9 @@ fn native_session_status(state: State<'_, AppState>) -> Result<NativeStatus, Str
 }
 
 #[tauri::command]
-async fn commercial_export_open(
+async fn commercial_export_open<R: tauri::Runtime>(
     directory: String,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -970,7 +970,10 @@ async fn commercial_export_open(
     .map_err(|_| "EXPORT_SESSION".to_string())?
 }
 #[tauri::command]
-async fn commercial_export_close(session_id: String, app: tauri::AppHandle) -> Result<(), String> {
+async fn commercial_export_close<R: tauri::Runtime>(
+    session_id: String,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<commercial_export::ExportSessions>()
             .close(&session_id)
@@ -979,10 +982,10 @@ async fn commercial_export_close(session_id: String, app: tauri::AppHandle) -> R
     .map_err(|_| "EXPORT_SESSION".to_string())?
 }
 #[tauri::command]
-async fn commercial_export_read(
+async fn commercial_export_read<R: tauri::Runtime>(
     session_id: String,
     name: String,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
 ) -> Result<Option<Vec<u8>>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -1008,11 +1011,11 @@ async fn commercial_export_read(
     .map_err(|_| "EXPORT_READ".to_string())?
 }
 #[tauri::command]
-async fn commercial_export_publish(
+async fn commercial_export_publish<R: tauri::Runtime>(
     session_id: String,
     name: String,
     bytes: Vec<u8>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<R>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -2164,5 +2167,131 @@ mod smoke_tests {
         assert!(pb.list_connect_items().expect("final list").is_empty());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod export_ipc_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires exact packaged publisher fixture; run explicitly with PASSSHARE_TEST_PUBLISHER"]
+    fn actual_tauri_invoke_opens_reads_closes_and_rejects_expired_session() {
+        use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
+        let app = mock_builder()
+            .manage(commercial_export::ExportSessions::default())
+            .manage(AppState {
+                data: Mutex::new(BoxSession::default()),
+                cancellation: AtomicU64::new(0),
+                recovery_active: AtomicBool::new(false),
+                recovery_session_ticket: AtomicU64::new(0),
+                foreground: AtomicBool::new(true),
+            })
+            .invoke_handler(tauri::generate_handler![
+                commercial_export_open,
+                commercial_export_close,
+                commercial_export_read,
+                commercial_export_publish
+            ])
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let call = |cmd: &str, value: serde_json::Value| {
+            get_ipc_response(
+                &window,
+                tauri::webview::InvokeRequest {
+                    cmd: cmd.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: "http://tauri.localhost".parse().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(value),
+                    headers: Default::default(),
+                    invoke_key: INVOKE_KEY.into(),
+                },
+            )
+        };
+        let root = std::env::temp_dir().join(format!("passshare-ipc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let token = call(
+            "commercial_export_open",
+            serde_json::json!({"directory":root}),
+        )
+        .unwrap()
+        .deserialize::<String>()
+        .unwrap();
+        assert!(call(
+            "commercial_export_read",
+            serde_json::json!({"sessionId":token,"name":"item-a.json"})
+        )
+        .unwrap()
+        .deserialize::<Option<Vec<u8>>>()
+        .unwrap()
+        .is_none());
+        // The application command resolves the fixed sibling, never an executable path from IPC.
+        let source = std::env::var_os("PASSSHARE_TEST_PUBLISHER")
+            .expect("explicit publisher fixture required");
+        let publisher = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("passshare-export-publish.exe");
+        let source_bytes = std::fs::read(source).unwrap();
+        let created = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&publisher)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                f.write_all(&source_bytes).unwrap();
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                assert_eq!(std::fs::read(&publisher).unwrap(), source_bytes);
+                false
+            }
+            Err(e) => panic!("{e}"),
+        };
+        call(
+            "commercial_export_publish",
+            serde_json::json!({"sessionId":token,"name":"attachment-a-b-v1.bin","bytes":[0,255,7]}),
+        )
+        .unwrap();
+        assert_eq!(
+            call(
+                "commercial_export_read",
+                serde_json::json!({"sessionId":token,"name":"attachment-a-b-v1.bin"})
+            )
+            .unwrap()
+            .deserialize::<Option<Vec<u8>>>()
+            .unwrap(),
+            Some(vec![0, 255, 7])
+        );
+        if created {
+            std::fs::remove_file(publisher).unwrap();
+        }
+        app.state::<AppState>()
+            .cancellation
+            .fetch_add(1, Ordering::SeqCst);
+        assert!(call(
+            "commercial_export_read",
+            serde_json::json!({"sessionId":token,"name":"item-a.json"})
+        )
+        .is_err());
+        call(
+            "commercial_export_close",
+            serde_json::json!({"sessionId":token}),
+        )
+        .unwrap();
+        app.state::<AppState>()
+            .foreground
+            .store(false, Ordering::SeqCst);
+        assert!(call(
+            "commercial_export_open",
+            serde_json::json!({"directory":root})
+        )
+        .is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

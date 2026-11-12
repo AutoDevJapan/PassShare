@@ -26,3 +26,6 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 
 zeroize = { workspace = true }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
