@@ -14,8 +14,8 @@ export function createVerifiedExportSink(directory:FileSystemDirectoryHandle){
    check(signal);
    if(existing){const prior=new Uint8Array(await (await existing.getFile()).arrayBuffer());try{if(!same(prior,bytes))throw new Error('Export output differs');check(signal);return;}finally{prior.fill(0);}}
    const file=await directory.getFileHandle(name,{create:true});check(signal);
-   const writer=await file.createWritable();let closed=false;
-   try{check(signal);await writer.write(new Uint8Array(bytes));check(signal);await writer.close();closed=true;}finally{if(!closed)await writer.abort().catch(()=>{});}
+   const writer=await file.createWritable({keepExistingData:true,mode:"exclusive"} as FileSystemCreateWritableOptions);let closed=false;
+   try{check(signal);const current=new Uint8Array(await (await file.getFile()).arrayBuffer());try{if(current.length>0){if(!same(current,bytes))throw new Error("Export output differs");await writer.abort();closed=true;return;}}finally{current.fill(0);}await writer.write(new Uint8Array(bytes));check(signal);await writer.close();closed=true;}finally{if(!closed)await writer.abort().catch(()=>{});}
    const readback=new Uint8Array(await (await file.getFile()).arrayBuffer());
    try{if(!same(readback,bytes))throw new Error('Export output verification failed');}finally{readback.fill(0);}
    // Close plus readback is a committed save even if abort arrived during close.

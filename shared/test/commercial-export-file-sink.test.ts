@@ -9,7 +9,7 @@ test('real file sink reads back item and arbitrary attachment bytes and refuses 
  const root=await mkdtemp(join(tmpdir(),'passshare-export-sink-'));
  const directory={
   getFileHandle:async(name:string,options?:{create?:boolean})=>{
-   const path=join(root,name);if(!options?.create)await readFile(path);
+   const path=join(root,name);if(!options?.create)await readFile(path);else await writeFile(path,new Uint8Array(),{flag:"wx"}).catch((e:any)=>{if(e.code!=="EEXIST")throw e;});
    return {
     getFile:async()=>{const b=await readFile(path);return {arrayBuffer:async()=>b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength)};},
     createWritable:async()=>{
@@ -36,6 +36,12 @@ test('cancel before save never opens a file',async()=>{
 });
 
 test('failed close is not reported as verified persistence',async()=>{
- let aborts=0;const sink=createVerifiedExportSink({getFileHandle:async(_n:string,o?:{create?:boolean})=>{if(!o?.create)throw new DOMException('missing','NotFoundError');return {createWritable:async()=>({write:async()=>{},close:async()=>{throw new Error('disk failure');},abort:async()=>{aborts++;}})};}} as any);
+ let aborts=0;const sink=createVerifiedExportSink({getFileHandle:async(_n:string,o?:{create?:boolean})=>{if(!o?.create)throw new DOMException('missing','NotFoundError');return {getFile:async()=>({arrayBuffer:async()=>new ArrayBuffer(0)}),createWritable:async()=>({write:async()=>{},close:async()=>{throw new Error('disk failure');},abort:async()=>{aborts++;}})};}} as any);
  await assert.rejects(sink.item('{}',{passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1},new AbortController().signal));assert.equal(aborts,1);
+});
+
+test('file created after absence probe is preserved under exclusive writer recheck',async()=>{
+ let opens=0,writes=0,aborts=0;const original=new Uint8Array([9]);
+ const directory={getFileHandle:async()=>{opens++;if(opens===1)throw new DOMException('missing','NotFoundError');return {getFile:async()=>({arrayBuffer:async()=>original.slice().buffer}),createWritable:async(options:any)=>{assert.equal(options.mode,'exclusive');assert.equal(options.keepExistingData,true);return {write:async()=>{writes++;},close:async()=>{},abort:async()=>{aborts++;}};}};}};
+ const sink=createVerifiedExportSink(directory as any);await assert.rejects(sink.item('{}',{passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1},new AbortController().signal));assert.equal(writes,0);assert.equal(aborts,1);assert.deepEqual([...original],[9]);
 });
