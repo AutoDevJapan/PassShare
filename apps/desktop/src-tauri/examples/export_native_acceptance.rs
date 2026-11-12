@@ -9,6 +9,7 @@ fn main() {
     let sessions = Arc::new(commercial_export::ExportSessions::default());
     let gate = Arc::new(Mutex::new(()));
     let output = Arc::new(Mutex::new(std::io::stdout()));
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut tasks = Vec::new();
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
@@ -17,7 +18,8 @@ fn main() {
         let g = gate.clone();
         let o = output.clone();
         let p = publisher.clone();
-        tasks.push(std::thread::spawn(move||{let id=request["id"].clone();let a=&request["args"];let token=a["sessionId"].as_str().unwrap_or("");let result:Result<serde_json::Value,String>=(||match request["command"].as_str().unwrap(){"commercial_export_open"=>s.open(a["directory"].as_str().unwrap().into(),1).map(serde_json::Value::String),"commercial_export_identity"=>s.identity(token).map(serde_json::Value::String),"commercial_export_read"=>s.read(token,a["name"].as_str().unwrap(),1).map(|v|serde_json::json!(v)),"commercial_export_publish"=>s.publish_ordered(token,a["name"].as_str().unwrap(),serde_json::from_value(a["bytes"].clone()).unwrap(),1,std::path::Path::new(&p),||true,&g).map(|_|serde_json::Value::Null),"commercial_export_cancel"=>s.cancel(token,&g).map(|_|serde_json::Value::Null),"commercial_export_close"=>s.close(token).map(|_|serde_json::Value::Null),"commercial_export_recover"=>s.recover(token).map(serde_json::Value::Bool),_=>Err("UNKNOWN_COMMAND".into())})();let mut out=o.lock().unwrap();writeln!(out,"{}",serde_json::json!({"id":id,"ok":result.is_ok(),"value":result.as_ref().ok(),"error":result.err()})).unwrap();out.flush().unwrap();}));
+        let released = released.clone();
+        tasks.push(std::thread::spawn(move||{let id=request["id"].clone();let a=&request["args"];let token=a["sessionId"].as_str().unwrap_or("");let result:Result<serde_json::Value,String>=(||match request["command"].as_str().unwrap(){"commercial_export_open"=>s.open(a["directory"].as_str().unwrap().into(),1).map(serde_json::Value::String),"commercial_export_identity"=>s.identity(token).map(serde_json::Value::String),"commercial_export_read"=>s.read(token,a["name"].as_str().unwrap(),1).map(|v|serde_json::json!(v)),"commercial_export_publish"=>s.publish_with_ready(token,a["name"].as_str().unwrap(),serde_json::from_value(a["bytes"].clone()).unwrap(),1,std::path::Path::new(&p),||true,&g,||{if std::env::var_os("PASSSHARE_HOLD_READY").is_some(){let mut out=o.lock().unwrap();writeln!(out,"{}",serde_json::json!({"event":"ready"})).unwrap();out.flush().unwrap();drop(out);let until=std::time::Instant::now()+std::time::Duration::from_secs(5);while !released.load(std::sync::atomic::Ordering::SeqCst)&&std::time::Instant::now()<until{std::thread::sleep(std::time::Duration::from_millis(1));}}}).map(|_|serde_json::Value::Null),"commercial_export_cancel"=>s.cancel(token,&g).map(|_|{released.store(true,std::sync::atomic::Ordering::SeqCst);serde_json::Value::Null}),"commercial_export_close"=>s.close(token).map(|_|serde_json::Value::Null),"commercial_export_recover"=>s.recover(token).map(serde_json::Value::Bool),_=>Err("UNKNOWN_COMMAND".into())})();let mut out=o.lock().unwrap();writeln!(out,"{}",serde_json::json!({"id":id,"ok":result.is_ok(),"value":result.as_ref().ok(),"error":result.err()})).unwrap();out.flush().unwrap();}));
     }
     for task in tasks {
         task.join().unwrap();

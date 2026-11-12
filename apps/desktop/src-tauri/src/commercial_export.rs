@@ -242,6 +242,28 @@ impl ExportSessions {
         current: impl Fn() -> bool,
         commit_gate: &Mutex<()>,
     ) -> Result<(), String> {
+        self.publish_with_ready(
+            token,
+            name_,
+            bytes,
+            epoch,
+            publisher,
+            current,
+            commit_gate,
+            || {},
+        )
+    }
+    pub fn publish_with_ready(
+        &self,
+        token: &str,
+        name_: &str,
+        bytes: Vec<u8>,
+        epoch: u64,
+        publisher: &Path,
+        current: impl Fn() -> bool,
+        commit_gate: &Mutex<()>,
+        on_ready: impl Fn(),
+    ) -> Result<(), String> {
         let cancelled = self
             .cancelled
             .lock()
@@ -359,6 +381,7 @@ impl ExportSessions {
         let mut interrupted = false;
         let status = loop {
             if !authorized && ready_rx.try_recv().is_ok() {
+                on_ready();
                 commit_guard = loop {
                     match commit_gate.try_lock() {
                         Ok(g) => break Some(g),
