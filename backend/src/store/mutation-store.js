@@ -9,6 +9,7 @@ function nativeInput(input){const {importFiles,...rest}=input;return rest;}
 // Persistence adapter only: scope, replay and payload decisions belong to Rust.
 export async function createMutationStore({ store, authStore, pool }) {
   const records = new Map();
+  const pendingRollback = new Map();
   let memoryTail = Promise.resolve();
   if (pool && process.env.PASSSHARE_MUTATIONS_BIN) {
     await applySchemaWithAdvisoryLock(pool, 4820123, await nativeMutation({ command: "schema" }));
@@ -81,7 +82,11 @@ export async function createMutationStore({ store, authStore, pool }) {
       } catch (error) {
         if(!client) {
           try { await transactionStore.deleteItem(input.resource,result.id); }
-          catch(cleanupError) { throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error}); }
+          catch(cleanupError) {
+            const scope=await nativeMutation({...nativeInput(input),command:'scope'});
+            pendingRollback.set(scope.lock,{resource:input.resource,itemId:result.id});
+            throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error});
+          }
         }
         throw error;
       }
@@ -106,7 +111,15 @@ export async function createMutationStore({ store, authStore, pool }) {
   return async function mutateOnce(input) {
     const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
     if (!pool) {
-      const pending = memoryTail.then(() => execute(input,store,null,records.get(scope.lock)));
+      const pending = memoryTail.then(async () => {
+        const rollback=pendingRollback.get(scope.lock);
+        if(rollback){
+          try { await store.deleteItem(rollback.resource,rollback.itemId); }
+          catch(error){if(error?.status!==404)throw error;}
+          pendingRollback.delete(scope.lock);
+        }
+        return execute(input,store,null,records.get(scope.lock));
+      });
       memoryTail = pending.catch(() => {});
       return pending;
     }

@@ -52,7 +52,7 @@ export async function parse1puxBuffer(zipBuffer, options = {}) {
     const document=item.details?.documentAttributes;
     if(!document)continue;
     if(typeof document.documentId!=='string'||typeof document.fileName!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX document reference');
-    const matches=directory.files.filter(file=>file.path.startsWith(`files/${document.documentId}__`)&&file.path.slice(`files/${document.documentId}`.length).replace(/^_{2,3}/,'')===document.fileName);
+    const matches=directory.files.filter(file=>[2,3].some(count=>file.path===`files/${document.documentId}${'_'.repeat(count)}${document.fileName}`));
     if(matches.length!==1)throw connectHttpError(400,'PS017: Missing or ambiguous 1PUX attachment');
     const content=await readEntryCapped(matches[0],maxDecompressedBytes-total);total+=content.length;
     if(document.decryptedSize!==content.length)throw connectHttpError(400,'PS017: 1PUX attachment size mismatch');
@@ -138,8 +138,10 @@ function extractItemsFromExport(parsed) {
     for(const account of parsed.accounts)for(const vault of account.vaults??[])for(const item of vault.items??[]){
       if(!item?.overview||typeof item.overview.title!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX item overview');
       const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'||field.fieldType==='P'||field.type==='P'?'CONCEALED':'STRING',value:field.value??''}));
-      for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:field.value?.concealed!==undefined?'CONCEALED':'STRING',value:sectionFieldValue(field.value)});
+      for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:['concealed','totp','sshKey'].some(key=>field.value&&Object.hasOwn(field.value,key))?'CONCEALED':'STRING',value:sectionFieldValue(field.value)});
       if(item.details?.notesPlain)fields.push({label:'notes',type:'STRING',value:item.details.notesPlain});
+      if(item.details?.password!==undefined)fields.push({label:'password',purpose:'PASSWORD',type:'CONCEALED',value:sectionFieldValue(item.details.password)});
+      for(const previous of item.details?.passwordHistory??[])fields.push({label:'password history',type:'CONCEALED',value:JSON.stringify(previous)});
       const urls=(item.overview.urls??[]).map(({url,...metadata})=>({...metadata,href:url,primary:url===item.overview.url}));
       if(item.overview.url&&!urls.some(value=>value.href===item.overview.url))urls.unshift({href:item.overview.url,primary:true});
       items.push({...item,title:item.overview.title,category:(item.categoryUuid==='001'?'LOGIN':'CUSTOM'),fields,tags:item.overview.tags??[],urls,importSource:{account:account.attrs??{},vault:vault.attrs??{},item:item.uuid}});
@@ -190,7 +192,8 @@ function isImportableItem(value) {
  */
 export function map1puxItemToConnectBody(source, options = {}) {
   const record = /** @type {Record<string, unknown>} */ (source);
-  const {importAttachments,...sourceMetadata}=record;
+  // Preserve provenance, not another independently editable copy of secrets.
+  const sourceMetadata=Object.fromEntries(['uuid','categoryUuid','favIndex','createdAt','updatedAt','state'].filter(key=>Object.hasOwn(record,key)).map(key=>[key,record[key]]));
   const category =
     typeof record.category === "string"
       ? record.category.toUpperCase().replace(/\s+/g, "_")

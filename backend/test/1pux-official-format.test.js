@@ -20,7 +20,7 @@ test('official hierarchy and document references retain source, Unicode name and
  const zip=archive([['export.attributes',Buffer.from('{"version":3}')],['export.data',Buffer.from(JSON.stringify(data))],['files/document___添付-é.bin',bytes]]);
  const items=await parse1puxBuffer(zip);assert.equal(items.length,1);assert.equal(items[0].importSource.vault.uuid,'vault');
  assert.equal(items[0].importAttachments[0].name,'添付-é.bin');assert.deepEqual(Buffer.from(items[0].importAttachments[0].base64,'base64'),bytes);
- const body=map1puxItemToConnectBody(items[0],{forReplay:true});assert.equal(body.category,'LOGIN');assert.equal(body.importedItem.details.notesPlain,'synthetic note');assert.equal('importAttachments' in body.importedItem,false);
+ const body=map1puxItemToConnectBody(items[0],{forReplay:true});assert.equal(body.category,'LOGIN');assert.equal(body.fields.find(field=>field.label==='notes').value,'synthetic note');assert.equal('details' in body.importedItem,false);assert.equal('fields' in body.importedItem,false);assert.equal('importAttachments' in body.importedItem,false);
  await assert.rejects(parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(data))]])),/Missing or ambiguous/);
  await assert.rejects(parse1puxBuffer(zip,{maxDecompressedBytes:10}));
  const [doubleSeparator]=await parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(data))],['files/document__添付-é.bin',bytes]]));
@@ -35,7 +35,8 @@ test('official URLs and section values preserve client-facing values',async()=>{
  assert.equal(body.fields[0].value,'synthetic-secret');
  assert.equal(body.fields[0].type,'CONCEALED');
  assert.equal(body.fields[1].value,'synthetic-user');
- assert.deepEqual(body.importedItem.details,original.accounts[0].vaults[0].items[0].details);
+ assert.equal(body.importedItem.uuid,'item');
+ assert.equal('details' in body.importedItem,false);
  const overview=original.accounts[0].vaults[0].items[0].overview;
  overview.url='https://primary.example.test/';
  const [primaryOnly]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
