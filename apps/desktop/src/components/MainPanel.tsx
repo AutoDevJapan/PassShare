@@ -14,6 +14,7 @@ import {
   exportOnepasswordCsv,
   generatePassword,
   importOnepasswordCsv,
+  nativeImportStatus,
   listItems,
   lockPasswordBox,
   searchItems,
@@ -47,13 +48,26 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
   const [importMessage, setImportMessage] = useState("");
   const [exportMessage, setExportMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importLifetime = useRef({ active: true, busy: false });
+  useEffect(() => {
+    const lifetime = { active: !enablingRecovery, busy: false };
+    importLifetime.current = lifetime;
+    return () => { lifetime.active = false; };
+  }, [boxPath, enablingRecovery]);
 
-  async function refreshItems(query = searchQuery.trim()) {
+  function showRecovery() {
+    importLifetime.current.active = false;
+    setEnablingRecovery(true);
+  }
+
+  async function refreshItems(query = searchQuery.trim(), lifetime?: { active: boolean }) {
     try {
       const nextItems = query ? await searchItems(query) : await listItems();
+      if (lifetime && !lifetime.active) return;
       setItems(nextItems);
       setListError("");
     } catch (err) {
+      if (lifetime && !lifetime.active) return;
       setListError(formatTauriError(err));
     }
   }
@@ -162,14 +176,23 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
     if (!file) {
       return;
     }
-
+    const lifetime = importLifetime.current;
+    if (!lifetime.active || lifetime.busy) return;
+    lifetime.busy = true;
     try {
+      const status = await nativeImportStatus();
+      if (!lifetime.active || !status.unlocked) return;
       const csvData = await file.text();
-      const count = await importOnepasswordCsv(csvData, masterPassword);
+      if (!lifetime.active) return;
+      const count = await importOnepasswordCsv(csvData, masterPassword, status.epoch, boxPath.trim());
+      if (!lifetime.active) return;
+      await refreshItems(undefined, lifetime);
+      if (!lifetime.active) return;
       setImportMessage(itemLabels.importSuccess.replace("{count}", String(count)));
-      await refreshItems();
     } catch (err) {
-      setListError(formatTauriError(err));
+      if (lifetime.active) setListError(formatTauriError(err));
+    } finally {
+      lifetime.busy = false;
     }
   }
 
@@ -217,7 +240,7 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
         <section className="ps-card">
           <h3 className="ps-heading-3">{desktopLabels.localRecovery.enableTitle}</h3>
           <p className="ps-text-muted">{desktopLabels.localRecovery.localOnly}</p>
-          <button type="button" className="ps-button ps-button--secondary" onClick={() => setEnablingRecovery(true)}>{desktopLabels.localRecovery.enableTitle}</button>
+          <button type="button" className="ps-button ps-button--secondary" onClick={showRecovery}>{desktopLabels.localRecovery.enableTitle}</button>
         </section>
         <ClipboardClearSettings labels={desktopLabels.clipboard} />
         <BiometricUnlockSettings boxPath={boxPath} masterPassword={masterPassword} />
