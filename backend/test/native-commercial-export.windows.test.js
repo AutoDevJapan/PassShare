@@ -1,7 +1,7 @@
 import {trackPoolShutdown} from './helpers/pg-fixture-lifecycle.js';
 import assert from 'node:assert/strict';import {test} from 'node:test';import pg from 'pg';import Stripe from 'stripe';import {randomUUID} from 'node:crypto';import fs from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
-test('contract-window export returns real ciphertext while rechecking current membership, session and key epoch',{skip:process.env.PASSSHARE_RECEIPTS_PG!=='true'},async()=>{
+test('contract-window export returns real ciphertext while rechecking current membership, session and key epoch',{skip:process.env.PASSSHARE_NATIVE_EXPORT_PG!=='true'},async()=>{
  assert.match(process.env.DATABASE_URL,/^postgresql:\/\/passshare:passshare@127\.0\.0\.1:(5432|15431)\/passshare$/);
  const admin=new pg.Pool({connectionString:process.env.DATABASE_URL}),name='ps_export_'+randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE '+name);
  const url=new URL(process.env.DATABASE_URL);url.pathname='/'+name;const pool=new pg.Pool({connectionString:url.href});const closePool=trackPoolShutdown(pool);
@@ -98,7 +98,7 @@ test('contract-window export returns real ciphertext while rechecking current me
   }finally{await fs.rm(output,{recursive:true});}
   // Actual authenticated HTTP/PG ciphertext -> Core -> native Rust session -> publisher -> OS.
   const {spawn}=await import('node:child_process');const {createInterface}=await import('node:readline');const {resolve,join}=await import('node:path');
-  const host=spawn(resolve('target/debug/examples/export_native_acceptance.exe'),[],{windowsHide:true,env:{...process.env,PASSSHARE_TEST_PUBLISHER:resolve('target/debug/passshare-export-publish.exe')},stdio:['pipe','pipe','pipe']});host.stderr.on('data',()=>{});let seq=0;const pending=new Map();createInterface({input:host.stdout}).on('line',line=>{const r=JSON.parse(line),p=pending.get(r.id);pending.delete(r.id);r.ok?p.resolve(r.value):p.reject(r.error);});
+  const host=spawn(resolve('target/debug/examples/export_native_acceptance.exe'),[],{windowsHide:true,env:{...process.env,PASSSHARE_TEST_PUBLISHER:resolve('target/debug/passshare-export-publish.exe')},stdio:['pipe','pipe','pipe']});host.stderr.on('data',()=>{});let seq=0;const pending=new Map();host.on('error',error=>{for(const p of pending.values())p.reject(error);pending.clear();});host.on('close',()=>{for(const p of pending.values())p.reject(new Error('Native acceptance host closed'));pending.clear();});createInterface({input:host.stdout}).on('line',line=>{const r=JSON.parse(line),p=pending.get(r.id);pending.delete(r.id);r.ok?p.resolve(r.value):p.reject(r.error);});
   const invoke=(command,args)=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});host.stdin.write(JSON.stringify({id,command,args})+'\n');});
   const transform=async(file,replacements={})=>{let text=stripTypeScriptTypes(await fs.readFile(file,'utf8'),{mode:'transform'});for(const [from,to]of Object.entries(replacements))text=text.replaceAll(from,JSON.stringify(to));return 'data:text/javascript;base64,'+Buffer.from(text).toString('base64');};
   const consumerModule=await transform(new URL('../../shared/cloud/commercial-attachment-export.ts',import.meta.url),{"'./cloud-api.ts'":apiModule});const sinkModule=await transform(new URL('../../shared/cloud/commercial-export-file-sink.ts',import.meta.url));const storeModule=await transform(new URL('../../apps/desktop/src/lib/native-export-store.ts',import.meta.url));
