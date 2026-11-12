@@ -28,8 +28,8 @@ export async function consumeCommercialAttachment(
 // Resume only the same export snapshot after a normal worker re-unlock. No key,
 // membership or authorization is restored by this progress record.
 const activeExports=new WeakSet<CommercialExportProgress>();
-export type CommercialExportProgress={binding:string;items:Set<string>;attachments:Set<string>};
-export function createCommercialExportProgress():CommercialExportProgress{return {binding:'',items:new Set(),attachments:new Set()};}
+export type CommercialExportProgress={binding:string;items:Set<string>;attachments:Set<string>;after:string|null;completed:boolean};
+export function createCommercialExportProgress():CommercialExportProgress{return {binding:'',items:new Set(),attachments:new Set(),after:null,completed:false};}
 // Pages and attachments share one immutable snapshot; delivery is sequential and backpressured.
 export async function consumeCommercialBox(
  api:Pick<CloudApi,'getCommercialExportPage'|'getCommercialAttachmentItemSnapshot'|'getCommercialEncryptedAttachment'>,
@@ -39,13 +39,14 @@ export async function consumeCommercialBox(
  consumeAttachment:(file:AttachmentPlaintext,context:AttachmentContext,signal:AbortSignal)=>Promise<void>,
  progress:CommercialExportProgress=createCommercialExportProgress(),
 ):Promise<void>{
- pin={...pin};let after:string|null=null;const seen=new Set<string>();
+ pin={...pin};let after:string|null=progress.after;const seen=new Set<string>();
  const binding=JSON.stringify([contractId,boxId,pin.keyEpoch,pin.snapshotRevision]);
  if(progress.binding&&progress.binding!==binding)throw new CloudApiError(409);
  if(activeExports.has(progress))throw new CloudApiError(409);
  activeExports.add(progress);
  try{
  progress.binding=binding;
+ if(progress.completed)return;
  // A contract export has a 30/minute server budget. Retry only the rejected GET,
  // never a delivered sink callback, and keep cancellation responsive while waiting.
  const request=async<T>(run:()=>Promise<T>):Promise<T>=>{
@@ -80,7 +81,7 @@ export async function consumeCommercialBox(
    }
   }
   if(page.nextCursor!==null&&(page.envelopes.length===0||page.nextCursor!==page.envelopes.at(-1)!.context.itemId||page.nextCursor===after))throw new CloudApiError(502);
-  after=page.nextCursor;
+  after=page.nextCursor;progress.after=after;if(after===null)progress.completed=true;
  }while(after!==null);
  }finally{activeExports.delete(progress);}
 }

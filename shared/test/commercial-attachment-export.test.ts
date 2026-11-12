@@ -100,3 +100,10 @@ test('cancelled delayed attachment save retains ownership until drained and neve
  const run=(signal:AbortSignal)=>consumeCommercialBox(api as any,worker as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},signal,async()=>{},async(_f,_c,sinkSignal)=>{assert.equal(sinkSignal,signal);entered();await gate;saves++;},progress);
  const first=run(controller.signal);await started;controller.abort();assert.equal(file.bytes[0],0);await assert.rejects(run(new AbortController().signal),(e:any)=>e.status===409);assert.equal(saves,0);finish();await assert.rejects(first);assert.equal(saves,1);assert.equal(releases,1);await run(new AbortController().signal);assert.equal(saves,1);
 });
+
+test('resume skips fully completed pages after worker re-unlock',async()=>{
+ const {consumeCommercialBox,createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress(),box='a'.repeat(26),ids=['b'.repeat(26),'c'.repeat(26)];let locked=true;const queries:any[]=[],saved:string[]=[];
+ const api={getCommercialExportPage:async(_c:any,_b:any,_p:any,after:any)=>{queries.push(after);const i=after===null?0:1;return {envelopes:[{context:{passwordBoxId:box,itemId:ids[i],itemVersion:1,keyEpoch:2}}],nextCursor:i===0?ids[0]:null,attachmentsIncluded:false};}};const worker={decrypt:async(_e:any,c:any)=>{if(locked&&c.itemId===ids[1])throw new Error('locked');return JSON.stringify({id:c.itemId,attachments:[]});}};
+ const run=()=>consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:4},new AbortController().signal,async text=>{saved.push(JSON.parse(text).id);},async()=>{},progress);
+ await assert.rejects(run());locked=false;await run();assert.deepEqual(queries,[null,ids[0],ids[0]]);assert.deepEqual(saved,ids);await run();assert.equal(queries.length,3);
+});
