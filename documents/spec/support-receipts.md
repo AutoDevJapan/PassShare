@@ -96,8 +96,12 @@ A receipt response with HTTP 401 retires that factory and clears only its
 matching Provider generation. A subsequently confirmed same-owner session gets
 a new factory; the old reference cannot follow a replacement cookie. Other
 HTTP failures retain their existing error semantics.
-The confirmed Connect credential changing during refresh is also a receipt
-lifetime boundary, even when the account ID stays the same.
+The Connect response includes sessionBinding, the existing session-derived CSRF
+projection already available to Web callers. It is an equality marker, not an
+authentication credential. It remains stable for one cookie session and changes
+for another session, even for the same owner. Receipt lifetime follows this
+marker, not the independently rotating Connect access token. Existing Connect
+response fields and bearer authorization are unchanged.
 Controlled React Provider tests execute the real receipt adapter with synthetic
 HTTP responses. They do not prove browser cookies, PostgreSQL persistence or a
 visible support operation. The visible entry still requires its scoped UI answer.

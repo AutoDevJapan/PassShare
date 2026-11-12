@@ -419,6 +419,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
         accessToken: token.accessToken,
         expiresIn: token.expiresIn,
         expiresAt: token.expiresAt,
+        sessionBinding: res.locals.sessionCsrfToken,
       });
     } catch (error) {
       sendAuthError(res, error);

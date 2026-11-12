@@ -53,10 +53,12 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [supportClient, setSupportClient] = useState<ReturnType<typeof createWebSupportReceiptApi> | null>(null);
   const supportRef = useRef<ReturnType<typeof createWebSupportReceiptApi> | null>(null);
   const supportGeneration = useRef(0);
+  const receiptSession = useRef<string | null>(null);
   const clearSupport = useCallback(() => {
     ++supportGeneration.current;
     supportRef.current?.dispose();
     supportRef.current = null;
+    receiptSession.current = null;
     setSupportClient(null);
   }, []);
   const bindSupport = useCallback((id: string) => {
@@ -96,7 +98,6 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     setLogoutLocationKey(null);
     setUser(currentUser);
     if (!currentUser) return null;
-    bindSupport(currentUser.id);
     // fetchConnectToken's error does not expose HTTP status. Inspect the real
     // response here so a confirmed unauthorized result cannot retain secrets.
     const response = await authFetch("/api/auth/connect-token");
@@ -113,12 +114,17 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!response.ok) throw new Error("Connect credential refresh failed");
     const credentials = await response.json() as ConnectTokenResponse;
     if (!active()) return null;
+    if (typeof credentials.sessionBinding !== 'string' || !credentials.sessionBinding) {
+      clearSupport();
+      throw new Error('Missing authenticated receipt session binding');
+    }
+    if (receiptSession.current !== credentials.sessionBinding) clearSupport();
+    receiptSession.current = credentials.sessionBinding;
+    bindSupport(currentUser.id);
     // Same-account metadata refresh with the same credential preserves drafts.
     // A changed credential is a new lifetime boundary for all private handles.
     if (currentCredential.current !== null && currentCredential.current !== credentials.accessToken) {
       lockCloudUi();
-      clearSupport();
-      bindSupport(currentUser.id);
     }
     currentCredential.current = credentials.accessToken;
     const client = new ConnectClient({ host: getApiBaseUrl(), token: credentials.accessToken });

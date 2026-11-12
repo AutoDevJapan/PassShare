@@ -228,7 +228,7 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
  await act(async()=>confirmedTree.unmount());
  stage='react-credential';
  let sessionUser={id:a.accountId,email:'owner@example.test'}, credential='synthetic-token-one', sessionValue=null;
- const authTransport={fetchCurrentUser:async()=>sessionUser,authFetch:async()=>new Response(JSON.stringify({accessToken:credential})),
+ const authTransport={fetchCurrentUser:async()=>sessionUser,authFetch:async()=>new Response(JSON.stringify({accessToken:credential,sessionBinding:'synthetic-receipt-session'})),
    getApiBaseUrl:()=>'',primeCsrfToken:async()=>{},login:async()=>sessionUser,signup:async()=>sessionUser,logout:async()=>{}};
  function receiptModule(relative,imports){
   const context={exports:{},Headers,Response,ReadableStream,AbortController,TextDecoder,TextEncoder,

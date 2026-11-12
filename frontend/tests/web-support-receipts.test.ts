@@ -74,6 +74,18 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   assert.equal(preflight.status,204);assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Owner/i);
   assert.equal(posts,2);assert.equal(csrf,2);
   const cookie='passshare_session='+encodeURIComponent(a.sessionToken);
+  const sameSessionTokens=await Promise.all([1,2].map(async()=>{
+   const response=await fetch(base+'/api/auth/connect-token',{headers:{Cookie:cookie}});
+   assert.equal(response.status,200);return response.json();
+  }));
+  assert.equal(typeof sameSessionTokens[0].sessionBinding,'string');
+  assert.ok(sameSessionTokens[0].sessionBinding.length>20);
+  assert.equal(sameSessionTokens[0].sessionBinding,sameSessionTokens[1].sessionBinding);
+  assert.notEqual(sameSessionTokens[0].accessToken,sameSessionTokens[1].accessToken);
+  const nextSession=await authStore.createSession(owner.id,owner.password_hash);
+  const nextToken=await fetch(base+'/api/auth/connect-token',{headers:{Cookie:'passshare_session='+encodeURIComponent(nextSession.sessionToken)}});
+  assert.equal(nextToken.status,200);
+  assert.notEqual((await nextToken.json()).sessionBinding,sameSessionTokens[0].sessionBinding);
   const tokens=await Promise.all([fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}}),fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}})]);
   const t1=(await tokens[0].json()).csrfToken,t2=(await tokens[1].json()).csrfToken;
   assert.equal(t1,t2);

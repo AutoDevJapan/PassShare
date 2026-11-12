@@ -30,7 +30,7 @@ function load(relative, imports) {
 }
 
 async function host() {
-  let account = {id: ownerA}, status = 200, receiptStatus = 201, credential='synthetic', current, finishLogout;
+  let account = {id: ownerA}, status = 200, receiptStatus = 201, credential='synthetic', binding='synthetic-session', current, finishLogout;
   const requests = [];
   const receiptId = '33333333-3333-4333-8333-333333333333';
   const auth = {
@@ -40,7 +40,7 @@ async function host() {
     logout: () => new Promise(resolve => {finishLogout=resolve;}),
     login: async () => account, signup: async () => account,
     async authFetch(path, init) {
-      if (path === '/api/auth/connect-token') return Response.json({accessToken:credential}, {status});
+      if (path === '/api/auth/connect-token') return Response.json({accessToken:credential,sessionBinding:binding}, {status});
       requests.push({path,init});
       if(receiptStatus!==201)return new Response(null,{status:receiptStatus});
       return Response.json({id:receiptId,status:'received',revision:0,history:[],createdAt:'2026-11-13T00:00:00Z',
@@ -63,6 +63,7 @@ async function host() {
     setAccount(id){account=id ? {id} : null;}, setStatus(value){status=value;},
     setReceiptStatus(value){receiptStatus=value;},
     setCredential(value){credential=value;},
+    setBinding(value){binding=value;},
     finishLogout(){finishLogout();},
     async unmount(){await renderer.act(async()=>tree.unmount());},
   };
@@ -93,6 +94,8 @@ test('same-account refresh preserves client; account change and unmount revoke o
     await renderer.act(async()=>h.current.refresh());
     assert.equal(h.current.supportClient,first);
     h.setCredential('synthetic-replacement');await renderer.act(async()=>h.current.refresh());
+    assert.equal(h.current.supportClient,first,'rotating Connect token does not change cookie session lifetime');
+    h.setBinding('synthetic-session-two');await renderer.act(async()=>h.current.refresh());
     assert.notEqual(h.current.supportClient,first);
     await assert.rejects(first.create(h.request,new AbortController().signal));
     h.setAccount(ownerB);await renderer.act(async()=>h.current.refresh());

@@ -10,6 +10,7 @@ export type ConnectTokenResponse = {
   accessToken: string;
   expiresIn: number;
   expiresAt: string;
+  sessionBinding?: string;
 };
 
 type AuthResponse = {
