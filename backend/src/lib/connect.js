@@ -38,7 +38,7 @@ export function toItemOverview(item) {
       listMetadataVersion: 1,
       username: value('purpose','username'),
       hasPassword: password,
-      hasBody: Boolean(value('label','notes')||value('label','body')),
+      hasBody: fields.some(field=>typeof field.label==='string'&&['notes','body'].includes(field.label.toLowerCase())&&typeof field.value==='string'&&field.value.length>0),
       bodyPreview: (value('label','notes')||value('label','body')).slice(0,81),
   };
 }
