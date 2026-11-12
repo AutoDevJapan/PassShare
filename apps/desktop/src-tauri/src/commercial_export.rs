@@ -303,7 +303,15 @@ mod tests {
         let id = s.open(root.clone(), 7).unwrap();
         assert!(s.read(&id, "item-a.json", 8).is_err());
         assert!(s.read(&id, "item-a.json", 7).unwrap().is_none());
+        let identity = s.identity(&id).unwrap();
         s.close(&id).unwrap();
+        let moved = root.with_extension("moved");
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        let replacement = s.open(root.clone(), 7).unwrap();
+        assert_ne!(s.identity(&replacement).unwrap(), identity);
+        s.close(&replacement).unwrap();
+        std::fs::remove_dir_all(moved).unwrap();
         assert!(s.read(&id, "item-a.json", 7).is_err());
         std::fs::remove_dir(root).unwrap();
     }
