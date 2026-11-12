@@ -463,7 +463,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
             items={filteredItems}
             labels={labels}
             onEdit={startEdit}
-            copyItem={async item=>{const scope=activeScope.current,generation=loadGeneration.current;try{const detail=connectItemFromApi(await currentDetail(item.id));if(scope!==activeScope.current||generation!==loadGeneration.current)return false;await copyTextWithAutoClear(detail.password||detail.body||'');return true;}catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));return false;}}}
+            copyItem={async item=>{const scope=activeScope.current,generation=loadGeneration.current;try{const detail=connectItemFromApi(await currentDetail(item.id));if(scope!==activeScope.current||generation!==loadGeneration.current)return false;const secret=detail.password||detail.body||'';if(!secret)return false;await copyTextWithAutoClear(secret);return true;}catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));return false;}}}
             onDelete={(id) => void handleDelete(id)}
           />
           {itemsLoading ? <p role="status">{t("session.loading")}</p> : itemsReady && filteredItems.length === 0 ? <p>{labels.emptyList}</p> : null}
