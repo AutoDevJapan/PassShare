@@ -138,10 +138,19 @@ func TestSourceVersionKeyAndSHA(t *testing.T) {
 		t.Fatalf("exact publisher overlay rejected: %v", e)
 	}
 	write(t, overlay, []byte(`{"bundle":{"externalBin":["binaries/passshare-export-publish"],"createUpdaterArtifacts":true}}`))
-	if _, e = inspectSource(root, sha); e == nil {
+	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "invalid committed publisher overlay"}} {
+		if _, e = command(root, nil, "git", args...); e != nil {
+			t.Fatal(e)
+		}
+	}
+	invalidHead, e := command(root, nil, "git", "rev-parse", "HEAD")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = inspectSource(root, strings.TrimSpace(string(invalidHead))); e == nil {
 		t.Fatal("modified publisher overlay accepted")
 	}
-	if _, e = command(root, nil, "git", "checkout", "--", overlay); e != nil {
+	if _, e = command(root, nil, "git", "checkout", "HEAD~1", "--", overlay); e != nil {
 		t.Fatal(e)
 	}
 	if _, err = inspectSource(root, strings.Repeat("b", 40)); err == nil {
