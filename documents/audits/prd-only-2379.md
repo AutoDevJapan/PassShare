@@ -1,6 +1,6 @@
 # PassShareのPrd統一（ToDo2379）
 
-2026-10-12時点で既存Prdの復旧・実動作を確認し、Railwayの旧環境と復旧先へ統合した旧失敗配備を廃止した。Vercelの過去Preview履歴削除と、その後の再生成なしの検査は進行中であり、全完了として扱わない。以下の初回棚卸し・統合記録は履歴で、現在の状態は末尾を参照する。
+2026-10-12時点で既存Prdの復旧・実動作を確認し、Railwayの旧環境と復旧先へ統合した旧失敗配備、Vercelの過去Preview879件を廃止した。全ページの削除後一覧と、実main/作業branch更新後の非Prd再生成なしを確認した。以下の初回棚卸し・統合記録は履歴で、現在の状態は末尾を参照する。製品全体の販売・全クライアントの受入や親2344全体の完了は、この有限作業の成果に含めない。
 
 ## 対象と保持対象
 
@@ -79,4 +79,10 @@ PR715は候補`f059dfa5`の同head CI（47成功、任意Cursor3件はNEUTRAL）
 
 現workspaceの完全一覧にない旧project `4b00f947-b267-42c8-98ae-b7cfb4951e49`は、見えない資源を名称で推測して操作しない。対応するGitHub productionラベルを保持し、一覧の不在と取得不能を記録する。全providerを横断して物理削除済みとは断定しない。
 
-Vercelの旧非Prd deployment 879件は実project/sourceを照合した有限の対象で、全Production履歴は保持する。まず1件を削除し直接GETの明示404とPrd保持を確認した後、重ならない4範囲で履歴を廃止している。完了判定には全ページの削除後一覧と、main/作業branchの実push後に非Prdが作成されない観測が必要で、ソースの設定だけで代用しない。結果は製品台帳と各retirement journalへ保存する。
+Vercelの旧非Prd deployment 879件は実project/sourceを照合した有限の対象で、全Production履歴を保持した。まず1件を削除し直接GETの明示404とPrd保持を確認した後、重ならない4範囲で履歴を廃止した。879個の一意なIDそれぞれにDELETED応答があり、失敗は0。削除後の全3ページには非Prd0件、Production242件があり、初回のProduction237件はすべて残っていた。削除対象879件も一覧に存在しない。`vercel-after-retirement-full-inventory.json`と各retirement journalに保存した。
+
+作業branchの実pushとPR716のmain統合`99380f3`後に非Prdが作成されないことを、Vercelの全ページとRailwayの全環境一覧で確認した。正式Preview停止設定、mainだけのGit配備、既存Prd用のCLI source/ID guardを維持し、disable設定だけで過去履歴が消えたとは判定しない。Prd用のVercel変数2件は残り、GitHubの廃止済み環境ラベルも再生成されていない。`vercel-534-reconciliation-and-main-no-recreation.json`、`railway-pr716-main-push-observation.json`、`github-final-environments.json`が証拠となる。
+
+同じ製品の元担当1163によるPR713がmain`100d59e695e8d11e61641f0138e6c1dfc897db4d`へ統合され、Prd frontend `dpl_BFgnhnPxyze2htZKcTwXFdAy6vAM`はそのsourceでREADYとなった。変更は承認済み契約・プライバシーの文書と多言語コンテンツで、backend/暗号処理/ログイン・保存・復元のコードは上の検査済みsourceから変わっていない。元の成果を保持し、DB・backend配備・buildを重ねて進めない。backendは`aa178758`の同IDでSUCCESSのまま保持し、文書mainへ再配備したとは記録しない。`pr713-main-functional-correspondence.json`、`vercel-final-prd-and-prevention.json`に対応を保存した。
+
+この稼働配備統一の機能受入は、Chromeのログイン・保存・CSV復元と、APIの書出しJSONを用いた復元で確認している。上記CSV UI書き出しの操作中断、全クライアント・暗号鍵の実機復旧・販売条件の実装は成功を主張しない。元1163/1177/1197の製品受入を、このhosting整理だけで完了に変更しない。一時保全のDPAPI archiveは必要な原データとして保持し、検査用の平文・CSVと担当タブは回収した。恒久の有料backupや新しいサイト・サービスは作成していない。
