@@ -8,19 +8,18 @@ function normalizeHeader(value: string): string {
 }
 
 function parseCsv(text: string): CsvRow[] {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (lines.length === 0) {
+  const records = splitCsvRecords(text);
+  if (records.length === 0) {
     return [];
   }
 
-  const headers = splitCsvLine(lines[0]).map(normalizeHeader);
+  const headers = records[0].map(normalizeHeader);
   const rows: CsvRow[] = [];
 
-  for (const line of lines.slice(1)) {
-    const cells = splitCsvLine(line);
+  for (const cells of records.slice(1)) {
     const row: CsvRow = {};
     headers.forEach((header, index) => {
-      row[header] = (cells[index] ?? "").trim();
+      row[header] = cells[index] ?? "";
     });
     rows.push(row);
   }
@@ -28,26 +27,42 @@ function parseCsv(text: string): CsvRow[] {
   return rows;
 }
 
-function splitCsvLine(line: string): string[] {
-  const cells: string[] = [];
+function splitCsvRecords(text: string): string[][] {
+  const records: string[][] = [];
+  let cells: string[] = [];
   let current = "";
   let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"') {
-      inQuotes = !inQuotes;
+  let closed = false;
+  const endCell = () => { cells.push(current); current = ""; closed = false; };
+  const endRecord = () => {
+    endCell();
+    if (cells.some(cell => cell.trim().length > 0)) records.push(cells);
+    cells = [];
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[index + 1] === '"') { current += '"'; index++; }
+        else { inQuotes = false; closed = true; }
+      } else current += char;
       continue;
     }
-    if (char === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
-      continue;
+    if (char === ',') endCell();
+    else if (char === '\n' || char === '\r') {
+      endRecord();
+      if (char === '\r' && text[index + 1] === '\n') index++;
+    } else if (char === '"') {
+      if (current.length > 0 || closed) throw new Error("Invalid CSV quoting");
+      inQuotes = true;
+    } else {
+      if (closed) throw new Error("Invalid CSV text after closing quote");
+      current += char;
     }
-    current += char;
   }
-  cells.push(current);
-  return cells.map((cell) => cell.replace(/^"|"$/g, "").replace(/""/g, '"'));
+  if (inQuotes) throw new Error("Unterminated CSV quoted field");
+  if (current.length > 0 || closed || cells.length > 0) endRecord();
+  return records;
 }
 
 export function parseOnepasswordCsv(csvData: string): ItemFormValues[] {
@@ -65,7 +80,7 @@ export function parseOnepasswordCsv(csvData: string): ItemFormValues[] {
   for (const row of rows) {
     const title = row.title ?? "";
     const password = row.password ?? "";
-    if (!title || !password) {
+    if (!title.trim() || !password.trim()) {
       continue;
     }
 
