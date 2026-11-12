@@ -20,7 +20,8 @@ export function nowIso() {
 /** @param {unknown} item */
 export function toItemOverview(item) {
   const fields=Array.isArray(item.fields)?item.fields.filter(field=>field&&typeof field==='object'):[];
-  const value=(key,name)=>fields.find(field=>typeof field[key]==='string'&&field[key].toLowerCase()===name&&typeof field.value==='string')?.value??'';
+  const value=(key,name)=>fields.find(field=>typeof field[key]==='string'&&field[key].toLowerCase()===name&&typeof field.value==='string'&&field.type!=='CONCEALED'&&!(typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'))?.value??'';
+  const password=fields.some(field=>typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'&&typeof field.value==='string'&&field.value.length>0);
   return {
     id: item.id,
     title: item.title,
@@ -35,9 +36,9 @@ export function toItemOverview(item) {
     urls: item.urls ?? [],
       favorite: Boolean(item.favorite),
       username: value('purpose','username'),
-      hasPassword: Boolean(value('purpose','password')),
+      hasPassword: password,
       hasBody: Boolean(value('label','notes')||value('label','body')),
-      bodyPreview: (value('label','notes')||value('label','body')).slice(0,80),
+      bodyPreview: (value('label','notes')||value('label','body')).slice(0,81),
   };
 }
 
