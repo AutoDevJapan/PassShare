@@ -7,7 +7,7 @@ export async function consumeCommercialAttachment(
  api:Pick<CloudApi,'getCommercialAttachmentItemSnapshot'|'getCommercialEncryptedAttachment'>,
  worker:Pick<CloudWorker,'decryptAttachment'|'releaseAttachment'>,
  contractId:string,item:ItemContext,attachment:AttachmentContext,revision:number,
- signal:AbortSignal,consume:(file:AttachmentPlaintext)=>Promise<void>,
+ signal:AbortSignal,consume:(file:AttachmentPlaintext,signal:AbortSignal)=>Promise<void>,
 ):Promise<void>{
  item={...item};attachment={...attachment};
  const current=()=>{if(signal.aborted)throw new CloudApiError(409);};
@@ -18,23 +18,30 @@ export async function consumeCommercialAttachment(
  const file=await worker.decryptAttachment(body,attachment,{itemEnvelope:parent,expectedItemContext:item,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision});
  let released=false;
  const release=()=>{if(!released){released=true;worker.releaseAttachment(file);}};
- let onAbort:()=>void=()=>{};
- try{
-  current();
-  const cancelled=new Promise<never>((_resolve,reject)=>{onAbort=()=>{release();reject(new CloudApiError(409));};signal.addEventListener('abort',onAbort,{once:true});});
-  await Promise.race([Promise.resolve().then(()=>{current();return consume(file);}),cancelled]);current();
- }finally{signal.removeEventListener('abort',onAbort);release();}
+ // Abort wipes immediately, but completion still drains the sink. A caller must
+ // never mistake cancellation for quiescence while a write remains outstanding.
+ const onAbort=()=>release();
+ try{current();signal.addEventListener('abort',onAbort,{once:true});await consume(file,signal);current();}
+ finally{signal.removeEventListener('abort',onAbort);release();}
 }
 
+// Resume only the same export snapshot after a normal worker re-unlock. No key,
+// membership or authorization is restored by this progress record.
+export type CommercialExportProgress={binding:string;items:Set<string>;attachments:Set<string>};
+export function createCommercialExportProgress():CommercialExportProgress{return {binding:'',items:new Set(),attachments:new Set()};}
 // Pages and attachments share one immutable snapshot; delivery is sequential and backpressured.
 export async function consumeCommercialBox(
  api:Pick<CloudApi,'getCommercialExportPage'|'getCommercialAttachmentItemSnapshot'|'getCommercialEncryptedAttachment'>,
  worker:Pick<CloudWorker,'decrypt'|'decryptAttachment'|'releaseAttachment'>,
  contractId:string,boxId:string,pin:{keyEpoch:number;snapshotRevision:number},signal:AbortSignal,
  consumeItem:(itemJSON:string,context:ItemContext)=>Promise<void>,
- consumeAttachment:(file:AttachmentPlaintext,context:AttachmentContext)=>Promise<void>,
+ consumeAttachment:(file:AttachmentPlaintext,context:AttachmentContext,signal:AbortSignal)=>Promise<void>,
+ progress:CommercialExportProgress=createCommercialExportProgress(),
 ):Promise<void>{
  pin={...pin};let after:string|null=null;const seen=new Set<string>();
+ const binding=JSON.stringify([contractId,boxId,pin.keyEpoch,pin.snapshotRevision]);
+ if(progress.binding&&progress.binding!==binding)throw new CloudApiError(409);
+ progress.binding=binding;
  // A contract export has a 30/minute server budget. Retry only the rejected GET,
  // never a delivered sink callback, and keep cancellation responsive while waiting.
  const request=async<T>(run:()=>Promise<T>):Promise<T>=>{
@@ -58,10 +65,14 @@ export async function consumeCommercialBox(
    if(seen.has(context.itemId)||(after!==null&&context.itemId<=after))throw new CloudApiError(502);
    seen.add(context.itemId);
    const plain=await worker.decrypt(JSON.stringify(envelope),context);current();
-   const item=JSON.parse(plain);await consumeItem(plain,{...context});current();
+   const item=JSON.parse(plain);if(!progress.items.has(context.itemId)){await consumeItem(plain,{...context});current();progress.items.add(context.itemId);}
    for(const ref of item.attachments??[]){
     const attachment={passwordBoxId:boxId,itemId:context.itemId,attachmentId:ref.attachmentId,attachmentVersion:ref.attachmentVersion,keyEpoch:ref.keyEpoch};
-    await consumeCommercialAttachment(limitedApi,worker,contractId,context,attachment,pin.snapshotRevision,signal,file=>consumeAttachment(file,{...attachment}));
+        const key=JSON.stringify([context.itemId,attachment.attachmentId,attachment.attachmentVersion]);
+    if(!progress.attachments.has(key)){
+     await consumeCommercialAttachment(limitedApi,worker,contractId,context,attachment,pin.snapshotRevision,signal,(file,sinkSignal)=>consumeAttachment(file,{...attachment},sinkSignal));
+     current();progress.attachments.add(key);
+    }
    }
   }
   if(page.nextCursor!==null&&(page.envelopes.length===0||page.nextCursor!==page.envelopes.at(-1)!.context.itemId||page.nextCursor===after))throw new CloudApiError(502);

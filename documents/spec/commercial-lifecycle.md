@@ -629,3 +629,8 @@ sandbox台帳や未払い受諾を有料期間へ昇格しない。他の契約�
 consumerの一括走査は既存30回/分制限を変更しない。429となったGETのみ61秒待機して
 最大1回再送し、配送済み保存callbackは再実行しない。待機中も取消し可能とする。
 保存callbackが失敗した場合は呼出元が部分出力を未完了として扱い、完成を示さない。
+保存callbackは取消signalを受け取り、取消時の書込み停止と部分出力の破棄を担う。
+consumerは平文を即解放するがcallbackの終端までは完了を返さず、書込みの排出を待つ。
+workerの5分idle期限は延長しない。`createCommercialExportProgress`の同snapshot記録を
+保持して通常の鍵再解除後に再開でき、完了済みcallbackは再送しない。revision/epochや
+契約/Boxを変えた記録の再利用は409で拒否し、資格・鍵・所属を復活させない。

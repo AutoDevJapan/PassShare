@@ -66,9 +66,16 @@ test('rate limit wait is cancellable and never retries after abort',async t=>{
  await reached;await Promise.resolve();controller.abort();await assert.rejects(pending);t.mock.timers.tick(61000);assert.equal(calls,1);
 });
 
-test('aborting a stalled sink promptly wipes plaintext and settles consumer',async()=>{
- const controller=new AbortController();let started!:()=>void;const sinkStarted=new Promise<void>(r=>{started=r;});let releases=0;const file={name:'private',bytes:new Uint8Array([7])};const item={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2};const attachment={passwordBoxId:item.passwordBoxId,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
+test('abort wipes plaintext immediately but waits for outstanding sink completion',async()=>{
+ const controller=new AbortController();let started!:()=>void,finish!:()=>void;const sinkStarted=new Promise<void>(r=>{started=r;});const sinkFinished=new Promise<void>(r=>{finish=r;});let releases=0,settled=false;const file={name:'private',bytes:new Uint8Array([7])};const item={passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:2};const attachment={passwordBoxId:item.passwordBoxId,itemId:item.itemId,attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2};
  const api={getCommercialAttachmentItemSnapshot:async()=>'',getCommercialEncryptedAttachment:async()=>''};const worker={decryptAttachment:async()=>file,releaseAttachment:(v:any)=>{releases++;v.name='';v.bytes.fill(0);}};
- const pending=consumeCommercialAttachment(api as any,worker as any,'contract',item,attachment,4,controller.signal,async()=>{started();await new Promise(()=>{});});
- await sinkStarted;controller.abort();await assert.rejects(pending);assert.equal(releases,1);assert.equal(file.bytes[0],0);assert.equal(file.name,'');
+ const pending=consumeCommercialAttachment(api as any,worker as any,'contract',item,attachment,4,controller.signal,async(_file,signal)=>{assert.equal(signal,controller.signal);started();await sinkFinished;});
+ void pending.then(()=>{settled=true;},()=>{settled=true;});await sinkStarted;controller.abort();await Promise.resolve();assert.equal(file.bytes[0],0);assert.equal(settled,false);finish();await assert.rejects(pending);assert.equal(releases,1);assert.equal(settled,true);
+});
+test('same-snapshot progress resumes after worker lock without redelivering completed sinks',async()=>{
+ const {consumeCommercialBox,createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress();const box='a'.repeat(26),id='b'.repeat(26),refs=[{attachmentId:'c'.repeat(26),attachmentVersion:1,keyEpoch:2},{attachmentId:'d'.repeat(26),attachmentVersion:1,keyEpoch:2}];let locked=true,items=0;const files:string[]=[];
+ const api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:id,itemVersion:1,keyEpoch:2}}],nextCursor:null,attachmentsIncluded:false}),getCommercialAttachmentItemSnapshot:async()=>'',getCommercialEncryptedAttachment:async()=>''};
+ const worker={decrypt:async()=>JSON.stringify({attachments:refs}),decryptAttachment:async(_e:any,c:any)=>{if(locked&&c.attachmentId===refs[1].attachmentId)throw new Error('worker locked');return {name:c.attachmentId,bytes:new Uint8Array([1])};},releaseAttachment:(f:any)=>f.bytes.fill(0)};
+ const run=(revision=4)=>consumeCommercialBox(api as any,worker as any,'contract',box,{keyEpoch:2,snapshotRevision:revision},new AbortController().signal,async()=>{items++;},async file=>{files.push(file.name);},progress);
+ await assert.rejects(run());assert.equal(items,1);assert.deepEqual(files,[refs[0].attachmentId]);locked=false;await run();assert.equal(items,1);assert.deepEqual(files,refs.map(r=>r.attachmentId));await assert.rejects(run(5),(e:any)=>e.status===409);
 });
