@@ -95,9 +95,7 @@ func signWindows(path string) error {
 	if err != nil {
 		return fail("cannot resolve signing target")
 	}
-	rel, err := filepath.Rel(filepath.Join(root, "target/release"), resolved)
-	allowedPublisher := filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe")
-	if (err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) && !strings.EqualFold(resolved, allowedPublisher) {
+	if !allowedWindowsSigningPath(root, resolved) {
 		return fail("signing target must stay inside candidate build output")
 	}
 	tool, err := signtool()
@@ -598,4 +596,12 @@ func verifyPublisherPayload(extracted, expected string) (string, error) {
 		return "", fail("installer export publisher bytes differ")
 	}
 	return publishers[0], nil
+}
+
+func allowedWindowsSigningPath(root, resolved string) bool {
+	rel, err := filepath.Rel(filepath.Join(root, "target/release"), resolved)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return true
+	}
+	return strings.EqualFold(resolved, filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe"))
 }

@@ -336,3 +336,19 @@ func TestPublisherPayloadRequiresExactUniqueSignedBuildBytes(t *testing.T) {
 		t.Fatal("duplicate publisher accepted")
 	}
 }
+
+func TestSigningPathAllowsOnlyExactPublisherException(t *testing.T) {
+	root := filepath.Join(scratch(t), "repo")
+	exact := filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe")
+	if !allowedWindowsSigningPath(root, exact) {
+		t.Fatal("fixed sidecar rejected")
+	}
+	if !allowedWindowsSigningPath(root, filepath.Join(root, "target/release/passshare-desktop.exe")) {
+		t.Fatal("existing build output rejected")
+	}
+	for _, p := range []string{exact + ".other.exe", filepath.Join(root, "apps/desktop/src-tauri/binaries/other.exe"), filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-aarch64-pc-windows-msvc.exe"), filepath.Join(root, "target/release-other/file.exe")} {
+		if allowedWindowsSigningPath(root, p) {
+			t.Fatalf("unqualified signing path accepted: %s", p)
+		}
+	}
+}
