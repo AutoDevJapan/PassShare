@@ -69,7 +69,7 @@ export function createVaultRoutes(store, options = {}) {
       const sourceItems = await parse1puxBuffer(zipBuffer);
       // Reject invalid input before any item is persisted. Storage failures can
       // still leave a partial import; this is not a batch transaction.
-      const bodies = sourceItems.map(map1puxItemToConnectBody);
+      const bodies = sourceItems.map(source => map1puxItemToConnectBody(source, {forReplay:true}));
       const created = [];
       const operation = req.headers['idempotency-key'];
       if(operation && (typeof operation!=='string'||!/^[-a-zA-Z0-9_]{16,64}$/.test(operation)))throw connectHttpError(400,'PS018: Invalid import operation');
