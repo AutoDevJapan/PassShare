@@ -59,6 +59,8 @@ jobs:
         working-directory: .
         shell: pwsh
         run: |
+          node --test --test-timeout=10000 backend/test/native-export-acceptance-host.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --locked -p passshare-desktop --example export_native_acceptance -j 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $pg = $env:PGBIN
