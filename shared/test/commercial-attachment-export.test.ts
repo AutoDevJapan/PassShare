@@ -57,3 +57,11 @@ test('rate-limited GET retries without repeating already delivered items',async 
  await reached;await Promise.resolve();await Promise.resolve();t.mock.timers.tick(61000);await pending;
  assert.equal(bodyCalls,2);assert.equal(items,1);assert.equal(files,1);
 });
+
+test('rate limit wait is cancellable and never retries after abort',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ const {consumeCommercialBox}=await import('../cloud/commercial-attachment-export.ts');const {CloudApiError}=await import('../cloud/cloud-api.ts');const controller=new AbortController();let calls=0,limited!:()=>void;const reached=new Promise<void>(r=>{limited=r;});
+ const api={getCommercialExportPage:async()=>{calls++;limited();throw new CloudApiError(429);}};
+ const pending=consumeCommercialBox(api as any,{} as any,'contract','a'.repeat(26),{keyEpoch:2,snapshotRevision:4},controller.signal,async()=>{},async()=>{});
+ await reached;await Promise.resolve();controller.abort();await assert.rejects(pending);t.mock.timers.tick(61000);assert.equal(calls,1);
+});
