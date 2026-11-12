@@ -9,6 +9,8 @@ test('real desktop handler never imports a file resolved after its view is dispo
   const body = source.slice(source.indexOf('  async function handleImportFile('), source.indexOf('\n  if (enablingRecovery)'));
   let finish!: (value: string) => void;
   const text = new Promise<string>(resolve => { finish = resolve; });
+  let started!: () => void;
+  const readStarted = new Promise<void>(resolve => { started = resolve; });
   let saves = 0;
   const importLifetime = {current: {active: true, busy: false}};
   const context = vm.createContext({importLifetime, masterPassword: 'synthetic', boxPath: 'synthetic.pbox',
@@ -17,8 +19,8 @@ test('real desktop handler never imports a file resolved after its view is dispo
     setImportMessage: () => {}, setListError: () => {}, refreshItems: async () => {},
     itemLabels: {importSuccess: '{count}'}, formatTauriError: String});
   vm.runInContext(stripTypeScriptTypes(body) + ';globalThis.run=handleImportFile', context);
-  const pending = context.run({target: {files: [{text: () => text}], value: 'chosen'}});
-  await Promise.resolve();
+  const pending = context.run({target: {files: [{text: () => { started(); return text; }}], value: 'chosen'}});
+  await readStarted;
   importLifetime.current.active = false;
   finish('Title,Password\nSynthetic,value');
   await pending;
@@ -37,6 +39,31 @@ test('recovery navigation invalidates the current flight before React commits th
   assert.equal(observed, false);
   assert.equal(lifetime.active, false);
   assert.equal(lifetime.busy, true);
+});
+
+test('late list results and import success never update a disposed import view', async () => {
+  const source = fs.readFileSync(new URL('../components/MainPanel.tsx', import.meta.url), 'utf8');
+  const refresh = source.slice(source.indexOf('  async function refreshItems('), source.indexOf('\n  useEffect(', source.indexOf('  async function refreshItems(')));
+  const handler = source.slice(source.indexOf('  async function handleImportFile('), source.indexOf('\n  if (enablingRecovery)'));
+  let finish!: (value: unknown[]) => void;
+  let started!: () => void;
+  const reached = new Promise<void>(resolve => { started = resolve; });
+  const response = new Promise<unknown[]>(resolve => { finish = resolve; });
+  const lifetime = {active: true, busy: false};
+  const effects: string[] = [];
+  const context = vm.createContext({importLifetime: {current: lifetime}, masterPassword: 'synthetic', boxPath: 'original.pbox', searchQuery: '',
+    nativeImportStatus: async () => ({epoch: 7, unlocked: true}), importOnepasswordCsv: async () => 1,
+    listItems: () => { started(); return response; }, searchItems: () => response,
+    setItems: () => effects.push('items'), setImportMessage: () => effects.push('success'), setListError: () => effects.push('error'),
+    itemLabels: {importSuccess: '{count}'}, formatTauriError: String});
+  vm.runInContext(stripTypeScriptTypes(refresh + handler) + ';globalThis.run=handleImportFile', context);
+  const pending = context.run({target: {files: [{text: async () => 'synthetic csv'}], value: 'chosen'}});
+  await reached;
+  lifetime.active = false;
+  finish([]);
+  await pending;
+  assert.deepEqual(effects, []);
+  assert.equal(lifetime.busy, false);
 });
 
 test('real handler binds epoch and Box, suppresses concurrent selection, and releases failed flights', async () => {

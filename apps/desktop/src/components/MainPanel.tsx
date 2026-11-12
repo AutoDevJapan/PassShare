@@ -60,12 +60,14 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
     setEnablingRecovery(true);
   }
 
-  async function refreshItems(query = searchQuery.trim()) {
+  async function refreshItems(query = searchQuery.trim(), lifetime?: { active: boolean }) {
     try {
       const nextItems = query ? await searchItems(query) : await listItems();
+      if (lifetime && !lifetime.active) return;
       setItems(nextItems);
       setListError("");
     } catch (err) {
+      if (lifetime && !lifetime.active) return;
       setListError(formatTauriError(err));
     }
   }
@@ -184,8 +186,9 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
       if (!lifetime.active) return;
       const count = await importOnepasswordCsv(csvData, masterPassword, status.epoch, boxPath.trim());
       if (!lifetime.active) return;
+      await refreshItems(undefined, lifetime);
+      if (!lifetime.active) return;
       setImportMessage(itemLabels.importSuccess.replace("{count}", String(count)));
-      await refreshItems();
     } catch (err) {
       if (lifetime.active) setListError(formatTauriError(err));
     } finally {
