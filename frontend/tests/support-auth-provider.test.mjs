@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import ts from '../node_modules/typescript/lib/typescript.js';
 
@@ -105,4 +107,17 @@ test('confirmed credential rejection clears receipt ownership without waiting fo
     await assert.rejects(old.create(h.request,new AbortController().signal));
     assert.equal(h.requests.length,0);
   } finally {await h.unmount();}
+});
+
+test('release WASM acceptance host resolves the real Provider receipt dependencies', () => {
+  const rust=fs.readFileSync(new URL('../../packages/cloud-wasm/examples/web_transport_acceptance.rs',import.meta.url),'utf8');
+  const start=rust.indexOf(" stage='react-credential';"), end=rust.indexOf(' function Consumer()',start);
+  assert.ok(start>=0 && end>start);
+  const root=fileURLToPath(new URL('../../',import.meta.url));
+  const context={stage:'',a:{accountId:ownerA},f:{root,renderer:path.join(root,'apps/mobile/node_modules/react-test-renderer')},
+    React,ts,fs,path,vm,require:requireMobile,sandbox:{exports:{lockCloudUi(){}}},
+    Headers,Response,ReadableStream,AbortController,TextDecoder,TextEncoder};
+  vm.runInNewContext(rust.slice(start,end)+';globalThis.providerExports=authSandbox.exports;',context);
+  assert.equal(typeof context.providerExports.AuthSessionProvider,'function');
+  assert.equal(typeof context.providerExports.useAuthSession,'function');
 });

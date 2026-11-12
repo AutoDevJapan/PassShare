@@ -228,11 +228,22 @@ process.stdin.on('end', () => { let stage='startup'; void (async () => {
  await act(async()=>confirmedTree.unmount());
  stage='react-credential';
  let sessionUser={id:a.accountId,email:'owner@example.test'}, credential='synthetic-token-one', sessionValue=null;
+ const authTransport={fetchCurrentUser:async()=>sessionUser,authFetch:async()=>new Response(JSON.stringify({accessToken:credential})),
+   getApiBaseUrl:()=>'',primeCsrfToken:async()=>{},login:async()=>sessionUser,signup:async()=>sessionUser,logout:async()=>{}};
+ function receiptModule(relative,imports){
+  const context={exports:{},Headers,Response,ReadableStream,AbortController,TextDecoder,TextEncoder,
+   require(name){if(!Object.hasOwn(imports,name))throw Error('unexpected receipt module');return imports[name];}};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(f.root,relative),'utf8'),
+   {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,context);
+  return context.exports;
+ }
+ const receiptShared=receiptModule('shared/cloud/support-receipts-api.ts',{});
+ const receiptWeb=receiptModule('frontend/src/lib/support-receipts-api.ts',{'@shared/cloud/support-receipts-api':receiptShared,'./auth-api':authTransport});
  const authSandbox={exports:{},require(name){if(name==='react')return React;if(name==='react/jsx-runtime')return require(path.join(path.dirname(f.renderer),'react/jsx-runtime'));
   if(name==='@passshare/connect')return {ConnectClient:class{constructor(config){this.config=config;}}};
   if(name==='../lib/cloud-worker')return sandbox.exports;
-  if(name==='../lib/auth-api')return {fetchCurrentUser:async()=>sessionUser,authFetch:async()=>new Response(JSON.stringify({accessToken:credential})),
-    getApiBaseUrl:()=>'',primeCsrfToken:async()=>{},login:async()=>sessionUser,signup:async()=>sessionUser,logout:async()=>{}};
+  if(name==='../lib/auth-api')return authTransport;
+  if(name==='../lib/support-receipts-api')return receiptWeb;
   throw Error('unexpected auth module');}};
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(f.root,'frontend/src/hooks/useAuthSession.tsx'),'utf8'),
   {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,authSandbox);
