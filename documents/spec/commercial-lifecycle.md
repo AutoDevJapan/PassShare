@@ -656,3 +656,10 @@ JSON、添付はitem/attachment ID/versionのbinaryと元ファイル名metadata
 違う内容は上書きせず拒否する。write/close後に同handleから全bytesを読み返してから成功を返す。
 取消し・close失敗は成功にせず、writer abortとconsumerの排出契約を保つ。選択UI・権限取得の
 画面操作はこのmoduleに含めず、実browser OPFSの受入と利用者選択directoryの受入を区別する。
+
+保存境界の修正: 汎用directory handleのcreate:true/exclusiveは新規entry所有を保証しない。
+そのため実保存sinkは`VerifiedExportStore`のatomic no-replace publishを必要とし、
+任意のbrowser directoryをそのまま安全なstoreとして扱わない。未公開一時fileを作り、
+非上書き確定後に全bytesを読み返す。取消し前に確定済みなら同内容readbackで照合する。
+この境界は既存Rust CLIのcreate_new+hard_link方式と一致する。browser OPFSだけの
+先行試験は旧候補の履歴であり、現native/host storeの利用者接続完了を意味しない。
