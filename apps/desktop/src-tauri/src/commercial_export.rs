@@ -203,6 +203,7 @@ impl ExportSessions {
         }
         Ok(Some(bytes))
     }
+    #[cfg(test)]
     pub fn publish(
         &self,
         token: &str,
@@ -213,6 +214,7 @@ impl ExportSessions {
     ) -> Result<(), String> {
         self.publish_checked(token, name_, bytes, epoch, publisher, || true)
     }
+    #[cfg(test)]
     pub fn publish_checked(
         &self,
         token: &str,
@@ -426,9 +428,9 @@ impl ExportSessions {
         };
         drop(permit_tx);
         #[cfg(windows)]
-        let stop_requested = tree.stop();
+        let _stop_requested = tree.stop();
         #[cfg(not(windows))]
-        let stop_requested = child.kill().is_ok() || status.is_some();
+        let _stop_requested = child.kill().is_ok() || status.is_some();
         if interrupted {
             let _ = child.kill();
         }
@@ -463,7 +465,7 @@ impl ExportSessions {
         }
         let write_ok = matches!(writer.join(), Ok(Ok(())));
         #[cfg(test)]
-        eprintln!("export_flight reaped={reaped} writer_joined=true tree_empty={tree_empty} stop_requested={stop_requested}");
+        eprintln!("export_flight reaped={reaped} writer_joined=true tree_empty={tree_empty} stop_requested={_stop_requested}");
         if interrupted {
             return Err("EXPORT_INTERRUPTED_CHECK_OUTPUT".into());
         }
