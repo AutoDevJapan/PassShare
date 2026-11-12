@@ -946,59 +946,93 @@ fn native_session_status(state: State<'_, AppState>) -> Result<NativeStatus, Str
 }
 
 #[tauri::command]
-fn commercial_export_open(
+async fn commercial_export_open(
     directory: String,
-    state: State<'_, AppState>,
-    exports: State<'_, commercial_export::ExportSessions>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
-    if !state.foreground.load(Ordering::SeqCst) {
-        return Err("EXPORT_FOREGROUND".into());
-    }
-    exports.open(
-        PathBuf::from(directory),
-        state.cancellation.load(Ordering::SeqCst),
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if !state.foreground.load(Ordering::SeqCst) {
+            return Err("EXPORT_FOREGROUND".into());
+        }
+        let epoch = state.cancellation.load(Ordering::SeqCst);
+        let exports = app.state::<commercial_export::ExportSessions>();
+        let token = exports.open(PathBuf::from(directory), epoch)?;
+        if !state.foreground.load(Ordering::SeqCst)
+            || state.cancellation.load(Ordering::SeqCst) != epoch
+        {
+            exports.close(&token)?;
+            return Err("EXPORT_SESSION".into());
+        }
+        Ok(token)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
 }
 #[tauri::command]
-fn commercial_export_close(
-    session_id: String,
-    exports: State<'_, commercial_export::ExportSessions>,
-) -> Result<(), String> {
-    exports.close(&session_id)
+async fn commercial_export_close(session_id: String, app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<commercial_export::ExportSessions>()
+            .close(&session_id)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
 }
 #[tauri::command]
 async fn commercial_export_read(
     session_id: String,
     name: String,
-    state: State<'_, AppState>,
-    exports: State<'_, commercial_export::ExportSessions>,
+    app: tauri::AppHandle,
 ) -> Result<Option<Vec<u8>>, String> {
-    exports.read(
-        &session_id,
-        &name,
-        state.cancellation.load(Ordering::SeqCst),
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if !state.foreground.load(Ordering::SeqCst) {
+            return Err("EXPORT_FOREGROUND".into());
+        }
+        let epoch = state.cancellation.load(Ordering::SeqCst);
+        let mut result =
+            app.state::<commercial_export::ExportSessions>()
+                .read(&session_id, &name, epoch)?;
+        if !state.foreground.load(Ordering::SeqCst)
+            || state.cancellation.load(Ordering::SeqCst) != epoch
+        {
+            if let Some(bytes) = result.as_mut() {
+                use zeroize::Zeroize;
+                bytes.zeroize();
+            }
+            return Err("EXPORT_SESSION".into());
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|_| "EXPORT_READ".to_string())?
 }
 #[tauri::command]
 async fn commercial_export_publish(
     session_id: String,
     name: String,
     bytes: Vec<u8>,
-    state: State<'_, AppState>,
-    exports: State<'_, commercial_export::ExportSessions>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let executable = std::env::current_exe().map_err(|_| "EXPORT_PUBLISHER")?;
-    let publisher = executable
-        .parent()
-        .ok_or("EXPORT_PUBLISHER")?
-        .join("passshare-export-publish.exe");
-    exports.publish(
-        &session_id,
-        &name,
-        bytes,
-        state.cancellation.load(Ordering::SeqCst),
-        &publisher,
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if !state.foreground.load(Ordering::SeqCst) {
+            return Err("EXPORT_FOREGROUND".into());
+        }
+        let epoch = state.cancellation.load(Ordering::SeqCst);
+        let executable = std::env::current_exe().map_err(|_| "EXPORT_PUBLISHER")?;
+        let publisher = executable
+            .parent()
+            .ok_or("EXPORT_PUBLISHER")?
+            .join("passshare-export-publish.exe");
+        app.state::<commercial_export::ExportSessions>()
+            .publish_checked(&session_id, &name, bytes, epoch, &publisher, || {
+                state.foreground.load(Ordering::SeqCst)
+                    && state.cancellation.load(Ordering::SeqCst) == epoch
+            })
+    })
+    .await
+    .map_err(|_| "EXPORT_PUBLISH".to_string())?
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -1018,6 +1052,8 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::Focused(true) => state.foreground.store(true, Ordering::SeqCst),
                 tauri::WindowEvent::Focused(false) => {
+                    state.foreground.store(false, Ordering::SeqCst);
+                    state.cancellation.fetch_add(1, Ordering::SeqCst);
                     let _ = state.recovery_background();
                     if state.recovery_active.load(Ordering::SeqCst) {
                         if let Ok(status) = state.status() {

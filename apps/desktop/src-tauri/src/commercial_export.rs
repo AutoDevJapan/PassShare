@@ -114,6 +114,17 @@ impl ExportSessions {
         epoch: u64,
         publisher: &Path,
     ) -> Result<(), String> {
+        self.publish_checked(token, name_, bytes, epoch, publisher, || true)
+    }
+    pub fn publish_checked(
+        &self,
+        token: &str,
+        name_: &str,
+        bytes: Vec<u8>,
+        epoch: u64,
+        publisher: &Path,
+        current: impl Fn() -> bool,
+    ) -> Result<(), String> {
         let bytes = Zeroizing::new(bytes);
         if !name(name_) || bytes.len() > MAX {
             return Err("EXPORT_INPUT".into());
@@ -123,6 +134,9 @@ impl ExportSessions {
             .get(token)
             .filter(|d| d.epoch == epoch)
             .ok_or("EXPORT_SESSION")?;
+        if !current() {
+            return Err("EXPORT_SESSION".into());
+        }
         let _held = &d.directory;
         let target = d.root.join(name_);
         let mut command = Command::new(publisher);
@@ -202,6 +216,18 @@ mod publisher_tests {
         std::fs::create_dir(&root).unwrap();
         let sessions = ExportSessions::default();
         let token = sessions.open(root.clone(), 9).unwrap();
+        assert_eq!(
+            sessions.publish_checked(
+                &token,
+                "item-cancel-v1.json",
+                vec![1],
+                9,
+                Path::new(&exe),
+                || false
+            ),
+            Err("EXPORT_SESSION".into())
+        );
+        assert!(!root.join("item-cancel-v1.json").exists());
         let expected = vec![0, 255, 3, 0, 128];
         sessions
             .publish(
