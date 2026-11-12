@@ -25,6 +25,25 @@ test('committed native publish remains readable for success reconciliation after
 import {saveNativeCommercialExport} from '../src/lib/save-native-commercial-export.ts';
 import {createCommercialExportProgress} from '../../../shared/cloud/commercial-attachment-export.ts';
 
+test('recovered close retries the same owned session before opening another',async()=>{
+ let opens=0,closes=0,recovers=0,sends=0;
+ const progress=createCommercialExportProgress();
+ const invoke=async(command:string)=>{
+  if(command==='commercial_export_open'){opens++;return 'owned';}
+  if(command==='commercial_export_identity')return 'volume:A';
+  if(command==='commercial_export_read')return null;
+  if(command==='commercial_export_publish'){sends++;throw 'EXPORT_DRAIN_UNCONFIRMED';}
+  if(command==='commercial_export_recover'){recovers++;return true;}
+  if(command==='commercial_export_close'){closes++;if(closes===1)throw 'CLOSE_TRANSPORT';}
+ };
+ const box='a'.repeat(26),item='b'.repeat(26),api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:item,itemVersion:1,keyEpoch:1}}],nextCursor:null})},worker={decrypt:async()=>JSON.stringify({id:item,attachments:[]})};
+ const run=()=>saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress);
+ await assert.rejects(run());await assert.rejects(run());
+ assert.equal(opens,1);assert.equal(sends,1);
+ await assert.rejects(run());
+ assert.equal(closes,2);assert.equal(recovers,2);assert.equal(opens,2);
+});
+
 test('failed destination open releases the caller abort listener before retry',async()=>{
  const controller=new AbortController();let calls=0;
  const invoke=async()=>{calls++;throw 'EXPORT_DIRECTORY';};
