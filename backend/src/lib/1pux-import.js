@@ -127,7 +127,7 @@ function extractItemsFromExport(parsed) {
       const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'?'CONCEALED':'STRING',value:field.value??''}));
       for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:field.value?.concealed!==undefined?'CONCEALED':'STRING',value:typeof field.value==='object'?JSON.stringify(field.value):String(field.value??'')});
       if(item.details?.notesPlain)fields.push({label:'notes',type:'STRING',value:item.details.notesPlain});
-      items.push({...item,title:item.overview.title,category:({'001':'LOGIN','002':'CREDIT_CARD','003':'SECURE_NOTE','004':'IDENTITY','005':'PASSWORD'})[item.categoryUuid]??'CUSTOM',fields,tags:item.overview.tags??[],urls:item.overview.urls??[],importSource:{account:account.attrs??{},vault:vault.attrs??{},item:item.uuid}});
+      items.push({...item,title:item.overview.title,category:(item.categoryUuid==='001'?'LOGIN':'CUSTOM'),fields,tags:item.overview.tags??[],urls:item.overview.urls??[],importSource:{account:account.attrs??{},vault:vault.attrs??{},item:item.uuid}});
     }
     return items;
   }
