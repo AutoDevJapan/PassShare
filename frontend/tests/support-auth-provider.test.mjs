@@ -30,7 +30,7 @@ function load(relative, imports) {
 }
 
 async function host() {
-  let account = {id: ownerA}, status = 200, current, finishLogout;
+  let account = {id: ownerA}, status = 200, receiptStatus = 201, current, finishLogout;
   const requests = [];
   const receiptId = '33333333-3333-4333-8333-333333333333';
   const auth = {
@@ -42,6 +42,7 @@ async function host() {
     async authFetch(path, init) {
       if (path === '/api/auth/connect-token') return Response.json({accessToken:'synthetic'}, {status});
       requests.push({path,init});
+      if(receiptStatus!==201)return new Response(null,{status:receiptStatus});
       return Response.json({id:receiptId,status:'received',revision:0,history:[],createdAt:'2026-11-13T00:00:00Z',
         request:JSON.parse(init.body),meaning:'request_received_not_contract_or_payment_confirmation'}, {status:201});
     },
@@ -60,6 +61,7 @@ async function host() {
   const request={requestId:receiptId,kind:'technical',version:'0.1.0',platform:'web',errorCode:''};
   return {get current(){return current;},requests,request,
     setAccount(id){account=id ? {id} : null;}, setStatus(value){status=value;},
+    setReceiptStatus(value){receiptStatus=value;},
     finishLogout(){finishLogout();},
     async unmount(){await renderer.act(async()=>tree.unmount());},
   };
@@ -122,4 +124,21 @@ test('release WASM acceptance host resolves the real Provider receipt dependenci
   vm.runInNewContext(rust.slice(start,end)+';globalThis.providerExports=authSandbox.exports;',context);
   assert.equal(typeof context.providerExports.AuthSessionProvider,'function');
   assert.equal(typeof context.providerExports.useAuthSession,'function');
+});
+
+test('receipt 401 retires the old client before a new same-owner cookie can reuse it', async () => {
+  const h=await host();
+  try {
+    const old=h.current.supportClient;
+    h.setReceiptStatus(401);
+    await renderer.act(async()=>{await assert.rejects(old.get(h.request.requestId,new AbortController().signal),e=>e.status===401);});
+    assert.equal(h.current.supportClient,null);
+    h.setReceiptStatus(201);
+    await assert.rejects(old.create(h.request,new AbortController().signal));
+    assert.equal(h.requests.length,1);
+    await renderer.act(async()=>h.current.refresh());
+    assert.notEqual(h.current.supportClient,old);
+    await h.current.supportClient.create(h.request,new AbortController().signal);
+    assert.equal(h.requests.length,2);
+  } finally {await h.unmount();}
 });

@@ -3,10 +3,11 @@ import {authFetch} from './auth-api';
 
 // Web cookies and CSRF stay in the existing auth transport. No session token
 // is projected into the shared receipt client or a native bearer connection.
-export function createWebSupportReceiptApi(ownerId: string, isCurrent: () => boolean) {
+export function createWebSupportReceiptApi(ownerId: string, isCurrent: () => boolean, onUnauthorized: () => void = () => {}) {
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(ownerId)) throw new Error('Invalid receipt owner');
   let alive = true;
   const active = new Set<AbortController>();
+  const dispose = () => { alive=false; for(const request of active)request.abort(); active.clear(); };
   const api = createSupportReceiptApi(async (path, init = {}) => {
     if (!alive || !isCurrent()) throw new Error('Inactive receipt session');
     const controller = new AbortController();
@@ -21,6 +22,13 @@ export function createWebSupportReceiptApi(ownerId: string, isCurrent: () => boo
     try {
       const response = await authFetch(path, {...init, headers, signal: controller.signal});
       if (!alive || !isCurrent()) { await response.body?.cancel(); throw new Error('Inactive receipt session'); }
+      if (response.status === 401) {
+        init.signal?.removeEventListener('abort',abort);
+        dispose();
+        onUnauthorized();
+        await response.body?.cancel().catch(()=>{});
+        return response;
+      }
       // Retain cancellation through body consumption, not only response headers.
       const reader = response.body?.getReader();
       if (!reader) { active.delete(controller); init.signal?.removeEventListener('abort',abort); return response; }
@@ -45,5 +53,5 @@ export function createWebSupportReceiptApi(ownerId: string, isCurrent: () => boo
       active.delete(controller); init.signal?.removeEventListener('abort',abort); throw error;
     }
   });
-  return Object.freeze({...api,dispose() { alive=false; for(const request of active)request.abort(); active.clear(); }});
+  return Object.freeze({...api,dispose});
 }

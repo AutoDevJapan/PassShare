@@ -62,10 +62,14 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const bindSupport = useCallback((id: string) => {
     if (supportRef.current) return;
     const epoch = supportGeneration.current;
-    const client = createWebSupportReceiptApi(id, () => mounted.current && currentAccount.current === id && supportGeneration.current === epoch);
+    const client = createWebSupportReceiptApi(id,
+      () => mounted.current && currentAccount.current === id && supportGeneration.current === epoch,
+      () => {
+        if (mounted.current && currentAccount.current === id && supportGeneration.current === epoch) clearSupport();
+      });
     supportRef.current = client;
     setSupportClient(client);
-  }, []);
+  }, [clearSupport]);
 
   const invalidate = useCallback(() => {
     const token = ++generation.current;

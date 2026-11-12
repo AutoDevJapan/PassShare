@@ -95,6 +95,10 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const correct=await freshB.create({...input,requestId:switchedId},signal);
   assert.equal(correct.status,'received');
   assert.equal(correct.request.requestId,switchedId);
-  await authStore.deleteSession(a.sessionId);await assert.rejects(api.get(row.id,signal),e=>(e as any).status===401);
+  const retiredCalls=calls;
+  await assert.rejects(api.get(row.id,signal),e=>(e as any).status===0);
+  assert.equal(calls,retiredCalls,'401-retired client cannot follow a replacement cookie');
+  const revokedA=load(a.sessionToken,owner.id);
+  await authStore.deleteSession(a.sessionId);await assert.rejects(revokedA.get(row.id,signal),e=>(e as any).status===401);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
