@@ -15,7 +15,9 @@ export async function saveCommercialExport(root:string,api:CloudApi,worker:Cloud
  contractId:string,boxId:string,pin:{keyEpoch:number;snapshotRevision:number},signal:AbortSignal,
  progress:CommercialExportProgress=createCommercialExportProgress()){
  root=resolve(root);const directory=await lstat(root,{bigint:true});if(!directory.isDirectory()||directory.isSymbolicLink())throw new Error('Export root must be a real directory');const binding=JSON.stringify([root,directory.dev.toString(),directory.ino.toString(),directory.birthtimeNs.toString()]);const prior=destinations.get(progress);if(prior&&prior!==binding)throw new Error('Export progress belongs to another output directory');destinations.set(progress,binding);
- const store=createAtomicExportStore(root);
+ const rawStore=createAtomicExportStore(root);
+ const checkRoot=async()=>{const current=await lstat(root,{bigint:true});if(current.isSymbolicLink()||current.dev!==directory.dev||current.ino!==directory.ino||current.birthtimeNs!==directory.birthtimeNs)throw new Error('Selected export directory changed');};
+ const store={read:async(name:string)=>{await checkRoot();const bytes=await rawStore.read(name);try{await checkRoot();return bytes;}catch(error){bytes?.fill(0);throw error;}},publishNew:async(name:string,bytes:Uint8Array,s:AbortSignal)=>{await checkRoot();await rawStore.publishNew(name,bytes,s);await checkRoot();}};
  const known=receipts.get(progress)??new Map<string,string>();receipts.set(progress,known);
  for(const [name,hash] of known){const bytes=await store.read(name);try{if(bytes===null||createHash('sha256').update(bytes).digest('hex')!==hash)throw new Error('Completed export output is missing or changed');}finally{bytes?.fill(0);}}
  const sink=createVerifiedExportSink({...store,verified:(name,bytes)=>{known.set(name,createHash('sha256').update(bytes).digest('hex'));}});
