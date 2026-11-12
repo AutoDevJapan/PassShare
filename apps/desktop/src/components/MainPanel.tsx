@@ -14,6 +14,7 @@ import {
   exportOnepasswordCsv,
   generatePassword,
   importOnepasswordCsv,
+  nativeImportStatus,
   listItems,
   lockPasswordBox,
   searchItems,
@@ -47,6 +48,12 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
   const [importMessage, setImportMessage] = useState("");
   const [exportMessage, setExportMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importLifetime = useRef({ active: true, busy: false });
+  useEffect(() => {
+    const lifetime = { active: true, busy: false };
+    importLifetime.current = lifetime;
+    return () => { lifetime.active = false; };
+  }, [boxPath]);
 
   async function refreshItems(query = searchQuery.trim()) {
     try {
@@ -162,14 +169,22 @@ export function MainPanel({ boxPath, masterPassword, onLocked }: MainPanelProps)
     if (!file) {
       return;
     }
-
+    const lifetime = importLifetime.current;
+    if (!lifetime.active || lifetime.busy) return;
+    lifetime.busy = true;
     try {
+      const status = await nativeImportStatus();
+      if (!lifetime.active || !status.unlocked) return;
       const csvData = await file.text();
-      const count = await importOnepasswordCsv(csvData, masterPassword);
+      if (!lifetime.active) return;
+      const count = await importOnepasswordCsv(csvData, masterPassword, status.epoch, boxPath);
+      if (!lifetime.active) return;
       setImportMessage(itemLabels.importSuccess.replace("{count}", String(count)));
       await refreshItems();
     } catch (err) {
-      setListError(formatTauriError(err));
+      if (lifetime.active) setListError(formatTauriError(err));
+    } finally {
+      lifetime.busy = false;
     }
   }
 

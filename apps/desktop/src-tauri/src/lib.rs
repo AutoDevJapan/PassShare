@@ -72,6 +72,23 @@ impl BoxSession {
 }
 
 impl AppState {
+    fn import_csv_bound(
+        &self,
+        csv: &str,
+        master: &str,
+        epoch: u64,
+        path: PathBuf,
+    ) -> Result<usize, String> {
+        let mut guard = self.access()?;
+        if guard.session.epoch() != epoch || guard.box_path.as_ref() != Some(&path) {
+            return Err(PassShareError::BoxLocked.to_string());
+        }
+        guard
+            .as_mut()
+            .ok_or_else(|| PassShareError::BoxLocked.to_string())?
+            .apply_and_save(SavedChange::ImportCsv(csv), master)
+            .map_err(map_error)
+    }
     fn status(&self) -> Result<NativeStatus, String> {
         let mut data = self.data.lock().map_err(|_| "内部エラー")?;
         let unlocked = data.check_and_wipe(Instant::now());
@@ -854,16 +871,11 @@ fn delete_item(
 fn import_onepassword_csv(
     csv_data: String,
     master_password: String,
+    epoch: u64,
+    box_path: String,
     state: State<'_, AppState>,
 ) -> Result<usize, String> {
-    let mut guard = state.access()?;
-    let pb = guard
-        .as_mut()
-        .ok_or_else(|| PassShareError::BoxLocked.to_string())?;
-    let count = pb
-        .apply_and_save(SavedChange::ImportCsv(&csv_data), &master_password)
-        .map_err(map_error)?;
-    Ok(count)
+    state.import_csv_bound(&csv_data, &master_password, epoch, PathBuf::from(box_path))
 }
 
 #[tauri::command]
@@ -1173,6 +1185,59 @@ mod smoke_tests {
     use super::*;
     use passshare_core::domain::item::ItemCategory;
     use std::path::PathBuf;
+
+    #[test]
+    fn smoke_csv_import_rejects_old_epoch_and_other_box_without_writing() {
+        let (dir, path) = temp_box("csv-session-bound");
+
+        let master = uuid::Uuid::new_v4().to_string();
+        let state = recovery_state();
+        let pb = PasswordBox::create(&path, &master).unwrap();
+        state
+            .finish_unlock(state.begin_unlock().unwrap(), pb, path.clone())
+            .unwrap();
+        let old = state.status().unwrap().epoch;
+        state.lock().unwrap();
+        let pb = PasswordBox::open(&path, &master).unwrap();
+        state
+            .finish_unlock(state.begin_unlock().unwrap(), pb, path.clone())
+            .unwrap();
+        let epoch = state.status().unwrap().epoch;
+        let before = std::fs::read(&path).unwrap();
+        let csv = "Title,Password\nImported,synthetic\n";
+        assert!(state
+            .import_csv_bound(csv, &master, old, path.clone())
+            .is_err());
+        assert!(state
+            .import_csv_bound(csv, &master, epoch, dir.join("other.pbox"))
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(state
+            .access()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .list_connect_items()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            state
+                .import_csv_bound(csv, &master, epoch, path.clone())
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            PasswordBox::open(&path, &master)
+                .unwrap()
+                .list_connect_items()
+                .unwrap()
+                .len(),
+            1
+        );
+        state.lock().unwrap();
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn recovery_state() -> AppState {
         AppState {

@@ -71,8 +71,12 @@ export async function deleteItem(id: string, masterPassword: string): Promise<vo
   return invoke("delete_item", { id, masterPassword });
 }
 
-export async function importOnepasswordCsv(csvData: string, masterPassword: string): Promise<number> {
-  return invoke("import_onepassword_csv", { csvData, masterPassword });
+export async function nativeImportStatus(): Promise<{ epoch: number; unlocked: boolean }> {
+  return invoke("native_session_status");
+}
+
+export async function importOnepasswordCsv(csvData: string, masterPassword: string, epoch: number, boxPath: string): Promise<number> {
+  return invoke("import_onepassword_csv", { csvData, masterPassword, epoch, boxPath });
 }
 
 export async function exportOnepasswordCsv(): Promise<string> {
