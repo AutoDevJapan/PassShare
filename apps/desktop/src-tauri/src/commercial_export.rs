@@ -152,6 +152,11 @@ impl ExportSessions {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| "EXPORT_PUBLISH")?;
+        if !current() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("EXPORT_SESSION".into());
+        }
         let write = child
             .stdin
             .take()
@@ -166,6 +171,9 @@ impl ExportSessions {
         }
         if !status.success() {
             return Err("EXPORT_PUBLISH".into());
+        }
+        if !current() {
+            return Err("EXPORT_COMMITTED_SESSION_EXPIRED".into());
         }
         Ok(())
     }
@@ -228,6 +236,43 @@ mod publisher_tests {
             Err("EXPORT_SESSION".into())
         );
         assert!(!root.join("item-cancel-v1.json").exists());
+        let checks = std::cell::Cell::new(0);
+        assert_eq!(
+            sessions.publish_checked(
+                &token,
+                "item-race-v1.json",
+                vec![1],
+                9,
+                Path::new(&exe),
+                || {
+                    let n = checks.get();
+                    checks.set(n + 1);
+                    n == 0
+                }
+            ),
+            Err("EXPORT_SESSION".into())
+        );
+        assert!(!root.join("item-race-v1.json").exists());
+        let checks = std::cell::Cell::new(0);
+        assert_eq!(
+            sessions.publish_checked(
+                &token,
+                "item-committed-v1.json",
+                vec![1],
+                9,
+                Path::new(&exe),
+                || {
+                    let n = checks.get();
+                    checks.set(n + 1);
+                    n < 2
+                }
+            ),
+            Err("EXPORT_COMMITTED_SESSION_EXPIRED".into())
+        );
+        assert_eq!(
+            std::fs::read(root.join("item-committed-v1.json")).unwrap(),
+            vec![1]
+        );
         let expected = vec![0, 255, 3, 0, 128];
         sessions
             .publish(

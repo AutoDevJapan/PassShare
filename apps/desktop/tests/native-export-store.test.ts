@@ -29,3 +29,8 @@ test('native consumer delivers item and attachment once and verifies completed o
  const progress=createCommercialExportProgress();await saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress);assert.equal(sends,3);assert.equal(closed,1);assert.deepEqual(files.get(`attachment-${item}-${attachment}-v1.bin`),[0,255]);
  await saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress);assert.equal(sends,3);files.delete(`item-${item}-v1.json`);await assert.rejects(saveNativeCommercialExport(invoke,'C:/selected',api as any,worker as any,'contract',box,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,progress));
 });
+
+test('expired native session after commit does not report saved success or retry the publisher',async()=>{
+ let sends=0;const store=await createNativeExportStore(async(command)=>{if(command==='commercial_export_open')return 'session';if(command==='commercial_export_publish'){sends++;throw 'EXPORT_COMMITTED_SESSION_EXPIRED';}},'C:/selected',new AbortController().signal);
+ await assert.rejects(store.publishNew('item-a-v1.json',new Uint8Array([1]),new AbortController().signal));assert.equal(sends,1);await store.close();
+});
