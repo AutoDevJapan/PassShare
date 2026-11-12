@@ -66,6 +66,34 @@ impl ExportSessions {
             );
         Ok(token)
     }
+    pub fn identity(&self, token: &str) -> Result<String, String> {
+        let sessions = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
+        let d = sessions.get(token).ok_or("EXPORT_SESSION")?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            unsafe extern "system" {
+                fn GetFileInformationByHandle(h: *mut std::ffi::c_void, p: *mut u32) -> i32;
+            }
+            let mut info = [0u32; 13];
+            if unsafe { GetFileInformationByHandle(d.directory.as_raw_handle(), info.as_mut_ptr()) }
+                == 0
+            {
+                return Err("EXPORT_DIRECTORY".into());
+            }
+            return Ok(format!(
+                "{}:{}",
+                info[7],
+                ((info[11] as u64) << 32) | info[12] as u64
+            ));
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let m = d.directory.metadata().map_err(|_| "EXPORT_DIRECTORY")?;
+            Ok(format!("{}:{}", m.dev(), m.ino()))
+        }
+    }
     pub fn close(&self, token: &str) -> Result<(), String> {
         self.destinations
             .lock()
@@ -179,68 +207,62 @@ impl ExportSessions {
         let mut stdin = child.stdin.take().ok_or("EXPORT_PUBLISH")?;
         let payload = Zeroizing::new(bytes.to_vec());
         let writer = std::thread::spawn(move || stdin.write_all(&payload));
+        let mut interrupted = false;
         let status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break status,
+                Ok(Some(status)) => break Some(status),
                 Ok(None) => {}
                 Err(_) => {
-                    #[cfg(windows)]
-                    let _ = tree.stop();
-                    let _ = child.kill();
-                    while matches!(child.try_wait(), Ok(None))
-                        && std::time::Instant::now() < deadline
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                    #[cfg(windows)]
-                    export_process::cancel_writer(&writer);
-                    while !writer.is_finished() && std::time::Instant::now() < deadline {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                    if !writer.is_finished() {
-                        return Err("EXPORT_DRAIN_UNCONFIRMED".into());
-                    }
-                    let _ = writer.join();
-                    return Err("EXPORT_PUBLISH".into());
+                    interrupted = true;
+                    break None;
                 }
             }
             if std::time::Instant::now() + std::time::Duration::from_secs(2) >= deadline
                 || !current()
             {
-                #[cfg(windows)]
-                let _ = tree.stop();
-                let _ = child.kill();
-                while matches!(child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                #[cfg(windows)]
-                export_process::cancel_writer(&writer);
-                while !writer.is_finished() && std::time::Instant::now() < deadline {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                if !writer.is_finished() {
-                    return Err("EXPORT_DRAIN_UNCONFIRMED".into());
-                }
-                let _ = writer.join();
-                return Err("EXPORT_INTERRUPTED_CHECK_OUTPUT".into());
+                interrupted = true;
+                break None;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(5));
         };
         #[cfg(windows)]
-        let _ = tree.stop();
-        while !writer.is_finished() && std::time::Instant::now() < deadline {
+        let stop_requested = tree.stop();
+        #[cfg(not(windows))]
+        let stop_requested = child.kill().is_ok() || status.is_some();
+        if interrupted {
+            let _ = child.kill();
+        }
+        let mut reaped = status.is_some();
+        while std::time::Instant::now() < deadline {
+            if !reaped {
+                reaped = matches!(child.try_wait(), Ok(Some(_)));
+            }
             #[cfg(windows)]
             export_process::cancel_writer(&writer);
+            #[cfg(windows)]
+            let tree_empty = tree.empty();
+            #[cfg(not(windows))]
+            let tree_empty = reaped;
+            if reaped && writer.is_finished() && tree_empty {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        if !writer.is_finished() {
+        #[cfg(windows)]
+        let tree_empty = tree.empty();
+        #[cfg(not(windows))]
+        let tree_empty = reaped;
+        if !reaped || !writer.is_finished() || !tree_empty {
             return Err("EXPORT_DRAIN_UNCONFIRMED".into());
         }
-        #[cfg(windows)]
-        if !tree.empty() {
-            return Err("EXPORT_TREE_UNCONFIRMED".into());
+        let write_ok = matches!(writer.join(), Ok(Ok(())));
+        #[cfg(test)]
+        eprintln!("export_flight reaped={reaped} writer_joined=true tree_empty={tree_empty} stop_requested={stop_requested}");
+        if interrupted {
+            return Err("EXPORT_INTERRUPTED_CHECK_OUTPUT".into());
         }
-        if !matches!(writer.join(), Ok(Ok(()))) {
+        let status = status.ok_or("EXPORT_PUBLISH")?;
+        if !write_ok {
             return Err("EXPORT_PUBLISH".into());
         }
         if status.code() == Some(17) {
@@ -381,5 +403,41 @@ mod publisher_tests {
         );
         sessions.close(&token).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod fault_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires owned fault publisher fixture"]
+    fn blocked_partial_and_descendant_pipe_are_reaped_within_one_flight() {
+        let exe = std::env::var_os("PASSSHARE_FAULT_PUBLISHER").expect("fault fixture");
+        for mode in ["noread", "partial", "descendant"] {
+            let root =
+                std::env::temp_dir().join(format!("passshare-fault-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let s = ExportSessions::default();
+            let token = s.open(root.clone(), 1).unwrap();
+            let start = std::time::Instant::now();
+            let result = s.publish(
+                &token,
+                &format!("item-{mode}-v1.json"),
+                vec![7; 1024 * 1024],
+                1,
+                Path::new(&exe),
+            );
+            assert!(result.is_err());
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(16),
+                "{mode} exceeded deadline"
+            );
+            s.close(&token).unwrap();
+            println!(
+                "mode={mode} elapsed_ms={} result={result:?}",
+                start.elapsed().as_millis()
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 }
