@@ -70,3 +70,13 @@ test("ConnectClient normalizes /v1 base URL", async () => {
     delete process.env.OP_CONNECT_TOKEN;
   }
 });
+test('Connect errors preserve only an anchored public PS code', async () => {
+  const original=globalThis.fetch;
+  try {
+    for(const [message,code] of [['PS015: Creation result changed','PS015'],['PS055: Ciphertext storage required','PS055'],['untrusted PS015: text',undefined]]){
+      globalThis.fetch=async()=>new Response(JSON.stringify({message}),{status:409});
+      const client=new ConnectClient({host:'https://example.test',token:'synthetic'});
+      await assert.rejects(client.createItem('box',{},'operation'),error=>error.status===409&&error.code===code);
+    }
+  }finally{globalThis.fetch=original;}
+});

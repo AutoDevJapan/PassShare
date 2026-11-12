@@ -204,6 +204,8 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
       - name: Type-check frontend
         run: pnpm --dir frontend exec tsc --noEmit
+      - name: Verify partial CSV retry operation identity
+        run: node --experimental-transform-types --test frontend/tests/csv-import-retry.test.ts
       - name: Build frontend
         run: pnpm --dir frontend run build
       - name: Verify pinned Playwright browser and dependency image

@@ -11,6 +11,7 @@ import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
 import { generatePassword } from "@shared/lib/password-generator";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
+import { importAttempt, importFingerprint, saveImportAttempt, finishImportAttempt, acquireImportAttempt, releaseImportAttempt, type ImportAttempt } from "../../lib/import-attempt";
 import { useAuthSession } from "../../hooks/useAuthSession";
 import { useItemLabels } from "../../hooks/useItemLabels";
 import { CloudBoxGate } from "./CloudEncryptionPage";
@@ -41,6 +42,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const createOperation = useRef<string | null>(null);
+  const csvAttempt = useRef<ImportAttempt | null>(null);
   const loadGeneration = useRef(0);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"create" | "edit" | null>("create");
@@ -224,16 +226,43 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     setBusy(true);
     const scope = activeScope.current;
     let imported = 0;
+    let changed = 0;
+    let ownedAttempt: ImportAttempt | null = null;
     try {
       const text = await file.text();
       const parsed = parseOnepasswordCsv(text);
-      for (const row of parsed) {
+      const fingerprint = await importFingerprint(text);
+      if (scope !== activeScope.current) return;
+      const attempt = importAttempt(csvAttempt.current, scope, fingerprint, parsed.length);
+      acquireImportAttempt(attempt);
+      ownedAttempt = attempt;
+      csvAttempt.current = attempt;
+      imported = 0;
+      for (const [index, row] of parsed.entries()) {
         await ensureCompatibility();
         if (scope !== activeScope.current) return;
-        await connectClient.createItem(vaultId, connectItemToCreateBody(row));
+        const alreadyCompleted = attempt.completed.has(index);
+        try {
+          await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
+        } catch (error) {
+          if (alreadyCompleted && typeof error === "object" && error !== null && "status" in error && error.status === 409 && "code" in error && error.code === "PS015") {
+            changed += 1;
+            continue;
+          }
+          throw error;
+        }
+        attempt.completed.add(index);
         imported += 1;
+        saveImportAttempt(attempt);
       }
       if (scope !== activeScope.current) return;
+      if (changed) {
+        await loadItems();
+        if (scope === activeScope.current) setError(t("app.item.importPartialError").replace("{count}", String(imported)));
+        return;
+      }
+      finishImportAttempt(attempt);
+      csvAttempt.current = null;
       setImportMessage(labels.importSuccess.replace("{count}", String(parsed.length)));
       await loadItems();
     } catch {
@@ -244,6 +273,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
         if (reloadGeneration === loadGeneration.current) setError(t("app.item.importPartialError").replace("{count}", String(imported)));
       }
     } finally {
+      if (ownedAttempt) releaseImportAttempt(ownedAttempt);
       busyRef.current = false;
       setBusy(false);
     }
