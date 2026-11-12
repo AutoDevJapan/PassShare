@@ -7,6 +7,20 @@ import {createSupportReceiptApi} from '../../shared/cloud/support-receipts-api.t
 import {createApp} from '../../backend/src/app.js';
 import {createMemoryAuthStore} from '../../backend/src/auth/index.js';
 import {createMemoryStore} from '../../backend/src/store/memory-store.js';
+import {AUTH_ROUTE_MAX_REQUESTS} from '../../backend/src/auth/rate-limit-constants.js';
+
+test('throttled CSRF requests do not reach session lookup',async()=>{
+ const authStore=createMemoryAuthStore();let lookups=0;
+ authStore.findSessionByToken=async()=>{lookups++;return null;};
+ const {app}=await createApp({pool:null,authStore,store:createMemoryStore()});
+ const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
+ try{
+  for(let i=0;i<AUTH_ROUTE_MAX_REQUESTS;i++){const r=await fetch('http://127.0.0.1:'+server.address().port+'/api/auth/csrf',{headers:{Cookie:'passshare_session=invalid'}});await r.arrayBuffer();assert.equal(r.status,200);}
+  const before=lookups;
+  const rejected=await fetch('http://127.0.0.1:'+server.address().port+'/api/auth/csrf',{headers:{Cookie:'passshare_session=invalid'}});
+  assert.equal(rejected.status,429);assert.equal(lookups,before);
+ }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+});
 
 test('Web receipt disposal rejects a delayed body and prevents later requests',async()=>{
  let controller!: ReadableStreamDefaultController<Uint8Array>;

@@ -28,6 +28,10 @@ import { registerLifecycleForms } from "./lifecycle-forms.js";
  */
 export function createAuthRouter({ authStore, connectStore, appEnv = "local", loginGuardStore, mutateOnce }) {
   const router = Router();
+  router.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
+  router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
+    standardHeaders:"draft-6",legacyHeaders:false,
+    handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
   router.use(async (req, res, next) => {
     try {
       const token = parseCookies(req)[SESSION_COOKIE];
@@ -37,10 +41,6 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       next();
     } catch (error) { next(error); }
   });
-  router.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
-  router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
-    standardHeaders:"draft-6",legacyHeaders:false,
-    handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
   const sessionGuard = requireSession(authStore);
   const loginGuard = createLoginGuard({ store: loginGuardStore });
   // Cheap per-process protection before session DB lookup; the existing shared
