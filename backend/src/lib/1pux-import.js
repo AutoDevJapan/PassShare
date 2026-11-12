@@ -138,9 +138,9 @@ function extractItemsFromExport(parsed) {
     for(const account of parsed.accounts)for(const vault of account.vaults??[])for(const item of vault.items??[]){
       if(!item?.overview||typeof item.overview.title!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX item overview');
       const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'?'CONCEALED':'STRING',value:field.value??''}));
-      for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:field.value?.concealed!==undefined?'CONCEALED':'STRING',value:typeof field.value==='object'?JSON.stringify(field.value):String(field.value??'')});
+      for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:field.value?.concealed!==undefined?'CONCEALED':'STRING',value:sectionFieldValue(field.value)});
       if(item.details?.notesPlain)fields.push({label:'notes',type:'STRING',value:item.details.notesPlain});
-      items.push({...item,title:item.overview.title,category:(item.categoryUuid==='001'?'LOGIN':'CUSTOM'),fields,tags:item.overview.tags??[],urls:item.overview.urls??[],importSource:{account:account.attrs??{},vault:vault.attrs??{},item:item.uuid}});
+      items.push({...item,title:item.overview.title,category:(item.categoryUuid==='001'?'LOGIN':'CUSTOM'),fields,tags:item.overview.tags??[],urls:(item.overview.urls??[]).map(({url,...metadata})=>({...metadata,href:url})),importSource:{account:account.attrs??{},vault:vault.attrs??{},item:item.uuid}});
     }
     return items;
   }
@@ -165,6 +165,16 @@ function extractItemsFromExport(parsed) {
 /**
  * @param {unknown} value
  */
+function sectionFieldValue(value) {
+  if (value && typeof value === 'object') {
+    for (const key of ['concealed', 'string']) {
+      if (typeof value[key] === 'string') return value[key];
+    }
+    return JSON.stringify(value);
+  }
+  return String(value ?? '');
+}
+
 function isImportableItem(value) {
   return (
     value !== null &&

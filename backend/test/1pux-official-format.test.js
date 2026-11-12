@@ -24,3 +24,14 @@ test('official hierarchy and document references retain source, Unicode name and
  await assert.rejects(parse1puxBuffer(archive([['export.data',Buffer.from(JSON.stringify(data))]])),/Missing or ambiguous/);
  await assert.rejects(parse1puxBuffer(zip,{maxDecompressedBytes:10}));
 });
+test('official URLs and section values preserve client-facing values',async()=>{
+ const original={accounts:[{vaults:[{items:[{uuid:'item',categoryUuid:'001',overview:{title:'Synthetic',urls:[{url:'https://example.test/login',label:'work'}]},details:{sections:[{fields:[{id:'password',value:{concealed:'synthetic-secret'}},{id:'username',value:{string:'synthetic-user'}}]}]}}]}]}]};
+ const [item]=await parse1puxBuffer(Buffer.from(JSON.stringify(original)));
+ const body=map1puxItemToConnectBody(item,{forReplay:true});
+ assert.equal(body.urls[0].href,'https://example.test/login');
+ assert.equal(body.urls[0].label,'work');
+ assert.equal(body.fields[0].value,'synthetic-secret');
+ assert.equal(body.fields[0].type,'CONCEALED');
+ assert.equal(body.fields[1].value,'synthetic-user');
+ assert.deepEqual(body.importedItem.details,original.accounts[0].vaults[0].items[0].details);
+});
