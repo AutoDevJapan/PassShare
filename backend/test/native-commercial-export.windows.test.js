@@ -61,7 +61,7 @@ test('contract-window export returns real ciphertext while rechecking current me
   assert.deepEqual((await pool.query('SELECT * FROM commercial_export_events ORDER BY id')).rows,auditBefore);
   for(const env of [...page.body.data.envelopes,...page2.body.data.envelopes]){const id=env.context.itemId;assert.deepEqual(env,originals.get(id).env);const plain=box.decrypt_item(JSON.stringify(env),JSON.stringify(context(id)));assert.deepEqual(typeof plain==='string'?JSON.parse(plain):plain,originals.get(id).plain);}
   const itemId='a'.repeat(26),attachmentId='z'.repeat(26),attachmentContext={passwordBoxId:boxId,itemId,attachmentId,attachmentVersion:1,keyEpoch:1};
-  const fileBytes=new Uint8Array([0,1,254,255,7,0]),fileEnvelope=JSON.parse(box.encrypt_attachment('synthetic.bin',fileBytes,JSON.stringify(attachmentContext)));
+  const fileBytes=new Uint8Array([0,1,254,255,7,0]),fileEnvelope=JSON.parse(box.encrypt_attachment('領収書-é_日本語 & [確定] #1.bin',fileBytes,JSON.stringify(attachmentContext)));
   const updated={...originals.get(itemId).plain,version:2,attachments:[{attachmentId,attachmentVersion:1,keyEpoch:1}]},itemContext={...context(itemId),itemVersion:2};
   const updatedEnvelope=JSON.parse(box.encrypt_item(JSON.stringify(updated),JSON.stringify(itemContext)));
   const state=await call('/api/encrypted/boxes/'+boxId+'/attachment-state',a.refreshToken);
@@ -75,7 +75,7 @@ test('contract-window export returns real ciphertext while rechecking current me
   const clientFile=await sharedClient.getCommercialEncryptedAttachment(q.id,attachmentContext,revision,new AbortController().signal);
   assert.deepEqual(JSON.parse(clientItem),updatedEnvelope);assert.deepEqual(JSON.parse(clientFile),fileEnvelope);
   const clientPlain=box.decrypt_attachment(clientFile,JSON.stringify(attachmentContext),JSON.stringify({itemEnvelope:clientItem,expectedItemContext:itemContext,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision}));
-  try{assert.deepEqual(clientPlain.content(),fileBytes);assert.equal(clientPlain.name(),'synthetic.bin');}finally{clientPlain.free();}
+  try{assert.deepEqual(clientPlain.content(),fileBytes);assert.equal(clientPlain.name(),'領収書-é_日本語 & [確定] #1.bin');}finally{clientPlain.free();}
   const consumerSource=await fs.readFile(new URL('../../shared/cloud/commercial-attachment-export.ts',import.meta.url),'utf8');
   const apiModule='data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(sharedSource,{mode:'transform'})).toString('base64');
   const transformedConsumer=stripTypeScriptTypes(consumerSource,{mode:'transform'}).replaceAll("'./cloud-api.ts'",JSON.stringify(apiModule));
@@ -83,7 +83,7 @@ test('contract-window export returns real ciphertext while rechecking current me
   const deliveredItems=[],deliveredFiles=[];let releases=0;
   const coreWorker={decrypt:async(e,c)=>{const p=box.decrypt_item(e,JSON.stringify(c));return typeof p==='string'?p:JSON.stringify(p);},decryptAttachment:async(e,c,s)=>{const p=box.decrypt_attachment(e,JSON.stringify(c),JSON.stringify(s));try{return {name:p.name(),bytes:new Uint8Array(p.content())};}finally{p.free();}},releaseAttachment:file=>{releases++;file.bytes.fill(0);file.name='';}};
   await consumeCommercialBox(sharedClient,coreWorker,q.id,boxId,{keyEpoch:1,snapshotRevision:revision},new AbortController().signal,async text=>{deliveredItems.push(JSON.parse(text));},async file=>{deliveredFiles.push({name:file.name,bytes:[...file.bytes]});});
-  assert.equal(deliveredItems.length,12);assert.deepEqual(deliveredFiles,[{name:'synthetic.bin',bytes:[...fileBytes]}]);assert.equal(releases,1);
+  assert.equal(deliveredItems.length,12);assert.deepEqual(deliveredFiles,[{name:'領収書-é_日本語 & [確定] #1.bin',bytes:[...fileBytes]}]);assert.equal(releases,1);
   const sinkSource=await fs.readFile(new URL('../../shared/cloud/commercial-export-file-sink.ts',import.meta.url),'utf8');
   const {createVerifiedExportSink}=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(sinkSource,{mode:'transform'})).toString('base64'));
   const {createAtomicExportStore}=await import('../../scripts/atomic-export-store.mjs');
@@ -94,7 +94,7 @@ test('contract-window export returns real ciphertext while rechecking current me
    assert.deepEqual([...await fs.readFile(output+`/attachment-${itemId}-${attachmentId}-v1.bin`)],[...fileBytes]);
    assert.deepEqual(JSON.parse(await fs.readFile(output+`/item-${itemId}-v2.json`,'utf8')),updated);
    const sinkAfterRestart=createVerifiedExportSink(createAtomicExportStore(output));
-   await sinkAfterRestart.attachment({name:'synthetic.bin',bytes:fileBytes.slice()},attachmentContext,new AbortController().signal);
+   await sinkAfterRestart.attachment({name:'領収書-é_日本語 & [確定] #1.bin',bytes:fileBytes.slice()},attachmentContext,new AbortController().signal);
   }finally{await fs.rm(output,{recursive:true});}
   if(process.env.PASSSHARE_NATIVE_EXPORT_BROWSER==='true'){
    // Keep this additional real-browser acceptance in its own ordinary API
@@ -108,7 +108,7 @@ test('contract-window export returns real ciphertext while rechecking current me
      owner:{passwordBoxId:boxId,ownerAccountId:a.user.id,keyEpoch:1},bundle:JSON.stringify(bundle),
      password:'fixture-encryption-password',pin:{keyEpoch:1,snapshotRevision:revision},output:browserOutput});
     assert.deepEqual([...await fs.readFile(browserOutput+`/attachment-${itemId}-${attachmentId}-v1.bin`)],[...fileBytes]);
-    assert.deepEqual(JSON.parse(await fs.readFile(browserOutput+`/attachment-${itemId}-${attachmentId}-v1.name.json`,'utf8')),{name:'synthetic.bin'});
+    assert.deepEqual(JSON.parse(await fs.readFile(browserOutput+`/attachment-${itemId}-${attachmentId}-v1.name.json`,'utf8')),{name:'領収書-é_日本語 & [確定] #1.bin'});
     assert.deepEqual(JSON.parse(await fs.readFile(browserOutput+`/item-${itemId}-v2.json`,'utf8')),updated);
     for(const [id,expected] of originals){
      const version=id===itemId?2:1;
@@ -127,7 +127,7 @@ test('contract-window export returns real ciphertext while rechecking current me
   const host=nativeExportAcceptanceHost(resolve('target/debug/examples/export_native_acceptance.exe'),[],{PASSSHARE_TEST_PUBLISHER:resolve('target/debug/passshare-export-publish.exe')});const invoke=host.invoke;
   try{const result=await saveNativeCommercialExport(invoke,nativeOutput,sharedClient,coreWorker,q.id,boxId,{keyEpoch:1,snapshotRevision:revision},new AbortController().signal);assert.equal(result.saved,true);assert.equal(result.items,12);assert.equal(result.attachments,1);assert.deepEqual([...await fs.readFile(join(nativeOutput,`attachment-${itemId}-${attachmentId}-v1.bin`))],[...fileBytes]);assert.deepEqual(JSON.parse(await fs.readFile(join(nativeOutput,`item-${itemId}-v2.json`),'utf8')),updated);}finally{try{assert.equal(await host.close(),0,"Native acceptance host must terminate successfully");}finally{await fs.rm(nativeOutput,{recursive:true});}}
   const decrypted=box.decrypt_attachment(JSON.stringify(fileExport.body.data),JSON.stringify(attachmentContext),JSON.stringify({itemEnvelope:JSON.stringify(itemExport.body.data),expectedItemContext:itemContext,itemSnapshotRevision:revision,attachmentSnapshotRevision:revision}));
-  try{assert.deepEqual(decrypted.content(),fileBytes);assert.equal(decrypted.name(),'synthetic.bin');}finally{decrypted.free();}
+  try{assert.deepEqual(decrypted.content(),fileBytes);assert.equal(decrypted.name(),'領収書-é_日本語 & [確定] #1.bin');}finally{decrypted.free();}
   // Keep expanded positive consumer traffic separate from the negative-selector
   // fixture's rate budget, preserving the production 30/min policy and real DB.
   server.closeAllConnections();await new Promise(r=>server.close(r));
