@@ -103,6 +103,7 @@ export async function import1puxWithSession(
   }
 
   const result=(await importRes.json()) as Import1puxResult;
+  if(result.partial)throw Object.assign(new Error('1PUX import remains partial'),{code:'IMPORT_PARTIAL',imported:result.imported,changed:result.changed});
   if(!result.partial&&pendingSessionImports.get(scope)===operationKey)pendingSessionImports.delete(scope);
   return result;
 }
