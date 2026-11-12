@@ -187,3 +187,55 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
 }
+
+#[cfg(all(test, windows))]
+mod publisher_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires exact packaged publisher fixture; run explicitly with PASSSHARE_TEST_PUBLISHER"]
+    fn real_packaged_publisher_preserves_existing_data_and_readback() {
+        let Some(exe) = std::env::var_os("PASSSHARE_TEST_PUBLISHER") else {
+            panic!("packaged publisher fixture required")
+        };
+        let root =
+            std::env::temp_dir().join(format!("passshare-native-session-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let sessions = ExportSessions::default();
+        let token = sessions.open(root.clone(), 9).unwrap();
+        let expected = vec![0, 255, 3, 0, 128];
+        sessions
+            .publish(
+                &token,
+                "attachment-a-b-v1.bin",
+                expected.clone(),
+                9,
+                Path::new(&exe),
+            )
+            .unwrap();
+        assert_eq!(
+            sessions.read(&token, "attachment-a-b-v1.bin", 9).unwrap(),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            sessions.publish(&token, "attachment-a-b-v1.bin", vec![7], 9, Path::new(&exe)),
+            Err("EXPORT_EXISTS".into())
+        );
+        assert_eq!(
+            sessions.read(&token, "attachment-a-b-v1.bin", 9).unwrap(),
+            Some(expected)
+        );
+        std::fs::write(root.join("item-foreign-v1.json"), []).unwrap();
+        assert_eq!(
+            sessions.publish(&token, "item-foreign-v1.json", vec![7], 9, Path::new(&exe)),
+            Err("EXPORT_EXISTS".into())
+        );
+        assert_eq!(
+            std::fs::metadata(root.join("item-foreign-v1.json"))
+                .unwrap()
+                .len(),
+            0
+        );
+        sessions.close(&token).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
