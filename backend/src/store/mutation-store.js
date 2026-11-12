@@ -4,21 +4,30 @@ import { generateConnectId } from "../lib/connect.js";
 import { normalizeItemBody } from "../lib/categories.js";
 import { connectHttpError } from "../middleware/connect-errors.js";
 import { applySchemaWithAdvisoryLock } from "../db/migration-lock.js";
+function nativeInput(input){const {importFiles,...rest}=input;return rest;}
 
 // Persistence adapter only: scope, replay and payload decisions belong to Rust.
 export async function createMutationStore({ store, authStore, pool }) {
   const records = new Map();
+  const pendingRollback = new Map();
   let memoryTail = Promise.resolve();
+  function recoveryAuthorization(input){
+    return ()=>{
+      if(input.actor==='legacy'&&!input.connectTokenHash)return;
+      if(typeof authStore.assertImportRecoveryAccess!=='function')throw connectHttpError(503,'PS019: Atomic import recovery authorization unavailable');
+      authStore.assertImportRecoveryAccess(input.actor,input.resource,input.connectTokenHash);
+    };
+  }
   if (pool && process.env.PASSSHARE_MUTATIONS_BIN) {
     await applySchemaWithAdvisoryLock(pool, 4820123, await nativeMutation({ command: "schema" }));
   }
 
-  async function execute(input, transactionStore, client, existing) {
+  async function execute(input, transactionStore, client, existing, memoryScope) {
     if (client && input.operation === "box" && existing?.result?.vaultId) {
       // Deletion locks the Box before changing this creation scope. A record
       // read before that wait is not current evidence after the lock returns.
       await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[existing.result.vaultId]);
-      const scope = await nativeMutation({ ...input, command: "scope" });
+      const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
       existing = (await client.query("SELECT request_hash,result FROM mutation_operations WHERE actor=$1 AND resource=$2 AND operation=$3 AND request_key=$4",scope.parts)).rows[0];
     }
     const currentSession = async () => {
@@ -64,11 +73,29 @@ export async function createMutationStore({ store, authStore, pool }) {
         else { const box = await transactionStore.getVault(existing.result.vaultId); live = { vaultId: box.id, name: box.name }; }
       } catch (error) { if (error?.status !== 404) throw error; }
     }
-    const plan = await nativeMutation({ ...input, command: "create", existing: existing ?? null, live });
-    if (plan.action === "replay") { await currentSession(); return plan.result; }
+    const plan = await nativeMutation({ ...nativeInput(input), command: "create", existing: existing ?? null, live });
+    if (plan.action === "replay") {
+      for(const file of input.importFiles??[]){
+        let content;try{content=await transactionStore.getFileContent(input.resource,plan.result.id,file.id);}catch(error){if(error?.status!==404)throw error;}
+        if(!content||!Buffer.from(content).equals(file.content))throw Object.assign(connectHttpError(409,'PS015: Imported attachment changed'),{reason:'creation_result_changed'});
+      }
+      await currentSession(); return plan.result;
+    }
     let result;
     if (input.operation === "item") {
       result = await transactionStore.createItem(input.resource, normalizeItemBody(input.request));
+      if(!client)pendingRollback.set(memoryScope,{resource:input.resource,itemId:result.id,document:JSON.stringify(result),fileIds:(input.importFiles??[]).map(file=>file.id),files:(input.importFiles??[]).map(file=>({...file,content:Buffer.from(file.content)}))});
+      try {
+        for(const file of input.importFiles??[])await transactionStore.createFile(input.resource,result.id,{id:file.id,name:file.name,content:file.content});
+      } catch (error) {
+        if(!client) {
+          try { await transactionStore.deleteItem(input.resource,result.id,JSON.stringify(result),(input.importFiles??[]).map(file=>file.id),recoveryAuthorization(input),input.importFiles??[]); }
+          catch(cleanupError) {
+            throw new AggregateError([error,cleanupError],'Import storage failed and rollback is unconfirmed',{cause:error});
+          }
+        }
+        throw error;
+      }
     } else {
       const vaultId = generateConnectId();
       if (client) {
@@ -79,18 +106,32 @@ export async function createMutationStore({ store, authStore, pool }) {
       } else { await authStore.createOwnedBox(input.actor,store,vaultId,input.request.name); }
       result = { vaultId, name: input.request.name };
     }
-    const scope = await nativeMutation({ ...input, command: "scope" });
-    const record = await nativeMutation({ ...input, command: "record", result });
+    const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
+    const record = await nativeMutation({ ...nativeInput(input), command: "record", result });
     if (client) await client.query("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES($1,$2,$3,$4,$5,$6::jsonb)", [...scope.parts,record.request_hash,JSON.stringify(record.result)]);
-    else records.set(scope.lock, record);
+    else {records.set(scope.lock, record);pendingRollback.delete(memoryScope);}
     await currentSession();
     return result;
   }
 
   return async function mutateOnce(input) {
-    const scope = await nativeMutation({ ...input, command: "scope" });
+    const scope = await nativeMutation({ ...nativeInput(input), command: "scope" });
     if (!pool) {
-      const pending = memoryTail.then(() => execute(input,store,null,records.get(scope.lock)));
+      const pending = memoryTail.then(async () => {
+        const rollback=pendingRollback.get(scope.lock);
+        if(rollback){
+          if(input.actor!=='legacy'&&!(await authStore.listVaultIdsForUser(input.actor)).includes(input.resource))throw connectHttpError(403,'PS016: Access denied to password box');
+          if(input.connectTokenHash&&!await authStore.findConnectTokenByHash(input.connectTokenHash))throw connectHttpError(401,'PS011: Invalid or expired Connect token');
+          try {
+            const current=await store.getItem(rollback.resource,rollback.itemId);
+            if(JSON.stringify(current)!==rollback.document)throw connectHttpError(409,'PS015: Pending import changed; recovery requires original item');
+            await store.deleteItem(rollback.resource,rollback.itemId,rollback.document,rollback.fileIds,recoveryAuthorization(input),rollback.files);
+          }
+          catch(error){if(error?.status!==404)throw error;}
+          pendingRollback.delete(scope.lock);
+        }
+        return execute(input,store,null,records.get(scope.lock),scope.lock);
+      });
       memoryTail = pending.catch(() => {});
       return pending;
     }

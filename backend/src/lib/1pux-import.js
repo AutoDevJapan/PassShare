@@ -1,7 +1,7 @@
 import { createWriteStream, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { connectHttpError } from "../middleware/connect-errors.js";
@@ -37,7 +37,7 @@ export async function parse1puxBuffer(zipBuffer, options = {}) {
   } catch {
     throw connectHttpError(400, "PS017: Invalid 1PUX — archive is not a valid ZIP export");
   }
-  const jsonEntry = directory.files.find((file) =>
+  const jsonEntry = directory.files.find(file => file.path === 'export.data') ?? directory.files.find((file) =>
     file.path.toLowerCase().endsWith(".json"),
   );
 
@@ -46,7 +46,22 @@ export async function parse1puxBuffer(zipBuffer, options = {}) {
   }
 
   const raw = await readEntryCapped(jsonEntry, maxDecompressedBytes);
-  return parseJsonExport(raw);
+  const items=await parseJsonExport(raw);
+  let total=raw.length;
+  for(const item of items){
+    const document=item.details?.documentAttributes;
+    if(!document)continue;
+    if(typeof document.documentId!=='string'||!/^[-a-zA-Z0-9]+$/.test(document.documentId)||typeof document.fileName!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX document reference');
+    // documentId binds archive bytes; fileName is independent display metadata.
+    // Never extract paths, accept nested entries or silently choose duplicates.
+    const matches=directory.files.filter(file=>file.type!=='Directory'&&file.path.startsWith(`files/${document.documentId}__`)&&!file.path.slice(6).includes('/')&&!file.path.includes('\\')&&!file.path.includes('\0'));
+    if(matches.length!==1)throw connectHttpError(400,'PS017: Missing or ambiguous 1PUX attachment');
+    const content=await readEntryCapped(matches[0],maxDecompressedBytes-total);total+=content.length;
+    if(document.decryptedSize!==content.length)throw connectHttpError(400,'PS017: 1PUX attachment size mismatch');
+    item.importAttachments=[{name:document.fileName,size:content.length,sha256:createHash('sha256').update(content).digest('hex'),base64:content.toString('base64')}];
+    content.fill(0);
+  }
+  return items;
 }
 
 /**
@@ -120,6 +135,25 @@ async function parseJsonExport(raw) {
  * @returns {object[]}
  */
 function extractItemsFromExport(parsed) {
+  if(parsed&&typeof parsed==='object'&&Array.isArray(parsed.accounts)){
+    const items=[];
+    for(const account of parsed.accounts)for(const vault of account.vaults??[])for(const item of vault.items??[]){
+      if(!item?.overview||typeof item.overview.title!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX item overview');
+      const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'||field.fieldType==='P'||field.type==='P'?'CONCEALED':'STRING',value:field.value??''}));
+      for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:['concealed','totp','sshKey'].some(key=>field.value&&Object.hasOwn(field.value,key))?'CONCEALED':'STRING',value:sectionFieldValue(field.value)});
+      if(item.details?.notesPlain)fields.push({label:'notes',type:'STRING',value:item.details.notesPlain});
+      if(item.details?.password!==undefined){
+        const password=sectionFieldValue(item.details.password);
+        for(const field of fields)if(field.purpose==='PASSWORD'&&field.value!==password){delete field.purpose;field.label='original form password';}
+        if(!fields.some(field=>field.purpose==='PASSWORD'&&field.value===password))fields.push({label:'password',purpose:'PASSWORD',type:'CONCEALED',value:password});
+      }
+      for(const previous of item.details?.passwordHistory??[])fields.push({label:'password history',type:'CONCEALED',value:JSON.stringify(previous)});
+      const urls=(item.overview.urls??[]).map(({url,...metadata})=>({...metadata,href:url,primary:url===item.overview.url}));
+      if(item.overview.url&&!urls.some(value=>value.href===item.overview.url))urls.unshift({href:item.overview.url,primary:true});
+      items.push({...item,title:item.overview.title,category:(item.categoryUuid==='001'?'LOGIN':'CUSTOM'),fields,tags:item.overview.tags??[],urls,importSource:{account:account.attrs??{},vault:vault.attrs??{},item:item.uuid}});
+    }
+    return items;
+  }
   if (Array.isArray(parsed)) {
     return parsed.filter(isImportableItem);
   }
@@ -141,6 +175,15 @@ function extractItemsFromExport(parsed) {
 /**
  * @param {unknown} value
  */
+function sectionFieldValue(value) {
+  if (value && typeof value === 'object') {
+    const entries=Object.entries(value);
+    if(entries.length===1&&['string','number','boolean'].includes(typeof entries[0][1]))return String(entries[0][1]);
+    return JSON.stringify(value);
+  }
+  return String(value ?? '');
+}
+
 function isImportableItem(value) {
   return (
     value !== null &&
@@ -155,6 +198,8 @@ function isImportableItem(value) {
  */
 export function map1puxItemToConnectBody(source, options = {}) {
   const record = /** @type {Record<string, unknown>} */ (source);
+  // Preserve provenance, not another independently editable copy of secrets.
+  const sourceMetadata=Object.fromEntries(['uuid','categoryUuid','favIndex','createdAt','updatedAt','state'].filter(key=>Object.hasOwn(record,key)).map(key=>[key,record[key]]));
   const category =
     typeof record.category === "string"
       ? record.category.toUpperCase().replace(/\s+/g, "_")
@@ -167,6 +212,7 @@ export function map1puxItemToConnectBody(source, options = {}) {
       ? record.fields.map(mapField)
       : [],
     tags: Array.isArray(record.tags) ? record.tags.map(String) : [],
+    ...(record.importSource ? {importSource:record.importSource,importedItem:sourceMetadata,urls:record.urls??[]} : {}),
   };
 
   const normalized = normalizeItemBody(body);
