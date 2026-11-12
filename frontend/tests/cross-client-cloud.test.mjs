@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import http from 'node:http';
 import ts from '../node_modules/typescript/lib/typescript.js';
 import { createRequire } from 'node:module';
+import { webcrypto } from 'node:crypto';
 const requireApp = createRequire(new URL('../../apps/mobile/package.json', import.meta.url));
 const React = requireApp('react'), renderer = requireApp('react-test-renderer');
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,13 +19,14 @@ function load(name, imports = {}, globals = {}) {
     if (!(id in imports)) throw new Error(`Unmapped import ${id}`);
     return imports[id];
   }, URL, Headers, Response, AbortController, Event, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer,
-  ReadableStream, setTimeout, clearTimeout, atob, btoa, ...globals });
+  ReadableStream, setTimeout, clearTimeout, atob, btoa, crypto: webcrypto, ...globals });
   return exports;
 }
 const cloudApi = load('cloud-api.ts');
 const sharingApi = load('sharing-api.ts', { './cloud-api': cloudApi });
+const supportApi = load('support-receipts-api.ts');
 const boxMode = load('box-mode.ts', { './cloud-api': cloudApi });
-const sessionModule = (fetch) => load('session-transport.ts', { './cloud-api': cloudApi, './sharing-api': sharingApi }, { fetch });
+const sessionModule = (fetch) => load('session-transport.ts', { './cloud-api': cloudApi, './sharing-api': sharingApi, './support-receipts-api': supportApi }, { fetch });
 const box = 'a'.repeat(26), owner = '11111111-1111-4111-8111-111111111111';
 const flush = () => renderer.act(async () => { for (let n = 0; n < 10; n++) await new Promise(setImmediate); });
 function events() {
