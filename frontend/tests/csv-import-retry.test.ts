@@ -60,3 +60,15 @@ test('duplicate stored row UUIDs are rejected and failed completion remains retr
  try{assert.throws(()=>finishImportAttempt(a),/remove unavailable/);assert.equal(importAttempt(null,a.scope,a.fingerprint,2),a);fail=false;finishImportAttempt(a);}finally{delete (globalThis as any).sessionStorage;}
  const b=importAttempt(null,a.scope,a.fingerprint,2);assert.notEqual(b.keys[0],a.keys[0]);finishImportAttempt(b);
 });
+test('a new module instance restores the saved row keys without source data',async()=>{
+ const values=new Map<string,string>();
+ Object.defineProperty(globalThis,'sessionStorage',{configurable:true,value:{getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}});
+ try{
+  const a=importAttempt(null,'reload-owner:box','synthetic-digest',2);a.completed.add(0);saveImportAttempt(a);
+  const module=await import('../src/lib/import-attempt.ts?reload-fixture');
+  const b=module.importAttempt(null,a.scope,a.fingerprint,2);
+  assert.deepEqual(b.keys,a.keys);assert.equal(b.completed.has(0),true);assert.equal(values.size,1);
+  assert.equal([...values.values()][0].includes('password'),false);
+  module.finishImportAttempt(b);
+ }finally{delete (globalThis as any).sessionStorage;}
+});

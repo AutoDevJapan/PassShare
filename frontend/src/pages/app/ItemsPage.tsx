@@ -243,8 +243,8 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
         await connectClient.createItem(vaultId, connectItemToCreateBody(row), attempt.keys[index]);
         const alreadyCompleted = attempt.completed.has(index);
         attempt.completed.add(index);
-        saveImportAttempt(attempt);
         if (!alreadyCompleted) imported += 1;
+        saveImportAttempt(attempt);
       }
       if (scope !== activeScope.current) return;
       finishImportAttempt(attempt);
