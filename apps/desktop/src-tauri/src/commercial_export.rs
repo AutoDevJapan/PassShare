@@ -79,18 +79,23 @@ impl ExportSessions {
         let root = path.canonicalize().map_err(|_| "EXPORT_DIRECTORY")?;
         let directory = pin(&root).map_err(|_| "EXPORT_DIRECTORY")?;
         let token = uuid::Uuid::new_v4().to_string();
-        self.destinations
-            .lock()
-            .map_err(|_| "EXPORT_SESSION")?
-            .insert(
-                token.clone(),
-                Destination {
-                    root,
-                    directory,
-                    epoch,
-                    pending: None,
-                },
-            );
+        let mut destinations = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
+        if destinations
+            .values()
+            .any(|d| d.root == root && d.pending.is_some())
+        {
+            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+        }
+        destinations.insert(
+            token.clone(),
+            Destination {
+                root,
+                directory,
+                epoch,
+                pending: None,
+            },
+        );
+        drop(destinations);
         self.cancelled.lock().map_err(|_| "EXPORT_SESSION")?.insert(
             token.clone(),
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -667,6 +672,9 @@ mod retained_tests {
             Err("EXPORT_DRAIN_UNCONFIRMED".into())
         );
         assert_eq!(sessions.identity(&token).unwrap(), identity);
+        assert!(
+            matches!(sessions.open(root.clone(),1),Err(ref e) if e=="EXPORT_DRAIN_UNCONFIRMED")
+        );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let recovered = loop {
             if sessions.recover(&token).unwrap() {
