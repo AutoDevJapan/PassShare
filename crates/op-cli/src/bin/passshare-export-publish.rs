@@ -1,3 +1,28 @@
+#[cfg(windows)]
+fn pin_directory(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .access_mode(1)
+        .share_mode(3)
+        .custom_flags(0x02000000)
+        .open(path)
+}
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn selected_directory_cannot_be_renamed_or_removed_until_handle_is_released() {
+        let root =
+            std::env::temp_dir().join(format!("passshare-parent-pin-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let moved = root.with_extension("moved");
+        let held = super::pin_directory(&root).unwrap();
+        assert!(std::fs::rename(&root, &moved).is_err());
+        assert!(std::fs::remove_dir(&root).is_err());
+        drop(held);
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::remove_dir(&moved).unwrap();
+    }
+}
 use std::{
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
@@ -49,11 +74,7 @@ fn run() -> std::io::Result<()> {
         }
         // Pin the selected directory against rename/deletion throughout creation,
         // publication and cleanup. No UI or credential capability is added.
-        let _directory = OpenOptions::new()
-            .access_mode(1)
-            .share_mode(3)
-            .custom_flags(0x02000000)
-            .open(parent)?;
+        let _directory = pin_directory(parent)?;
         let expected_volume = std::env::args().nth(3).and_then(|s| s.parse::<u64>().ok());
         let expected_index = std::env::args().nth(4).and_then(|s| s.parse::<u64>().ok());
         if let (Some(volume), Some(index)) = (expected_volume, expected_index) {
