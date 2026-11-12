@@ -37,7 +37,7 @@ export async function parse1puxBuffer(zipBuffer, options = {}) {
   } catch {
     throw connectHttpError(400, "PS017: Invalid 1PUX — archive is not a valid ZIP export");
   }
-  const jsonEntry = directory.files.find((file) =>
+  const jsonEntry = directory.files.find(file => file.path === 'export.data') ?? directory.files.find((file) =>
     file.path.toLowerCase().endsWith(".json"),
   );
 
@@ -120,6 +120,17 @@ async function parseJsonExport(raw) {
  * @returns {object[]}
  */
 function extractItemsFromExport(parsed) {
+  if(parsed&&typeof parsed==='object'&&Array.isArray(parsed.accounts)){
+    const items=[];
+    for(const account of parsed.accounts)for(const vault of account.vaults??[])for(const item of vault.items??[]){
+      if(!item?.overview||typeof item.overview.title!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX item overview');
+      const fields=(item.details?.loginFields??[]).map(field=>({label:field.name??field.designation??'field',purpose:field.designation?.toUpperCase(),type:field.designation==='password'?'CONCEALED':'STRING',value:field.value??''}));
+      for(const section of item.details?.sections??[])for(const field of section.fields??[])fields.push({label:field.title??field.id??'field',type:field.value?.concealed!==undefined?'CONCEALED':'STRING',value:typeof field.value==='object'?JSON.stringify(field.value):String(field.value??'')});
+      if(item.details?.notesPlain)fields.push({label:'notes',type:'STRING',value:item.details.notesPlain});
+      items.push({...item,title:item.overview.title,category:({'001':'LOGIN','002':'CREDIT_CARD','003':'SECURE_NOTE','004':'IDENTITY','005':'PASSWORD'})[item.categoryUuid]??'CUSTOM',fields,tags:item.overview.tags??[],urls:item.overview.urls??[],importSource:{account:account.attrs??{},vault:vault.attrs??{},item:item.uuid}});
+    }
+    return items;
+  }
   if (Array.isArray(parsed)) {
     return parsed.filter(isImportableItem);
   }
@@ -167,6 +178,7 @@ export function map1puxItemToConnectBody(source, options = {}) {
       ? record.fields.map(mapField)
       : [],
     tags: Array.isArray(record.tags) ? record.tags.map(String) : [],
+    ...(record.importSource ? {importSource:record.importSource,importedItem:record,urls:record.urls??[]} : {}),
   };
 
   const normalized = normalizeItemBody(body);
