@@ -46,8 +46,10 @@ export function createSupportReceiptApi(transport: CloudFetch) {
   }
   return Object.freeze({
     async create(input: SupportReceiptRequest, signal: AbortSignal) {
-      if(!validRequest(input))throw new SupportReceiptError(400);
-      const expected={...input,requestId:input.requestId.toLowerCase()};
+      if(!fields(input,['requestId','kind','version','platform','errorCode']))throw new SupportReceiptError(400);
+      const snapshot={requestId:input.requestId,kind:input.kind,version:input.version,platform:input.platform,errorCode:input.errorCode};
+      if(!validRequest(snapshot))throw new SupportReceiptError(400);
+      const expected={...snapshot,requestId:snapshot.requestId.toLowerCase()};
       const receipt=await request('/api/support-receipts',{method:'POST',body:JSON.stringify(expected),signal},201);
       if(Object.keys(expected).some(k=>receipt.request[k as keyof SupportReceiptRequest]!==expected[k as keyof SupportReceiptRequest]))throw new SupportReceiptError(502);
       return receipt;

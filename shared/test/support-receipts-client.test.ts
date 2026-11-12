@@ -9,6 +9,14 @@ const input={requestId:'11111111-1111-4111-8111-111111111111',kind:'technical' a
 const id='22222222-2222-4222-8222-222222222222';
 const row=()=>({id,status:'received',revision:0,history:[],createdAt:'2026-11-13T00:00:00Z',request:{...input},meaning:'request_received_not_contract_or_payment_confirmation'});
 
+test('validated input values are captured once before serialization',async()=>{
+ let reads=0;let body='';
+ const changing={...input};Object.defineProperty(changing,'errorCode',{enumerable:true,get(){return ++reads===1?'PS019':'private-value';}});
+ const api=createSupportReceiptApi(async(_path,init)=>{body=String(init?.body);return Response.json(row(),{status:201});});
+ await api.create(changing,new AbortController().signal);
+ assert.equal(reads,1);assert.equal(JSON.parse(body).errorCode,'PS019');assert.equal(body.includes('private'),false);
+});
+
 test('client reaches the actual authenticated receipt HTTP route and isolates owners',async()=>{
  const authStore=createMemoryAuthStore();
  const owner=await authStore.createUser({email:'receipt-client@example.test',passwordHash:'$argon2id$'+'x'.repeat(80)});
