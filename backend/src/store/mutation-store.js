@@ -33,9 +33,6 @@ export async function createMutationStore({ store, authStore, pool }) {
         throw connectHttpError(401,"PS024: Session is invalid or expired");
       }
     };
-    if (existing?.result?.deleted === true) {
-      throw Object.assign(connectHttpError(409, "PS015: Creation result was deleted; use a new operation"),{reason:'creation_result_changed'});
-    }
     async function requireCurrentMembership(boxId) {
       // Sharing, retirement and ciphertext activation lock the parent first.
       if (client) await client.query("SELECT id FROM connect_vaults WHERE id=$1 FOR UPDATE",[boxId]);
@@ -46,6 +43,9 @@ export async function createMutationStore({ store, authStore, pool }) {
     }
     if (input.actor !== "legacy" && input.operation === "item") await requireCurrentMembership(input.resource);
     await currentSession();
+    if (existing?.result?.deleted === true) {
+      throw Object.assign(connectHttpError(409, "PS015: Creation result was deleted; use a new operation"),{reason:'creation_result_changed'});
+    }
     if(input.importKey){
       if(client){
         await client.query("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES($1,$2,'import_binding',$3,$4,'{}'::jsonb) ON CONFLICT DO NOTHING",[input.actor,input.resource,input.importKey,input.archiveDigest]);
