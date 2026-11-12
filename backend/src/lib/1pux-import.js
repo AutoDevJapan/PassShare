@@ -1,7 +1,7 @@
 import { createWriteStream, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { connectHttpError } from "../middleware/connect-errors.js";
@@ -46,7 +46,20 @@ export async function parse1puxBuffer(zipBuffer, options = {}) {
   }
 
   const raw = await readEntryCapped(jsonEntry, maxDecompressedBytes);
-  return parseJsonExport(raw);
+  const items=await parseJsonExport(raw);
+  let total=raw.length;
+  for(const item of items){
+    const document=item.details?.documentAttributes;
+    if(!document)continue;
+    if(typeof document.documentId!=='string'||typeof document.fileName!=='string')throw connectHttpError(400,'PS017: Invalid 1PUX document reference');
+    const matches=directory.files.filter(file=>file.path.startsWith(`files/${document.documentId}___`));
+    if(matches.length!==1)throw connectHttpError(400,'PS017: Missing or ambiguous 1PUX attachment');
+    const content=await readEntryCapped(matches[0],maxDecompressedBytes-total);total+=content.length;
+    if(document.decryptedSize!==content.length)throw connectHttpError(400,'PS017: 1PUX attachment size mismatch');
+    item.importAttachments=[{name:document.fileName,size:content.length,sha256:createHash('sha256').update(content).digest('hex'),base64:content.toString('base64')}];
+    content.fill(0);
+  }
+  return items;
 }
 
 /**
@@ -166,6 +179,7 @@ function isImportableItem(value) {
  */
 export function map1puxItemToConnectBody(source, options = {}) {
   const record = /** @type {Record<string, unknown>} */ (source);
+  const {importAttachments,...sourceMetadata}=record;
   const category =
     typeof record.category === "string"
       ? record.category.toUpperCase().replace(/\s+/g, "_")
@@ -178,7 +192,7 @@ export function map1puxItemToConnectBody(source, options = {}) {
       ? record.fields.map(mapField)
       : [],
     tags: Array.isArray(record.tags) ? record.tags.map(String) : [],
-    ...(record.importSource ? {importSource:record.importSource,importedItem:record,urls:record.urls??[]} : {}),
+    ...(record.importSource ? {importSource:record.importSource,importedItem:sourceMetadata,urls:record.urls??[]} : {}),
   };
 
   const normalized = normalizeItemBody(body);
