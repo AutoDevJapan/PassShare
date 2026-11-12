@@ -110,8 +110,8 @@ test('rejected foreign output never poisons verified receipts for a later retry'
 test('native rename publishes exactly the requested path across UTF16 alignment lengths',()=>fixture(async(_store,root)=>{
  if(process.platform!=='win32')return;
  const {spawn}=await import('node:child_process');const {fileURLToPath}=await import('node:url');
- for(let length=1;length<=12;length++){
-  const out=join(root,'x'.repeat(length)+'.bin'),body=new Uint8Array([0,7,255]);
+ for(const name of [...Array.from({length:12},(_,i)=>'x'.repeat(i+1)+'.bin'),'日本語の添付😀.bin','境界'.repeat(39)+'.bin']){
+  const out=join(root,name),body=new Uint8Array([0,7,255]);
   const code=await new Promise<number|null>((resolve,reject)=>{const c=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[out,String(body.length)],{windowsHide:true,stdio:['pipe','ignore','ignore']});c.on('error',reject);c.on('close',resolve);c.stdin.end(body);});assert.equal(code,0);assert.deepEqual([...await readFile(out)],[...body]);
  }
 }));
