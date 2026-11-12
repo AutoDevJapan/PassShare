@@ -9,6 +9,8 @@ import { useI18n } from "@shared/i18n/I18nProvider";
 import { import1puxFile } from "@shared/lib/1pux-import";
 import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
 import { generatePassword } from "@shared/lib/password-generator";
+import { loadCurrentItem, loadItemDetails, loadItemOverviewPage } from "@shared/lib/item-detail-loading";
+import { copyTextWithAutoClear } from "@shared/ui/clipboard-auto-clear";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
 import { importAttempt, importFingerprint, saveImportAttempt, finishImportAttempt, acquireImportAttempt, releaseImportAttempt, type ImportAttempt } from "../../lib/import-attempt";
@@ -36,7 +38,6 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
   }, [vaultId, user?.id]);
   const [vaultName, setVaultName] = useState("");
   const [items, setItems] = useState<ConnectItem[]>([]);
-  const [documents, setDocuments] = useState<Record<string, Item>>({});
   const [itemsLoading, setItemsLoading] = useState(true);
   const [itemsReady, setItemsReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -44,6 +45,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
   const createOperation = useRef<string | null>(null);
   const csvAttempt = useRef<ImportAttempt | null>(null);
   const loadGeneration = useRef(0);
+  const copyGeneration = useRef(0);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"create" | "edit" | null>("create");
   const [formValues, setFormValues] = useState<ItemFormValues>(emptyFormValues());
@@ -73,7 +75,6 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     setItemsLoading(true);
     setItemsReady(false);
     setItems([]);
-    setDocuments({});
     if (!connectClient || !vaultId) {
       setItemsLoading(false);
       setError(t("app.item.loadError"));
@@ -84,18 +85,19 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
       const vault = await connectClient.getVault(vaultId);
       await ensureCompatibility();
       if (generation !== loadGeneration.current) return;
-      const overviews = await connectClient.listItems(vaultId);
-      const details = await Promise.all(
-        overviews.map(async (overview) => {
-          await ensureCompatibility();
-          if (generation !== loadGeneration.current) throw new Error("Inactive item request");
-          return connectClient.getItem(vaultId, overview.id);
-        }),
-      );
+      const overviews = await loadItemOverviewPage(connectClient,vaultId,async()=>{
+        await ensureCompatibility();if(generation!==loadGeneration.current)throw new Error('Inactive item list');
+      });
       if (generation !== loadGeneration.current) return;
       setVaultName(vault.name);
-      setDocuments(Object.fromEntries(details.map((item) => [item.id, item])));
-      setItems(details.map(connectItemFromApi));
+      if(overviews.some(row=>(row as typeof row & {listMetadataVersion?:number}).listMetadataVersion!==1)){
+        const details=await loadItemDetails(overviews,id=>connectClient.getItem(vaultId,id),async()=>{await ensureCompatibility();if(generation!==loadGeneration.current)throw new Error('Inactive list');});
+        if(generation!==loadGeneration.current)return;
+        setItems(details.map(connectItemFromApi));
+      }else setItems(overviews.map(overview=>{
+        const metadata=overview as typeof overview & {username?:string;favorite?:boolean;hasPassword?:boolean;hasBody?:boolean;bodyPreview?:string};
+        return {...connectItemFromApi({...overview,fields:[]} as Item),username:metadata.username??'',favorite:metadata.favorite??false,hasPassword:metadata.hasPassword,hasBody:metadata.hasBody,body:metadata.bodyPreview};
+      }));
       setItemsReady(true);
     } catch {
       if (generation === loadGeneration.current) setError(t("app.item.loadError"));
@@ -208,12 +210,23 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     }
   }
 
-  function startEdit(item: ConnectItem) {
-    if (busyRef.current || itemsLoading || !documents[item.id]) return;
-    createOperation.current = null;
-    setMode("edit");
-    setEditingItem(documents[item.id]);
-    setFormValues(formValuesFromItem(item));
+  async function currentDetail(id:string) {
+    if(!connectClient)throw new Error('Inactive client');
+    const scope=activeScope.current,generation=loadGeneration.current;
+    return loadCurrentItem(()=>connectClient.getItem(vaultId,id),async()=>{
+      await ensureCompatibility();
+      if(scope!==activeScope.current||generation!==loadGeneration.current)throw new Error('Inactive request');
+    });
+  }
+  async function startEdit(item: ConnectItem) {
+    if (busyRef.current || itemsLoading) return;
+    busyRef.current=true;setBusy(true);
+    const scope=activeScope.current,generation=loadGeneration.current;
+    try{
+      const detail=await currentDetail(item.id);
+      createOperation.current = null;setMode("edit");setEditingItem(detail);
+      setFormValues(formValuesFromItem(connectItemFromApi(detail)));
+    }catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));}finally{busyRef.current=false;setBusy(false);}
   }
 
   async function handleCsvImport(file: File) {
@@ -327,10 +340,13 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     }
   }
 
-  function handleExportCsv() {
+  async function handleExportCsv() {
     if (!itemsReady || busyRef.current || !window.confirm(t("app.item.exportWarning"))) return;
-    downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(items));
-    setExportMessage(labels.exportSuccess);
+    busyRef.current=true;setBusy(true);
+    const scope=activeScope.current,generation=loadGeneration.current;
+    const ensureExport=async()=>{await ensureCompatibility();if(scope!==activeScope.current||generation!==loadGeneration.current)throw new Error('Inactive export');};
+    try{const details=await loadItemDetails(items,currentDetail,ensureExport);await ensureExport();if(scope!==activeScope.current||generation!==loadGeneration.current)throw new Error('Inactive export');downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(details.map(connectItemFromApi)));setExportMessage(labels.exportSuccess);}
+    catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));}finally{busyRef.current=false;setBusy(false);}
   }
 
   if (connectLoading) {
@@ -448,6 +464,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
             items={filteredItems}
             labels={labels}
             onEdit={startEdit}
+            copyItem={async item=>{const copy=++copyGeneration.current;const scope=activeScope.current,generation=loadGeneration.current;try{const detail=connectItemFromApi(await currentDetail(item.id));if(copy!==copyGeneration.current||scope!==activeScope.current||generation!==loadGeneration.current)return false;const secret=detail.password||detail.body||'';if(!secret)return false;await copyTextWithAutoClear(secret);return true;}catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));return false;}}}
             onDelete={(id) => void handleDelete(id)}
           />
           {itemsLoading ? <p role="status">{t("session.loading")}</p> : itemsReady && filteredItems.length === 0 ? <p>{labels.emptyList}</p> : null}

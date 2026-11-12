@@ -94,17 +94,52 @@ test("failed save retains input and blocks duplicate submissions until completio
   expect(await (await page.request.get(box.path, { headers: box.headers })).json()).toHaveLength(1);
 });
 
-test("failed detail load disables incomplete CSV export and can be retried", async ({ page }) => {
+test("metadata list needs no details and failed CSV detail export produces no download", async ({ page }) => {
   const box = await openBox(page);
   const created = await (await page.request.post(box.path, { headers: box.headers, data: { title: "Existing record", category: "SECURE_NOTE", fields: [{ label: "notes", type: "STRING", value: "synthetic note" }] } })).json();
   await page.route(`**${box.path}/${created.id}`, (route) => route.fulfill({ status: 503, json: { message: "Synthetic failure" } }));
   await page.goto(box.url);
+  await expect(page.getByText("Existing record", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  let downloads=0;page.on('download',()=>downloads++);
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole("button", { name: /Export 1Password CSV|CSV.*エクスポート/ }).click();
   await expect(page.getByRole("alert")).toContainText(/Failed to load|読み込み|取得/);
-  await expect(page.getByRole("button", { name: /Export 1Password CSV|CSV.*エクスポート/ })).toBeDisabled();
+  expect(downloads).toBe(0);
   await page.unroute(`**${box.path}/${created.id}`);
   await page.getByRole("button", { name: /Refresh list|一覧を更新/ }).click();
   await expect(page.getByText("Existing record", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Export 1Password CSV|CSV.*エクスポート/ })).toBeEnabled();
+});
+test('list does not prefetch details and an edit response after navigation is discarded',async({page})=>{
+ const box=await openBox(page);const created=await(await page.request.post(box.path,{headers:box.headers,data:{title:'Lazy record',category:'LOGIN',fields:[{label:'username',purpose:'USERNAME',value:'searchable-user'},{label:'password',purpose:'PASSWORD',type:'CONCEALED',value:'synthetic'}]}})).json();
+ let details=0;let release!:()=>void;const wait=new Promise<void>(r=>release=r);
+ await page.route(`**${box.path}/${created.id}`,async route=>{details++;await wait;await route.fulfill({status:200,json:created});});
+ await page.goto(box.url);await expect(page.getByText('Lazy record',{exact:true})).toBeVisible();expect(details).toBe(0);await expect(page.getByText('searchable-user',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:/^Edit$|^編集$/}).click();await expect.poll(()=>details).toBe(1);
+ await page.goto('/app/vaults');release();await expect(page).toHaveURL(/\/app\/vaults$/);await expect(page.locator('input[value="Lazy record"]')).toHaveCount(0);
+});
+test('delayed copy detail response after navigation publishes no clipboard output',async({page})=>{
+ const box=await openBox(page);const created=await(await page.request.post(box.path,{headers:box.headers,data:{title:'Delayed secret',category:'LOGIN',fields:[{label:'password',purpose:'PASSWORD',type:'CONCEALED',value:'synthetic-secret'}]}})).json();
+ await page.addInitScript(()=>{(window as any).__writes=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{(window as any).__writes.push(text);}}});});
+ let release!:()=>void;let arrived!:()=>void;const entered=new Promise<void>(r=>arrived=r),gate=new Promise<void>(r=>release=r);
+ await page.route(`**${box.path}/${created.id}`,async route=>{arrived();await gate;await route.fulfill({status:200,json:created});});
+ await page.goto(box.url);await page.getByRole('button',{name:/Copy password|パスワードをコピー/}).click();await entered;
+ await page.getByRole('link',{name:/Back|戻る/}).first().click();const response=page.waitForResponse(r=>r.url().endsWith(`${box.path}/${created.id}`));release();await response;await page.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));expect(await page.evaluate(()=>(window as any).__writes.length)).toBe(0);
+});
+test('older backend metadata falls back without losing search or copy actions',async({page})=>{
+ const box=await openBox(page);const created=await(await page.request.post(box.path,{headers:box.headers,data:{title:'Legacy metadata',category:'LOGIN',favorite:true,fields:[{purpose:'USERNAME',value:'legacy-user'},{purpose:'PASSWORD',type:'CONCEALED',value:'synthetic'}]}})).json();
+ await page.route(`**${box.path}`,async route=>{if(route.request().method()!=='GET')return route.continue();const response=await route.fetch();const rows=await response.json();for(const row of rows){delete row.listMetadataVersion;delete row.username;delete row.hasPassword;delete row.favorite;}await route.fulfill({response,json:rows});});
+ await page.goto(box.url);await expect(page.getByText('legacy-user',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:/Copy password|パスワードをコピー/})).toBeVisible();expect(created.id).toBeTruthy();
+});
+test('a late earlier copy cannot overwrite the last clicked item',async({page})=>{
+ const box=await openBox(page);const items=[];for(const name of ['First copy','Last copy'])items.push(await(await page.request.post(box.path,{headers:box.headers,data:{title:name,category:'LOGIN',fields:[{purpose:'PASSWORD',type:'CONCEALED',value:name}]}})).json());
+ await page.addInitScript(()=>{(window as any).__writes=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{(window as any).__writes.push(text);}}});});
+ let release!:()=>void,arrived!:()=>void;const entered=new Promise<void>(r=>arrived=r),gate=new Promise<void>(r=>release=r);
+ await page.route(`**${box.path}/${items[0].id}`,async route=>{arrived();await gate;await route.fulfill({status:200,json:items[0]});});
+ await page.goto(box.url);await page.locator('li.ps-item-card').filter({hasText:'First copy'}).getByRole('button',{name:/Copy password|パスワードをコピー/}).click();await entered;
+ await page.locator('li.ps-item-card').filter({hasText:'Last copy'}).getByRole('button',{name:/Copy password|パスワードをコピー/}).click();await expect.poll(()=>page.evaluate(()=>(window as any).__writes)).toEqual(['Last copy']);
+ const response=page.waitForResponse(r=>r.url().endsWith(`${box.path}/${items[0].id}`));release();await response;await page.evaluate(()=>new Promise(r=>setTimeout(r,100)));expect(await page.evaluate(()=>(window as any).__writes)).toEqual(['Last copy']);
 });
 
 test("CSV import reports created rows after partial failure and delete errors stay visible", async ({ page }) => {
