@@ -78,8 +78,8 @@ export function createVaultRoutes(store, options = {}) {
       for (const [index, body] of bodies.entries()) {
         try {
         const item = operation && mutateOnce
-          ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,resource:vaultUuid,operation:'item',key:createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex'),request:body})
-          : await store.createItem(vaultUuid, body);
+          ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,importKey:operation,archiveDigest,resource:vaultUuid,operation:'item',key:createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex'),request:body})
+          : await store.createItem(vaultUuid, normalizeItemBody(body));
         created.push(item);
         } catch(error) {
           if(operation&&error?.status===409&&error?.reason==='creation_result_changed'){changed++;continue;}

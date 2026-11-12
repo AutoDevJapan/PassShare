@@ -32,7 +32,6 @@ export async function createMutationStore({ store, authStore, pool }) {
         throw connectHttpError(401,"PS024: Session is invalid or expired");
       }
     };
-    await currentSession();
     if (existing?.result?.deleted === true) {
       throw Object.assign(connectHttpError(409, "PS015: Creation result was deleted; use a new operation"),{reason:'creation_result_changed'});
     }
@@ -45,6 +44,18 @@ export async function createMutationStore({ store, authStore, pool }) {
       if (!permitted) throw connectHttpError(403, "PS016: Access denied to password box");
     }
     if (input.actor !== "legacy" && input.operation === "item") await requireCurrentMembership(input.resource);
+    await currentSession();
+    if(input.importKey){
+      if(client){
+        await client.query("INSERT INTO mutation_operations(actor,resource,operation,request_key,request_hash,result) VALUES($1,$2,'import_binding',$3,$4,'{}'::jsonb) ON CONFLICT DO NOTHING",[input.actor,input.resource,input.importKey,input.archiveDigest]);
+        const bound=(await client.query("SELECT request_hash AS archive_digest FROM mutation_operations WHERE actor=$1 AND resource=$2 AND operation='import_binding' AND request_key=$3 FOR SHARE",[input.actor,input.resource,input.importKey])).rows[0];
+        if(bound?.archive_digest!==input.archiveDigest)throw connectHttpError(409,'PS015: Import operation archive changed');
+      }else{
+        const key=JSON.stringify(['archive',input.actor,input.resource,input.importKey]);
+        if(records.has(key)&&records.get(key)!==input.archiveDigest)throw connectHttpError(409,'PS015: Import operation archive changed');
+        records.set(key,input.archiveDigest);
+      }
+    }
     let live = null;
     if (existing) {
       try {
