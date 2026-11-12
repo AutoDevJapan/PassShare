@@ -18,7 +18,7 @@ export async function saveCommercialExport(root:string,api:CloudApi,worker:Cloud
  const known=receipts.get(progress)??new Map<string,string>();receipts.set(progress,known);
  for(const [name,hash] of known){const bytes=await store.read(name);try{if(bytes===null||createHash('sha256').update(bytes).digest('hex')!==hash)throw new Error('Completed export output is missing or changed');}finally{bytes?.fill(0);}}
  const tracked={read:store.read,publishNew:store.publishNew};
- const sink=createVerifiedExportSink({read:async name=>{const bytes=await tracked.read(name);return bytes;},publishNew:async(name,bytes,s)=>{await tracked.publishNew(name,bytes,s);known.set(name,createHash('sha256').update(bytes).digest('hex'));}});
+ const sink=createVerifiedExportSink({read:async name=>{const bytes=await tracked.read(name);if(bytes!==null)known.set(name,createHash('sha256').update(bytes).digest('hex'));return bytes;},publishNew:async(name,bytes,s)=>{await tracked.publishNew(name,bytes,s);known.set(name,createHash('sha256').update(bytes).digest('hex'));}});
  await consumeCommercialBox(api,worker,contractId,boxId,pin,signal,sink.item,sink.attachment,progress);
  return {saved:true,snapshotRevision:pin.snapshotRevision,items:progress.items.size,attachments:progress.attachments.size};
 }
