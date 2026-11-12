@@ -54,6 +54,14 @@ jobs:
           $env:PASSSHARE_TEST_PUBLISHER = Join-Path $env:GITHUB_WORKSPACE 'target/debug/passshare-export-publish.exe'
           cargo test --locked -p passshare-desktop export_ipc_tests --lib -j 2 -- --ignored
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::publisher_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::commit_order_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::cancel_permit_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p passshare-desktop commercial_export::ready_cleanup_tests --lib -j 2 -- --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify authenticated contract export through Windows native storage
         if: runner.os == 'Windows'
         working-directory: .

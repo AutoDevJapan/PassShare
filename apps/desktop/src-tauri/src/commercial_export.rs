@@ -381,7 +381,7 @@ impl ExportSessions {
         let mut authorized = false;
         let mut commit_guard = None;
         let mut interrupted = false;
-        let status = loop {
+        let mut status = loop {
             if !authorized && ready_rx.try_recv().is_ok() {
                 on_ready();
                 commit_guard = loop {
@@ -426,12 +426,26 @@ impl ExportSessions {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         };
+        if interrupted && !authorized {
+            let _ = permit_tx.send(b'X');
+            while std::time::Instant::now() + std::time::Duration::from_secs(1) < deadline {
+                match child.try_wait() {
+                    Ok(Some(exit)) => {
+                        status = Some(exit);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(_) => break,
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
         drop(permit_tx);
         #[cfg(windows)]
         let _stop_requested = tree.stop();
         #[cfg(not(windows))]
         let _stop_requested = child.kill().is_ok() || status.is_some();
-        if interrupted {
+        if interrupted && status.is_none() {
             let _ = child.kill();
         }
         let mut reaped = status.is_some();
@@ -781,6 +795,11 @@ mod commit_order_tests {
         drop(held);
         assert!(worker.join().unwrap().is_err());
         assert!(!root.join("item-denied-v1.json").exists());
+        assert!(!std::fs::read_dir(&root).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".passshare-export-")));
         valid.store(true, Ordering::SeqCst);
         sessions
             .publish_ordered(
@@ -834,6 +853,11 @@ mod cancel_permit_tests {
             )
             .is_err());
         assert!(!root.join("item-cancelled-v1.json").exists());
+        assert!(!std::fs::read_dir(&root).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".passshare-export-")));
         sessions
             .publish_ordered(
                 &other,
@@ -853,5 +877,41 @@ mod cancel_permit_tests {
         sessions.close(&token).unwrap();
         sessions.close(&other).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod ready_cleanup_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires current handshake publisher"]
+    fn cancellation_at_ready_removes_plaintext_temp_before_return() {
+        let exe = PathBuf::from(std::env::var_os("PASSSHARE_TEST_PUBLISHER").unwrap());
+        let root =
+            std::env::temp_dir().join(format!("passshare-ready-cleanup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let sessions = ExportSessions::default();
+        let token = sessions.open(root.clone(), 1).unwrap();
+        let gate = Mutex::new(());
+        let result = sessions.publish_with_ready(
+            &token,
+            "item-cancelled-v1.json",
+            vec![83, 69, 67],
+            1,
+            &exe,
+            || true,
+            &gate,
+            || {
+                sessions.cancel(&token, &gate).unwrap();
+            },
+        );
+        assert_eq!(result, Err("EXPORT_INTERRUPTED_CHECK_OUTPUT".into()));
+        assert_eq!(
+            std::fs::read_dir(&root).unwrap().count(),
+            0,
+            "target and plaintext temp must both be absent"
+        );
+        sessions.close(&token).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 }
