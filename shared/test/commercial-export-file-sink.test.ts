@@ -93,3 +93,10 @@ test('completed progress cannot claim success in a different output directory',(
  await saveCommercialExport(root,api as any,{} as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);
  await assert.rejects(saveCommercialExport(root+'-other',api as any,{} as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress));
 }));
+
+test('completed output removed or changed is detected before resume reports saved',()=>fixture(async(_store,root)=>{
+ const {saveCommercialExport}=await import('../../scripts/save-commercial-export.ts');const {createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress();
+ const api={getCommercialExportPage:async()=>({envelopes:[{context}],nextCursor:null,attachmentsIncluded:false})},worker={decrypt:async()=>JSON.stringify({attachments:[]})};
+ const run=()=>saveCommercialExport(root,api as any,worker as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);
+ await run();await writeFile(join(root,`item-${context.itemId}-v1.json`),'changed');await assert.rejects(run());await rm(join(root,`item-${context.itemId}-v1.json`));await assert.rejects(run());
+}));
