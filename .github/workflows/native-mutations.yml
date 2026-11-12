@@ -186,7 +186,7 @@ jobs:
           PASSSHARE_DELETION_RECOVERY_CONTAINER: ${{ job.services.postgres.id }}
           PASSSHARE_MUTATIONS_BIN: ${{ github.workspace }}/backend/native/target/release/passshare-mutations
       - name: Verify shared contract export client selectors and ciphertext bindings
-        run: node --experimental-transform-types --test --test-timeout=15000 shared/test/commercial-export-client.test.ts shared/test/commercial-attachment-export.test.ts shared/test/commercial-export-file-sink.test.ts
+        run: node --experimental-transform-types --test --test-timeout=15000 shared/test/commercial-export-client.test.ts shared/test/commercial-attachment-export.test.ts shared/test/commercial-export-file-sink.test.ts shared/test/support-receipts-client.test.ts
       - name: Verify atomic PostgreSQL operations and restart
         run: backend/native/target/release/acceptance
         env:

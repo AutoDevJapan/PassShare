@@ -72,3 +72,7 @@ the earlier synthetic mail roundtrip does not demonstrate this flow.
 Tests: Rust fixed-field rejection; real HTTP actor isolation, idempotent retries,
 changed-body conflict, unknown/secret-field rejection; PostgreSQL second-instance
 read in the existing isolated CI database.
+
+## Shared authenticated client connection
+
+createCloudSession exposes support.create and support.get through its existing immutable session transport. The caller retains requestId; uncertain POSTs are not automatically retried. Only the existing fixed metadata is accepted, response receipt/request identity is checked, body size is bounded, and remote diagnostics are not returned. This adds no operator enrollment, mail delivery, UI, contract or payment authority. The isolated HTTP client test verifies same-request replay, owner read, other-owner rejection and session revocation; memory-store acceptance is separate from PostgreSQL persistence and production contact integration.

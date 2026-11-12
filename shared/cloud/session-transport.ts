@@ -1,5 +1,6 @@
 import { createCloudApi, CloudApiError } from "./cloud-api";
 import { createSharingApi } from "./sharing-api";
+import { createSupportReceiptApi } from "./support-receipts-api";
 
 export type CloudFetch = (path: string, init?: RequestInit) => Promise<Response>;
 export type VaultMember = { userId: string; email: string; role: "owner" | "member"; joinedAt: string; identityConfirmed?: boolean };
@@ -69,7 +70,7 @@ export function createCloudSession(base: string, userId: string, sessionToken: s
     }
   };
   return Object.freeze({
-    userId, api: createCloudApi(transport), sharing: createSharingApi(transport), transport,
+    userId, api: createCloudApi(transport), sharing: createSharingApi(transport), support: createSupportReceiptApi(transport), transport,
     async listVaultMembers(boxId: string, signal: AbortSignal): Promise<VaultMember[]> {
       const response = await transport(`/api/auth/vaults/${encodeURIComponent(boxId)}/members`, { signal });
       if (response.status !== 200) { await response.body?.cancel().catch(() => {}); throw new CloudApiError(response.status); }
