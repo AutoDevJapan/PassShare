@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {getEventListeners} from 'node:events';
 import {createNativeExportStore} from '../src/lib/native-export-store.ts';
 test('native output session binds destination and preserves existing-file classification',async()=>{
  const calls:Array<{command:string;args:any}>=[];const invoke=async(command:string,args:any)=>{calls.push({command,args});if(command==='commercial_export_open')return 'owned-session';if(command==='commercial_export_read')return [0,255,1];if(command==='commercial_export_publish')throw 'EXPORT_EXISTS';};
@@ -23,6 +24,16 @@ test('committed native publish remains readable for success reconciliation after
 });
 import {saveNativeCommercialExport} from '../src/lib/save-native-commercial-export.ts';
 import {createCommercialExportProgress} from '../../../shared/cloud/commercial-attachment-export.ts';
+
+test('failed destination open releases the caller abort listener before retry',async()=>{
+ const controller=new AbortController();let calls=0;
+ const invoke=async()=>{calls++;throw 'EXPORT_DIRECTORY';};
+ for(let retry=0;retry<3;retry++){
+  await assert.rejects(saveNativeCommercialExport(invoke,'C:/unavailable',{} as any,{} as any,'contract','a'.repeat(26),{keyEpoch:1,snapshotRevision:2},controller.signal),e=>e==='EXPORT_DIRECTORY');
+  assert.equal(getEventListeners(controller.signal,'abort').length,0);
+ }
+ assert.equal(calls,3);
+});
 test('native consumer delivers item and attachment once and verifies completed output on resume',async()=>{
  const files=new Map<string,number[]>();let sends=0,closed=0;const invoke=async(command:string,args:any)=>{if(command==='commercial_export_open')return 'session';if(command==='commercial_export_identity')return 'volume:fileA';if(command==='commercial_export_close'){closed++;return;}if(command==='commercial_export_read')return files.get(args.name)??null;if(command==='commercial_export_publish'){sends++;files.set(args.name,[...args.bytes]);}};
  const box='a'.repeat(26),item='b'.repeat(26),attachment='c'.repeat(26);const api={getCommercialExportPage:async()=>({envelopes:[{context:{passwordBoxId:box,itemId:item,itemVersion:1,keyEpoch:1}}],nextCursor:null}),getCommercialAttachmentItemSnapshot:async()=> 'parent',getCommercialEncryptedAttachment:async()=> 'encrypted'};const worker={decrypt:async()=>JSON.stringify({id:item,attachments:[{attachmentId:attachment,attachmentVersion:1,keyEpoch:1}]}),decryptAttachment:async()=>({name:'日本語.bin',bytes:new Uint8Array([0,255])}),releaseAttachment:(file:any)=>file.bytes.fill(0)};
