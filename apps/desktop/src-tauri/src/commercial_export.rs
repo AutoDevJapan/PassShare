@@ -502,3 +502,63 @@ mod fault_tests {
         }
     }
 }
+
+#[cfg(all(test, windows))]
+mod retained_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires owned fault publisher fixture"]
+    fn uncertain_flight_retains_identity_and_recovers_before_close() {
+        use std::os::windows::process::CommandExt;
+        let exe = std::env::var_os("PASSSHARE_FAULT_PUBLISHER").expect("fixture");
+        let root =
+            std::env::temp_dir().join(format!("passshare-retained-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let sessions = ExportSessions::default();
+        let token = sessions.open(root.clone(), 1).unwrap();
+        let identity = sessions.identity(&token).unwrap();
+        let mut child = Command::new(exe)
+            .arg("item-noread-v1.json")
+            .arg("0")
+            .creation_flags(0x08000004)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let tree = export_process::Tree::attach(&child).unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let writer = std::thread::spawn(move || stdin.write_all(&vec![0; 1024 * 1024]));
+        sessions
+            .destinations
+            .lock()
+            .unwrap()
+            .get_mut(&token)
+            .unwrap()
+            .pending = Some(PendingFlight {
+            child,
+            writer,
+            tree,
+        });
+        assert_eq!(
+            sessions.close(&token),
+            Err("EXPORT_DRAIN_UNCONFIRMED".into())
+        );
+        assert_eq!(sessions.identity(&token).unwrap(), identity);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let recovered = loop {
+            if sessions.recover(&token).unwrap() {
+                break true;
+            }
+            if std::time::Instant::now() > deadline {
+                break false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        };
+        assert!(recovered);
+        assert_eq!(sessions.identity(&token).unwrap(), identity);
+        sessions.close(&token).unwrap();
+        assert!(sessions.identity(&token).is_err());
+        std::fs::remove_dir(root).unwrap();
+    }
+}
