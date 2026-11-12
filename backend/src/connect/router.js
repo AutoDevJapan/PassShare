@@ -76,7 +76,7 @@ export function createVaultRoutes(store, options = {}) {
       const archiveDigest=createHash('sha256').update(zipBuffer).digest('hex');
       for (const [index, body] of bodies.entries()) {
         const item = operation && mutateOnce
-          ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',resource:vaultUuid,operation:'item',key:createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex'),request:body})
+          ? await mutateOnce({actor:req.connectAuth?.userId??'legacy',connectTokenHash:req.connectAuth?.tokenHash,resource:vaultUuid,operation:'item',key:createHash('sha256').update(JSON.stringify([operation,archiveDigest,index])).digest('hex'),request:body})
           : await store.createItem(vaultUuid, body);
         created.push(item);
       }

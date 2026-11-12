@@ -22,6 +22,12 @@ export async function createMutationStore({ store, authStore, pool }) {
       existing = (await client.query("SELECT request_hash,result FROM mutation_operations WHERE actor=$1 AND resource=$2 AND operation=$3 AND request_key=$4",scope.parts)).rows[0];
     }
     const currentSession = async () => {
+      if(input.connectTokenHash){
+        const token=client
+          ? (await client.query("SELECT id FROM connect_tokens WHERE token_hash=$1 AND user_id=$2 AND expires_at>clock_timestamp() AND vault_ids @> $3::jsonb FOR SHARE",[input.connectTokenHash,input.actor,JSON.stringify([input.resource])])).rowCount>0
+          : Boolean(await authStore.findConnectTokenByHash(input.connectTokenHash));
+        if(!token)throw connectHttpError(401,"PS011: Invalid or expired Connect token");
+      }
       if (client && input.sessionId && !(await client.query("SELECT s.id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=$1 AND u.id=$2 AND s.expires_at>clock_timestamp() FOR SHARE OF u,s",[input.sessionId,input.actor])).rowCount) {
         throw connectHttpError(401,"PS024: Session is invalid or expired");
       }
