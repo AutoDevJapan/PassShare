@@ -34,6 +34,15 @@ test('memory rollback compare-delete preserves edits during the deletion await',
  await assert.rejects(store.deleteItem(box,item.id,JSON.stringify(original),[foreign.id],()=>{throw Object.assign(Error('revoked'),{status:401});}),error=>error.status===401);
  assert.equal((await store.getItem(box,item.id)).title,'edited');
 });
+test('recovery revocation after the precheck preserves the pending item',async()=>{
+ const auth=createMemoryAuthStore(),store=createMemoryStore();const user=await auth.createUser({email:'late@example.test',passwordHash:'synthetic'});const box=await store.createVault({name:'synthetic'});await auth.addVaultMembership(user.id,box);const session=await auth.createSession(user.id,'synthetic');const token=await auth.createConnectToken(user.id,'test',session.sessionId);
+ const source=await fs.readFile(new URL('../src/store/mutation-store.js',import.meta.url),'utf8');const text=source.replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');let fail=true;
+ const native=async input=>{if(input.command==='record'&&fail)throw Error('record failed');return input.command==='scope'?{parts:[],lock:'late-scope'}:input.command==='create'?{action:'create'}:{request_hash:'same',result:input.result};};
+ const factory=Function('nativeMutation','createPgStore','generateConnectId','normalizeItemBody','connectHttpError','applySchemaWithAdvisoryLock',text+';return createMutationStore;')(native,()=>{},()=>'',x=>x,(status,message)=>Object.assign(Error(message),{status}),async()=>{});
+ const run=await factory({store,authStore:auth,pool:null});const input={actor:user.id,connectTokenHash:token.tokenHash,resource:box,operation:'item',key:'late-key',request:{title:'synthetic'}};await assert.rejects(run(input),/record failed/);
+ const originalGet=store.getItem.bind(store);let reached=false;store.getItem=async(...args)=>{const result=await originalGet(...args);reached=true;await auth.deleteConnectTokensForUser(user.id);return result;};fail=false;
+ await assert.rejects(run(input),error=>error.status===401);assert.equal(reached,true);assert.equal((await store.listItemOverviews(box)).length,1,'revocation during recovery must not delete the pending item');
+});
 test('mutation rollback owns a copied snapshot through actual memory store',async()=>{
  const source=await fs.readFile(new URL('../src/store/mutation-store.js',import.meta.url),'utf8');const text=source.replace(/^import .*;\r?\n/gm,'').replace('export async function','async function');
  let recordFails=true;const native=async input=>{if(input.command==='record'&&recordFails)throw Error('record failed');return input.command==='scope'?{parts:[],lock:'snapshot-scope'}:input.command==='create'?{action:'create'}:{request_hash:'same',result:input.result};};
