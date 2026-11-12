@@ -54,9 +54,13 @@ test('cancelled empty output resumes only through its retained file identity',as
  await assert.rejects(sink.item('{}',context,controller.signal));assert.equal(stored.length,0);cancelWrite=false;await sink.item('{}',context,new AbortController().signal);assert.equal(new TextDecoder().decode(stored),'{}');
 });
 
-test('close-time abort and source wipe retain committed output verification',async()=>{
- const c=new AbortController();const input=new Uint8Array([7,0,255]);let stored=new Uint8Array(),opens=0;
- const h={getFile:async()=>({arrayBuffer:async()=>stored.slice().buffer}),createWritable:async()=>{let next=new Uint8Array();return {write:async(b:Uint8Array)=>{next=b.slice();},close:async()=>{stored=next;c.abort();input.fill(0);},abort:async()=>{}};}};
- const d={getFileHandle:async(_n:string,o?:{create?:boolean})=>{opens++;if(!o?.create&&opens===1)throw new DOMException('missing','NotFoundError');return h;}};
- const sink=createVerifiedExportSink(d as any);await sink.item('abc',{passwordBoxId:'a'.repeat(26),itemId:'b'.repeat(26),itemVersion:1,keyEpoch:1},c.signal);assert.equal(new TextDecoder().decode(stored),'abc');
+test('attachment close-time abort and source wipe retain committed binary verification',async()=>{
+ const c=new AbortController(),input=new Uint8Array([7,0,255]);const files=new Map<string,Uint8Array>();
+ const d={getFileHandle:async(name:string,o?:{create?:boolean})=>{
+  if(!files.has(name)&&!o?.create)throw new DOMException('missing','NotFoundError');if(!files.has(name))files.set(name,new Uint8Array());
+  return {getFile:async()=>({arrayBuffer:async()=>files.get(name)!.slice().buffer}),createWritable:async()=>{let next=new Uint8Array();return {write:async(b:Uint8Array)=>{next=b.slice();},close:async()=>{files.set(name,next);if(name.endsWith('.bin')){c.abort();input.fill(0);}},abort:async()=>{}};}};
+ }};
+ const sink=createVerifiedExportSink(d as any),itemId='b'.repeat(26),attachmentId='c'.repeat(26);
+ await sink.attachment({name:'日本語.bin',bytes:input},{passwordBoxId:'a'.repeat(26),itemId,attachmentId,attachmentVersion:1,keyEpoch:1},c.signal);
+ assert.deepEqual([...files.get(`attachment-${itemId}-${attachmentId}-v1.bin`)!],[7,0,255]);assert.deepEqual([...input],[0,0,0]);
 });
