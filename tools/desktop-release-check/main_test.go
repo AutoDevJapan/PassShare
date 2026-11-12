@@ -122,6 +122,28 @@ func TestSourceVersionKeyAndSHA(t *testing.T) {
 	if s, err := inspectSource(root, sha); err != nil || s.TauriVersion != "0.1.0" {
 		t.Fatalf("clean source must pass: %v", err)
 	}
+	overlay := filepath.Join(root, "apps/desktop/src-tauri/tauri.windows-export.conf.json")
+	write(t, overlay, []byte(`{"bundle":{"externalBin":["binaries/passshare-export-publish"]}}`))
+	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "export publisher overlay"}} {
+		if _, e := command(root, nil, "git", args...); e != nil {
+			t.Fatal(e)
+		}
+	}
+	updated, e := command(root, nil, "git", "rev-parse", "HEAD")
+	if e != nil {
+		t.Fatal(e)
+	}
+	sha = strings.TrimSpace(string(updated))
+	if _, e = inspectSource(root, sha); e != nil {
+		t.Fatalf("exact publisher overlay rejected: %v", e)
+	}
+	write(t, overlay, []byte(`{"bundle":{"externalBin":["binaries/passshare-export-publish"],"createUpdaterArtifacts":true}}`))
+	if _, e = inspectSource(root, sha); e == nil {
+		t.Fatal("modified publisher overlay accepted")
+	}
+	if _, e = command(root, nil, "git", "checkout", "--", overlay); e != nil {
+		t.Fatal(e)
+	}
 	if _, err = inspectSource(root, strings.Repeat("b", 40)); err == nil {
 		t.Fatal("wrong checkout SHA accepted")
 	}
