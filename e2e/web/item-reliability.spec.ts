@@ -132,6 +132,15 @@ test('older backend metadata falls back without losing search or copy actions',a
  await page.route(`**${box.path}`,async route=>{if(route.request().method()!=='GET')return route.continue();const response=await route.fetch();const rows=await response.json();for(const row of rows){delete row.listMetadataVersion;delete row.username;delete row.hasPassword;delete row.favorite;}await route.fulfill({response,json:rows});});
  await page.goto(box.url);await expect(page.getByText('legacy-user',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:/Copy password|パスワードをコピー/})).toBeVisible();expect(created.id).toBeTruthy();
 });
+test('a late earlier copy cannot overwrite the last clicked item',async({page})=>{
+ const box=await openBox(page);const items=[];for(const name of ['First copy','Last copy'])items.push(await(await page.request.post(box.path,{headers:box.headers,data:{title:name,category:'LOGIN',fields:[{purpose:'PASSWORD',type:'CONCEALED',value:name}]}})).json());
+ await page.addInitScript(()=>{(window as any).__writes=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{(window as any).__writes.push(text);}}});});
+ let release!:()=>void,arrived!:()=>void;const entered=new Promise<void>(r=>arrived=r),gate=new Promise<void>(r=>release=r);
+ await page.route(`**${box.path}/${items[0].id}`,async route=>{arrived();await gate;await route.fulfill({status:200,json:items[0]});});
+ await page.goto(box.url);await page.locator('li.ps-item-card').filter({hasText:'First copy'}).getByRole('button',{name:/Copy password|パスワードをコピー/}).click();await entered;
+ await page.locator('li.ps-item-card').filter({hasText:'Last copy'}).getByRole('button',{name:/Copy password|パスワードをコピー/}).click();await expect.poll(()=>page.evaluate(()=>(window as any).__writes)).toEqual(['Last copy']);
+ const response=page.waitForResponse(r=>r.url().endsWith(`${box.path}/${items[0].id}`));release();await response;await page.evaluate(()=>new Promise(r=>setTimeout(r,100)));expect(await page.evaluate(()=>(window as any).__writes)).toEqual(['Last copy']);
+});
 
 test("CSV import reports created rows after partial failure and delete errors stay visible", async ({ page }) => {
   const box = await openBox(page);
