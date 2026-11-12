@@ -36,6 +36,14 @@ jobs:
       - name: Verify native service through the real memory API
         run: ./target/release/acceptance
         if: runner.os != 'Windows'
+      - name: Build Windows atomic export publisher
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: cargo build --locked -p op-cli --bin passshare-export-publish -j 2
+      - name: Verify Windows atomic export host file lifecycle
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: node --experimental-transform-types --test --test-timeout=30000 shared/test/commercial-export-file-sink.test.ts
       - name: Verify native service through the real memory API (Windows)
         run: ./target/release/acceptance.exe
         if: runner.os == 'Windows'

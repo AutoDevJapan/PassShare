@@ -669,3 +669,9 @@ dev/inode/birthtimeの同一性を公開前・公開後・清掃前に照合す�
 から取得し、path identity/size/mtime変化を拒否する。任意の非協調processによるpath差替えを
 OSのhandle-relative unlinkなしで完全排除できるとは主張せず、そのWindows native接続は
 独立受入として残す。identity不一致・清掃失敗は成功へ隠さず、foreign entryを消さない。
+
+Windows hostの公開・清掃は`passshare-export-publish`を用い、create-new fileを
+read/write/DELETEかつshare mode0で保持し、同handleへの非上書きrenameで確定する。
+失敗時も同handleへ削除指定し、path上の別entryをunlinkしない。公開後のbytes検証は
+その同handleから行う。Node adapterは子process終端まで排出し、成功code後にもsinkの
+readbackを行う。非Windowsのpath操作実装とWindowsの実handle受入を混同しない。
