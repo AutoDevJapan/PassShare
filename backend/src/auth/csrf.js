@@ -11,7 +11,7 @@ import { parseBearerToken, parseCookies } from "./session.js";
  * @returns {string}
  */
 export function issueCsrfToken(res, appEnv) {
-  const token = generateToken();
+  const token = res.locals.sessionCsrfToken ?? generateToken();
   setCsrfCookie(res, token, appEnv);
   return token;
 }

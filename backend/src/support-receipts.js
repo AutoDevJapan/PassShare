@@ -21,6 +21,11 @@ export async function createSupportReceiptRouter({pool,authStore,operatorIds=(pr
 
  const router=Router();router.use(rateLimit({windowMs:60000,limit:30,standardHeaders:"draft-6",legacyHeaders:false}));router.use(requireSession(authStore));
  router.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
+ router.use((req,res,next)=>{
+  const expected=req.get('X-PassShare-Receipt-Owner');
+  if(expected!==undefined&&expected.toLowerCase()!==req.auth.userId.toLowerCase())return sendAuthError(res,authHttpError(401,'PS024','Receipt account changed'));
+  next();
+ });
  const publicRow=r=>({id:r.id,status:r.status,revision:r.revision??0,history:(r.history??[]).map(({status,at})=>({status,at})),createdAt:r.created_at,request:r.metadata,meaning:'request_received_not_contract_or_payment_confirmation'});
  installSupportOperatorRoutes(router,{pool,operatorIds});
  router.post('/',requireCsrf,async(req,res)=>{

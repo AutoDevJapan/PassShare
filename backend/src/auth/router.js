@@ -1,4 +1,5 @@
 import { Router, urlencoded } from "express";
+import { createHmac } from "node:crypto";
 import { rateLimit } from "express-rate-limit";
 import { generateConnectId } from "../lib/connect.js";
 import { isTokenAuthClient } from "./client.js";
@@ -8,11 +9,11 @@ import { createLoginGuard, resolveClientIp } from "./login-guard.js";
 import { toMobileAuthResponse } from "./mobile-response.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { createInvitationsRouter, createShareRouter } from "./share-router.js";
-import { clearSessionCookie, parseBearerToken, requireSession, setSessionCookie } from "./session.js";
+import { clearSessionCookie, parseBearerToken, parseCookies, requireSession, setSessionCookie } from "./session.js";
 import { parseEmail, parsePassword } from "./validation.js";
 import { nativeMutation } from "../lib/native-mutations.js";
 import { LOGIN_IP_MAX_REQUESTS, LOGIN_IP_WINDOW_MS, AUTH_ROUTE_WINDOW_MS, AUTH_ROUTE_MAX_REQUESTS } from "./rate-limit-constants.js";
-import { CSRF_HEADER } from "./constants.js";
+import { CSRF_HEADER, SESSION_COOKIE } from "./constants.js";
 import { generateToken } from "./tokens.js";
 import { registerLifecycleForms } from "./lifecycle-forms.js";
 
@@ -31,6 +32,15 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   router.use(rateLimit({windowMs:AUTH_ROUTE_WINDOW_MS,limit:AUTH_ROUTE_MAX_REQUESTS,
     standardHeaders:"draft-6",legacyHeaders:false,
     handler:(_req,_res,next)=>next(authHttpError(429,"PS029","Too many requests. Try again later."))}));
+  router.use(async (req, res, next) => {
+    try {
+      const token = parseCookies(req)[SESSION_COOKIE];
+      const session = token ? await authStore.findSessionByToken(token) : null;
+      if (session) res.locals.sessionCsrfToken = createHmac('sha256', token)
+        .update('passshare-session-csrf-v1\0').update(session.id).digest('base64url');
+      next();
+    } catch (error) { next(error); }
+  });
   const sessionGuard = requireSession(authStore);
   const loginGuard = createLoginGuard({ store: loginGuardStore });
   // Cheap per-process protection before session DB lookup; the existing shared
@@ -44,8 +54,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
   const expiredPages = new Map();
 
   router.get("/csrf", (_req, res) => {
-    const csrfToken = issueCsrfToken(res, appEnv);
-    res.json({ csrfToken });
+    res.json({ csrfToken: issueCsrfToken(res, appEnv) });
   });
 
   router.post("/signup", requireCsrf, async (req, res) => {
@@ -80,6 +89,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       setSessionCookie(res, session.sessionToken, appEnv);
+      res.locals.sessionCsrfToken = createHmac('sha256', session.sessionToken).update('passshare-session-csrf-v1\0').update(session.sessionId).digest('base64url');
       const csrfToken = issueCsrfToken(res, appEnv);
       res.status(201).json({
         user: toPublicUser(user),
@@ -121,6 +131,7 @@ export function createAuthRouter({ authStore, connectStore, appEnv = "local", lo
       }
 
       setSessionCookie(res, session.sessionToken, appEnv);
+      res.locals.sessionCsrfToken = createHmac('sha256', session.sessionToken).update('passshare-session-csrf-v1\0').update(session.sessionId).digest('base64url');
       const csrfToken = issueCsrfToken(res, appEnv);
       res.json({
         user: toPublicUser(user),
