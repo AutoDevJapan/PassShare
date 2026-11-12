@@ -15,6 +15,29 @@ struct Destination {
     root: PathBuf,
     directory: File,
     epoch: u64,
+    pending: Option<PendingFlight>,
+}
+struct PendingFlight {
+    child: std::process::Child,
+    writer: std::thread::JoinHandle<std::io::Result<()>>,
+    #[cfg(windows)]
+    tree: export_process::Tree,
+}
+impl PendingFlight {
+    fn reclaim(&mut self) -> bool {
+        #[cfg(windows)]
+        {
+            let _ = self.tree.stop();
+            export_process::cancel_writer(&self.writer);
+        }
+        let _ = self.child.kill();
+        let reaped = matches!(self.child.try_wait(), Ok(Some(_)));
+        #[cfg(windows)]
+        let empty = self.tree.empty();
+        #[cfg(not(windows))]
+        let empty = reaped;
+        reaped && empty && self.writer.is_finished()
+    }
 }
 #[derive(Default)]
 pub struct ExportSessions {
@@ -62,6 +85,7 @@ impl ExportSessions {
                     root,
                     directory,
                     epoch,
+                    pending: None,
                 },
             );
         Ok(token)
@@ -94,11 +118,25 @@ impl ExportSessions {
             Ok(format!("{}:{}", m.dev(), m.ino()))
         }
     }
+    pub fn recover(&self, token: &str) -> Result<bool, String> {
+        let mut sessions = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
+        let d = sessions.get_mut(token).ok_or("EXPORT_SESSION")?;
+        if let Some(f) = d.pending.as_mut() {
+            if !f.reclaim() {
+                return Ok(false);
+            }
+        }
+        if let Some(f) = d.pending.take() {
+            let _ = f.writer.join();
+        }
+        Ok(true)
+    }
     pub fn close(&self, token: &str) -> Result<(), String> {
-        self.destinations
-            .lock()
-            .map_err(|_| "EXPORT_SESSION")?
-            .remove(token);
+        let mut sessions = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
+        if sessions.get(token).is_some_and(|d| d.pending.is_some()) {
+            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+        }
+        sessions.remove(token);
         Ok(())
     }
     pub fn read(&self, token: &str, name_: &str, epoch: u64) -> Result<Option<Vec<u8>>, String> {
@@ -160,11 +198,14 @@ impl ExportSessions {
         if !name(name_) || bytes.len() > MAX {
             return Err("EXPORT_INPUT".into());
         }
-        let sessions = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
+        let mut sessions = self.destinations.lock().map_err(|_| "EXPORT_SESSION")?;
         let d = sessions
-            .get(token)
+            .get_mut(token)
             .filter(|d| d.epoch == epoch)
             .ok_or("EXPORT_SESSION")?;
+        if d.pending.is_some() {
+            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+        }
         if !current() {
             return Err("EXPORT_SESSION".into());
         }
@@ -195,6 +236,9 @@ impl ExportSessions {
                 return Err("EXPORT_TREE".into());
             }
         };
+        if d.pending.is_some() {
+            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
+        }
         if !current() {
             #[cfg(windows)]
             let _ = tree.stop();
@@ -253,6 +297,12 @@ impl ExportSessions {
         #[cfg(not(windows))]
         let tree_empty = reaped;
         if !reaped || !writer.is_finished() || !tree_empty {
+            d.pending = Some(PendingFlight {
+                child,
+                writer,
+                #[cfg(windows)]
+                tree,
+            });
             return Err("EXPORT_DRAIN_UNCONFIRMED".into());
         }
         let write_ok = matches!(writer.join(), Ok(Ok(())));
@@ -270,6 +320,9 @@ impl ExportSessions {
         }
         if !status.success() {
             return Err("EXPORT_PUBLISH".into());
+        }
+        if d.pending.is_some() {
+            return Err("EXPORT_DRAIN_UNCONFIRMED".into());
         }
         if !current() {
             return Err("EXPORT_COMMITTED_SESSION_EXPIRED".into());

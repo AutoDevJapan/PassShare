@@ -982,6 +982,18 @@ async fn commercial_export_identity<R: tauri::Runtime>(
     .map_err(|_| "EXPORT_SESSION".to_string())?
 }
 #[tauri::command]
+async fn commercial_export_recover<R: tauri::Runtime>(
+    session_id: String,
+    app: tauri::AppHandle<R>,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<commercial_export::ExportSessions>()
+            .recover(&session_id)
+    })
+    .await
+    .map_err(|_| "EXPORT_SESSION".to_string())?
+}
+#[tauri::command]
 async fn commercial_export_close<R: tauri::Runtime>(
     session_id: String,
     app: tauri::AppHandle<R>,
@@ -1095,6 +1107,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commercial_export_open,
             commercial_export_identity,
+            commercial_export_recover,
             commercial_export_close,
             commercial_export_read,
             commercial_export_publish,
@@ -2202,6 +2215,7 @@ mod export_ipc_tests {
             .invoke_handler(tauri::generate_handler![
                 commercial_export_open,
                 commercial_export_identity,
+                commercial_export_recover,
                 commercial_export_close,
                 commercial_export_read,
                 commercial_export_publish
