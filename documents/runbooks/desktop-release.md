@@ -37,12 +37,12 @@ cargo tauri build
 
 `desktop-build.yml`:
 
-- `smoke`: `cargo test -p passshare-desktop smoke_`
-- `build`: macOS / Ubuntu / Windows で `tauri-action` 実行、インストーラ artifact アップロード
+- `smoke`: dependency scope判定、候補検査Go・Desktop型/unit、Rust smoke/native lock検査。影響外は重い検査を実行しない。
+- `build`: Windowsのみ。release publisher準備後、固定Windows configでTauri CLIを実行し、未署名MSI/NSISをartifactへ保存する。観測したbundler HTTP 504だけ最大3回の有限再試行対象とする。
 
-Cargoのworkspace全体の出力先を使うため、成果物はリポジトリ直下の `target/release/bundle/`、macOS arm64は `target/aarch64-apple-darwin/release/bundle/` に生成される。`apps/desktop/src-tauri/target/` を探すと生成に成功しても成果物を保存できない。成果物が0件ならCIを失敗させ、3OSの成果物を7日間保存する。
+Cargoのworkspace全体の出力先を使うため、成果物はリポジトリ直下の `target/release/bundle/`、現在の通常workflowはWindowsだけを実行する。`apps/desktop/src-tauri/target/` を探すと生成に成功しても成果物を保存できない。成果物が0件ならCIを失敗させ、Windows成果物を7日間保存する。
 
-検証担当は、対象CIの実行番号とソースSHAを固定し、3OSの成果物が存在することと、取得したファイルのバイト数・SHA256を照合する。CIの成果物保存は一般公開や署名の証明ではない。対応OSでの署名・導入・起動・更新・削除を確認するまで、販売のM7を完了としない。
+検証担当は、対象CIの実行番号とソースSHAを固定し、同runのWindows成果物が存在することと、取得したファイルのバイト数・SHA256を照合する。CIの成果物保存は一般公開や署名の証明ではない。対応OSでの署名・導入・起動・更新・削除を確認するまで、販売のM7を完了としない。
 
 ## M7-Aの手動署名候補工程（準備コード、実署名は未実施）
 
@@ -52,7 +52,7 @@ Cargoのworkspace全体の出力先を使うため、成果物はリポジトリ
 
 非公開の `AutoDevJapan/PassShare` の `refs/heads/main` で手動起動する。入力 `source_sha` は起動時mainの40桁SHAそのもの。workflow SHA、checkout SHAも同じでなければ失敗する。古いmainコミットを入力して動かす仕様ではない。mainが進んだ場合は、その時点のソースとworkflowを再レビューしてから起動する。fork、PR、別ブランチ、公開リポジトリには署名秘密を渡さない。
 
-通常の `desktop-build.yml` は引き続き3OSの無署名インストーラを作る。新しいGo検査の回帰テストだけを通常CIへ接続し、署名秘密不足を通常CIの失敗理由にしない。両workflowのcontents権限はreadだけ。
+通常の `desktop-build.yml` はWindowsの未署名インストーラだけを作る。MacはWindows完成後、Linux利用者版は具体要求時という順序を維持する。新しいGo検査の回帰テストだけを通常CIへ接続し、署名秘密不足を通常CIの失敗理由にしない。両workflowのcontents権限はreadだけ。
 
 ### 既存環境の必要条件
 
