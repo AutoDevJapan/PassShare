@@ -1,4 +1,4 @@
-import {readFile,open,link,unlink} from 'node:fs/promises';
+import {readFile,open,link,unlink,lstat} from 'node:fs/promises';
 import {resolve,join,basename} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
@@ -7,7 +7,7 @@ export function createAtomicExportStore(root){
  root=resolve(root);
  const path=name=>{if(typeof name!=='string'||basename(name)!==name||!/^((item|attachment)-[a-z0-9-]+\.(json|bin)|attachment-[a-z0-9-]+\.name\.json)$/.test(name))throw new Error('Invalid export filename');return join(root,name);};
  return {
-  read:async name=>{try{return new Uint8Array(await readFile(path(name)));}catch(error){if(error.code==='ENOENT')return null;throw error;}},
+  read:async name=>{try{const p=path(name);const info=await lstat(p);if(!info.isFile()||info.isSymbolicLink())throw new Error('Export output must be a regular file');return new Uint8Array(await readFile(p));}catch(error){if(error.code==='ENOENT')return null;throw error;}},
   publishNew:async(name,bytes,signal)=>{
    const out=path(name),temp=join(root,'.passshare-export-'+randomUUID()+'.tmp');let file;
    try{
