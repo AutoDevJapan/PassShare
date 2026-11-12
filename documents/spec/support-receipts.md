@@ -84,3 +84,11 @@ Web receipt factories bind an expected authenticated owner ID. X-PassShare-Recei
 Authenticated CSRF issuance is stable per live session, derived with a domain-separated HMAC using the existing opaque session credential. It exposes neither that credential nor the session ID and is consistent across router instances. Unauthenticated CSRF issuance remains random; cookie/header equality and session validation are unchanged. Concurrent authenticated receipt requests therefore do not rotate each other's CSRF cookie.
 
 A Web receipt factory also requires a current-session predicate and exposes dispose. Callers dispose on logout/account-lifetime change. Its cancellation remains active through response body completion, so a disposed factory cannot publish a late receipt or start another request. The expected-owner server precondition and session lifetime serve different boundaries.
+
+AuthSessionProvider exposes supportClient for the confirmed account. Logout,
+login and signup invalidate that client before awaiting authentication I/O;
+account changes, confirmed authorization rejection and Provider unmount also
+dispose it. A same-account metadata refresh preserves the current client.
+Controlled React Provider tests execute the real receipt adapter with synthetic
+HTTP responses. They do not prove browser cookies, PostgreSQL persistence or a
+visible support operation. The visible entry still requires its scoped UI answer.

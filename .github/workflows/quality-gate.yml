@@ -210,6 +210,7 @@ jobs:
         run: |
           pnpm --dir apps/mobile install --frozen-lockfile --ignore-scripts
           node --test --test-timeout=15000 frontend/tests/cross-client-cloud.test.mjs
+          node --test --test-timeout=15000 frontend/tests/support-auth-provider.test.mjs
       - name: Build frontend
         run: pnpm --dir frontend run build
       - name: Verify pinned Playwright browser and dependency image

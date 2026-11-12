@@ -10,6 +10,7 @@ import {
 } from "react";
 import { ConnectClient } from "@passshare/connect";
 import { lockCloudUi } from "../lib/cloud-worker";
+import { createWebSupportReceiptApi } from "../lib/support-receipts-api";
 import {
   authFetch,
   fetchCurrentUser,
@@ -27,6 +28,7 @@ type AuthSessionContextValue = {
   loading: boolean;
   connectClient: ConnectClient | null;
   connectLoading: boolean;
+  supportClient: ReturnType<typeof createWebSupportReceiptApi> | null;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
   logout: (fromLocationKey?: string) => Promise<void>;
@@ -47,14 +49,31 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const mounted = useRef(true);
   const currentAccount = useRef<string | null>(null);
   const currentCredential = useRef<string | null>(null);
+  const [supportClient, setSupportClient] = useState<ReturnType<typeof createWebSupportReceiptApi> | null>(null);
+  const supportRef = useRef<ReturnType<typeof createWebSupportReceiptApi> | null>(null);
+  const supportGeneration = useRef(0);
+  const clearSupport = useCallback(() => {
+    ++supportGeneration.current;
+    supportRef.current?.dispose();
+    supportRef.current = null;
+    setSupportClient(null);
+  }, []);
+  const bindSupport = useCallback((id: string) => {
+    if (supportRef.current) return;
+    const epoch = supportGeneration.current;
+    const client = createWebSupportReceiptApi(id, () => mounted.current && currentAccount.current === id && supportGeneration.current === epoch);
+    supportRef.current = client;
+    setSupportClient(client);
+  }, []);
 
   const invalidate = useCallback(() => {
     const token = ++generation.current;
+    clearSupport();
     lockCloudUi();
     currentCredential.current = null;
     setConnectClient(null);
     return token;
-  }, []);
+  }, [clearSupport]);
 
   const syncSession = useCallback(async (token: number): Promise<ConnectClient | null> => {
     const active = () => mounted.current && generation.current === token;
@@ -63,6 +82,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     // Compare identity before publishing any state or acquiring new credentials.
     // A valid same-account refresh keeps the opened worker and its draft alive.
     if (!currentUser || currentAccount.current !== currentUser.id) {
+      clearSupport();
       lockCloudUi();
       currentCredential.current = null;
       setConnectClient(null);
@@ -71,6 +91,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     setLogoutLocationKey(null);
     setUser(currentUser);
     if (!currentUser) return null;
+    bindSupport(currentUser.id);
     // fetchConnectToken's error does not expose HTTP status. Inspect the real
     // response here so a confirmed unauthorized result cannot retain secrets.
     const response = await authFetch("/api/auth/connect-token");
@@ -79,6 +100,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       lockCloudUi();
       currentCredential.current = null;
       currentAccount.current = null;
+      clearSupport();
       setConnectClient(null);
       setUser(null);
       return null;
@@ -93,7 +115,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     const client = new ConnectClient({ host: getApiBaseUrl(), token: credentials.accessToken });
     setConnectClient(client);
     return client;
-  }, []);
+  }, [clearSupport, bindSupport]);
 
   const refreshConnect = useCallback(async () => {
     const token = ++generation.current;
@@ -134,7 +156,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    return () => { mounted.current = false; ++generation.current; currentCredential.current = null; lockCloudUi(); };
+    return () => { mounted.current = false; ++generation.current; ++supportGeneration.current; supportRef.current?.dispose(); supportRef.current = null; currentCredential.current = null; lockCloudUi(); };
   }, [refresh]);
 
   const login = useCallback(
@@ -197,6 +219,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       loading,
       connectClient,
       connectLoading,
+      supportClient,
       logoutLocationKey,
       login,
       signup,
@@ -204,7 +227,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       refresh,
       refreshConnect,
     }),
-    [user, loading, connectClient, connectLoading, logoutLocationKey, login, signup, logout, refresh, refreshConnect],
+    [user, loading, connectClient, connectLoading, supportClient, logoutLocationKey, login, signup, logout, refresh, refreshConnect],
   );
 
   return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;
