@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { rateLimit } from "express-rate-limit";
-import { randomUUID, createHash } from "node:crypto";
-import { requireSession } from "./auth/session.js";
+import { randomUUID, createHash, createHmac } from "node:crypto";
+import { requireSession, parseCookies } from "./auth/session.js";
+import { SESSION_COOKIE } from './auth/constants.js';
 import { requireCsrf } from "./auth/csrf.js";
 import { nativeMutation } from "./lib/native-mutations.js";
 import { authHttpError, sendAuthError } from "./auth/errors.js";
@@ -24,6 +25,12 @@ export async function createSupportReceiptRouter({pool,authStore,operatorIds=(pr
  router.use((req,res,next)=>{
   const expected=req.get('X-PassShare-Receipt-Owner');
   if(expected!==undefined&&expected.toLowerCase()!==req.auth.userId.toLowerCase())return sendAuthError(res,authHttpError(401,'PS024','Receipt account changed'));
+  const expectedSession=req.get('X-PassShare-Receipt-Session');
+  if(expectedSession!==undefined){
+   const cookie=parseCookies(req)[SESSION_COOKIE];
+   const actual=cookie?createHmac('sha256',cookie).update('passshare-session-csrf-v1\0').update(req.auth.sessionId).digest('base64url'):null;
+   if(expectedSession!==actual)return sendAuthError(res,authHttpError(401,'PS024','Receipt session changed'));
+  }
   next();
  });
  const publicRow=r=>({id:r.id,status:r.status,revision:r.revision??0,history:(r.history??[]).map(({status,at})=>({status,at})),createdAt:r.created_at,request:r.metadata,meaning:'request_received_not_contract_or_payment_confirmation'});

@@ -68,7 +68,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       () => mounted.current && currentAccount.current === id && supportGeneration.current === epoch,
       () => {
         if (mounted.current && currentAccount.current === id && supportGeneration.current === epoch) clearSupport();
-      });
+      }, receiptSession.current ?? undefined);
     supportRef.current = client;
     setSupportClient(client);
   }, [clearSupport]);

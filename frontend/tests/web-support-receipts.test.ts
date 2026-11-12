@@ -85,7 +85,20 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const nextSession=await authStore.createSession(owner.id,owner.password_hash);
   const nextToken=await fetch(base+'/api/auth/connect-token',{headers:{Cookie:'passshare_session='+encodeURIComponent(nextSession.sessionToken)}});
   assert.equal(nextToken.status,200);
-  assert.notEqual((await nextToken.json()).sessionBinding,sameSessionTokens[0].sessionBinding);
+  const nextBinding=(await nextToken.json()).sessionBinding;
+  assert.notEqual(nextBinding,sameSessionTokens[0].sessionBinding);
+  const staleReceipt=await fetch(base+'/api/support-receipts/'+row.id,{headers:{
+   Cookie:'passshare_session='+encodeURIComponent(nextSession.sessionToken),
+   'X-PassShare-Receipt-Owner':owner.id,'X-PassShare-Receipt-Session':sameSessionTokens[0].sessionBinding}});
+  assert.equal(staleReceipt.status,401,'old receipt session cannot follow another same-owner cookie');
+  const switchedRequest={...input,requestId:'88888888-8888-4888-8888-888888888888'};
+  const switchedHeaders={Cookie:'passshare_session='+encodeURIComponent(nextSession.sessionToken)+'; passshare_csrf='+nextBinding,
+   'X-CSRF-Token':nextBinding,'content-type':'application/json','X-PassShare-Receipt-Owner':owner.id,
+   'X-PassShare-Receipt-Session':sameSessionTokens[0].sessionBinding};
+  const stalePost=await fetch(base+'/api/support-receipts',{method:'POST',headers:switchedHeaders,body:JSON.stringify(switchedRequest)});
+  assert.equal(stalePost.status,401);
+  const currentPost=await fetch(base+'/api/support-receipts',{method:'POST',headers:{...switchedHeaders,'X-PassShare-Receipt-Session':nextBinding},body:JSON.stringify(switchedRequest)});
+  assert.equal(currentPost.status,201);
   const tokens=await Promise.all([fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}}),fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}})]);
   const t1=(await tokens[0].json()).csrfToken,t2=(await tokens[1].json()).csrfToken;
   assert.equal(t1,t2);

@@ -3,7 +3,7 @@ import {authFetch} from './auth-api';
 
 // Web cookies and CSRF stay in the existing auth transport. No session token
 // is projected into the shared receipt client or a native bearer connection.
-export function createWebSupportReceiptApi(ownerId: string, isCurrent: () => boolean, onUnauthorized: () => void = () => {}) {
+export function createWebSupportReceiptApi(ownerId: string, isCurrent: () => boolean, onUnauthorized: () => void = () => {}, sessionBinding?: string) {
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(ownerId)) throw new Error('Invalid receipt owner');
   let alive = true;
   const active = new Set<AbortController>();
@@ -19,6 +19,7 @@ export function createWebSupportReceiptApi(ownerId: string, isCurrent: () => boo
     // This is an equality precondition, never an authorization claim. The
     // server compares it with the user authenticated by the actual cookie.
     headers.set('X-PassShare-Receipt-Owner', ownerId.toLowerCase());
+    if (sessionBinding) headers.set('X-PassShare-Receipt-Session', sessionBinding);
     try {
       const response = await authFetch(path, {...init, headers, signal: controller.signal});
       if (!alive || !isCurrent()) { await response.body?.cancel(); throw new Error('Inactive receipt session'); }

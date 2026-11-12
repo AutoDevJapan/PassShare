@@ -75,6 +75,7 @@ test('Provider exposes owner-bound receipts and invalidates them before logout r
     const client=h.current.supportClient;
     await client.create(h.request,new AbortController().signal);
     assert.equal(h.requests[0].init.headers.get('X-PassShare-Receipt-Owner'),ownerA);
+    assert.equal(h.requests[0].init.headers.get('X-PassShare-Receipt-Session'),'synthetic-session');
     let logout;
     renderer.act(()=>{logout=h.current.logout();});
     await assert.rejects(client.create(h.request,new AbortController().signal));
