@@ -157,13 +157,30 @@ impl ExportSessions {
             let _ = child.wait();
             return Err("EXPORT_SESSION".into());
         }
-        let write = child
-            .stdin
-            .take()
-            .ok_or("EXPORT_PUBLISH")?
-            .write_all(&bytes);
-        let status = child.wait().map_err(|_| "EXPORT_PUBLISH")?;
-        if write.is_err() {
+        let mut stdin = child.stdin.take().ok_or("EXPORT_PUBLISH")?;
+        let payload = Zeroizing::new(bytes.to_vec());
+        let writer = std::thread::spawn(move || stdin.write_all(&payload));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = writer.join();
+                    return Err("EXPORT_PUBLISH".into());
+                }
+            }
+            if std::time::Instant::now() >= deadline || !current() {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = writer.join();
+                return Err("EXPORT_INTERRUPTED_CHECK_OUTPUT".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        if !matches!(writer.join(), Ok(Ok(()))) {
             return Err("EXPORT_PUBLISH".into());
         }
         if status.code() == Some(17) {
@@ -253,22 +270,18 @@ mod publisher_tests {
             Err("EXPORT_SESSION".into())
         );
         assert!(!root.join("item-race-v1.json").exists());
-        let checks = std::cell::Cell::new(0);
-        assert_eq!(
-            sessions.publish_checked(
-                &token,
-                "item-committed-v1.json",
-                vec![1],
-                9,
-                Path::new(&exe),
-                || {
-                    let n = checks.get();
-                    checks.set(n + 1);
-                    n < 2
-                }
-            ),
-            Err("EXPORT_COMMITTED_SESSION_EXPIRED".into())
+        let result = sessions.publish_checked(
+            &token,
+            "item-committed-v1.json",
+            vec![1],
+            9,
+            Path::new(&exe),
+            || !root.join("item-committed-v1.json").exists(),
         );
+        assert!(matches!(
+            result.as_ref().map_err(String::as_str),
+            Err("EXPORT_COMMITTED_SESSION_EXPIRED" | "EXPORT_INTERRUPTED_CHECK_OUTPUT")
+        ));
         assert_eq!(
             std::fs::read(root.join("item-committed-v1.json")).unwrap(),
             vec![1]
