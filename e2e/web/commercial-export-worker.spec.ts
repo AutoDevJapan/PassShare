@@ -6,7 +6,7 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
  await page.goto('/cloud-crypto/boot.mjs');
  const result=await page.evaluate(async()=>{
   const {CloudWorker,CloudWorkerError}=await import('/src/lib/cloud-worker.ts');
-  const {createCloudApi,consumeCommercialBox}=await import('/src/lib/cloud-api.ts');
+  const {createCloudApi,consumeCommercialBox,createVerifiedExportSink}=await import('/src/lib/cloud-api.ts');
   const boxId='a'.repeat(26),itemId='b'.repeat(26),ownerAccountId='11111111-1111-4111-8111-111111111111',contractId='22222222-2222-4222-8222-222222222222';
   const worker=new CloudWorker();
   try{
@@ -37,6 +37,16 @@ test('shared commercial export client passes nonempty ciphertext to the actual w
    const bulkApi=createCloudApi(async path=>Response.json({format:'passshare-encrypted-export-v1',receiptId:'33333333-3333-4333-8333-333333333333',boxId,keyEpoch:1,snapshotRevision:2,ciphertextOnly:true,restoresIdentityMembershipOrKeys:false,data:path.includes('/attachments/')?JSON.parse(attachment):path.includes('attachment-snapshot')?JSON.parse(parentEnvelope):{envelopes:[JSON.parse(parentEnvelope)],nextCursor:null,attachmentsIncluded:false}}));
    await consumeCommercialBox(bulkApi,worker,contractId,boxId,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,async text=>{if(JSON.parse(text).id!==itemId)throw new Error('item mismatch');consumedItems++;},async value=>{if(value.name!=='添付.bin'||!value.bytes.every((b,i)=>b===originalBytes[i])||value.bytes.length!==originalBytes.length)throw new Error('attachment mismatch');consumedAttachments++;});
    if(consumedItems!==1||consumedAttachments!==1||worker.isClosed)throw new Error('consumer incomplete');
+   const storage=await navigator.storage.getDirectory();
+   const directory=await storage.getDirectoryHandle('contract-export-worker-fixture',{create:true});
+   try{
+    const sink=createVerifiedExportSink(directory);
+    await consumeCommercialBox(bulkApi,worker,contractId,boxId,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,sink.item,sink.attachment);
+    const savedItem=JSON.parse(await (await (await directory.getFileHandle(`item-${itemId}-v1.json`)).getFile()).text());
+    const savedBytes=new Uint8Array(await (await (await directory.getFileHandle(`attachment-${itemId}-${attachmentContext.attachmentId}-v1.bin`)).getFile()).arrayBuffer());
+    if(savedItem.id!==itemId||savedBytes.length!==originalBytes.length||!savedBytes.every((b,i)=>b===originalBytes[i]))throw new Error('persistent output mismatch');
+    await consumeCommercialBox(bulkApi,worker,contractId,boxId,{keyEpoch:1,snapshotRevision:2},new AbortController().signal,sink.item,sink.attachment);
+   }finally{await storage.removeEntry('contract-export-worker-fixture',{recursive:true});}
    const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
    return {matches:JSON.stringify(canonical(decrypted))===JSON.stringify(canonical(plain)),afterMatches:JSON.stringify(canonical(after))===JSON.stringify(canonical(plain)),attachmentMatches,items:page.envelopes.length,wrongContextRejected,liveBefore,liveAfter};
   }finally{worker.dispose();await worker.closed;}

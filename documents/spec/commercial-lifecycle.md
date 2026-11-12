@@ -648,3 +648,11 @@ worker idleで中断しても権限・鍵を復活させず、通常再解除後
 取消しは`signal.reason`（通常`AbortError`）で伝播し、snapshot不一致・並行再開の409と
 区別する。fetch中の取消しも同じ理由へ正規化する。callbackが取消しを確定する場合は
 成功returnせず同取消理由をrejectし、未保存分を成功checkpointへ含めない。
+
+#### 出力先への保存と読み返し
+`createVerifiedExportSink`は呼出元が選択済みのdirectory handleを使い、項目は安定ID/versionの
+JSON、添付はitem/attachment ID/versionのbinaryと元ファイル名metadataへ保存する。
+入力名をpathに使わない。同名既存出力は全bytes一致の場合だけ成功として再利用し、
+違う内容は上書きせず拒否する。write/close後に同handleから全bytesを読み返してから成功を返す。
+取消し・close失敗は成功にせず、writer abortとconsumerの排出契約を保つ。選択UI・権限取得の
+画面操作はこのmoduleに含めず、実browser OPFSの受入と利用者選択directoryの受入を区別する。
