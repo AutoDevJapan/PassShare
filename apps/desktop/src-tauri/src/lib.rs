@@ -21,6 +21,7 @@ use zeroize::Zeroizing;
 #[path = "../../../../shared/native-lock.rs"]
 mod native_lock;
 use native_lock::NativeLock;
+mod commercial_export;
 
 struct AppState {
     data: Mutex<BoxSession>,
@@ -944,10 +945,66 @@ fn native_session_status(state: State<'_, AppState>) -> Result<NativeStatus, Str
     state.status()
 }
 
+#[tauri::command]
+fn commercial_export_open(
+    directory: String,
+    state: State<'_, AppState>,
+    exports: State<'_, commercial_export::ExportSessions>,
+) -> Result<String, String> {
+    if !state.foreground.load(Ordering::SeqCst) {
+        return Err("EXPORT_FOREGROUND".into());
+    }
+    exports.open(
+        PathBuf::from(directory),
+        state.cancellation.load(Ordering::SeqCst),
+    )
+}
+#[tauri::command]
+fn commercial_export_close(
+    session_id: String,
+    exports: State<'_, commercial_export::ExportSessions>,
+) -> Result<(), String> {
+    exports.close(&session_id)
+}
+#[tauri::command]
+async fn commercial_export_read(
+    session_id: String,
+    name: String,
+    state: State<'_, AppState>,
+    exports: State<'_, commercial_export::ExportSessions>,
+) -> Result<Option<Vec<u8>>, String> {
+    exports.read(
+        &session_id,
+        &name,
+        state.cancellation.load(Ordering::SeqCst),
+    )
+}
+#[tauri::command]
+async fn commercial_export_publish(
+    session_id: String,
+    name: String,
+    bytes: Vec<u8>,
+    state: State<'_, AppState>,
+    exports: State<'_, commercial_export::ExportSessions>,
+) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|_| "EXPORT_PUBLISHER")?;
+    let publisher = executable
+        .parent()
+        .ok_or("EXPORT_PUBLISHER")?
+        .join("passshare-export-publish.exe");
+    exports.publish(
+        &session_id,
+        &name,
+        bytes,
+        state.cancellation.load(Ordering::SeqCst),
+        &publisher,
+    )
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_biometry::init())
+        .manage(commercial_export::ExportSessions::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             data: Mutex::new(BoxSession::default()),
@@ -985,6 +1042,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commercial_export_open,
+            commercial_export_close,
+            commercial_export_read,
+            commercial_export_publish,
             get_state,
             create_password_box,
             open_password_box,
