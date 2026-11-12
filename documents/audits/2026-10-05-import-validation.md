@@ -9,7 +9,7 @@
 公式階層とDocument添付の部分対応、[PR771](https://github.com/AutoDevJapan/PassShare/pull/771)と
 [PR772](https://github.com/AutoDevJapan/PassShare/pull/772)は一覧metadata・詳細取得・秘匿notesコピーの整合を扱う。
 
-合成ZIPを正式認証HTTP・native・隔離PostgreSQLへ通し、添付の名前とbytes、同key再送、
+実装側の受入では、合成ZIPを正式認証HTTP・native・隔離PostgreSQLへ通し、添付の名前とbytes、同key再送、
 他actor拒否、保存失敗rollback、変更削除行の部分結果を確認した。browser sessionまたは
 Desktop process終了後の試行寿命、全形式対応、全client GUI、署名・販売の受入は別に残る。
 現在の動作と限界は[同期・移行仕様](../spec/sync-migration.md)を参照する。
