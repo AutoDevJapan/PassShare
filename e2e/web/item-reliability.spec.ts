@@ -119,6 +119,14 @@ test('list does not prefetch details and an edit response after navigation is di
  await page.getByRole('button',{name:/^Edit$|^編集$/}).click();await expect.poll(()=>details).toBe(1);
  await page.goto('/app/vaults');release();await expect(page).toHaveURL(/\/app\/vaults$/);await expect(page.locator('input[value="Lazy record"]')).toHaveCount(0);
 });
+test('delayed copy detail response after navigation publishes no clipboard output',async({page})=>{
+ const box=await openBox(page);const created=await(await page.request.post(box.path,{headers:box.headers,data:{title:'Delayed secret',category:'LOGIN',fields:[{label:'password',purpose:'PASSWORD',type:'CONCEALED',value:'synthetic-secret'}]}})).json();
+ await page.addInitScript(()=>{(window as any).__writes=[];Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{(window as any).__writes.push(text);}}});});
+ let release!:()=>void;let arrived!:()=>void;const entered=new Promise<void>(r=>arrived=r),gate=new Promise<void>(r=>release=r);
+ await page.route(`**${box.path}/${created.id}`,async route=>{arrived();await gate;await route.fulfill({status:200,json:created});});
+ await page.goto(box.url);await page.getByRole('button',{name:/Copy password|パスワードをコピー/}).click();await entered;
+ await page.getByRole('link',{name:/Back|戻る/}).first().click();const response=page.waitForResponse(r=>r.url().endsWith(`${box.path}/${created.id}`));release();await response;await page.evaluate(()=>new Promise(resolve=>setTimeout(resolve,100)));expect(await page.evaluate(()=>(window as any).__writes.length)).toBe(0);
+});
 
 test("CSV import reports created rows after partial failure and delete errors stay visible", async ({ page }) => {
   const box = await openBox(page);
