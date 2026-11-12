@@ -10,6 +10,7 @@ import { import1puxFile } from "@shared/lib/1pux-import";
 import { downloadCsvFile, exportOnepasswordCsv } from "@shared/lib/csv-export";
 import { generatePassword } from "@shared/lib/password-generator";
 import { loadCurrentItem, loadItemDetails, loadItemOverviewPage } from "@shared/lib/item-detail-loading";
+import { copyTextWithAutoClear } from "@shared/ui/clipboard-auto-clear";
 import { connectItemFromApi, connectItemToCreateBody } from "../../lib/connect-items";
 import { parseOnepasswordCsv } from "../../lib/csv-import";
 import { importAttempt, importFingerprint, saveImportAttempt, finishImportAttempt, acquireImportAttempt, releaseImportAttempt, type ImportAttempt } from "../../lib/import-attempt";
@@ -44,7 +45,6 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
   const createOperation = useRef<string | null>(null);
   const csvAttempt = useRef<ImportAttempt | null>(null);
   const loadGeneration = useRef(0);
-  const copyPermit = useRef<{scope:string;generation:number}|null>(null);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"create" | "edit" | null>("create");
   const [formValues, setFormValues] = useState<ItemFormValues>(emptyFormValues());
@@ -340,7 +340,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
     busyRef.current=true;setBusy(true);
     const scope=activeScope.current,generation=loadGeneration.current;
     const ensureExport=async()=>{await ensureCompatibility();if(scope!==activeScope.current||generation!==loadGeneration.current)throw new Error('Inactive export');};
-    try{const details=await loadItemDetails(items,currentDetail,ensureExport);await ensureExport();downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(details.map(connectItemFromApi)));setExportMessage(labels.exportSuccess);}
+    try{const details=await loadItemDetails(items,currentDetail,ensureExport);await ensureExport();if(scope!==activeScope.current||generation!==loadGeneration.current)throw new Error('Inactive export');downloadCsvFile("passshare-export.csv", exportOnepasswordCsv(details.map(connectItemFromApi)));setExportMessage(labels.exportSuccess);}
     catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));}finally{busyRef.current=false;setBusy(false);}
   }
 
@@ -459,8 +459,7 @@ function CompatibilityItemsPage({ ensureCompatibility }: { ensureCompatibility: 
             items={filteredItems}
             labels={labels}
             onEdit={startEdit}
-            assertCopyCurrent={()=>{const permit=copyPermit.current;copyPermit.current=null;if(!permit||permit.scope!==activeScope.current||permit.generation!==loadGeneration.current)throw new Error('Inactive copy');}}
-            resolveCopy={async item=>{const scope=activeScope.current,generation=loadGeneration.current;try{const detail=connectItemFromApi(await currentDetail(item.id));copyPermit.current={scope,generation};return detail.password??detail.body??'';}catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));return '';}}}
+            copyItem={async item=>{const scope=activeScope.current,generation=loadGeneration.current;try{const detail=connectItemFromApi(await currentDetail(item.id));if(scope!==activeScope.current||generation!==loadGeneration.current)return false;await copyTextWithAutoClear(detail.password||detail.body||'');return true;}catch{if(scope===activeScope.current&&generation===loadGeneration.current)setError(t('app.item.loadError'));return false;}}}
             onDelete={(id) => void handleDelete(id)}
           />
           {itemsLoading ? <p role="status">{t("session.loading")}</p> : itemsReady && filteredItems.length === 0 ? <p>{labels.emptyList}</p> : null}

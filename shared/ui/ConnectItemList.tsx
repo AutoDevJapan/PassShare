@@ -8,8 +8,7 @@ type ConnectItemListProps = {
   labels: ItemUiLabels;
   onEdit: (item: ConnectItem) => void;
   onDelete: (id: string) => void;
-  resolveCopy?: (item: ConnectItem) => Promise<string>;
-  assertCopyCurrent?: () => void;
+  copyItem?: (item: ConnectItem) => Promise<boolean>;
 };
 
 function ItemRow({
@@ -17,24 +16,22 @@ function ItemRow({
   labels,
   onEdit,
   onDelete,
-  resolveCopy,
-  assertCopyCurrent,
+  copyItem,
 }: {
   item: ConnectItem;
   labels: ItemUiLabels;
   onEdit: (item: ConnectItem) => void;
   onDelete: (id: string) => void;
-  resolveCopy?: (item: ConnectItem) => Promise<string>;
-  assertCopyCurrent?: () => void;
+  copyItem?: (item: ConnectItem) => Promise<boolean>;
 }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    const secret = resolveCopy ? await resolveCopy(item) : item.password ?? item.body ?? "";
+    if(copyItem){if(await copyItem(item)){setCopied(true);window.setTimeout(()=>setCopied(false),2000);}return;}
+    const secret = item.password ?? item.body ?? "";
     if (!secret) {
       return;
     }
-    assertCopyCurrent?.();
     await copyTextWithAutoClear(secret);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
@@ -114,7 +111,7 @@ function ItemRow({
   );
 }
 
-export function ConnectItemList({ items, labels, onEdit, onDelete, resolveCopy, assertCopyCurrent }: ConnectItemListProps) {
+export function ConnectItemList({ items, labels, onEdit, onDelete, copyItem }: ConnectItemListProps) {
   if (items.length === 0) {
     return <p className="ps-text-muted">{labels.emptyList}</p>;
   }
@@ -122,7 +119,7 @@ export function ConnectItemList({ items, labels, onEdit, onDelete, resolveCopy, 
   return (
     <ul className="ps-item-list">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} labels={labels} onEdit={onEdit} onDelete={onDelete} resolveCopy={resolveCopy} assertCopyCurrent={assertCopyCurrent} />
+        <ItemRow key={item.id} item={item} labels={labels} onEdit={onEdit} onDelete={onDelete} copyItem={copyItem} />
       ))}
     </ul>
   );
