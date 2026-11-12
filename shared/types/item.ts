@@ -18,6 +18,8 @@ export type ConnectItem = {
   password?: string | null;
   body?: string | null;
   notes?: string | null;
+  hasPassword?: boolean;
+  hasBody?: boolean;
   /**
    * Server-monotonic revision (Connect API `Item.version`). Used by sync to
    * pick the newer side of a one-sided edit. Optional so locally-built items

@@ -8,6 +8,7 @@ type ConnectItemListProps = {
   labels: ItemUiLabels;
   onEdit: (item: ConnectItem) => void;
   onDelete: (id: string) => void;
+  resolveCopy?: (item: ConnectItem) => Promise<string>;
 };
 
 function ItemRow({
@@ -15,16 +16,18 @@ function ItemRow({
   labels,
   onEdit,
   onDelete,
+  resolveCopy,
 }: {
   item: ConnectItem;
   labels: ItemUiLabels;
   onEdit: (item: ConnectItem) => void;
   onDelete: (id: string) => void;
+  resolveCopy?: (item: ConnectItem) => Promise<string>;
 }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    const secret = item.password ?? item.body ?? "";
+    const secret = resolveCopy ? await resolveCopy(item) : item.password ?? item.body ?? "";
     if (!secret) {
       return;
     }
@@ -34,10 +37,10 @@ function ItemRow({
   }
 
   const copyLabel = isBodyCategory(item.category)
-    ? item.body
+    ? item.body || item.hasBody
       ? labels.copyBody
       : null
-    : item.password
+    : item.password || item.hasPassword
       ? labels.copyPassword
       : null;
 
@@ -107,7 +110,7 @@ function ItemRow({
   );
 }
 
-export function ConnectItemList({ items, labels, onEdit, onDelete }: ConnectItemListProps) {
+export function ConnectItemList({ items, labels, onEdit, onDelete, resolveCopy }: ConnectItemListProps) {
   if (items.length === 0) {
     return <p className="ps-text-muted">{labels.emptyList}</p>;
   }
@@ -115,7 +118,7 @@ export function ConnectItemList({ items, labels, onEdit, onDelete }: ConnectItem
   return (
     <ul className="ps-item-list">
       {items.map((item) => (
-        <ItemRow key={item.id} item={item} labels={labels} onEdit={onEdit} onDelete={onDelete} />
+        <ItemRow key={item.id} item={item} labels={labels} onEdit={onEdit} onDelete={onDelete} resolveCopy={resolveCopy} />
       ))}
     </ul>
   );

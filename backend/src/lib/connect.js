@@ -31,6 +31,11 @@ export function toItemOverview(item) {
     additionalInformation: item.additionalInformation ?? undefined,
     tags: item.tags ?? [],
     urls: item.urls ?? [],
+      favorite: Boolean(item.favorite),
+      username: item.fields?.find(field=>field.purpose?.toUpperCase()==='USERNAME')?.value ?? '',
+      hasPassword: Boolean(item.fields?.some(field=>field.purpose?.toUpperCase()==='PASSWORD'&&field.value)),
+      hasBody: Boolean(item.fields?.some(field=>['notes','body'].includes(field.label?.toLowerCase())&&field.value)),
+      bodyPreview: (item.fields?.find(field=>field.label?.toLowerCase()==='notes')?.value ?? item.fields?.find(field=>field.label?.toLowerCase()==='body')?.value ?? '').slice(0,80),
   };
 }
 

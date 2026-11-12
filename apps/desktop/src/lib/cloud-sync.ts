@@ -1,4 +1,5 @@
 import { ConnectClient } from "@passshare/connect";
+import { loadItemDetails } from "@shared/lib/item-detail-loading";
 import type { ConnectItem } from "@shared/types/item.js";
 import { formValuesFromItem } from "@shared/types/item.js";
 import { connectItemFromApi, connectItemToCreateBody } from "./connect-items";
@@ -161,9 +162,7 @@ async function loginAndGetClient(config: CloudSyncConfig): Promise<ConnectClient
 
 async function fetchRemoteItems(client: ConnectClient, vaultId: string): Promise<ConnectItem[]> {
   const overviews = await client.listItems(vaultId);
-  const details = await Promise.all(
-    overviews.map((overview) => client.getItem(vaultId, overview.id)),
-  );
+  const details = await loadItemDetails(overviews,(id)=>client.getItem(vaultId,id));
   return details.map(connectItemFromApi);
 }
 
