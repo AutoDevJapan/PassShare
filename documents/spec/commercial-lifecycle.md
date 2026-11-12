@@ -663,3 +663,9 @@ JSON、添付はitem/attachment ID/versionのbinaryと元ファイル名metadata
 非上書き確定後に全bytesを読み返す。取消し前に確定済みなら同内容readbackで照合する。
 この境界は既存Rust CLIのcreate_new+hard_link方式と一致する。browser OPFSだけの
 先行試験は旧候補の履歴であり、現native/host storeの利用者接続完了を意味しない。
+
+原子的storeの所有はcreate-new成功時のopen handleから公開・清掃まで保持し、
+dev/inode/birthtimeの同一性を公開前・公開後・清掃前に照合する。読返しは開いた同handle
+から取得し、path identity/size/mtime変化を拒否する。任意の非協調processによるpath差替えを
+OSのhandle-relative unlinkなしで完全排除できるとは主張せず、そのWindows native接続は
+独立受入として残す。identity不一致・清掃失敗は成功へ隠さず、foreign entryを消さない。

@@ -1,19 +1,40 @@
-import {readFile,open,link,unlink,lstat} from 'node:fs/promises';
+import {open,link,unlink,lstat} from 'node:fs/promises';
 import {resolve,join,basename} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
-// Native host adapter. The root is selected by the caller, never remote input.
+// Caller-selected local directory. Existing entries are never replaced.
 export function createAtomicExportStore(root){
  root=resolve(root);
+ const identity=(a,b)=>a.dev===b.dev&&a.ino===b.ino&&a.birthtimeNs===b.birthtimeNs;
  const path=name=>{if(typeof name!=='string'||basename(name)!==name||!/^((item|attachment)-[a-z0-9-]+\.(json|bin)|attachment-[a-z0-9-]+\.name\.json)$/.test(name))throw new Error('Invalid export filename');return join(root,name);};
+ const stat=p=>lstat(p,{bigint:true});
  return {
-  read:async name=>{try{const p=path(name);const info=await lstat(p);if(!info.isFile()||info.isSymbolicLink())throw new Error('Export output must be a regular file');return new Uint8Array(await readFile(p));}catch(error){if(error.code==='ENOENT')return null;throw error;}},
-  publishNew:async(name,bytes,signal)=>{
-   const out=path(name),temp=join(root,'.passshare-export-'+randomUUID()+'.tmp');let file,created=false;
+  read:async name=>{
+   let file;
    try{
-    if(signal.aborted)throw signal.reason;file=await open(temp,'wx',0o600);created=true;await file.writeFile(bytes);await file.sync();await file.close();file=undefined;
-    if(signal.aborted)throw signal.reason;await link(temp,out);
-   }finally{await file?.close();if(created)await unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});}
+    const p=path(name),before=await stat(p);if(!before.isFile()||before.isSymbolicLink())throw new Error('Export output must be a regular file');
+    file=await open(p,'r');const held=await file.stat({bigint:true});if(!identity(before,held))throw new Error('Export output identity changed');
+    const bytes=new Uint8Array(await file.readFile());const after=await file.stat({bigint:true});
+    if(!identity(held,await stat(p))||held.size!==after.size||held.mtimeNs!==after.mtimeNs){bytes.fill(0);throw new Error('Export output changed during read');}
+    return bytes;
+   }catch(error){if(error.code==='ENOENT')return null;throw error;}finally{await file?.close();}
+  },
+  publishNew:async(name,bytes,signal)=>{
+   const out=path(name),temp=join(root,'.passshare-export-'+randomUUID()+'.tmp');let file,owned;
+   try{
+    if(signal.aborted)throw signal.reason;
+    file=await open(temp,'wx',0o600);owned=await file.stat({bigint:true});
+    await file.writeFile(bytes);await file.sync();
+    if(signal.aborted)throw signal.reason;
+    if(!identity(owned,await stat(temp)))throw new Error('Export temporary identity changed');
+    await link(temp,out);
+    if(!identity(owned,await stat(out)))throw new Error('Export publication identity changed');
+   }finally{
+    // Never remove an entry merely because it still occupies our temporary name.
+    // Keep the created object open through publication and compare identity again.
+    try{if(owned){const current=await stat(temp);if(!identity(owned,current))throw new Error('Export temporary cleanup identity changed');await unlink(temp);}}
+    finally{await file?.close();}
+   }
   },
  };
 }
