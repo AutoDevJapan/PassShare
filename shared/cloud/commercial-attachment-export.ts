@@ -28,8 +28,8 @@ export async function consumeCommercialAttachment(
 // Resume only the same export snapshot after a normal worker re-unlock. No key,
 // membership or authorization is restored by this progress record.
 const activeExports=new WeakSet<CommercialExportProgress>();
-export type CommercialExportProgress={binding:string;items:Set<string>;attachments:Set<string>;after:string|null;completed:boolean};
-export function createCommercialExportProgress():CommercialExportProgress{return {binding:'',items:new Set(),attachments:new Set(),after:null,completed:false};}
+export type CommercialExportProgress={binding:string;items:Set<string>;attachments:Set<string>;completedItems:Set<string>;after:string|null;completed:boolean};
+export function createCommercialExportProgress():CommercialExportProgress{return {binding:'',items:new Set(),attachments:new Set(),completedItems:new Set(),after:null,completed:false};}
 // Pages and attachments share one immutable snapshot; delivery is sequential and backpressured.
 export async function consumeCommercialBox(
  api:Pick<CloudApi,'getCommercialExportPage'|'getCommercialAttachmentItemSnapshot'|'getCommercialEncryptedAttachment'>,
@@ -69,6 +69,7 @@ export async function consumeCommercialBox(
    const context={...envelope.context};
    if(seen.has(context.itemId)||(after!==null&&context.itemId<=after))throw new CloudApiError(502);
    seen.add(context.itemId);
+   if(progress.completedItems.has(context.itemId))continue;
    const plain=await worker.decrypt(JSON.stringify(envelope),context);current();
    const item=JSON.parse(plain);if(!progress.items.has(context.itemId)){await consumeItem(plain,{...context},signal);progress.items.add(context.itemId);current();}
    for(const ref of item.attachments??[]){
@@ -79,6 +80,7 @@ export async function consumeCommercialBox(
      current();
     }
    }
+   progress.completedItems.add(context.itemId);
   }
   if(page.nextCursor!==null&&(page.envelopes.length===0||page.nextCursor!==page.envelopes.at(-1)!.context.itemId||page.nextCursor===after))throw new CloudApiError(502);
   after=page.nextCursor;progress.after=after;if(after===null)progress.completed=true;
