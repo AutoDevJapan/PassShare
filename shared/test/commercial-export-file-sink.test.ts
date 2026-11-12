@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,rm,rename,mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {createVerifiedExportSink,type VerifiedExportStore} from '../cloud/commercial-export-file-sink.ts';
 
@@ -114,4 +114,10 @@ test('native rename publishes exactly the requested path across UTF16 alignment 
   const out=join(root,name),body=new Uint8Array([0,7,255]);
   const code=await new Promise<number|null>((resolve,reject)=>{const c=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[out,String(body.length)],{windowsHide:true,stdio:['pipe','ignore','ignore']});c.on('error',reject);c.on('close',resolve);c.stdin.end(body);});assert.equal(code,0);assert.deepEqual([...await readFile(out)],[...body]);
  }
+}));
+
+test('same path replaced by a different directory cannot reuse completed progress',()=>fixture(async(_store,root)=>{
+ const {saveCommercialExport}=await import('../../scripts/save-commercial-export.ts');const {createCommercialExportProgress}=await import('../cloud/commercial-attachment-export.ts');const progress=createCommercialExportProgress(),api={getCommercialExportPage:async()=>({envelopes:[],nextCursor:null,attachmentsIncluded:false})};
+ const run=()=>saveCommercialExport(root,api as any,{} as any,'contract',context.passwordBoxId,{keyEpoch:1,snapshotRevision:4},new AbortController().signal,progress);
+ await run();const old=root+'-old';await rename(root,old);try{await mkdir(root);await assert.rejects(run());}finally{await rm(old,{recursive:true});}
 }));
