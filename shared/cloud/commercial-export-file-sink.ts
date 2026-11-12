@@ -15,8 +15,9 @@ export function createVerifiedExportSink(store:VerifiedExportStore){
   check(signal);if(active.has(name))throw new Error('Export output is busy');active.add(name);
   const expected=bytes.slice();
   try{
-   const prior=await store.read(name);check(signal);
-   if(prior!==null){try{if(!same(prior,expected))throw new Error('Export output differs');store.verified?.(name,expected);return;}finally{prior.fill(0);}}
+   const prior=await store.read(name);
+   if(prior!==null){try{check(signal);if(!same(prior,expected))throw new Error('Export output differs');store.verified?.(name,expected);return;}finally{prior.fill(0);}}
+   check(signal);
    try{await store.publishNew(name,expected,signal);}catch(error){
     if((error as {code?:string})?.code!=='EEXIST'&&!(signal.aborted&&error===signal.reason))throw error;
     // Another writer may have committed the same deterministic output. Reconcile

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,readFile,writeFile,rm,rename,mkdir} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,rm,rename,mkdir,readdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {createVerifiedExportSink,type VerifiedExportStore} from '../cloud/commercial-export-file-sink.ts';
 
@@ -130,5 +130,10 @@ test('directory changed during API wait is rejected before any output write',()=
 
 test('native rejects a selected directory identity mismatch before creating temporary output',()=>fixture(async(_store,root)=>{
  if(process.platform!=='win32')return;const {spawn}=await import('node:child_process');const {fileURLToPath}=await import('node:url');const out=join(root,'item-'+context.itemId+'-v1.json');
- const code=await new Promise<number|null>((resolve,reject)=>{const p=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[out,'1','0','0'],{windowsHide:true,stdio:['pipe','ignore','ignore']});p.on('error',reject);p.on('close',resolve);p.stdin.end(new Uint8Array([1]));});assert.notEqual(code,0);await assert.rejects(readFile(out),(e:any)=>e.code==='ENOENT');
+ const code=await new Promise<number|null>((resolve,reject)=>{const p=spawn(fileURLToPath(new URL('../../target/debug/passshare-export-publish.exe',import.meta.url)),[out,'1','0','0'],{windowsHide:true,stdio:['pipe','ignore','ignore']});p.on('error',reject);p.on('close',resolve);p.stdin.end(new Uint8Array([1]));});assert.notEqual(code,0);await assert.rejects(readFile(out),(e:any)=>e.code==='ENOENT');assert.equal((await readdir(root)).filter(n=>n.startsWith('.passshare-export-')).length,0);
 }));
+
+test('abort after existing plaintext read still wipes that buffer',async()=>{
+ const c=new AbortController(),prior=new Uint8Array([1,2]);const sink=createVerifiedExportSink({read:async()=>{c.abort();return prior;},publishNew:async()=>{throw new Error('unexpected');}});
+ await assert.rejects(sink.item('{}',context,c.signal));assert.deepEqual([...prior],[0,0]);
+});
