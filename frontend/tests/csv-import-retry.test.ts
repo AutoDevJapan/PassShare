@@ -23,11 +23,13 @@ test('real parser and create-body conversion deliver full multiline values throu
  const c=vm.createContext({connectClient:{createItem:async(_v,payload)=>saved.push(payload)},itemsReady:true,busyRef:{current:false},activeScope:{current:'real-parser-body:box'},vaultId:'box',ensureCompatibility:async()=>{},parseOnepasswordCsv:realParser(),setError:()=>{},setImportMessage:()=>{},setBusy:()=>{},labels:{importSuccess:'{count}'},loadGeneration:{current:0},loadItems:async()=>{},t:()=>'{count}',csvAttempt:{current:null},importAttempt,importFingerprint,saveImportAttempt,finishImportAttempt,acquireImportAttempt,releaseImportAttempt});
  vm.runInContext(stripTypeScriptTypes(tags+conversion+body)+';globalThis.run=handleCsvImport',c);
  const notes='first\r\n"second", third';
- await c.run({text:async()=>exportOnepasswordCsv([{id:'fixture',category:'LOGIN',favorite:false,title:'Synthetic',username:' user ',password:' value ',url:'',notes,tags:[]}])});
+ await c.run({text:async()=>exportOnepasswordCsv([{id:'fixture',category:'LOGIN',favorite:false,title:'Synthetic',username:' user ',password:' value ',url:' https://example.test/path?q=a%20b ',notes,tags:[' first ','second']}])});
  assert.equal(saved.length,1);
  assert.equal(saved[0].fields.find(field=>field.purpose==='PASSWORD').value,' value ');
  assert.equal(saved[0].fields.find(field=>field.purpose==='USERNAME').value,' user ');
  assert.equal(saved[0].fields.find(field=>field.label==='notes').value,notes);
+ assert.equal(saved[0].urls[0].href,'https://example.test/path?q=a%20b');
+ assert.equal(JSON.stringify(saved[0].tags),JSON.stringify(['first','second']));
 });
 
 test('existing exporter roundtrip retains quoted values and intentional duplicate rows',()=>{
