@@ -22,7 +22,11 @@ export function toItemOverview(item) {
   const fields=Array.isArray(item.fields)?item.fields.filter(field=>field&&typeof field==='object'):[];
   const value=(key,name)=>fields.find(field=>typeof field[key]==='string'&&field[key].toLowerCase()===name&&typeof field.value==='string'&&!(typeof field.type==='string'&&field.type.toUpperCase()==='CONCEALED')&&!(typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'))?.value??'';
   const password=fields.some(field=>typeof field.purpose==='string'&&field.purpose.toUpperCase()==='PASSWORD'&&typeof field.value==='string'&&field.value.length>0);
-  const firstBody=name=>{const field=fields.find(field=>typeof field.label==='string'&&field.label.toLowerCase()===name);return typeof field?.value==='string'?field.value:'';};
+  const firstBody=name=>fields.find(field=>typeof field.label==='string'&&field.label.toLowerCase()===name);
+  const notes=firstBody('notes'),body=firstBody('body');
+  const selected=typeof notes?.value==='string'&&notes.value?notes:body;
+  const bodyValue=typeof selected?.value==='string'?selected.value:'';
+  const concealed=typeof selected?.type==='string'&&selected.type.toUpperCase()==='CONCEALED'||typeof selected?.purpose==='string'&&selected.purpose.toUpperCase()==='PASSWORD';
   return {
     id: item.id,
     title: item.title,
@@ -39,8 +43,8 @@ export function toItemOverview(item) {
       listMetadataVersion: 1,
       username: value('purpose','username'),
       hasPassword: password,
-      hasBody: Boolean(firstBody('notes')||firstBody('body')),
-      bodyPreview: (value('label','notes')||value('label','body')).slice(0,81),
+      hasBody: Boolean(bodyValue),
+      bodyPreview: concealed?'':bodyValue.slice(0,81),
   };
 }
 
