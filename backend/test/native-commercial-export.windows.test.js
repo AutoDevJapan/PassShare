@@ -96,6 +96,28 @@ test('contract-window export returns real ciphertext while rechecking current me
    const sinkAfterRestart=createVerifiedExportSink(createAtomicExportStore(output));
    await sinkAfterRestart.attachment({name:'synthetic.bin',bytes:fileBytes.slice()},attachmentContext,new AbortController().signal);
   }finally{await fs.rm(output,{recursive:true});}
+  if(process.env.PASSSHARE_NATIVE_EXPORT_BROWSER==='true'){
+   // Keep this additional real-browser acceptance in its own ordinary API
+   // instance, preserving the production rate limit and the same stored data.
+   server.closeAllConnections();await new Promise(r=>server.close(r));
+   {const restarted=await createApp({pool});server=restarted.app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;}
+   const {workerAuthenticatedNativeExport}=await import('../../scripts/worker-authenticated-native-export.mjs');
+   const browserOutput=await fs.mkdtemp((await import('node:os')).tmpdir()+'/passshare-worker-pg-native-');
+   try{
+    await workerAuthenticatedNativeExport({apiBase:base,token:a.refreshToken,contractId:q.id,
+     owner:{passwordBoxId:boxId,ownerAccountId:a.user.id,keyEpoch:1},bundle:JSON.stringify(bundle),
+     password:'fixture-encryption-password',pin:{keyEpoch:1,snapshotRevision:revision},output:browserOutput});
+    assert.deepEqual([...await fs.readFile(browserOutput+`/attachment-${itemId}-${attachmentId}-v1.bin`)],[...fileBytes]);
+    assert.deepEqual(JSON.parse(await fs.readFile(browserOutput+`/item-${itemId}-v2.json`,'utf8')),updated);
+    for(const [id,expected] of originals){
+     const version=id===itemId?2:1;
+     assert.deepEqual(JSON.parse(await fs.readFile(browserOutput+`/item-${id}-v${version}.json`,'utf8')),id===itemId?updated:expected.plain);
+    }
+    assert.equal((await fs.readdir(browserOutput)).length,14); // twelve items, binary and attachment metadata
+   }finally{await fs.rm(browserOutput,{recursive:true});}
+   server.closeAllConnections();await new Promise(r=>server.close(r));
+   {const restarted=await createApp({pool});server=restarted.app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;}
+  }
   // Actual authenticated HTTP/PG ciphertext -> Core -> native Rust session -> publisher -> OS.
   const {resolve,join}=await import('node:path');const {nativeExportAcceptanceHost}=await import('../../scripts/native-export-acceptance-host.mjs');
   const transform=async(file,replacements={})=>{let text=stripTypeScriptTypes(await fs.readFile(file,'utf8'),{mode:'transform'});for(const [from,to]of Object.entries(replacements))text=text.replaceAll(from,JSON.stringify(to));return 'data:text/javascript;base64,'+Buffer.from(text).toString('base64');};

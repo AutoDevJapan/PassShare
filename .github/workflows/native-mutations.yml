@@ -71,6 +71,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --locked -p passshare-desktop --example export_native_acceptance -j 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir frontend install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir frontend exec playwright install chromium --only-shell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $pg = $env:PGBIN
           if (-not (Test-Path -LiteralPath (Join-Path $pg 'initdb.exe'))) { throw 'Runner PostgreSQL binaries unavailable' }
           $data = Join-Path $env:RUNNER_TEMP 'passshare-native-export-pg'
@@ -83,6 +87,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Owned fixture database failed' }
             $env:DATABASE_URL = 'postgresql://passshare:passshare@127.0.0.1:15431/passshare'
             $env:PASSSHARE_NATIVE_EXPORT_PG = 'true'
+            $env:PASSSHARE_NATIVE_EXPORT_BROWSER = 'true'
             $env:PASSSHARE_MUTATIONS_BIN = Join-Path $env:GITHUB_WORKSPACE 'backend/native/target/release/passshare-mutations.exe'
             node --test --test-timeout=120000 backend/test/native-commercial-export.windows.test.js
             if ($LASTEXITCODE -ne 0) { throw 'Windows authenticated native export acceptance failed' }
