@@ -10,7 +10,7 @@ use crate::error::PassShareError;
 pub fn import_onepassword_csv(vault: &Vault, csv_data: &str) -> Result<Vec<Item>, PassShareError> {
     let mut reader = csv::ReaderBuilder::new()
         .flexible(true)
-        .trim(csv::Trim::All)
+        .trim(csv::Trim::Headers)
         .from_reader(csv_data.as_bytes());
 
     let headers = reader
@@ -41,7 +41,7 @@ pub fn import_onepassword_csv(vault: &Vault, csv_data: &str) -> Result<Vec<Item>
         // empty Password column; erroring here would break the export→import
         // roundtrip and reject otherwise-valid backups. Parity with the TS SSOT
         // `frontend/src/lib/csv-import.ts`, which likewise skips such rows.
-        if password.is_empty() {
+        if password.trim().is_empty() {
             continue;
         }
 
@@ -54,7 +54,7 @@ pub fn import_onepassword_csv(vault: &Vault, csv_data: &str) -> Result<Vec<Item>
             }
         }
         if let Some(idx) = column_map.get("url").or_else(|| column_map.get("website")) {
-            if let Some(url) = record.get(*idx).filter(|v| !v.is_empty()) {
+            if let Some(url) = record.get(*idx).map(str::trim).filter(|v| !v.is_empty()) {
                 item.urls.push(ItemUrl {
                     extensions: Default::default(),
                     label: String::new(),
