@@ -370,8 +370,8 @@ test('session archive retry retains its operation key after uncertainty and rene
     throw Error('unexpected route');
   }});
   const file={arrayBuffer:async()=>new Uint8Array([3,2,1]).buffer};
-  const run=()=>imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic');
-  await assert.rejects(run());fail=false;await run();await run();
+  const run=(origin='https://example.invalid')=>imports.import1puxWithSession(origin,box,file,'synthetic@example.invalid','synthetic');
+  await assert.rejects(run());fail=false;await run('https://EXAMPLE.invalid:443/');await run();
   assert.equal(keys.length,3);assert.equal(keys[0],keys[1]);assert.notEqual(keys[1],keys[2]);
 });
 

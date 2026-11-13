@@ -39,6 +39,7 @@ export async function import1puxWithSession(
   signal?: AbortSignal,
 ): Promise<Import1puxResult> {
   signal?.throwIfAborted();
+  apiBaseUrl=new URL(apiBaseUrl).href.replace(/\/$/,'');
   const flightScope=JSON.stringify([apiBaseUrl,email.trim().toLowerCase(),vaultId]);
   if(activeSessionImports.has(flightScope))throw Object.assign(new Error('1PUX import already in progress'),{code:'IMPORT_IN_PROGRESS'});
   activeSessionImports.add(flightScope);
