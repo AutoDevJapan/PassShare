@@ -1,7 +1,7 @@
 # Updater public verification vectors
 
-`updater-public-vectors.json` contains a synthetic payload, two disposable public
-keys and signatures made with one disposable key using `aead.dev/minisign`.
+`updater-public-vectors.json` contains a synthetic payload, three disposable public
+keys and signatures made with two disposable keys using `aead.dev/minisign`.
 No private key is retained. These are unrelated to the deployed updater key and
 are not Windows Authenticode signatures or executable installers.
 
@@ -10,7 +10,11 @@ a bounded loopback HTTP server. It checks online compatibility with unversioned
 signatures, strict version rejection, matching signed versions, mismatched
 manifest versions, altered bytes and a different verification key. Cached
 metadata cannot disable strict validation or replace the runtime key. Every
-case must request the manifest and payload exactly once. The server joins on
+case must request the manifest and payload exactly once. The six cases run for
+both legacy `Ed` signatures and Blake2b-prehashed `ED` signatures, matching the
+production updater's two verification formats. A second test delays and splits
+HTTP headers after accept; accepted sockets explicitly return to blocking mode
+before setting timeouts. The server joins on
 success and failure. No window, install, extract or restart API is called.
 
 The test name starts with `smoke_`, so the existing Desktop smoke command runs

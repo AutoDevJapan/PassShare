@@ -194,7 +194,9 @@ manifest公開は同directoryのhard linkを使うためNTFS/ReFS等の対応FS�
 使い捨て公開vectorで、旧版なし署名の互換受理とstrict拒否、版付き正常、manifest版不一致、
 本文改変、別公開鍵拒否を対照にする。cached metadataの復元は版なし署名を拒否し、
 metadata内の鍵設定ではruntimeの検証鍵を置き換えないことも確認する。
-各caseでmanifest/payload各1取得を要求し、serverを終了・joinする。
+legacy `Ed` と本番Tauri形式のprehashed `ED` で同じ6caseずつを実行し、
+各caseでmanifest/payload各1取得を要求する。遅延・分割headerのfixture対照を加え、
+Windowsでaccept後のsocketをblockingへ戻した上で、serverを終了・joinする。
 
 本検査はdownload/verifyまでで、install・extract・restartを呼ばない。
 本番の公開鍵・`requireSignedVersion`・更新URLは変更しない。
