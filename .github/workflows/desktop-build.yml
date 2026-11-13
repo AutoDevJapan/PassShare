@@ -74,6 +74,7 @@ jobs:
       desktop: ${{ steps.scope.outputs.desktop }}
   build:
     needs: smoke
+    if: needs.smoke.outputs.desktop == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -134,4 +135,3 @@ jobs:
             target/release/bundle/**/*
           if-no-files-found: error
           retention-days: 7
-    if: needs.smoke.outputs.desktop == 'true'

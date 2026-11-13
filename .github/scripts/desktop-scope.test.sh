@@ -42,6 +42,13 @@ case_check verification-only push "$base" false false tools/restore-drill-rs/Car
 case_check private-snapshot-helper pull_request "$base" false false tools/prd-snapshot-go/main.go .github/workflows/private-prd-snapshot.yml
 case_check production-deployment push "$base" false false .github/workflows/deploy-prd.yml
 case_check desktop pull_request "$base" true false apps/desktop/src/main.ts
+case_check desktop-runbook-only pull_request "$base" false false documents/runbooks/desktop-release.md
+case_check runbook-backup pull_request "$base" true true documents/runbooks/desktop-release.md.bak
+case_check runbook-mdx pull_request "$base" true true documents/runbooks/desktop-release.mdx
+case_check runbook-case pull_request "$base" true true documents/runbooks/Desktop-release.md
+case_check runbook-subdirectory pull_request "$base" true true documents/runbooks/nested/desktop-release.md
+case_check staging-runbook pull_request "$base" true true documents/runbooks/staging-acceptance.md
+case_check runbook-with-runtime pull_request "$base" true false documents/runbooks/desktop-release.md apps/desktop/src/main.ts
 case_check shared-rust pull_request "$base" true true crates/passshare-connect/src/lib.rs
 case_check cargo-lock push "$base" true true Cargo.lock
 case_check wasm-assets pull_request "$base" true true frontend/public/cloud-crypto/passshare_cloud_wasm_bg.wasm
@@ -59,4 +66,4 @@ else
   status=$?
   [[ "$status" == 47 && ! -s "$GITHUB_OUTPUT" ]]
 fi
-printf 'scope controls: 20 passed\n'
+printf 'scope controls: 27 passed\n'
