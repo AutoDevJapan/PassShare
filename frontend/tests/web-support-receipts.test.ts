@@ -70,9 +70,11 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const api=load(a.sessionToken,owner.id),signal=new AbortController().signal;
   const input={requestId:'33333333-3333-4333-8333-333333333333',kind:'technical',version:'0.1.0',platform:'web',errorCode:''};
   const row=await api.create(input,signal);assert.equal((await api.create(input,signal)).id,row.id);assert.equal((await api.get(row.id,signal)).id,row.id);
-  const preflight=await fetch(base+'/api/support-receipts',{method:'OPTIONS',headers:{Origin:base,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'X-PassShare-Receipt-Owner'}});
-  assert.equal(preflight.status,204);assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Owner/i);
-  assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Session/i);
+  const preflight=await fetch(base+'/api/support-receipts',{method:'OPTIONS',headers:{Origin:base,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'X-PassShare-Receipt-Owner, X-PassShare-Receipt-Session'}});
+  assert.equal(preflight.status,204);
+  const allowedHeaders=(preflight.headers.get('Access-Control-Allow-Headers')??'').split(',').map(value=>value.trim().toLowerCase());
+  assert.ok(allowedHeaders.includes('x-passshare-receipt-owner'));
+  assert.ok(allowedHeaders.includes('x-passshare-receipt-session'));
   assert.equal(posts,2);assert.equal(csrf,2);
   const cookie='passshare_session='+encodeURIComponent(a.sessionToken);
   const sameSessionTokens=await Promise.all([1,2].map(async()=>{
