@@ -98,7 +98,7 @@ test('authenticated owner consent and operator status are persistent and single 
     const lock=await pool.connect();let queued;
     try{
      await lock.query('BEGIN');await lock.query('SELECT id FROM support_receipts WHERE id=$1 FOR UPDATE',[pendingReceipt.body.id]);
-     queued=scenario==='create-owner'?run(pendingAuth,login.body.refreshToken,grant):run(pendingConsume,opLogin.body.refreshToken,{confirmation:renewedBeforeRetire.body.confirmation});
+     queued=scenario==='create-owner'?run(pendingAuth,login.body.refreshToken,{...grant,revision:renewedBeforeRetire.body.revision}):run(pendingConsume,opLogin.body.refreshToken,{confirmation:renewedBeforeRetire.body.confirmation});
      const deadline=Date.now()+5000;let waiting=false;
      while(Date.now()<deadline){
       const q=await pool.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT * FROM support_receipts WHERE id=%'");

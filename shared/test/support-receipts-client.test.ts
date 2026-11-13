@@ -15,11 +15,11 @@ test('owner consent and operator status use exact scoped responses without retry
  const operatorId='44444444-4444-4444-8444-444444444444',confirmation='a'.repeat(43),signal=new AbortController().signal,calls:any[]=[];
  const api=createSupportReceiptApi(async(path,init)=>{
   calls.push({path,init});
-  return path.endsWith('/authorization')?Response.json({receiptId:id,status:'in_progress',revision:1,expiresAt:'2026-11-13T00:10:00Z',confirmation},{status:201}):Response.json({id,status:'in_progress',revision:1});
+  return path.endsWith('/authorization')?Response.json({receiptId:id,status:'in_progress',revision:1,expiresAt:'2026-11-13T00:10:00Z',confirmation},{status:201}):Response.json({id,status:'in_progress',revision:2});
  });
  const grant=await api.authorize(id,{operatorId,status:'in_progress',revision:0},signal);
  assert.equal(grant.confirmation,confirmation);
- assert.deepEqual(JSON.parse(JSON.stringify(await api.applyStatus(id,{confirmation},signal))),{id,status:'in_progress',revision:1});
+ assert.deepEqual(JSON.parse(JSON.stringify(await api.applyStatus(id,{confirmation},signal))),{id,status:'in_progress',revision:2});
  assert.deepEqual(calls.map(c=>c.path),[`/api/support-receipts/${id}/authorization`,`/api/support-receipts/${id}/operator-status`]);
  assert.equal(calls.every(c=>c.init.signal===signal&&c.init.method==='POST'&&c.init.cache==='no-store'&&c.init.redirect==='error'),true);
  let sends=0;const uncertain=createSupportReceiptApi(async()=>{sends++;throw Error('private transport detail');});
