@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,70 @@ import (
 	"testing"
 	"time"
 )
+
+func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "late.ready")
+	if err := os.WriteFile(path, []byte("1234"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	name, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := syscall.CreateFile(name, syscall.GENERIC_READ, 0, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if handle != 0 {
+			syscall.CloseHandle(handle)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	type result struct {
+		pid []byte
+		err error
+	}
+	done := make(chan result, 1)
+	attempted := make(chan error, 1)
+	go func() {
+		pid, err := readFixturePIDWith(ctx, path, func(name string) ([]byte, error) {
+			data, err := os.ReadFile(name)
+			select {
+			case attempted <- err:
+			default:
+			}
+			return data, err
+		})
+		done <- result{pid, err}
+	}()
+	select {
+	case err := <-attempted:
+		if !errors.Is(err, syscall.Errno(32)) {
+			t.Fatalf("real sharing conflict not reached: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("fixture reader did not attempt the held file")
+	}
+	select {
+	case r := <-done:
+		t.Fatalf("ready read completed while the real file was locked: %q %v", r.pid, r.err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	if err := syscall.CloseHandle(handle); err != nil {
+		t.Fatal(err)
+	}
+	handle = 0
+	select {
+	case r := <-done:
+		if r.err != nil || string(r.pid) != "1234" {
+			t.Fatalf("ready PID after unlock: %q %v", r.pid, r.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("ready reader did not recover after lock release")
+	}
+}
 
 func holdChildForTest(t *testing.T, pidText []byte) func() bool {
 	t.Helper()

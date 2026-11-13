@@ -2,14 +2,67 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+func readFixturePID(ctx context.Context, path string) ([]byte, error) {
+	return readFixturePIDWith(ctx, path, os.ReadFile)
+}
+
+func readFixturePIDWith(ctx context.Context, path string, read func(string) ([]byte, error)) ([]byte, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := read(path)
+		if err == nil {
+			pid, parseErr := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32)
+			if parseErr != nil || pid == 0 {
+				return nil, fmt.Errorf("invalid fixture PID")
+			}
+			return data, nil
+		}
+		// Atomic publication prevents partial PID data, but another Windows process can
+		// briefly hold the published name without FILE_SHARE_READ.
+		sharing := runtime.GOOS == "windows" && (errors.Is(err, syscall.Errno(32)) || errors.Is(err, syscall.Errno(33)))
+		if !os.IsNotExist(err) && !sharing {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+func TestFixturePIDReadRejectsInvalidDataAndBoundsMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ready")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := readFixturePID(ctx, path); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("missing fixture did not honor deadline: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("not-a-pid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFixturePID(context.Background(), path); err == nil {
+		t.Fatal("invalid fixture PID accepted")
+	}
+	if _, err := readFixturePID(ctx, path); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("expired read consumed ready file")
+	}
+}
 
 // This is an actual child/grandchild with inherited pipes, not a fake runner.
 func TestOwnedProcessFixture(t *testing.T) {
@@ -117,23 +170,27 @@ func TestExecuteCancellationStopsGrandchildBeforeReturnAndBeforeKeyRevocation(t 
 			defer cancel()
 			finished := make(chan error, 1)
 			go func() { _, err := execute(ctx, os.Args[0], "-test.run=^TestOwnedProcessFixture$"); finished <- err }()
-			until := time.Now().Add(5 * time.Second)
-			for {
-				if _, err := os.Stat(marker + ".ready"); err == nil {
-					break
+			joined := false
+			defer func() {
+				cancel()
+				if !joined {
+					select {
+					case <-finished:
+					case <-time.After(8 * time.Second):
+						t.Error("owned fixture did not drain after failed readiness")
+					}
 				}
-				if time.Now().After(until) {
-					t.Fatal("grandchild never reached its real pipe-holding barrier")
-				}
-				time.Sleep(time.Millisecond)
-			}
-			pidText, err := os.ReadFile(marker + ".ready")
+			}()
+			readyCtx, readyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer readyCancel()
+			pidText, err := readFixturePID(readyCtx, marker+".ready")
 			if err != nil {
 				t.Fatal(err)
 			}
 			exited := holdChildForTest(t, pidText)
 			cancel()
 			err = <-finished
+			joined = true
 			if err == nil {
 				t.Fatal("cancelled process accepted as successful")
 			}
