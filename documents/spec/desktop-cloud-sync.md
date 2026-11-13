@@ -40,9 +40,13 @@
 - [x] 競合検出 + 手動解決 UI
 - [x] 1PUX インポート（クラウド経由）
 
-Session-authenticated archive imports serialize upload for the same API origin,
-normalized account email, Box and archive SHA-256 within the current process.
-A concurrent caller receives IMPORT_IN_PROGRESS before a second upload. The
+Session-authenticated archive imports own one flight for the same API origin,
+normalized account email and Box before the first asynchronous login or file
+read, through response completion. A concurrent caller receives IMPORT_IN_PROGRESS
+before a second login or upload. Login uses the existing native JSON token
+response with cookies omitted; mode and upload requests use only that response's
+session and Connect credentials. Retry keys bind the authenticated actor ID,
+Box and archive SHA-256, rather than a cookie changed by another call. The
 operation key survives an uncertain or partial result; only a completed result
 removes it. After completion, a new explicit import is a new legitimate trial.
 This does not persist archive contents or prove restart recovery, browser UI,

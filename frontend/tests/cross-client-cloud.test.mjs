@@ -322,7 +322,7 @@ test('legacy archive never reads or uploads file bytes for encrypted/rejected mo
   let modeStatus = 200, encrypted = true, metadataStatus = 200, reads = 0, uploads = 0;
   const imports = load('../../shared/lib/1pux-import.ts', {}, { fetch: async (url, init) => {
     if (url.endsWith('/csrf')) return new Response('{"csrfToken":"synthetic-csrf"}');
-    if (url.endsWith('/login')) return new Response('{}');
+    if (url.endsWith('/login')) return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'synthetic-session',connectAccessToken:'synthetic-connect'});
     if (url.includes('/api/encrypted/')) return new Response(JSON.stringify({ mode: encrypted ? 'encrypted' : 'compatibility', keyEpoch: encrypted ? 17 : null }), { status: modeStatus });
     if (url.endsWith('/connect-token')) return new Response('{"accessToken":"synthetic-connect"}');
     if (url.endsWith(`/v1/vaults/${box}`)) return new Response('{}', { status: metadataStatus });
@@ -342,7 +342,7 @@ test('same archive session import owns one flight until its response completes',
   const entered=new Promise(resolve=>{release={entered:resolve};});
   const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url)=>{
     if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
-    if(url.endsWith('/login'))return Response.json({user:{id:owner}});
+    if(url.endsWith('/login'))return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'synthetic-session',connectAccessToken:'synthetic-connect'});
     if(url.includes('/api/encrypted/'))return Response.json({mode:'compatibility',keyEpoch:null});
     if(url.endsWith('/connect-token'))return Response.json({accessToken:'synthetic'});
     if(url.endsWith('/imports/1pux')){uploads++;release.entered();return new Promise(resolve=>{release.response=resolve;});}
@@ -363,7 +363,7 @@ test('session archive retry retains its operation key after uncertainty and rene
   const keys=[];let fail=true;
   const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url,init)=>{
     if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
-    if(url.endsWith('/login'))return Response.json({user:{id:owner}});
+    if(url.endsWith('/login'))return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'synthetic-session',connectAccessToken:'synthetic-connect'});
     if(url.includes('/api/encrypted/'))return Response.json({mode:'compatibility',keyEpoch:null});
     if(url.endsWith('/connect-token'))return Response.json({accessToken:'synthetic'});
     if(url.endsWith('/imports/1pux')){keys.push(init.headers['Idempotency-Key']);if(fail)throw Error('synthetic lost reply');return Response.json({imported:1});}
@@ -373,6 +373,24 @@ test('session archive retry retains its operation key after uncertainty and rene
   const run=()=>imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic');
   await assert.rejects(run());fail=false;await run();await run();
   assert.equal(keys.length,3);assert.equal(keys[0],keys[1]);assert.notEqual(keys[1],keys[2]);
+});
+
+test('session archive excludes a second caller before a delayed file read and binds native login credentials', async () => {
+  let resolveRead, enteredRead, logins=0, uploads=0;
+  const reading=new Promise(resolve=>{enteredRead=resolve;});
+  const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url,init)=>{
+    if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
+    if(url.endsWith('/login')){logins++;assert.equal(init.credentials,'omit');assert.equal(init.headers['X-Passshare-Client'],'mobile');return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'own-session',connectAccessToken:'own-connect'});}
+    if(url.includes('/api/encrypted/')){assert.equal(init.headers.Authorization,'Bearer own-session');assert.equal(init.credentials,'omit');return Response.json({mode:'compatibility',keyEpoch:null});}
+    if(url.endsWith('/imports/1pux')){uploads++;assert.equal(init.headers.Authorization,'Bearer own-connect');return Response.json({imported:1});}
+    throw Error('unexpected cookie-based credential lookup');
+  }});
+  const file={arrayBuffer:()=>{enteredRead();return new Promise(resolve=>{resolveRead=resolve;});}};
+  const run=()=>imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic');
+  const first=run();await reading;
+  try{await assert.rejects(run(),error=>error.code==='IMPORT_IN_PROGRESS');assert.equal(logins,1);assert.equal(uploads,0);}
+  finally{resolveRead(new Uint8Array([1]).buffer);}
+  await first;assert.equal(uploads,1);
 });
 
 test('desktop cloud entry locks an open .pbox before another account may be shown', async () => {

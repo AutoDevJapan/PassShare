@@ -37,27 +37,29 @@ export async function import1puxWithSession(
   email: string,
   password: string,
 ): Promise<Import1puxResult> {
-  const csrfRes = await fetch(`${apiBaseUrl}/api/auth/csrf`, { credentials: "include" });
-  if (!csrfRes.ok) {
-    throw new Error("CSRF fetch failed");
-  }
-  const { csrfToken } = (await csrfRes.json()) as { csrfToken: string };
-
+  const flightScope=JSON.stringify([apiBaseUrl,email.trim().toLowerCase(),vaultId]);
+  if(activeSessionImports.has(flightScope))throw Object.assign(new Error('1PUX import already in progress'),{code:'IMPORT_IN_PROGRESS'});
+  activeSessionImports.add(flightScope);
+  try {
   const loginRes = await fetch(`${apiBaseUrl}/api/auth/login`, {
     method: "POST",
-    credentials: "include",
+    credentials: "omit",
+    redirect: "error",
     headers: {
       "Content-Type": "application/json",
-      "X-CSRF-Token": csrfToken,
+      "X-Passshare-Client": "mobile",
     },
     body: JSON.stringify({ email, password }),
   });
   if (!loginRes.ok) {
     throw new Error("Login failed");
   }
+  const loginBody=await loginRes.json() as {user?:{id?:string;email?:string};refreshToken?:string;connectAccessToken?:string};
+  if(!loginBody.user?.id||loginBody.user.email?.trim().toLowerCase()!==email.trim().toLowerCase()||!loginBody.refreshToken||!loginBody.connectAccessToken)throw new Error('Invalid import authentication response');
+  const sessionHeaders={Authorization:`Bearer ${loginBody.refreshToken}`};
 
   const modeResponse = await fetch(`${apiBaseUrl}/api/encrypted/boxes/${encodeURIComponent(vaultId)}`, {
-    credentials: "include", cache: "no-store", redirect: "error",
+    credentials: "omit",headers:sessionHeaders, cache: "no-store", redirect: "error",
   });
   if (modeResponse.status !== 404) {
     if (!modeResponse.ok) throw new Error("Password box mode unavailable");
@@ -65,17 +67,12 @@ export async function import1puxWithSession(
     if (mode.mode !== "compatibility" || mode.keyEpoch !== null) throw new Error("Encrypted password box requires encrypted migration");
   }
 
-  const tokenRes = await fetch(`${apiBaseUrl}/api/auth/connect-token`, {
-    credentials: "include",
-  });
-  if (!tokenRes.ok) {
-    throw new Error("Connect token fetch failed");
-  }
-  const tokenBody = (await tokenRes.json()) as { accessToken: string };
+  const tokenBody = { accessToken: loginBody.connectAccessToken };
 
   if (modeResponse.status === 404) {
     // Metadata only; flag-off still preserves the server's ciphertext boundary.
     const metadata = await fetch(`${apiBaseUrl}/v1/vaults/${encodeURIComponent(vaultId)}`, {
+      credentials: "omit",
       headers: { Authorization: `Bearer ${tokenBody.accessToken}` }, cache: "no-store", redirect: "error",
     });
     if (metadata.status !== 200) throw new Error("Compatibility password box unavailable");
@@ -84,14 +81,12 @@ export async function import1puxWithSession(
   const buffer = await file.arrayBuffer();
   const base64 = bufferToBase64(buffer);
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buffer)),b=>b.toString(16).padStart(2,'0')).join('');
-  const scope=JSON.stringify([apiBaseUrl,email.trim().toLowerCase(),vaultId,digest]);
+  const scope=JSON.stringify([apiBaseUrl,loginBody.user.id,vaultId,digest]);
   const operationKey=pendingSessionImports.get(scope)??crypto.randomUUID();
-  if(activeSessionImports.has(scope))throw Object.assign(new Error('1PUX import already in progress'),{code:'IMPORT_IN_PROGRESS'});
-  activeSessionImports.add(scope);
-  try {
   pendingSessionImports.set(scope,operationKey);
   const importRes = await fetch(`${apiBaseUrl}/v1/vaults/${vaultId}/imports/1pux`, {
     method: "POST",
+    credentials: "omit", redirect: "error",
     headers: {
       Authorization: `Bearer ${tokenBody.accessToken}`,
       "Content-Type": "application/json",
@@ -110,5 +105,5 @@ export async function import1puxWithSession(
   if(result.partial)throw Object.assign(new Error('1PUX import remains partial'),{code:'IMPORT_PARTIAL',imported:result.imported,changed:result.changed});
   if(!result.partial&&pendingSessionImports.get(scope)===operationKey)pendingSessionImports.delete(scope);
   return result;
-  } finally {activeSessionImports.delete(scope);}
+  } finally {activeSessionImports.delete(flightScope);}
 }
