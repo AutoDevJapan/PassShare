@@ -97,6 +97,39 @@ func TestFixturePIDReadRejectsInvalidDataAndBoundsMissingFile(t *testing.T) {
 	}
 }
 
+func TestFixturePIDRetriesOnlyTransientReadFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{{"missing", os.ErrNotExist}}
+	if runtime.GOOS == "windows" {
+		cases = append(cases, struct {
+			name string
+			err  error
+		}{"sharing32", syscall.Errno(32)}, struct {
+			name string
+			err  error
+		}{"byteLock33", syscall.Errno(33)})
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			calls := 0
+			pid, err := readFixturePIDWith(ctx, "fixture.ready", func(string) ([]byte, error) {
+				calls++
+				if calls <= 3 {
+					return nil, &os.PathError{Op: "open", Path: "fixture.ready", Err: test.err}
+				}
+				return []byte("1234"), nil
+			})
+			if err != nil || string(pid) != "1234" || calls != 4 {
+				t.Fatalf("transient read did not recover: calls=%d pid=%q err=%v", calls, pid, err)
+			}
+		})
+	}
+}
+
 // This is an actual child/grandchild with inherited pipes, not a fake runner.
 func TestOwnedProcessFixture(t *testing.T) {
 	mode := os.Getenv("PASSSHARE_PROCESS_FIXTURE")
