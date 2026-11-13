@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,5 +46,32 @@ func TestVerifiedManifestPayloadBinding(t *testing.T) {
 		if _, err := verifiedWindowsManifest(src, bad, url, "dGVzdA=="); err == nil {
 			t.Fatalf("missing verification %s", field)
 		}
+	}
+}
+
+func TestManifestRetainsCryptographicallyCheckedSignature(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(readFixture(t, "minisign.pub"))
+	signature := base64.StdEncoding.EncodeToString(readFixture(t, "message.txt.minisig"))
+	path := filepath.Join(scratch(t), "PassShare_0.1.0_x64-setup.exe")
+	write(t, path, readFixture(t, "message.txt"))
+	write(t, path+".sig", []byte(signature))
+	a, err := updaterCheck(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, path+".sig", []byte("cmVwbGFjZWQ="))
+	if a.verifiedSignature != signature {
+		t.Fatal("signature bytes no longer bound to crypto verification")
+	}
+	// Native status here is an explicit synthetic formatter fixture, not OS signing.
+	a.OSSignature = "authenticode_trusted_publisher_and_timestamp"
+	a.EmbeddedVersion = "0.1.0"
+	a.ApplicationSHA256 = strings.Repeat("b", 64)
+	data, err := verifiedWindowsManifest(source{TauriVersion: "0.1.0"}, a, "https://github.com/"+repository+"/releases/download/v0.1.0/"+a.Name, a.verifiedSignature)
+	if err != nil || !strings.Contains(string(data), signature) || strings.Contains(string(data), "cmVwbGFjZWQ=") {
+		t.Fatal("manifest signature differs from verified bytes")
+	}
+	if _, err := updaterCheck(path, key); err == nil {
+		t.Fatal("replacement signature accepted on new verification")
 	}
 }
