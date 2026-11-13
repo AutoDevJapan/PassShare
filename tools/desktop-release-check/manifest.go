@@ -16,7 +16,7 @@ var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // Called only with evidence produced by the live cryptographic/native verifier.
 // This creates a local candidate manifest, never a release or reachable URL.
 func verifiedWindowsManifest(src source, a asset, payloadURL, signature string) ([]byte, error) {
-	if !versionPattern.MatchString(src.TauriVersion) || a.EmbeddedVersion != src.TauriVersion || a.UpdaterSignature != "verified" || a.OSSignature != "authenticode_trusted_publisher_and_timestamp" || a.Bytes <= 0 || !sha256Pattern.MatchString(a.SHA256) || !sha256Pattern.MatchString(a.ApplicationSHA256) {
+	if !versionPattern.MatchString(src.TauriVersion) || a.verifiedVersion != src.TauriVersion || a.EmbeddedVersion != src.TauriVersion || a.UpdaterSignature != "verified" || a.OSSignature != "authenticode_trusted_publisher_and_timestamp" || a.Bytes <= 0 || !sha256Pattern.MatchString(a.SHA256) || !sha256Pattern.MatchString(a.ApplicationSHA256) {
 		return nil, fail("verified Windows candidate required for update manifest")
 	}
 	if filepath.Base(a.Name) != a.Name || strings.ContainsAny(a.Name, "/\\:") || !strings.HasSuffix(a.Name, "-setup.exe") {
@@ -56,10 +56,11 @@ func writeVerifiedManifestWithKey(output string, src source, payloadURL string, 
 	if filepath.Base(a.Name) != a.Name || strings.ContainsAny(a.Name, "/\\:") {
 		return fail("invalid verified payload name")
 	}
-	checked, err := updaterCheck(filepath.Join(output, a.Name), key)
+	checked, err := updaterCheckForVersion(filepath.Join(output, a.Name), key, src.TauriVersion)
 	if err != nil || checked.SHA256 != a.SHA256 || checked.Bytes != a.Bytes {
 		return fail("staged payload no longer matches verified candidate")
 	}
+	a.verifiedVersion = checked.verifiedVersion
 	data, err := verifiedWindowsManifest(src, a, payloadURL, checked.verifiedSignature)
 	if err != nil {
 		return err

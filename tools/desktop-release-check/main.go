@@ -39,6 +39,8 @@ type source struct {
 }
 type asset struct {
 	verifiedSignature string
+	verifiedComment   string
+	verifiedVersion   string
 	Name              string `json:"name"`
 	Bytes             int64  `json:"bytes"`
 	SHA256            string `json:"sha256"`
@@ -355,7 +357,7 @@ func build(root string, src source) error {
 		return fail("signed candidate build failed; child logs suppressed to protect secrets")
 	}
 	if runtime.GOOS == "darwin" {
-		if err = notarizeAndSignMac(root, program); err != nil {
+		if err = notarizeAndSignMac(root, program, src.TauriVersion); err != nil {
 			return err
 		}
 	} else {
@@ -367,7 +369,7 @@ func build(root string, src source) error {
 		if e != nil {
 			return e
 		}
-		if err = signUpdater(root, program, path); err != nil {
+		if err = signUpdater(root, program, path, src.TauriVersion); err != nil {
 			return err
 		}
 	}
@@ -375,25 +377,33 @@ func build(root string, src source) error {
 	return err
 }
 
-func signUpdater(root, program, path string) error {
+func signUpdater(root, program, path, version string) error {
+	if !versionPattern.MatchString(version) {
+		return fail("verified application version required for signing")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	c := exec.CommandContext(ctx, program, "exec", "tauri", "signer", "sign", path)
-	if runtime.GOOS == "windows" {
-		c = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `& pnpm exec tauri signer sign $env:CANDIDATE_UPDATER; exit $LASTEXITCODE`)
-	}
-	c.Dir = filepath.Join(root, "apps/desktop")
-	c.Env = append(cleanEnv(true), "CANDIDATE_UPDATER="+path)
-	c.Stdout = io.Discard
-	c.Stderr = io.Discard
-	c.WaitDelay = 5 * time.Second
+	c := updaterSigningCommand(ctx, root, program, path, version)
 	if c.Run() != nil {
 		return fail("updater signing failed; child logs suppressed to protect secrets")
 	}
-	if _, err := updaterCheck(path, trustedKey); err != nil {
+	if _, err := updaterCheckForVersion(path, trustedKey, version); err != nil {
 		return err
 	}
 	return nil
+}
+
+func updaterSigningCommand(ctx context.Context, root, program, path, version string) *exec.Cmd {
+	c := exec.CommandContext(ctx, program, "exec", "tauri", "signer", "sign", "--app-version", version, path)
+	if runtime.GOOS == "windows" {
+		c = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `& pnpm exec tauri signer sign --app-version $env:CANDIDATE_APP_VERSION $env:CANDIDATE_UPDATER; exit $LASTEXITCODE`)
+	}
+	c.Dir = filepath.Join(root, "apps/desktop")
+	c.Env = append(cleanEnv(true), "CANDIDATE_UPDATER="+path, "CANDIDATE_APP_VERSION="+version)
+	c.Stdout = io.Discard
+	c.Stderr = io.Discard
+	c.WaitDelay = 5 * time.Second
+	return c
 }
 
 func updaterCheck(path, key string) (asset, error) {
@@ -444,7 +454,7 @@ func updaterCheck(path, key string) (asset, error) {
 	if !verified {
 		return a, fail("updater signature does not authenticate candidate with trusted key")
 	}
-	return asset{Name: filepath.Base(path), Bytes: info.Size(), SHA256: hex.EncodeToString(h.Sum(nil)), UpdaterSignature: "verified", verifiedSignature: strings.TrimSpace(string(sigText))}, nil
+	return asset{Name: filepath.Base(path), Bytes: info.Size(), SHA256: hex.EncodeToString(h.Sum(nil)), UpdaterSignature: "verified", verifiedSignature: strings.TrimSpace(string(sigText)), verifiedComment: parsed.TrustedComment}, nil
 }
 
 func single(bundle, pattern string) (string, error) {
@@ -481,7 +491,7 @@ func verify(root, bundle, out string, src source, verifiedAsset *asset) error {
 	if err != nil {
 		return err
 	}
-	a, err := updaterCheck(path, trustedKey)
+	a, err := updaterCheckForVersion(path, trustedKey, src.TauriVersion)
 	if err != nil {
 		return err
 	}
@@ -497,7 +507,7 @@ func verify(root, bundle, out string, src source, verifiedAsset *asset) error {
 	a.EmbeddedVersion = src.TauriVersion
 	a.ApplicationSHA256 = appHash
 	// Reject mutation between cryptographic/native verification and staging.
-	again, err := updaterCheck(path, trustedKey)
+	again, err := updaterCheckForVersion(path, trustedKey, src.TauriVersion)
 	if err != nil || a.SHA256 != again.SHA256 || a.Bytes != again.Bytes {
 		return fail("candidate changed during verification")
 	}
@@ -523,7 +533,7 @@ func verify(root, bundle, out string, src source, verifiedAsset *asset) error {
 		}
 	}
 	// Verify the actual staged bytes too. Upload is allowed only after this succeeds.
-	staged, err := updaterCheck(filepath.Join(output, a.Name), trustedKey)
+	staged, err := updaterCheckForVersion(filepath.Join(output, a.Name), trustedKey, src.TauriVersion)
 	if err != nil || staged.SHA256 != a.SHA256 {
 		return fail("staged candidate signature mismatch")
 	}
