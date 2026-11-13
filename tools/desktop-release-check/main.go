@@ -38,6 +38,7 @@ type source struct {
 	UpdaterKeySHA256 string `json:"updater_key_sha256"`
 }
 type asset struct {
+	verifiedSignature string
 	Name              string `json:"name"`
 	Bytes             int64  `json:"bytes"`
 	SHA256            string `json:"sha256"`
@@ -427,7 +428,7 @@ func updaterCheck(path, key string) (asset, error) {
 	if !verified {
 		return a, fail("updater signature does not authenticate candidate with trusted key")
 	}
-	return asset{Name: filepath.Base(path), Bytes: info.Size(), SHA256: hex.EncodeToString(h.Sum(nil)), UpdaterSignature: "verified"}, nil
+	return asset{Name: filepath.Base(path), Bytes: info.Size(), SHA256: hex.EncodeToString(h.Sum(nil)), UpdaterSignature: "verified", verifiedSignature: strings.TrimSpace(string(sigText))}, nil
 }
 
 func single(bundle, pattern string) (string, error) {

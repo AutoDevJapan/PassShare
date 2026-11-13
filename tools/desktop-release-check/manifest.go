@@ -63,11 +63,7 @@ func writeVerifiedWindowsManifest(output string, src source, payloadURL string) 
 	if err != nil || checked.SHA256 != a.SHA256 || checked.Bytes != a.Bytes {
 		return fail("staged payload no longer matches verified candidate")
 	}
-	sig, err := os.ReadFile(filepath.Join(output, a.Name) + ".sig")
-	if err != nil {
-		return fail("verified signature missing")
-	}
-	data, err := verifiedWindowsManifest(src, a, payloadURL, strings.TrimSpace(string(sig)))
+	data, err := verifiedWindowsManifest(src, a, payloadURL, checked.verifiedSignature)
 	if err != nil {
 		return err
 	}
@@ -75,9 +71,9 @@ func writeVerifiedWindowsManifest(output string, src source, payloadURL string) 
 	if err != nil {
 		return fail("cannot create new candidate update manifest")
 	}
-	_, writeErr := f.Write(data)
+	n, writeErr := f.Write(data)
 	closeErr := f.Close()
-	if writeErr != nil || closeErr != nil {
+	if writeErr != nil || n != len(data) || closeErr != nil {
 		return fail("candidate update manifest write failed")
 	}
 	return nil
