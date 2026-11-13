@@ -37,6 +37,44 @@ cargo tauri build
 
 ## CI
 
+### Public OSSの本人ローカル署名
+
+public repoのために既存private-only workflowのgateや署名条件を外さない。
+既存の本人Windows PCで `owner-preflight` / `owner-build` / `owner-verify` を使える。
+この入口は通常の `gh` keyring認証から本人IDと対象repo ID・組織ID・管理権限を読み、
+GitHubの現在main SHA、origin、main branch、tracked cleanとビルド範囲のuntracked source不在を独立に照合する。
+workflow環境・別本人・別repo・旧SHA・未確認APIでは署名へ進まない。
+認証用tokenを引数・新しい保存先へ渡さず、通常のtoken環境上書きも子へ継承しない。
+
+```powershell
+# Merged current main only. RUNNER_TEMP is an owned temporary directory.
+Set-Location tools/desktop-release-check
+go run -mod=readonly . owner-preflight --repo ../.. --source-sha <main-full-sha>
+go run -mod=readonly . owner-build --repo ../.. --source-sha <main-full-sha>
+go run -mod=readonly . owner-verify --repo ../.. --source-sha <main-full-sha> --bundle <absolute-bundle-path> --out <new-owned-output-outside-checkout>
+```
+
+Go moduleは `tools/desktop-release-check` にあり、root go.modによる実行を要求しない。
+既存の更新秘密鍵、信頼済みWindowsコード署名証明書、正確なpublisher/HTTPS timestamp設定、
+SDK signtoolと7-Zipが必要である。未保有ならfail closedし、無料・テスト証明書で代用しない。
+署名子も同じ認証・sourceを再照合し、従来の限定されたexe/sidecar以外は署名できない。
+更新署名の版、Authenticode、NSIS内本体とpublisherの同bytes検査は共通処理で行う。
+owner-local evidenceはCI run IDを捏造せず `execution` と本人IDで識別し、
+署名候補の検証を公開・インストール・更新・再起動やデータ保持の完了としない。
+公開APIのmainはビルド完了時と候補保存前にも再照合し、main移動時はその候補を成功にしない。
+
+### 旧公開版と署名移行の境界
+
+公開 `v1.1.0` のtag source `4094a327c0ae4009508ce4de652ba8c2fed3966c` はElectron版で、
+`desktop/src/main/auto-updater.ts` は更新無効のplaceholderだった。
+調査したGitHub Release 8 assetsにTauri用 `.sig` / `latest.json` はなかった。
+repo直下の同名JSONはdownload catalogで、署名付きTauri manifestではない。
+この旧版を現Tauriの更新元や署名互換の正例へ数えない。R2・private/offlineの旧成果物が
+存在しないとは断定せず、利用者の実更新元・データ保持を確認してから移行する。
+旧版の登録project pathを自動探索して秘密情報を取り込まない。
+現行の `requireSignedVersion` を有効化する前に、正規の現鍵で署名した同版payloadと
+実更新元の互換性を確認する。本人key/certificateの発行・購入はこの技術入口へ含めない。
+
 `desktop-build.yml`:
 
 - `smoke`: dependency scope判定、候補検査Go・Desktop型/unit、Rust smoke/native lock検査。影響外は重い検査を実行しない。

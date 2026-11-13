@@ -71,14 +71,21 @@ if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsof
 	return p, nil
 }
 func signWindows(path string) error {
-	if err := checkTrust(os.Getenv("CANDIDATE_SHA"), os.Getenv); err != nil {
+	root := os.Getenv("GITHUB_WORKSPACE")
+	sha := os.Getenv("CANDIDATE_SHA")
+	if ownerRoot := os.Getenv("PASSSHARE_OWNER_SIGNING_ROOT"); ownerRoot != "" {
+		root = ownerRoot
+		sha = os.Getenv("PASSSHARE_OWNER_SIGNING_SHA")
+		if err := checkOwnerSource(root, sha); err != nil {
+			return err
+		}
+	} else if err := checkTrust(sha, os.Getenv); err != nil {
 		return err
 	}
-	root := os.Getenv("GITHUB_WORKSPACE")
 	if root == "" {
 		return fail("trusted workspace required for signing")
 	}
-	if _, err := inspectSource(root, os.Getenv("CANDIDATE_SHA")); err != nil {
+	if _, err := inspectSource(root, sha); err != nil {
 		return err
 	}
 	if err := windowsPrerequisites(); err != nil {

@@ -60,6 +60,8 @@ type evidence struct {
 	CandidateVerified              bool    `json:"candidate_verified"`
 	Published                      bool    `json:"published"`
 	InstallUpdateUninstallVerified bool    `json:"install_update_uninstall_verified"`
+	Execution                      string  `json:"execution,omitempty"`
+	OwnerID                        int64   `json:"owner_id,omitempty"`
 }
 
 func fail(message string) error { return errors.New(message) }
@@ -73,7 +75,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return fail("expected preflight, build, verify or sign-windows")
+		return fail("expected preflight, build, verify, owner-preflight, owner-build, owner-verify or sign-windows")
 	}
 	if args[0] == "sign-windows" {
 		if len(args) != 2 || runtime.GOOS != "windows" {
@@ -104,7 +106,17 @@ func run(args []string) error {
 	if err != nil {
 		return fail("invalid source path")
 	}
-	if err = checkTrust(*sha, os.Getenv); err != nil {
+	operation := args[0]
+	ownerLocal := strings.HasPrefix(operation, "owner-")
+	if ownerLocal {
+		operation = strings.TrimPrefix(operation, "owner-")
+		if operation != "preflight" && operation != "build" && operation != "verify" {
+			return fail("unknown owner command")
+		}
+		if err = checkOwnerSource(root, *sha); err != nil {
+			return err
+		}
+	} else if err = checkTrust(*sha, os.Getenv); err != nil {
 		return err
 	}
 	src, err := inspectSource(root, *sha)
@@ -117,17 +129,17 @@ func run(args []string) error {
 		}
 	}
 
-	switch args[0] {
+	switch operation {
 	case "preflight":
 		return nil
 	case "build":
-		return build(root, src)
+		return buildCandidate(root, src, ownerLocal)
 	case "verify":
 		if *out == "" || *bundle == "" {
 			return fail("bundle and new output directory required")
 		}
 		var verifiedAsset asset
-		if err := verify(root, *bundle, *out, src, &verifiedAsset); err != nil {
+		if err := verifyCandidate(root, *bundle, *out, src, &verifiedAsset, ownerLocal); err != nil {
 			return err
 		}
 		if *payloadURL != "" {
@@ -234,6 +246,9 @@ func cleanEnv(signing bool) []string {
 	var env []string
 	for _, v := range os.Environ() {
 		name := strings.ToUpper(strings.SplitN(v, "=", 2)[0])
+		if name == "PASSSHARE_OWNER_SIGNING_ROOT" || name == "PASSSHARE_OWNER_SIGNING_SHA" {
+			continue
+		}
 		// PS7 module paths cannot be loaded by Windows PowerShell 5.1.
 		// Let the native PowerShell child construct its own system module path.
 		if runtime.GOOS == "windows" && name == "PSMODULEPATH" {
@@ -282,6 +297,10 @@ func commandWithin(timeout time.Duration, dir string, extra []string, program st
 }
 
 func build(root string, src source) error {
+	return buildCandidate(root, src, false)
+}
+
+func buildCandidate(root string, src source, ownerLocal bool) error {
 	if os.Getenv("TAURI_SIGNING_PRIVATE_KEY") == "" {
 		return fail("updater signing key is required; unsigned build is prohibited")
 	}
@@ -347,6 +366,11 @@ func build(root string, src source) error {
 	}
 	c.Dir = filepath.Join(root, "apps/desktop")
 	c.Env = cleanEnv(false)
+	if ownerLocal {
+		// The signer subprocess independently rechecks the same official account,
+		// repository, main SHA and clean source before signing allowlisted paths.
+		c.Env = append(c.Env, "PASSSHARE_OWNER_SIGNING_ROOT="+root, "PASSSHARE_OWNER_SIGNING_SHA="+src.SHA)
+	}
 	if runtime.GOOS == "windows" {
 		c.Env = append(c.Env, "CANDIDATE_CONFIG="+configPath, "CANDIDATE_BUNDLES="+bundles)
 	}
@@ -372,6 +396,9 @@ func build(root string, src source) error {
 		if err = signUpdater(root, program, path, src.TauriVersion); err != nil {
 			return err
 		}
+	}
+	if ownerLocal {
+		return checkOwnerSource(root, src.SHA)
 	}
 	_, err = inspectSource(root, src.SHA)
 	return err
@@ -466,6 +493,10 @@ func single(bundle, pattern string) (string, error) {
 }
 
 func verify(root, bundle, out string, src source, verifiedAsset *asset) error {
+	return verifyCandidate(root, bundle, out, src, verifiedAsset, false)
+}
+
+func verifyCandidate(root, bundle, out string, src source, verifiedAsset *asset, ownerLocal bool) error {
 	output, err := filepath.Abs(out)
 	if err != nil {
 		return fail("invalid output path")
@@ -514,6 +545,11 @@ func verify(root, bundle, out string, src source, verifiedAsset *asset) error {
 	if _, err = inspectSource(root, src.SHA); err != nil {
 		return err
 	}
+	if ownerLocal {
+		if err = checkOwnerSource(root, src.SHA); err != nil {
+			return err
+		}
+	}
 	if os.Mkdir(output, 0700) != nil {
 		return fail("cannot create evidence directory")
 	}
@@ -537,7 +573,12 @@ func verify(root, bundle, out string, src source, verifiedAsset *asset) error {
 	if err != nil || staged.SHA256 != a.SHA256 {
 		return fail("staged candidate signature mismatch")
 	}
-	e := evidence{1, src, runtime.GOOS + "-" + runtime.GOARCH, os.Getenv("GITHUB_RUN_ID"), os.Getenv("GITHUB_RUN_ATTEMPT"), time.Now().UTC().Format(time.RFC3339), []asset{a}, true, false, false}
+	e := evidence{Schema: 1, Source: src, Platform: runtime.GOOS + "-" + runtime.GOARCH,
+		RunID: os.Getenv("GITHUB_RUN_ID"), RunAttempt: os.Getenv("GITHUB_RUN_ATTEMPT"),
+		VerifiedUTC: time.Now().UTC().Format(time.RFC3339), Assets: []asset{a}, CandidateVerified: true}
+	if ownerLocal {
+		e.Execution, e.OwnerID = "authenticated_owner_local", signingOwnerID
+	}
 	data, err := json.MarshalIndent(e, "", "  ")
 	if err != nil || os.WriteFile(filepath.Join(output, "evidence.json"), append(data, '\n'), 0600) != nil {
 		return fail("cannot save evidence")
