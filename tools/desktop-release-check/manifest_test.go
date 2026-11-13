@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,5 +74,31 @@ func TestManifestRetainsCryptographicallyCheckedSignature(t *testing.T) {
 	}
 	if _, err := updaterCheck(path, key); err == nil {
 		t.Fatal("replacement signature accepted on new verification")
+	}
+}
+
+func TestManifestFilePublicationIsCompleteAndNonOverwriting(t *testing.T) {
+	dir := scratch(t)
+	data := []byte(`{"version":"0.1.0"}`)
+	if err := publishManifestFile(dir, data); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "latest.json"))
+	if err != nil || string(got) != string(data) {
+		t.Fatal("complete readback")
+	}
+	if err := publishManifestFile(dir, []byte("replacement")); err == nil {
+		t.Fatal("existing manifest overwritten")
+	}
+	got, _ = os.ReadFile(filepath.Join(dir, "latest.json"))
+	if string(got) != string(data) {
+		t.Fatal("existing bytes changed")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatal("partial file remains")
+	}
+	if err := publishManifestFile(filepath.Join(dir, "absent"), data); err == nil {
+		t.Fatal("missing output accepted")
 	}
 }

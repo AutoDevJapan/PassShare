@@ -67,14 +67,24 @@ func writeVerifiedWindowsManifest(output string, src source, payloadURL string) 
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(output, "latest.json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	return publishManifestFile(output, data)
+}
+
+func publishManifestFile(output string, data []byte) error {
+	f, err := os.CreateTemp(output, ".latest-partial-*")
 	if err != nil {
 		return fail("cannot create new candidate update manifest")
 	}
+	temporary := f.Name()
+	defer os.Remove(temporary)
 	n, writeErr := f.Write(data)
+	syncErr := f.Sync()
 	closeErr := f.Close()
-	if writeErr != nil || n != len(data) || closeErr != nil {
+	if writeErr != nil || n != len(data) || syncErr != nil || closeErr != nil {
 		return fail("candidate update manifest write failed")
+	}
+	if err := os.Link(temporary, filepath.Join(output, "latest.json")); err != nil {
+		return fail("cannot publish new local update manifest")
 	}
 	return nil
 }
