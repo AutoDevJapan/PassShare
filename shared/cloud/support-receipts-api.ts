@@ -66,9 +66,8 @@ export function createSupportReceiptApi(transport: CloudFetch) {
         fields(value,['id','status','revision'])&&value.id===id.toLowerCase()&&['in_progress','resolved'].includes(value.status)&&Number.isSafeInteger(value.revision)&&value.revision>0);
     },
     async create(input: SupportReceiptRequest, signal: AbortSignal) {
-      if(!fields(input,['requestId','kind','version','platform','errorCode']))throw new SupportReceiptError(400);
       let snapshot: SupportReceiptRequest;
-      try{snapshot={requestId:input.requestId,kind:input.kind,version:input.version,platform:input.platform,errorCode:input.errorCode};}catch{throw new SupportReceiptError(400);}
+      try{if(!fields(input,['requestId','kind','version','platform','errorCode']))throw new Error();snapshot={requestId:input.requestId,kind:input.kind,version:input.version,platform:input.platform,errorCode:input.errorCode};}catch{throw new SupportReceiptError(400);}
       if(!validRequest(snapshot))throw new SupportReceiptError(400);
       const expected={...snapshot,requestId:snapshot.requestId.toLowerCase()};
       const receipt=await request('/api/support-receipts',{method:'POST',body:JSON.stringify(expected),signal},201);
