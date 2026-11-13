@@ -45,6 +45,44 @@ test('support receipt connection uses the immutable session and stops after disp
   assert.equal(requests.length,1);
 });
 const flush = () => renderer.act(async () => { for (let n = 0; n < 10; n++) await new Promise(setImmediate); });
+
+for(const operation of ['authorize','applyStatus'])test(`support ${operation} retains immutable bearer and rejects a late body after session disposal`,async()=>{
+ let body,request,cancelled=0;
+ const {createCloudSession}=sessionModule(async(url,init)=>{
+  request={url,init};return new Response(new ReadableStream({start(controller){body=controller;},cancel(){cancelled++;}}),{status:operation==='authorize'?201:200});
+ });
+ const session=createCloudSession('https://support.example.invalid',owner,'synthetic-support-session');
+ const id='22222222-2222-4222-8222-222222222222',signal=new AbortController().signal;
+ const invoke=()=>operation==='authorize'?session.support.authorize(id,{operatorId:owner,status:'in_progress',revision:0},signal):session.support.applyStatus(id,{confirmation:'a'.repeat(43)},signal);
+ const pending=invoke();await new Promise(setImmediate);
+ assert.equal(request.init.headers.get('Authorization'),'Bearer synthetic-support-session');
+ assert.equal(request.init.credentials,'omit');assert.equal(request.init.method,'POST');
+ assert.equal(request.init.headers.get('Content-Type'),'application/json');
+ assert.equal(request.url.href,`https://support.example.invalid/api/support-receipts/${id}/${operation==='authorize'?'authorization':'operator-status'}`);
+ assert.deepEqual(JSON.parse(request.init.body),operation==='authorize'?{operatorId:owner,status:'in_progress',revision:0}:{confirmation:'a'.repeat(43)});
+ session.dispose();await assert.rejects(pending);assert.equal(cancelled,1);
+ const original=request;await assert.rejects(invoke());assert.equal(request,original);
+ void body;
+});
+
+for(const operation of ['authorize','applyStatus'])test(`support ${operation} accepts a valid response but rejects the same bytes after lifetime change`,async()=>{
+ let current=true,source,entered;
+ const waiting=new Promise(resolve=>{entered=resolve;});let delayed=false;
+ const id='22222222-2222-4222-8222-222222222222';
+ const value=operation==='authorize'?{receiptId:id,status:'in_progress',revision:1,expiresAt:'2026-11-13T00:10:00Z',confirmation:'a'.repeat(43)}:{id,status:'in_progress',revision:2};
+ const {createCloudSession}=sessionModule(async()=>{
+  if(!delayed)return Response.json(value,{status:operation==='authorize'?201:200});
+  return new Response(new ReadableStream({start(c){source=c;},pull(){entered();}}),{status:operation==='authorize'?201:200});
+ });
+ const session=createCloudSession('https://support.example.invalid',owner,'synthetic',()=>current);
+ const invoke=()=>operation==='authorize'?session.support.authorize(id,{operatorId:owner,status:'in_progress',revision:0},new AbortController().signal):session.support.applyStatus(id,{confirmation:'a'.repeat(43)},new AbortController().signal);
+ try{
+  assert.deepEqual(JSON.parse(JSON.stringify(await invoke())),value);
+  delayed=true;const pending=invoke();await waiting;await new Promise(setImmediate);
+  current=false;source.enqueue(new TextEncoder().encode(JSON.stringify(value)));source.close();
+  await assert.rejects(pending);
+ }finally{session.dispose();}
+});
 function events() {
   const listeners = new Map();
   return { addEventListener(type, fn) { const set = listeners.get(type) ?? new Set(); set.add(fn); listeners.set(type, set); },
