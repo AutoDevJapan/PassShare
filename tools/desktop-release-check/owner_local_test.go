@@ -173,12 +173,54 @@ func TestOwnerRemoteRejectsCredentialAndHostAmbiguity(t *testing.T) {
 func TestOwnerSigningContextDoesNotLeakToUnrelatedChildren(t *testing.T) {
 	t.Setenv("PASSSHARE_OWNER_SIGNING_ROOT", "owned-source")
 	t.Setenv("PASSSHARE_OWNER_SIGNING_SHA", strings.Repeat("a", 40))
+	t.Setenv("PASSSHARE_SIGNING_TEMP", "owned-temp")
+	t.Setenv("RUSTC_WRAPPER", "untrusted-wrapper")
+	t.Setenv("RUSTC_WORKSPACE_WRAPPER", "untrusted-workspace-wrapper")
 	for _, signing := range []bool{false, true} {
 		for _, value := range cleanEnv(signing) {
-			if strings.HasPrefix(value, "PASSSHARE_OWNER_SIGNING_") {
+			if strings.HasPrefix(value, "PASSSHARE_OWNER_SIGNING_") || strings.HasPrefix(value, "PASSSHARE_SIGNING_TEMP=") || strings.HasPrefix(value, "RUSTC_WRAPPER=") || strings.HasPrefix(value, "RUSTC_WORKSPACE_WRAPPER=") {
 				t.Fatal("owner signing context inherited outside exact build child")
 			}
 		}
+	}
+}
+
+func TestOwnerBuildRequiresTemporaryRootBeforeChildren(t *testing.T) {
+	t.Setenv("TAURI_SIGNING_PRIVATE_KEY", "UNUSED_TEST_SENTINEL")
+	t.Setenv("RUNNER_TEMP", "")
+	root := scratch(t)
+	if err := buildCandidate(root, source{SHA: strings.Repeat("a", 40)}, true); err == nil || err.Error() != "runner-owned temporary directory required" {
+		t.Fatalf("missing temporary root did not stop before native or dependency children: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("missing temporary root created build output")
+	}
+}
+
+func TestOwnerGitEnvironmentOverridesStopBeforeAPI(t *testing.T) {
+	for _, key := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} {
+		t.Run(key, func(t *testing.T) {
+			err := checkOwnerSourceWith("owned-source", strings.Repeat("a", 40), "windows",
+				func(k string) string {
+					if k == key {
+						return "override"
+					}
+					return ""
+				},
+				func(string, any) error { t.Fatal("Git override reached official API"); return nil },
+				func(string, []string, string, ...string) ([]byte, error) {
+					t.Fatal("Git override reached local Git")
+					return nil, nil
+				},
+				func(string, string) (source, error) {
+					t.Fatal("Git override reached source inspection")
+					return source{}, nil
+				})
+			if err == nil || err.Error() != "owner signing requires the documented source and build environment" {
+				t.Fatalf("Git override was not rejected: %v", err)
+			}
+		})
 	}
 }
 

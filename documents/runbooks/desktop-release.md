@@ -66,6 +66,8 @@ SDK signtoolと7-Zipが必要である。未保有ならfail closedし、無料�
 固定Tauri CLI 2.12.4の5個のNSIS DLLだけとし、`target/release` 内でも未知exe/DLLは拒否する。
 NSIS 3.13の `!uninstfinalize` が作る `nst<hex>.tmp` は同build専用TEMP直下のみとし、
 PEの製品名・版を確認する。一般TEMP配下や任意の一時ファイルを署名対象にしない。
+署名先の限定とTEMP置換・wrapper除去は共通処理なので、既存private CIの署名候補にも適用する。
+private CIの信頼gate自体を変更したりpublic実行を許可したりするものではない。
 更新署名の版、Authenticode、NSIS内本体とpublisherの同bytes検査は共通処理で行う。
 owner-local evidenceはCI run IDを捏造せず `execution` と本人IDで識別し、
 署名候補の検証を公開・インストール・更新・再起動やデータ保持の完了としない。

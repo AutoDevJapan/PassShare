@@ -310,6 +310,9 @@ func buildCandidate(root string, src source, ownerLocal bool) error {
 	if os.Getenv("TAURI_SIGNING_PRIVATE_KEY") == "" {
 		return fail("updater signing key is required; unsigned build is prohibited")
 	}
+	if os.Getenv("RUNNER_TEMP") == "" {
+		return fail("runner-owned temporary directory required")
+	}
 	var bundles string
 	// Build with public OS policy only, then supply the updater key solely to signer.
 	// Intermediate files are never accepted or uploaded as verified candidates.
@@ -355,9 +358,6 @@ func buildCandidate(root string, src source, ownerLocal bool) error {
 	config, err := json.Marshal(overlay)
 	if err != nil {
 		return fail("cannot create candidate overlay")
-	}
-	if os.Getenv("RUNNER_TEMP") == "" {
-		return fail("runner-owned temporary directory required")
 	}
 	configDir, err := os.MkdirTemp(os.Getenv("RUNNER_TEMP"), "candidate-config-")
 	if err != nil {
