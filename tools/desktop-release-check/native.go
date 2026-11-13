@@ -149,7 +149,7 @@ func macPrerequisites() error {
 	return nil
 }
 
-func notarizeAndSignMac(root, program string) error {
+func notarizeAndSignMac(root, program, version string) error {
 	macdir := filepath.Join(root, "target/release/bundle/macos")
 	app, err := single(macdir, "*.app")
 	if err != nil {
@@ -180,7 +180,7 @@ func notarizeAndSignMac(root, program string) error {
 	if _, err = command(macdir, []string{"COPYFILE_DISABLE=1"}, "/usr/bin/tar", "--no-xattrs", "-czf", archive, filepath.Base(app)); err != nil {
 		return fail("cannot package notarized updater")
 	}
-	return signUpdater(root, program, archive)
+	return signUpdater(root, program, archive, version)
 }
 
 func nativeCheck(root, bundle, path, version string) (string, string, error) {

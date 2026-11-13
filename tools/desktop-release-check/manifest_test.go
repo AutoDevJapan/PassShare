@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -13,6 +12,7 @@ import (
 func TestVerifiedManifestPayloadBinding(t *testing.T) {
 	src := source{TauriVersion: "0.1.0"}
 	a := asset{Name: "PassShare_0.1.0_x64-setup.exe", Bytes: 12, SHA256: strings.Repeat("a", 64), UpdaterSignature: "verified", OSSignature: "authenticode_trusted_publisher_and_timestamp", EmbeddedVersion: "0.1.0", ApplicationSHA256: strings.Repeat("b", 64)}
+	a.verifiedVersion = "0.1.0" // synthetic formatter fixture, not cryptographic evidence
 	url := "https://github.com/AutoDevJapan/PassShare/releases/download/v0.1.0/" + a.Name
 	data, err := verifiedWindowsManifest(src, a, url, "dGVzdA==")
 	if err != nil {
@@ -52,12 +52,10 @@ func TestVerifiedManifestPayloadBinding(t *testing.T) {
 }
 
 func TestManifestRetainsCryptographicallyCheckedSignature(t *testing.T) {
-	key := base64.StdEncoding.EncodeToString(readFixture(t, "minisign.pub"))
-	signature := base64.StdEncoding.EncodeToString(readFixture(t, "message.txt.minisig"))
-	path := filepath.Join(scratch(t), "PassShare_0.1.0_x64-setup.exe")
-	write(t, path, readFixture(t, "message.txt"))
-	write(t, path+".sig", []byte(signature))
-	a, err := updaterCheck(path, key)
+	dir := scratch(t)
+	key, signature, _ := signedVersionFixture(t, dir, "0.1.0")
+	path := filepath.Join(dir, "PassShare_0.1.0_x64-setup.exe")
+	a, err := updaterCheckForVersion(path, key, "0.1.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,15 +146,7 @@ func TestManifestFailedWritesLeaveNoFinalOrPartial(t *testing.T) {
 func TestManifestWiringRechecksStagedBytesAndIgnoresDiskEvidence(t *testing.T) {
 	dir := scratch(t)
 	name := "PassShare_0.1.0_x64-setup.exe"
-	path := filepath.Join(dir, name)
-	key := base64.StdEncoding.EncodeToString(readFixture(t, "minisign.pub"))
-	sig := base64.StdEncoding.EncodeToString(readFixture(t, "message.txt.minisig"))
-	write(t, path, readFixture(t, "message.txt"))
-	write(t, path+".sig", []byte(sig))
-	a, err := updaterCheck(path, key)
-	if err != nil {
-		t.Fatal(err)
-	}
+	key, sig, a := signedVersionFixture(t, dir, "0.1.0")
 	a.OSSignature = "authenticode_trusted_publisher_and_timestamp"
 	a.EmbeddedVersion = "0.1.0"
 	a.ApplicationSHA256 = strings.Repeat("b", 64)
@@ -200,6 +190,7 @@ func TestManifestEarlyURLAndExplicitEmpty(t *testing.T) {
 }
 func TestManifestRejectsMultilineSignature(t *testing.T) {
 	a := asset{Name: "PassShare_0.1.0_x64-setup.exe", Bytes: 1, SHA256: strings.Repeat("a", 64), UpdaterSignature: "verified", OSSignature: "authenticode_trusted_publisher_and_timestamp", EmbeddedVersion: "0.1.0", ApplicationSHA256: strings.Repeat("b", 64)}
+	a.verifiedVersion = "0.1.0" // synthetic formatter fixture
 	u := "https://github.com/" + repository + "/releases/download/v0.1.0/" + a.Name
 	for _, sig := range []string{"dGVz\ndA==", "dGVz\rdA=="} {
 		if _, err := verifiedWindowsManifest(source{TauriVersion: "0.1.0"}, a, u, sig); err == nil {

@@ -129,4 +129,9 @@ go vet ./...
 これはローカル候補の生成のみで、公開・upload・URLの実在確認はしない。署名を持たない現在の通常artifactは入力にできない。元の `verify` は引数省略時の挙動を保つ。実署名環境、同scopeの更新UI確認、導入・再起動・データ保持と実公開の受入は別工程である。
 手動workflowの任意入力 payload_url は環境変数から引数配列へ渡す。式をshell本文に展開しない。候補検証の失敗時にはartifact保存へ進まず、成功した同じ出力先のmanifestだけを既存artifactに含める。
 
-manifest公開は同directoryのhard linkを使うためNTFS/ReFS等の対応FSが必要で、非対応FSでは失敗し署名検証を弱めるfallbackは行わない。一時file削除がOSに拒否された場合、完全なfinalは存在してもhidden一時fileが残り得る。これは回収未確認として対象・理由を記録し、通常の所有回収へ戻す。更新署名のtrusted commentへの版束縛は既存pipeline全体の別受入であり、この候補生成の成功だけでは実更新を認定しない。
+manifest公開は同directoryのhard linkを使うためNTFS/ReFS等の対応FSが必要で、非対応FSでは失敗し署名検証を弱めるfallbackは行わない。一時file削除がOSに拒否された場合、完全なfinalは存在してもhidden一時fileが残り得る。これは回収未確認として対象・理由を記録し、通常の所有回収へ戻す。新候補の更新署名は、lockで固定したTauri CLIの `--app-version` に検証済みTauri版を渡す。暗号検証後のtrusted commentにcanonicalな `version:<版>` が1件だけあり、候補版と完全一致することを署名直後・candidate検証・staging再検査・manifest生成で要求する。署名なし・版なし・別版・重複版は候補として拒否する。
+### 更新署名の版と旧クライアントの移行
+
+新署名は既存の公開鍵を保持し、署名済みの `timestamp` / `file` にtab区切りの `version` を加えるTauri CLIの形式を使う。変更されていないminisign一般検証は従来vectorを引き続き認証するが、新候補/manifestは版なし署名を受け付けない。固定updater rev `ba98bfad` は、認証済みtrusted commentに版があればmanifestとの一致を検査する。
+
+`requireSignedVersion` は今は有効化しない。公式updaterは版なしの旧署名を拒否するため、実公開の既署名payloadすべての再署名・互換性と利用者の更新元を確認してから移行する。未署名の旧releaseや、今回のテスト鍵を本番署名の代用としない。この変更は鍵ローテーション・公開・実インストール・更新/再起動成功ではない。private-only候補入口とpublic OSSの不一致は別設計契約で修復し、検証器の信頼境界を単に解除しない。
