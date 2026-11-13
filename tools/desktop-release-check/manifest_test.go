@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,5 +101,46 @@ func TestManifestFilePublicationIsCompleteAndNonOverwriting(t *testing.T) {
 	}
 	if err := publishManifestFile(filepath.Join(dir, "absent"), data); err == nil {
 		t.Fatal("missing output accepted")
+	}
+}
+
+type failedManifestFile struct {
+	*os.File
+	mode string
+}
+
+func (f failedManifestFile) Write(b []byte) (int, error) {
+	if f.mode == "short" {
+		return f.File.Write(b[:1])
+	}
+	if f.mode == "write" {
+		_, _ = f.File.Write(b[:1])
+		return 1, errors.New("injected")
+	}
+	return f.File.Write(b)
+}
+func (f failedManifestFile) Close() error {
+	err := f.File.Close()
+	if f.mode == "close" {
+		return errors.New("injected")
+	}
+	return err
+}
+func TestManifestFailedWritesLeaveNoFinalOrPartial(t *testing.T) {
+	for _, mode := range []string{"short", "write", "close"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := scratch(t)
+			err := publishManifestWith(dir, []byte("complete"), func() (manifestFile, error) {
+				f, e := os.CreateTemp(dir, ".latest-partial-*")
+				return failedManifestFile{f, mode}, e
+			})
+			if err == nil {
+				t.Fatal("failure accepted")
+			}
+			entries, _ := os.ReadDir(dir)
+			if len(entries) != 0 {
+				t.Fatal("failed manifest remains")
+			}
+		})
 	}
 }

@@ -70,8 +70,18 @@ func writeVerifiedWindowsManifest(output string, src source, payloadURL string) 
 	return publishManifestFile(output, data)
 }
 
+type manifestFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+	Name() string
+}
+
 func publishManifestFile(output string, data []byte) error {
-	f, err := os.CreateTemp(output, ".latest-partial-*")
+	return publishManifestWith(output, data, func() (manifestFile, error) { return os.CreateTemp(output, ".latest-partial-*") })
+}
+func publishManifestWith(output string, data []byte, create func() (manifestFile, error)) error {
+	f, err := create()
 	if err != nil {
 		return fail("cannot create new candidate update manifest")
 	}
