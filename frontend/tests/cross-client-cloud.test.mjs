@@ -57,6 +57,7 @@ for(const operation of ['authorize','applyStatus'])test(`support ${operation} re
  const pending=invoke();await new Promise(setImmediate);
  assert.equal(request.init.headers.get('Authorization'),'Bearer synthetic-support-session');
  assert.equal(request.init.credentials,'omit');assert.equal(request.init.method,'POST');
+ assert.equal(request.init.headers.get('Content-Type'),'application/json');
  assert.equal(request.url.href,`https://support.example.invalid/api/support-receipts/${id}/${operation==='authorize'?'authorization':'operator-status'}`);
  assert.deepEqual(JSON.parse(request.init.body),operation==='authorize'?{operatorId:owner,status:'in_progress',revision:0}:{confirmation:'a'.repeat(43)});
  session.dispose();await assert.rejects(pending);assert.equal(cancelled,1);
