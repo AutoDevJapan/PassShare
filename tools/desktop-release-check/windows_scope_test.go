@@ -13,7 +13,7 @@ func TestCandidateWindowsOnlyPrerequisites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	start := strings.Index(text, "      - name: Require ")
 	if start < 0 {
 		t.Fatal("candidate readiness gate missing")
@@ -38,8 +38,14 @@ func TestCandidateWindowsOnlyPrerequisites(t *testing.T) {
 		t.Fatal("candidate matrix missing")
 	}
 	matrix := text[matrixStart : matrixStart+matrixEnd]
-	if strings.Count(matrix, "- os:") != 1 || !strings.Contains(matrix, "- os: windows") || !strings.Contains(matrix, "passshare-windows-signing") {
+	if strings.TrimSpace(matrix) != "matrix:\n        include:\n          - os: windows\n            runner: [self-hosted, Windows, X64, passshare-windows-signing]" {
 		t.Fatal("candidate must select only the existing Windows signing runner")
+	}
+	if strings.Contains(text, "MACOS_READY") || strings.Contains(text, "LINUX_READY") {
+		t.Fatal("deferred readiness dependency anywhere in workflow")
+	}
+	if !strings.Contains(text, "  signed:\n    needs: gate\n") {
+		t.Fatal("signed candidate must depend on trust gate")
 	}
 	for _, preserved := range []string{"$env:CANDIDATE_REPOSITORY_PRIVATE -ne 'true'", "$env:CANDIDATE_SHA -cne $env:GITHUB_WORKFLOW_SHA", "Verify actual signatures, versions and stage allowlisted files only", "TAURI_SIGNING_PRIVATE_KEY:"} {
 		if !strings.Contains(text, preserved) {

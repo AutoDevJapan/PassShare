@@ -60,12 +60,12 @@ Cargoのworkspace全体の出力先を使うため、成果物はリポジトリ
 
 | 対象 | 必要な既存環境・公開設定 | 実際に確認すること |
 |---|---|---|
-| 更新署名（全OS） | `TAURI_SIGNING_PRIVATE_KEY`、必要なら `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 現行公開鍵で実成果物の `.sig` を検証する。別鍵なら失敗 |
+| 更新署名（現候補はWindowsのみ） | `TAURI_SIGNING_PRIVATE_KEY`、必要なら `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 現行公開鍵で実成果物の `.sig` を検証する。別鍵なら失敗 |
 | Windows x64 | 専用runnerラベル `passshare-windows-signing`。発行元が対応するCSP/KSP等を構成済みの `CurrentUser/My` コード署名証明書、Windows SDK signtool、7-Zip | 秘密鍵利用可能、EKU、期限、オンラインchain、発行元subject、thumbprint。完成したNSISと内部アプリのAuthenticode、timestamp、版、内部アプリとビルド本体のバイト一致 |
-| macOS arm64 | 専用runnerラベル `passshare-macos-signing`。有効なDeveloper ID Applicationと既存のnotarytool keychain profile、Xcode CLI tools | 署名identityとteam、公証提出成功、staple。更新archiveから展開した実appの版・identifier・codesignのApple chain/Developer ID/team・Gatekeeper・公証ticket |
-| Linux x64 | 専用runnerラベル `passshare-linux-signing`、Ubuntu 22.04、既存CIと同じビルド依存、FUSE2 | AppImage全体の更新署名、同時生成debの版・architecture、deb内アプリとビルド本体の全バイト一致、AppImage内アプリとdeb内アプリのELFコード・静的データの一致。debは照合用で、無署名debを候補へ保存しない |
+| macOS arm64（現手動候補では未使用） | 専用runnerラベル `passshare-macos-signing`。有効なDeveloper ID Applicationと既存のnotarytool keychain profile、Xcode CLI tools | 署名identityとteam、公証提出成功、staple。更新archiveから展開した実appの版・identifier・codesignのApple chain/Developer ID/team・Gatekeeper・公証ticket |
+| Linux x64（現手動候補では未使用） | 専用runnerラベル `passshare-linux-signing`、Ubuntu 22.04、既存CIと同じビルド依存、FUSE2 | AppImage全体の更新署名、同時生成debの版・architecture、deb内アプリとビルド本体の全バイト一致、AppImage内アプリとdeb内アプリのELFコード・静的データの一致。debは照合用で、無署名debを候補へ保存しない |
 
-Windowsの公開設定は `DESKTOP_WINDOWS_CERT_THUMBPRINT`（40桁hex）、`DESKTOP_WINDOWS_PUBLISHER_SUBJECT`（証明書の実subject）、`DESKTOP_WINDOWS_TIMESTAMP_URL`（発行元が指定したHTTPS timestamp）。macOSは `DESKTOP_APPLE_SIGNING_IDENTITY`、`DESKTOP_APPLE_TEAM_ID`（10桁）、`DESKTOP_MACOS_NOTARY_PROFILE`（既存keychain profileの名前）。対象OS環境の準備を確認するまで `DESKTOP_WINDOWS_SIGNING_READY`、`DESKTOP_MACOS_SIGNING_READY`、`DESKTOP_LINUX_SIGNING_READY` をtrueにしない。この実装は設定の登録を行わず、特定providerの秘密値も仮定しない。入口の一般runnerには秘密を渡さず、既存更新鍵の有無は各専用署名runnerのビルド工程で確認する。準備フラグがtrueでも実証明書・署名検査を省略しない。
+Windowsの公開設定は `DESKTOP_WINDOWS_CERT_THUMBPRINT`（40桁hex）、`DESKTOP_WINDOWS_PUBLISHER_SUBJECT`（証明書の実subject）、`DESKTOP_WINDOWS_TIMESTAMP_URL`（発行元が指定したHTTPS timestamp）。macOSは `DESKTOP_APPLE_SIGNING_IDENTITY`、`DESKTOP_APPLE_TEAM_ID`（10桁）、`DESKTOP_MACOS_NOTARY_PROFILE`（既存keychain profileの名前）。現手動候補ではMac/Linux設定とフラグは読み取り対象外。対象OS環境の準備を確認するまで `DESKTOP_WINDOWS_SIGNING_READY`、`DESKTOP_MACOS_SIGNING_READY`、`DESKTOP_LINUX_SIGNING_READY` をtrueにしない。この実装は設定の登録を行わず、特定providerの秘密値も仮定しない。入口の一般runnerには秘密を渡さず、既存更新鍵の有無は各専用署名runnerのビルド工程で確認する。準備フラグがtrueでも実証明書・署名検査を省略しない。
 
 署名runnerはこのリポジトリの信頼したmainだけで使う専用の使い捨てrunnerとし、fork/PRのジョブを受けない。checkoutと生成先は作業ごとに新しくする。runnerの資格とkeychainは管理対象の既存環境として扱い、候補ツールが取得・輸出・登録しない。作業終了時はrunnerとその作業用ファイルを破棄する。既存のWindows証明書をPFXへ輸出してGitHubへ取り込む手順は採用していない。
 

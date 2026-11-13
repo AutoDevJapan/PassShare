@@ -83,6 +83,8 @@ jobs:
       WINDOWS_CERT_THUMBPRINT: ${{ matrix.os == 'windows' && vars.DESKTOP_WINDOWS_CERT_THUMBPRINT || '' }}
       WINDOWS_PUBLISHER_SUBJECT: ${{ matrix.os == 'windows' && vars.DESKTOP_WINDOWS_PUBLISHER_SUBJECT || '' }}
       WINDOWS_TIMESTAMP_URL: ${{ matrix.os == 'windows' && vars.DESKTOP_WINDOWS_TIMESTAMP_URL || '' }}
+      # Deferred-platform adapters remain for future explicit scope only.
+      # The Windows-only matrix does not require their values.
       MACOS_NOTARY_PROFILE: ${{ matrix.os == 'macos' && vars.DESKTOP_MACOS_NOTARY_PROFILE || '' }}
       APPLE_TEAM_ID: ${{ matrix.os == 'macos' && vars.DESKTOP_APPLE_TEAM_ID || '' }}
 
@@ -116,6 +118,7 @@ jobs:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
+      # Unreachable with the Windows-only matrix; not a prerequisite.
       - name: Install Linux dependencies
         if: matrix.os == 'linux'
         run: |
