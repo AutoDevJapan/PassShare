@@ -77,6 +77,15 @@ read in the existing isolated CI database.
 
 createCloudSession exposes support.create and support.get through its existing immutable session transport. The caller retains requestId; uncertain POSTs are not automatically retried. Only the existing fixed metadata is accepted, response receipt/request identity is checked, body size is bounded, and remote diagnostics are not returned. This adds no operator enrollment, mail delivery, UI, contract or payment authority. The isolated HTTP client test verifies same-request replay, owner read, other-owner rejection and session revocation; memory-store acceptance is separate from PostgreSQL persistence and production contact integration.
 
+共有clientの `support.authorize` は、本人sessionからoperatorId・次status・現在revisionを
+既存authorization APIへ送る。応答はreceiptId・status・revisionの一致、期限の形式、
+confirmationの固定形式と余分なfield不在を検査する。`support.applyStatus` は担当者自身の
+sessionでconfirmationだけを既存operator-status APIへ送り、receipt IDと更新版を検査する。
+不明なPOST結果は自動再送せず、既存GETで状態を照合する。確認値をログや永続client保存へ
+出さない。この接続はoperator登録・mail配送・UI・契約や決済の操作権限を追加しない。
+専用PG/実HTTPでは本人同意、担当者消費、他actor拒否、再送拒否、旧revision拒否と履歴を
+共有client経由で確認する。本番担当者・窓口との結合や可視操作の受入は別である。
+
 The Web adapter webSupportReceiptApi uses the existing authFetch cookie/CSRF path. A non-UI Node host executes that actual transport against the isolated receipt HTTP route, maintaining a cookie jar only in the test host. It covers same-request replay, other-owner 404, CSRF rejection, pre-abort with no request, uncertain POST without automatic replay, and revoked session 401. This does not add a visible support screen, deliver mail, prove a browser cookie implementation, or enroll a production operator. An unused adapter may be removed from the Web bundle until an approved consumer is connected.
 
 Web receipt factories bind an expected authenticated owner ID. X-PassShare-Receipt-Owner is an equality precondition checked against the current cookie-authenticated user, never an authorization grant. If cookies switch while CSRF is loading, a mismatched POST is rejected before receipt creation. Other clients may omit this optional precondition and retain their existing authentication contract. The allowed CORS header is explicit. Visible UI remains unconnected.
