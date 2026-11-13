@@ -52,17 +52,15 @@ export function createSupportReceiptApi(transport: CloudFetch) {
   }
   return Object.freeze({
     async authorize(id:string,input:SupportReceiptAuthorization,signal:AbortSignal):Promise<SupportReceiptConsent> {
-      if(!uuid(id)||!fields(input,['operatorId','status','revision']))throw new SupportReceiptError(400);
       let snapshot:SupportReceiptAuthorization;
-      try{snapshot={operatorId:input.operatorId,status:input.status,revision:input.revision};}catch{throw new SupportReceiptError(400);}
+      try{if(!uuid(id)||!fields(input,['operatorId','status','revision']))throw new Error();snapshot={operatorId:input.operatorId,status:input.status,revision:input.revision};}catch{throw new SupportReceiptError(400);}
       if(!uuid(snapshot.operatorId)||!['in_progress','resolved'].includes(snapshot.status)||!Number.isSafeInteger(snapshot.revision)||snapshot.revision<0)throw new SupportReceiptError(400);
       return request<SupportReceiptConsent>(`/api/support-receipts/${id.toLowerCase()}/authorization`,{method:'POST',body:JSON.stringify({...snapshot,operatorId:snapshot.operatorId.toLowerCase()}),signal},201,value=>
         fields(value,['receiptId','status','revision','expiresAt','confirmation'])&&value.receiptId===id.toLowerCase()&&value.status===snapshot.status&&value.revision===snapshot.revision&&
         typeof value.expiresAt==='string'&&Number.isFinite(Date.parse(value.expiresAt))&&typeof value.confirmation==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value.confirmation));
     },
     async applyStatus(id:string,input:{confirmation:string},signal:AbortSignal):Promise<SupportReceiptStatus> {
-      if(!uuid(id)||!fields(input,['confirmation']))throw new SupportReceiptError(400);
-      let confirmation:string;try{confirmation=input.confirmation;}catch{throw new SupportReceiptError(400);}
+      let confirmation:string;try{if(!uuid(id)||!fields(input,['confirmation']))throw new Error();confirmation=input.confirmation;}catch{throw new SupportReceiptError(400);}
       if(typeof confirmation!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(confirmation))throw new SupportReceiptError(400);
       return request<SupportReceiptStatus>(`/api/support-receipts/${id.toLowerCase()}/operator-status`,{method:'POST',body:JSON.stringify({confirmation}),signal},200,value=>
         fields(value,['id','status','revision'])&&value.id===id.toLowerCase()&&['in_progress','resolved'].includes(value.status)&&Number.isSafeInteger(value.revision)&&value.revision>0);

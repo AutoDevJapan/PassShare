@@ -81,7 +81,10 @@ createCloudSession exposes support.create and support.get through its existing i
 既存authorization APIへ送る。応答はreceiptId・status・revisionの一致、期限の形式、
 confirmationの固定形式と余分なfield不在を検査する。`support.applyStatus` は担当者自身の
 sessionでconfirmationだけを既存operator-status APIへ送り、receipt IDと更新版を検査する。
-不明なPOST結果は自動再送せず、既存GETで状態を照合する。確認値をログや永続client保存へ
+不明なPOST結果は自動再送しない。認可発行の応答喪失では確認値をGETで復元できないため、
+本人が現在revisionを取得して再認可し、旧同意を置換する。担当者更新の応答喪失では、
+担当者が本人用GETを代行せず、本人sessionのGETでstatus/revisionを照合する。
+確認値をログや永続client保存へ
 出さない。この接続はoperator登録・mail配送・UI・契約や決済の操作権限を追加しない。
 専用PG/実HTTPでは本人同意、担当者消費、他actor拒否、再送拒否、旧revision拒否と履歴を
 共有client経由で確認する。本番担当者・窓口との結合や可視操作の受入は別である。

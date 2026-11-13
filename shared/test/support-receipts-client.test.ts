@@ -32,6 +32,9 @@ test('operator client rejects malformed inputs and mismatched or secret-bearing 
  for(const bad of [{operatorId,status:'in_progress',revision:-1},{operatorId,status:'resolved',revision:0,secret:'private'}])await assert.rejects(api.authorize(id,bad as any,signal),e=>(e as any).status===400);
  await assert.rejects(api.applyStatus(id,{confirmation:'private'} as any,signal),e=>(e as any).status===400);
  assert.equal(sends,0);
+ const proxy=new Proxy({},{ownKeys(){throw Error('private-proxy-diagnostic');}});
+ for(const invoke of [()=>api.authorize(id,proxy as any,signal),()=>api.applyStatus(id,proxy as any,signal)])await assert.rejects(invoke(),e=>(e as any).status===400&&!(e as Error).message.includes('private'));
+ assert.equal(sends,0);
  const grant={receiptId:id,status:'in_progress',revision:0,expiresAt:'2026-11-13T00:10:00Z',confirmation};
  for(const bad of [{...grant,receiptId:operatorId},{...grant,revision:1},{...grant,status:'resolved'},{...grant,secret:'private'}]){
   const client=createSupportReceiptApi(async()=>Response.json(bad,{status:201}));
