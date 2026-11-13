@@ -15,7 +15,7 @@ test('owner consent and operator status use exact scoped responses without retry
  const operatorId='44444444-4444-4444-8444-444444444444',confirmation='a'.repeat(43),signal=new AbortController().signal,calls:any[]=[];
  const api=createSupportReceiptApi(async(path,init)=>{
   calls.push({path,init});
-  return path.endsWith('/authorization')?Response.json({receiptId:id,status:'in_progress',revision:0,expiresAt:'2026-11-13T00:10:00Z',confirmation},{status:201}):Response.json({id,status:'in_progress',revision:1});
+  return path.endsWith('/authorization')?Response.json({receiptId:id,status:'in_progress',revision:1,expiresAt:'2026-11-13T00:10:00Z',confirmation},{status:201}):Response.json({id,status:'in_progress',revision:1});
  });
  const grant=await api.authorize(id,{operatorId,status:'in_progress',revision:0},signal);
  assert.equal(grant.confirmation,confirmation);
@@ -35,8 +35,8 @@ test('operator client rejects malformed inputs and mismatched or secret-bearing 
  const proxy=new Proxy({},{ownKeys(){throw Error('private-proxy-diagnostic');}});
  for(const invoke of [()=>api.authorize(id,proxy as any,signal),()=>api.applyStatus(id,proxy as any,signal)])await assert.rejects(invoke(),e=>(e as any).status===400&&!(e as Error).message.includes('private'));
  assert.equal(sends,0);
- const grant={receiptId:id,status:'in_progress',revision:0,expiresAt:'2026-11-13T00:10:00Z',confirmation};
- for(const bad of [{...grant,receiptId:operatorId},{...grant,revision:1},{...grant,status:'resolved'},{...grant,secret:'private'}]){
+ const grant={receiptId:id,status:'in_progress',revision:1,expiresAt:'2026-11-13T00:10:00Z',confirmation};
+ for(const bad of [{...grant,receiptId:operatorId},{...grant,revision:0},{...grant,status:'resolved'},{...grant,secret:'private'}]){
   const client=createSupportReceiptApi(async()=>Response.json(bad,{status:201}));
   await assert.rejects(client.authorize(id,{operatorId,status:'in_progress',revision:0},signal),e=>(e as any).status===502);
  }
@@ -60,8 +60,10 @@ test('shared client binds owner authorization to real PostgreSQL operator consum
   const a=client(owner.refreshToken),op=client(operator.refreshToken),outsider=client(other.refreshToken),signal=new AbortController().signal;
   const receipt=await a.create({...input,requestId:randomUUID()},signal);
   const consent=await a.authorize(receipt.id,{operatorId:operator.user.id,status:'in_progress',revision:0},signal);
+  assert.equal(consent.revision,1);
+  await assert.rejects(a.authorize(receipt.id,{operatorId:operator.user.id,status:'in_progress',revision:0},signal),e=>(e as any).status===409);
   await assert.rejects(outsider.applyStatus(receipt.id,{confirmation:consent.confirmation},signal),e=>(e as any).status===403);
-  assert.equal((await op.applyStatus(receipt.id,{confirmation:consent.confirmation},signal)).revision,1);
+  assert.equal((await op.applyStatus(receipt.id,{confirmation:consent.confirmation},signal)).revision,2);
   await assert.rejects(op.applyStatus(receipt.id,{confirmation:consent.confirmation},signal),e=>(e as any).status===403);
   const read=await a.get(receipt.id,signal);assert.equal(read.status,'in_progress');assert.equal(read.history.length,1);
   assert.equal(JSON.stringify(read).includes(consent.confirmation),false);

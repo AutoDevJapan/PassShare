@@ -49,6 +49,9 @@ The owner calls `POST /api/support-receipts/:id/authorization` with `operatorId`
 the next `status` and current `revision`. A live owner session is required. The
 one-time `confirmation` returned is bound to that session, operator, receipt,
 revision and transition, expires after ten minutes, and replaces prior consent.
+Issuance atomically advances the receipt revision and returns that new revision.
+Two requests using the same expected revision cannot both issue a grant; the
+loser returns 409 without replacing the winner. Consumption advances it again.
 Only its SHA-256 digest is stored. It is not an account credential. Do not put
 session credentials in mail. The owner may convey the scoped confirmation to
 the assigned operator through the existing contact conversation.
@@ -84,10 +87,10 @@ sessionでconfirmationだけを既存operator-status APIへ送り、receipt ID�
 不明なPOST結果は自動再送しない。認可発行の応答喪失では確認値をGETで復元できないため、
 本人が現在revisionを取得して再認可し、旧同意を置換する。担当者更新の応答喪失では、
 担当者が本人用GETを代行せず、本人sessionのGETでstatus/revisionを照合する。
-認可transactionはロック待ち前にDB時計で受付時刻を取得し、同意の発行時刻を保存する。
-新同意の発行より前に受付済みの要求は409で拒否し、その同意を上書きしない。
-一回消費とreceipt revisionの既存排他は維持する。これはHTTP送信時刻の推測ではなく
-DBへ到達した要求間の順序保証であり、DB受付前のネットワーク遅延までは順序付けない。
+認可発行もreceipt revisionをCASで1増加させ、確認値は発行後の版へ束縛する。
+同じ旧revisionを持つ並行要求は一方だけ成功し、接続待ち前後の遅延にかかわらず
+他方は409で拒否する。応答喪失時も旧版の盲再送は新確認値を上書きしない。
+本人GETで現在版を取得してから明示的に再認可する。一回消費・権限・状態履歴は維持する。
 担当者が403を受けたら消費成功と扱わず、本人がGETでstatus/revisionを再確認する。
 既に目的の状態なら追加消費せず、未更新なら先行要求の終端・期限を確認してから
 現revisionで再認可する。GETから確認値や進行中要求の有無を復元できるとはしない。
