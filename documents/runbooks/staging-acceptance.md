@@ -89,7 +89,7 @@ docker compose -f docker/docker-compose.test.yml run --rm backend-e2e
 - [ ] アプリ起動 + パスワードボックス解錠
 - [ ] Connect CRUD
 - [ ] クラウド同期（push / pull）smoke
-- [ ] 設定 → 更新確認（ネットワーク接続時）
+- [ ] 更新確認／installの利用者callerは未接続。[現行の配布手順](desktop-release.md#自動更新)に従い、導線実装・署名付き更新・再起動・データ保持の実受入を別途行う。現在存在する「設定→更新確認」操作としては検査しない。
 
 ### Mobile
 
