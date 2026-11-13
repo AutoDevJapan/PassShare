@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +17,26 @@ import (
 )
 
 func readFixturePID(ctx context.Context, path string) ([]byte, error) {
-	return readFixturePIDWith(ctx, path, os.ReadFile)
+	return readFixturePIDWith(ctx, path, readFixturePIDFile)
+}
+
+func readFixturePIDFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, 32))
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(data) == 32 {
+		return nil, fmt.Errorf("fixture PID data too long")
+	}
+	return data, nil
 }
 
 func readFixturePIDWith(ctx context.Context, path string, read func(string) ([]byte, error)) ([]byte, error) {
@@ -53,14 +73,27 @@ func TestFixturePIDReadRejectsInvalidDataAndBoundsMissingFile(t *testing.T) {
 	if _, err := readFixturePID(ctx, path); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("missing fixture did not honor deadline: %v", err)
 	}
-	if err := os.WriteFile(path, []byte("not-a-pid"), 0600); err != nil {
+	for _, invalid := range []string{"not-a-pid", "0", "4294967296", strings.Repeat("1", 32)} {
+		if err := os.WriteFile(path, []byte(invalid), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readFixturePID(context.Background(), path); err == nil {
+			t.Fatal("invalid fixture PID accepted")
+		}
+	}
+	if err := os.WriteFile(path, []byte("1234"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readFixturePID(context.Background(), path); err == nil {
-		t.Fatal("invalid fixture PID accepted")
+	if pid, err := readFixturePID(context.Background(), path); err != nil || string(pid) != "1234" {
+		t.Fatalf("valid fixture PID: %q %v", pid, err)
 	}
 	if _, err := readFixturePID(ctx, path); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("expired read consumed ready file")
+	}
+	denied := errors.New("non-retryable fixture read")
+	calls := 0
+	if _, err := readFixturePIDWith(context.Background(), path, func(string) ([]byte, error) { calls++; return nil, denied }); !errors.Is(err, denied) || calls != 1 {
+		t.Fatal("unrelated read error retried or accepted")
 	}
 }
 

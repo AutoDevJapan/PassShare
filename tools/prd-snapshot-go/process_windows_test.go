@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,34 +16,81 @@ import (
 )
 
 func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
+	if os.Getenv("PASSSHARE_READY_LOCK_HOLDER") == "true" {
+		name, err := syscall.UTF16PtrFromString(os.Getenv("PASSSHARE_READY_LOCK_PATH"))
+		if err != nil {
+			os.Exit(7)
+		}
+		handle, err := syscall.CreateFile(name, syscall.GENERIC_READ, 0, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+		if err != nil {
+			os.Exit(7)
+		}
+		fmt.Fprintln(os.Stdout, "fixture-lock-held")
+		var release [1]byte
+		_, err = os.Stdin.Read(release[:])
+		_ = syscall.CloseHandle(handle)
+		if err != nil || release[0] != 'R' {
+			os.Exit(7)
+		}
+		os.Exit(0)
+	}
 	path := filepath.Join(t.TempDir(), "late.ready")
 	if err := os.WriteFile(path, []byte("1234"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	name, err := syscall.UTF16PtrFromString(path)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFixturePIDWaitsForAnActualSharingViolation$")
+	hideWindow(cmd)
+	cmd.Env = append(os.Environ(), "PASSSHARE_READY_LOCK_HOLDER=true", "PASSSHARE_READY_LOCK_PATH="+path)
+	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle, err := syscall.CreateFile(name, syscall.GENERIC_READ, 0, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	output, err := cmd.StdoutPipe()
 	if err != nil {
+		input.Close()
 		t.Fatal(err)
 	}
+	cmd.WaitDelay = 500 * time.Millisecond
+	if err := cmd.Start(); err != nil {
+		input.Close()
+		output.Close()
+		t.Fatal(err)
+	}
+	waited := false
 	defer func() {
-		if handle != 0 {
-			syscall.CloseHandle(handle)
+		cancel()
+		_ = input.Close()
+		_ = output.Close()
+		if !waited {
+			_ = cmd.Wait()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil || strings.TrimSpace(line) != "fixture-lock-held" {
+		t.Fatalf("real holder did not lock file: %q %v", line, err)
+	}
 	type result struct {
 		pid []byte
 		err error
 	}
 	done := make(chan result, 1)
 	attempted := make(chan error, 1)
+	readerJoined := false
+	defer func() {
+		cancel()
+		if !readerJoined {
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Error("fixture PID reader did not drain")
+			}
+		}
+	}()
 	go func() {
 		pid, err := readFixturePIDWith(ctx, path, func(name string) ([]byte, error) {
-			data, err := os.ReadFile(name)
+			data, err := readFixturePIDFile(name)
 			select {
 			case attempted <- err:
 			default:
@@ -60,15 +109,21 @@ func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
 	}
 	select {
 	case r := <-done:
+		readerJoined = true
 		t.Fatalf("ready read completed while the real file was locked: %q %v", r.pid, r.err)
 	case <-time.After(25 * time.Millisecond):
 	}
-	if err := syscall.CloseHandle(handle); err != nil {
+	if _, err := input.Write([]byte("R")); err != nil {
 		t.Fatal(err)
 	}
-	handle = 0
+	_ = input.Close()
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	waited = true
 	select {
 	case r := <-done:
+		readerJoined = true
 		if r.err != nil || string(r.pid) != "1234" {
 			t.Fatalf("ready PID after unlock: %q %v", r.pid, r.err)
 		}
