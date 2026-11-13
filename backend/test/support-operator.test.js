@@ -23,8 +23,9 @@ test('authenticated owner consent and operator status are persistent and single 
   const {app:configured}=await createApp({pool});let nested=configured.listen(0,'127.0.0.1');await new Promise(r=>nested.once('listening',r));
   const run=async(path,t,b)=>{const response=await fetch('http://127.0.0.1:'+nested.address().port+path,{method:b===undefined?'GET':'POST',headers:{'content-type':'application/json','x-passshare-client':'mobile',...(t?{authorization:'Bearer '+t}:{})},body:b===undefined?undefined:JSON.stringify(b)});return {status:response.status,body:await response.json().catch(()=>null)};};
   try{
-   // Hold the older transaction after its database admission timestamp, before
-   // row locks. A later request must retain its grant when the older one resumes.
+   // Hold the first transaction after BEGIN, before actor/receipt locks. A
+   // second request using the same expected revision commits first; the held
+   // request must reject its stale revision without replacing that grant.
    const originalConnect=pool.connect.bind(pool);let releaseOld,admittedOld;
    const admitted=new Promise(resolve=>{admittedOld=resolve;});
    const held=new Promise(resolve=>{releaseOld=resolve;});let intercept=true;

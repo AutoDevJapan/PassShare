@@ -81,7 +81,7 @@ read in the existing isolated CI database.
 createCloudSession exposes support.create and support.get through its existing immutable session transport. The caller retains requestId; uncertain POSTs are not automatically retried. Only the existing fixed metadata is accepted, response receipt/request identity is checked, body size is bounded, and remote diagnostics are not returned. This adds no operator enrollment, mail delivery, UI, contract or payment authority. The isolated HTTP client test verifies same-request replay, owner read, other-owner rejection and session revocation; memory-store acceptance is separate from PostgreSQL persistence and production contact integration.
 
 共有clientの `support.authorize` は、本人sessionからoperatorId・次status・現在revisionを
-既存authorization APIへ送る。応答はreceiptId・status・revisionの一致、期限の形式、
+既存authorization APIへ送る。応答はreceiptId・statusの一致と発行後revision=入力revision+1、期限の形式、
 confirmationの固定形式と余分なfield不在を検査する。`support.applyStatus` は担当者自身の
 sessionでconfirmationだけを既存operator-status APIへ送り、receipt IDと更新版を検査する。
 不明なPOST結果は自動再送しない。認可発行の応答喪失では確認値をGETで復元できないため、
