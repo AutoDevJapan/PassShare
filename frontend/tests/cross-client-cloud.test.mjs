@@ -337,6 +337,44 @@ test('legacy archive never reads or uploads file bytes for encrypted/rejected mo
   encrypted = false; modeStatus = 200; await run(); assert.equal(reads, 2); assert.equal(uploads, 2);
 });
 
+test('same archive session import owns one flight until its response completes', async () => {
+  let release, uploads=0;
+  const entered=new Promise(resolve=>{release={entered:resolve};});
+  const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url)=>{
+    if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
+    if(url.endsWith('/login'))return Response.json({user:{id:owner}});
+    if(url.includes('/api/encrypted/'))return Response.json({mode:'compatibility',keyEpoch:null});
+    if(url.endsWith('/connect-token'))return Response.json({accessToken:'synthetic'});
+    if(url.endsWith('/imports/1pux')){uploads++;release.entered();return new Promise(resolve=>{release.response=resolve;});}
+    throw Error('unexpected route');
+  }});
+  const file={arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};
+  const run=()=>imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic');
+  const first=run();await entered;
+  let secondError;
+  const second=run().catch(error=>{secondError=error;});
+  for(let i=0;i<100 && !secondError && uploads===1;i++)await new Promise(resolve=>setTimeout(resolve,1));
+  try {assert.equal(uploads,1);assert.equal(secondError?.code,'IMPORT_IN_PROGRESS');}
+  finally {release.response(Response.json({imported:1}));}
+  await first;await second;
+});
+
+test('session archive retry retains its operation key after uncertainty and renews only after completion', async () => {
+  const keys=[];let fail=true;
+  const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url,init)=>{
+    if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
+    if(url.endsWith('/login'))return Response.json({user:{id:owner}});
+    if(url.includes('/api/encrypted/'))return Response.json({mode:'compatibility',keyEpoch:null});
+    if(url.endsWith('/connect-token'))return Response.json({accessToken:'synthetic'});
+    if(url.endsWith('/imports/1pux')){keys.push(init.headers['Idempotency-Key']);if(fail)throw Error('synthetic lost reply');return Response.json({imported:1});}
+    throw Error('unexpected route');
+  }});
+  const file={arrayBuffer:async()=>new Uint8Array([3,2,1]).buffer};
+  const run=()=>imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic');
+  await assert.rejects(run());fail=false;await run();await run();
+  assert.equal(keys.length,3);assert.equal(keys[0],keys[1]);assert.notEqual(keys[1],keys[2]);
+});
+
 test('desktop cloud entry locks an open .pbox before another account may be shown', async () => {
   let unlocked = true, fileLocks = 0, tree;
   const window = events(), document = { hidden: false };

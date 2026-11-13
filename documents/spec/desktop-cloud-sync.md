@@ -40,6 +40,14 @@
 - [x] 競合検出 + 手動解決 UI
 - [x] 1PUX インポート（クラウド経由）
 
+Session-authenticated archive imports serialize upload for the same API origin,
+normalized account email, Box and archive SHA-256 within the current process.
+A concurrent caller receives IMPORT_IN_PROGRESS before a second upload. The
+operation key survives an uncertain or partial result; only a completed result
+removes it. After completion, a new explicit import is a new legitimate trial.
+This does not persist archive contents or prove restart recovery, browser UI,
+encrypted migration or PostgreSQL acceptance for this caller.
+
 ## 自動テスト対応表（#211）
 
 Quality Gate `docker-e2e`（`backend/test/cloud-sync.integration.test.js`）が Desktop `cloud-sync.ts` と同じ Auth + Connect HTTP フローを検証する。

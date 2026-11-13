@@ -1,5 +1,6 @@
 import type { ConnectClient } from "@passshare/connect";
 const pendingSessionImports=new Map<string,string>();
+const activeSessionImports=new Set<string>();
 
 export type Import1puxResult = {
   imported: number;
@@ -85,6 +86,9 @@ export async function import1puxWithSession(
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buffer)),b=>b.toString(16).padStart(2,'0')).join('');
   const scope=JSON.stringify([apiBaseUrl,email.trim().toLowerCase(),vaultId,digest]);
   const operationKey=pendingSessionImports.get(scope)??crypto.randomUUID();
+  if(activeSessionImports.has(scope))throw Object.assign(new Error('1PUX import already in progress'),{code:'IMPORT_IN_PROGRESS'});
+  activeSessionImports.add(scope);
+  try {
   pendingSessionImports.set(scope,operationKey);
   const importRes = await fetch(`${apiBaseUrl}/v1/vaults/${vaultId}/imports/1pux`, {
     method: "POST",
@@ -106,4 +110,5 @@ export async function import1puxWithSession(
   if(result.partial)throw Object.assign(new Error('1PUX import remains partial'),{code:'IMPORT_PARTIAL',imported:result.imported,changed:result.changed});
   if(!result.partial&&pendingSessionImports.get(scope)===operationKey)pendingSessionImports.delete(scope);
   return result;
+  } finally {activeSessionImports.delete(scope);}
 }
