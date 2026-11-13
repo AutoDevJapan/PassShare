@@ -74,6 +74,7 @@ jobs:
       desktop: ${{ steps.scope.outputs.desktop }}
   build:
     needs: smoke
+    if: needs.smoke.outputs.desktop == 'true'
     strategy:
       fail-fast: false
       matrix:

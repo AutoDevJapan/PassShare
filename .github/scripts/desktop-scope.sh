@@ -15,7 +15,7 @@ else
       apps/desktop/*) desktop=true ;;
       apps/mobile/*) mobile=true ;;
       # Neither standalone verification workspace is a desktop path dependency.
-      tools/restore-drill-rs/*|tools/encrypted-storage-acceptance/*|documents/spec/commercial-lifecycle.md|documents/spec/support-data-lifecycle.md) ;;
+      tools/restore-drill-rs/*|tools/encrypted-storage-acceptance/*|documents/spec/commercial-lifecycle.md|documents/spec/support-data-lifecycle.md|documents/runbooks/desktop-release.md) ;;
       # Production-only snapshot tooling/deployment does not enter client builds.
       tools/prd-snapshot-go/*|.github/workflows/private-prd-snapshot.yml|.github/workflows/deploy-prd.yml) ;;
       # Server changes keep API/mobile/WebView/encrypted acceptance coverage.
