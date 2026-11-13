@@ -13,23 +13,43 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
-func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
+var fixtureLock = syscall.NewLazyDLL("kernel32.dll").NewProc("LockFileEx")
+var fixtureUnlock = syscall.NewLazyDLL("kernel32.dll").NewProc("UnlockFileEx")
+
+func TestFixturePIDWaitsForAnActualByteLock(t *testing.T) {
 	if os.Getenv("PASSSHARE_READY_LOCK_HOLDER") == "true" {
 		name, err := syscall.UTF16PtrFromString(os.Getenv("PASSSHARE_READY_LOCK_PATH"))
 		if err != nil {
 			os.Exit(7)
 		}
-		handle, err := syscall.CreateFile(name, syscall.GENERIC_READ, 0, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+		handle, err := syscall.CreateFile(name, syscall.GENERIC_READ, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
 		if err != nil {
 			os.Exit(7)
 		}
-		fmt.Fprintln(os.Stdout, "fixture-lock-held")
+		var offset syscall.Overlapped
+		locked, _, _ := fixtureLock.Call(uintptr(handle), 3, 0, 4, 0, uintptr(unsafe.Pointer(&offset)))
+		if locked == 0 {
+			_ = syscall.CloseHandle(handle)
+			os.Exit(7)
+		}
+		var info syscall.ByHandleFileInformation
+		if syscall.GetFileInformationByHandle(handle, &info) != nil {
+			os.Exit(7)
+		}
+		if _, probeErr := readFixturePIDFile(os.Getenv("PASSSHARE_READY_LOCK_PATH")); !errors.Is(probeErr, syscall.Errno(33)) {
+			fmt.Fprintf(os.Stdout, "fixture-lock-unconfirmed: %v\n", probeErr)
+			_ = syscall.CloseHandle(handle)
+			os.Exit(7)
+		}
+		fmt.Fprintf(os.Stdout, "fixture-lock-held:%d:%x:%x:%x\n", os.Getpid(), info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow)
 		var release [1]byte
 		_, err = os.Stdin.Read(release[:])
+		unlocked, _, _ := fixtureUnlock.Call(uintptr(handle), 0, 4, 0, uintptr(unsafe.Pointer(&offset)))
 		_ = syscall.CloseHandle(handle)
-		if err != nil || release[0] != 'R' {
+		if err != nil || release[0] != 'R' || unlocked == 0 {
 			os.Exit(7)
 		}
 		os.Exit(0)
@@ -40,7 +60,7 @@ func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFixturePIDWaitsForAnActualSharingViolation$")
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFixturePIDWaitsForAnActualByteLock$")
 	hideWindow(cmd)
 	cmd.Env = append(os.Environ(), "PASSSHARE_READY_LOCK_HOLDER=true", "PASSSHARE_READY_LOCK_PATH="+path)
 	input, err := cmd.StdinPipe()
@@ -68,8 +88,22 @@ func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
 		}
 	}()
 	line, err := bufio.NewReader(output).ReadString('\n')
-	if err != nil || strings.TrimSpace(line) != "fixture-lock-held" {
+	var holderPID uint32
+	var holderInfo syscall.ByHandleFileInformation
+	count, parseErr := fmt.Sscanf(strings.TrimSpace(line), "fixture-lock-held:%d:%x:%x:%x", &holderPID, &holderInfo.VolumeSerialNumber, &holderInfo.FileIndexHigh, &holderInfo.FileIndexLow)
+	if err != nil || parseErr != nil || count != 4 || holderPID != uint32(cmd.Process.Pid) {
 		t.Fatalf("real holder did not lock file: %q %v", line, err)
+	}
+	exited := holdChildForTest(t, []byte(fmt.Sprint(holderPID)))
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observedInfo syscall.ByHandleFileInformation
+	infoErr := syscall.GetFileInformationByHandle(syscall.Handle(f.Fd()), &observedInfo)
+	closeErr := f.Close()
+	if infoErr != nil || closeErr != nil || observedInfo.VolumeSerialNumber != holderInfo.VolumeSerialNumber || observedInfo.FileIndexHigh != holderInfo.FileIndexHigh || observedInfo.FileIndexLow != holderInfo.FileIndexLow {
+		t.Fatal("holder and readiness reader do not identify the same file")
 	}
 	type result struct {
 		pid []byte
@@ -101,8 +135,8 @@ func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
 	}()
 	select {
 	case err := <-attempted:
-		if !errors.Is(err, syscall.Errno(32)) {
-			t.Fatalf("real sharing conflict not reached: %v", err)
+		if !errors.Is(err, syscall.Errno(33)) {
+			t.Fatalf("real byte-lock conflict not reached: %v holder_exited=%v", err, exited())
 		}
 	case <-ctx.Done():
 		t.Fatal("fixture reader did not attempt the held file")
@@ -121,6 +155,9 @@ func TestFixturePIDWaitsForAnActualSharingViolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	waited = true
+	if !exited() {
+		t.Fatal("fixture holder still alive after Wait")
+	}
 	select {
 	case r := <-done:
 		readerJoined = true
