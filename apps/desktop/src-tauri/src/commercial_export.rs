@@ -130,11 +130,11 @@ impl ExportSessions {
             {
                 return Err("EXPORT_DIRECTORY".into());
             }
-            return Ok(format!(
+            Ok(format!(
                 "{}:{}",
                 info[7],
                 ((info[11] as u64) << 32) | info[12] as u64
-            ));
+            ))
         }
         #[cfg(not(windows))]
         {
@@ -258,6 +258,10 @@ impl ExportSessions {
             &Mutex::new(()),
         )
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep session, payload and independent revocation/commit inputs explicit"
+    )]
     pub fn publish_ordered(
         &self,
         token: &str,
@@ -279,6 +283,10 @@ impl ExportSessions {
             || {},
         )
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Ready synchronization adds no authority to the explicit publish boundary"
+    )]
     pub fn publish_with_ready(
         &self,
         token: &str,
