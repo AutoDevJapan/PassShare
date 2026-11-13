@@ -49,6 +49,9 @@ The owner calls `POST /api/support-receipts/:id/authorization` with `operatorId`
 the next `status` and current `revision`. A live owner session is required. The
 one-time `confirmation` returned is bound to that session, operator, receipt,
 revision and transition, expires after ten minutes, and replaces prior consent.
+Issuance atomically advances the receipt revision and returns that new revision.
+Two requests using the same expected revision cannot both issue a grant; the
+loser returns 409 without replacing the winner. Consumption advances it again.
 Only its SHA-256 digest is stored. It is not an account credential. Do not put
 session credentials in mail. The owner may convey the scoped confirmation to
 the assigned operator through the existing contact conversation.
@@ -76,6 +79,26 @@ read in the existing isolated CI database.
 ## Shared authenticated client connection
 
 createCloudSession exposes support.create and support.get through its existing immutable session transport. The caller retains requestId; uncertain POSTs are not automatically retried. Only the existing fixed metadata is accepted, response receipt/request identity is checked, body size is bounded, and remote diagnostics are not returned. This adds no operator enrollment, mail delivery, UI, contract or payment authority. The isolated HTTP client test verifies same-request replay, owner read, other-owner rejection and session revocation; memory-store acceptance is separate from PostgreSQL persistence and production contact integration.
+
+共有clientの `support.authorize` は、本人sessionからoperatorId・次status・現在revisionを
+既存authorization APIへ送る。応答はreceiptId・statusの一致と発行後revision=入力revision+1、期限の形式、
+confirmationの固定形式と余分なfield不在を検査する。`support.applyStatus` は担当者自身の
+sessionでconfirmationだけを既存operator-status APIへ送り、receipt IDと更新版を検査する。
+不明なPOST結果は自動再送しない。認可発行の応答喪失では確認値をGETで復元できないため、
+本人が現在revisionを取得して再認可し、旧同意を置換する。担当者更新の応答喪失では、
+担当者が本人用GETを代行せず、本人sessionのGETでstatus/revisionを照合する。
+認可発行もreceipt revisionをCASで1増加させ、確認値は発行後の版へ束縛する。
+同じ旧revisionを持つ並行要求は一方だけ成功し、接続待ち前後の遅延にかかわらず
+他方は409で拒否する。応答喪失時も旧版の盲再送は新確認値を上書きしない。
+本人GETで現在版を取得してから明示的に再認可する。一回消費・権限・状態履歴は維持する。
+担当者が403を受けたら消費成功と扱わず、本人がGETでstatus/revisionを再確認する。
+既に目的の状態なら追加消費せず、未更新なら先行要求の終端・期限を確認してから
+現revisionで再認可する。GETから確認値や進行中要求の有無を復元できるとはしない。
+同意の自動再発行・無制限の再送や、担当者への本人session引渡しは行わない。
+確認値をログや永続client保存へ
+出さない。この接続はoperator登録・mail配送・UI・契約や決済の操作権限を追加しない。
+専用PG/実HTTPでは本人同意、担当者消費、他actor拒否、再送拒否、旧revision拒否と履歴を
+共有client経由で確認する。本番担当者・窓口との結合や可視操作の受入は別である。
 
 The Web adapter webSupportReceiptApi uses the existing authFetch cookie/CSRF path. A non-UI Node host executes that actual transport against the isolated receipt HTTP route, maintaining a cookie jar only in the test host. It covers same-request replay, other-owner 404, CSRF rejection, pre-abort with no request, uncertain POST without automatic replay, and revoked session 401. This does not add a visible support screen, deliver mail, prove a browser cookie implementation, or enroll a production operator. An unused adapter may be removed from the Web bundle until an approved consumer is connected.
 

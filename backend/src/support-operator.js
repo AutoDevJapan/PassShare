@@ -44,8 +44,9 @@ export function installSupportOperatorRoutes(router,{pool,operatorIds=[]}) {
     await assertUnexpired(c,sessions);
     if(!r)throw denied();
     if(r.revision!==b.revision||!((r.status==='received'&&b.status==='in_progress')||(r.status==='in_progress'&&b.status==='resolved')))throw authHttpError(409,'PS015','Receipt state changed');
-    const value=await c.query(`UPDATE support_receipts SET operator_consent=jsonb_build_object('hash',$2::text,'operator',$3::text,'session',$4::text,'status',$5::text,'revision',$6::int,'expiresAt',clock_timestamp()+interval '10 minutes') WHERE id=$1 RETURNING operator_consent->>'expiresAt' AS expires`,[r.id,hash(token),operator,req.auth.sessionId,b.status,r.revision]);
-    return {receiptId:r.id,status:b.status,revision:r.revision,expiresAt:value.rows[0].expires};
+    const value=await c.query(`UPDATE support_receipts SET revision=revision+1,operator_consent=jsonb_build_object('hash',$2::text,'operator',$3::text,'session',$4::text,'status',$5::text,'revision',revision+1,'issuedAt',clock_timestamp(),'expiresAt',clock_timestamp()+interval '10 minutes') WHERE id=$1 AND revision=$6 RETURNING revision,operator_consent->>'expiresAt' AS expires`,[r.id,hash(token),operator,req.auth.sessionId,b.status,r.revision]);
+    if(value.rowCount!==1)throw authHttpError(409,'PS015','Receipt authorization superseded');
+    return {receiptId:r.id,status:b.status,revision:value.rows[0].revision,expiresAt:value.rows[0].expires};
    });res.status(201).json({...result,confirmation:token});
   }catch(e){sendAuthError(res,e);}
  });
