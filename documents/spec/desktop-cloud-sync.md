@@ -40,17 +40,15 @@
 - [x] 競合検出 + 手動解決 UI
 - [x] 1PUX インポート（クラウド経由）
 
-Session-authenticated archive imports own one flight for the same API origin,
-normalized account email and Box before the first asynchronous login or file
-read, through response completion. A concurrent caller receives IMPORT_IN_PROGRESS
-before a second login or upload. Login uses the existing native JSON token
-response with cookies omitted; mode and upload requests use only that response's
-session and Connect credentials. Retry keys bind the authenticated actor ID,
-Box and archive SHA-256, rather than a cookie changed by another call. The
-operation key survives an uncertain or partial result; only a completed result
-removes it. After completion, a new explicit import is a new legitimate trial.
-This does not persist archive contents or prove restart recovery, browser UI,
-encrypted migration or PostgreSQL acceptance for this caller.
+session認証の1PUX取込は、API接続先・正規化したemail・Boxごとに、最初の
+非同期login/file読取前から応答完了まで1件を所有する。並行呼出しは追加loginや
+upload前にIMPORT_IN_PROGRESSで拒否する。既存native JSON loginの返却資格だけを
+mode/Connect送信へ使い、共有Cookieを送らない。再試行keyは認証済みactor ID・Box・
+archive SHA-256へ束縛し、不明/partial時に保持、完了時だけ解放する。
+完了後の明示取込は正当な新試行である。HTTPにはflight全体の120秒期限と任意の
+caller取消signalを通し、終了時にtimer/listenerと排他を解除する。file読取自体は
+ブラウザAPIの完了まで待つが、その後に取消済みuploadを開始しない。
+秘密archiveの永続保存、再起動復帰、実WebView、暗号化移行、実PGの受入とは別である。
 
 ## 自動テスト対応表（#211）
 

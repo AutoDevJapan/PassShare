@@ -393,6 +393,33 @@ test('session archive excludes a second caller before a delayed file read and bi
   await first;assert.equal(uploads,1);
 });
 
+test('session archive cancellation aborts held login and releases its flight for retry',async()=>{
+ let entered, calls=0;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(_url,init)=>{
+  calls++;entered();return new Promise((_resolve,reject)=>{if(init.signal.aborted)reject(init.signal.reason);else init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true});});
+ }});
+ const file={arrayBuffer:async()=>new ArrayBuffer(0)};
+ for(let i=0;i<2;i++){
+  const cancel=new AbortController();
+  const pending=imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic',cancel.signal);
+  await started;cancel.abort(new Error('synthetic cancellation'));
+  await assert.rejects(pending,/synthetic cancellation/);
+ }
+ assert.equal(calls,2);
+});
+
+test('session archive deadline aborts pending authentication and clears its timer',async()=>{
+ let expire,entered,cleared=0;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const imports=load('../../shared/lib/1pux-import.ts',{}, {
+  setTimeout(fn,ms){assert.equal(ms,120000);expire=fn;return 7;},clearTimeout(id){assert.equal(id,7);cleared++;},
+  fetch:async(_url,init)=>{entered();return new Promise((_resolve,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));},
+ });
+ const pending=imports.import1puxWithSession('https://example.invalid',box,{arrayBuffer:async()=>new ArrayBuffer(0)},'synthetic@example.invalid','synthetic');
+ await started;expire();await assert.rejects(pending,/deadline exceeded/);assert.equal(cleared,1);
+});
+
 test('desktop cloud entry locks an open .pbox before another account may be shown', async () => {
   let unlocked = true, fileLocks = 0, tree;
   const window = events(), document = { hidden: false };
