@@ -19,14 +19,14 @@ func verifiedWindowsManifest(src source, a asset, payloadURL, signature string) 
 	if !versionPattern.MatchString(src.TauriVersion) || a.EmbeddedVersion != src.TauriVersion || a.UpdaterSignature != "verified" || a.OSSignature != "authenticode_trusted_publisher_and_timestamp" || a.Bytes <= 0 || !sha256Pattern.MatchString(a.SHA256) || !sha256Pattern.MatchString(a.ApplicationSHA256) {
 		return nil, fail("verified Windows candidate required for update manifest")
 	}
-	if !strings.HasSuffix(a.Name, "-setup.exe") {
+	if filepath.Base(a.Name) != a.Name || strings.ContainsAny(a.Name, "/\\:") || !strings.HasSuffix(a.Name, "-setup.exe") {
 		return nil, fail("manifest requires verified NSIS payload")
 	}
 	expected := "https://github.com/" + repository + "/releases/download/v" + src.TauriVersion + "/" + url.PathEscape(a.Name)
 	if payloadURL != expected {
 		return nil, fail("update URL must bind exact repository version and payload")
 	}
-	if signature == "" || len(signature) > 8192 {
+	if signature == "" || len(signature) > 8192 || strings.ContainsAny(signature, "\r\n") {
 		return nil, fail("verified updater signature content required")
 	}
 	if _, err := base64.StdEncoding.DecodeString(signature); err != nil {
@@ -46,20 +46,17 @@ func verifiedWindowsManifest(src source, a asset, payloadURL, signature string) 
 	}
 	return append(data, '\n'), nil
 }
-func writeVerifiedWindowsManifest(output string, src source, payloadURL string) error {
+func writeVerifiedWindowsManifest(output string, src source, payloadURL string, a asset) error {
 	if runtime.GOOS != "windows" {
 		return fail("update manifest currently supports Windows NSIS only")
 	}
-	raw, err := os.ReadFile(filepath.Join(output, "evidence.json"))
-	if err != nil {
-		return fail("verified candidate evidence missing")
+	return writeVerifiedManifestWithKey(output, src, payloadURL, a, trustedKey)
+}
+func writeVerifiedManifestWithKey(output string, src source, payloadURL string, a asset, key string) error {
+	if filepath.Base(a.Name) != a.Name || strings.ContainsAny(a.Name, "/\\:") {
+		return fail("invalid verified payload name")
 	}
-	var e evidence
-	if json.Unmarshal(raw, &e) != nil || !e.CandidateVerified || e.Source != src || e.Platform != "windows-amd64" || len(e.Assets) != 1 {
-		return fail("verified candidate evidence mismatch")
-	}
-	a := e.Assets[0]
-	checked, err := updaterCheck(filepath.Join(output, a.Name), trustedKey)
+	checked, err := updaterCheck(filepath.Join(output, a.Name), key)
 	if err != nil || checked.SHA256 != a.SHA256 || checked.Bytes != a.Bytes {
 		return fail("staged payload no longer matches verified candidate")
 	}
@@ -95,6 +92,18 @@ func publishManifestWith(output string, data []byte, create func() (manifestFile
 	}
 	if err := os.Link(temporary, filepath.Join(output, "latest.json")); err != nil {
 		return fail("cannot publish new local update manifest")
+	}
+	return nil
+}
+
+func validateManifestURL(version, raw string) error {
+	prefix := "https://github.com/" + repository + "/releases/download/v" + version + "/"
+	if !versionPattern.MatchString(version) || !strings.HasPrefix(raw, prefix) {
+		return fail("update URL must bind exact repository version and payload")
+	}
+	name, err := url.PathUnescape(strings.TrimPrefix(raw, prefix))
+	if err != nil || filepath.Base(name) != name || strings.ContainsAny(name, "/\\:") || !strings.HasSuffix(name, "-setup.exe") || raw != prefix+url.PathEscape(name) {
+		return fail("invalid NSIS candidate update URL")
 	}
 	return nil
 }

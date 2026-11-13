@@ -144,3 +144,40 @@ func TestManifestFailedWritesLeaveNoFinalOrPartial(t *testing.T) {
 		})
 	}
 }
+
+func TestManifestWiringRechecksStagedBytesAndIgnoresDiskEvidence(t *testing.T) {
+	dir := scratch(t)
+	name := "PassShare_0.1.0_x64-setup.exe"
+	path := filepath.Join(dir, name)
+	key := base64.StdEncoding.EncodeToString(readFixture(t, "minisign.pub"))
+	sig := base64.StdEncoding.EncodeToString(readFixture(t, "message.txt.minisig"))
+	write(t, path, readFixture(t, "message.txt"))
+	write(t, path+".sig", []byte(sig))
+	a, err := updaterCheck(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.OSSignature = "authenticode_trusted_publisher_and_timestamp"
+	a.EmbeddedVersion = "0.1.0"
+	a.ApplicationSHA256 = strings.Repeat("b", 64)
+	src := source{TauriVersion: "0.1.0"}
+	u := "https://github.com/" + repository + "/releases/download/v0.1.0/" + name
+	write(t, filepath.Join(dir, "evidence.json"), []byte(`{"candidate_verified":true,"assets":[{"name":"../evil-setup.exe"}]}`))
+	bad := a
+	bad.Name = "../evil-setup.exe"
+	if writeVerifiedManifestWithKey(dir, src, u, bad, key) == nil {
+		t.Fatal("path escape accepted")
+	}
+	bad = a
+	bad.SHA256 = strings.Repeat("c", 64)
+	if writeVerifiedManifestWithKey(dir, src, u, bad, key) == nil {
+		t.Fatal("staged hash ignored")
+	}
+	if err := writeVerifiedManifestWithKey(dir, src, u, a, key); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "latest.json"))
+	if !strings.Contains(string(data), sig) || strings.Contains(string(data), "evil") {
+		t.Fatal("disk evidence influenced output")
+	}
+}

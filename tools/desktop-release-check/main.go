@@ -89,6 +89,15 @@ func run(args []string) error {
 	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 {
 		return fail("invalid arguments")
 	}
+	payloadSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "payload-url" {
+			payloadSpecified = true
+		}
+	})
+	if payloadSpecified && *payloadURL == "" {
+		return fail("explicit payload URL must not be empty")
+	}
 	root, err := filepath.Abs(*repo)
 	if err != nil {
 		return fail("invalid source path")
@@ -100,6 +109,12 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *payloadURL != "" {
+		if err := validateManifestURL(src.TauriVersion, *payloadURL); err != nil {
+			return err
+		}
+	}
+
 	switch args[0] {
 	case "preflight":
 		return nil
@@ -109,11 +124,12 @@ func run(args []string) error {
 		if *out == "" || *bundle == "" {
 			return fail("bundle and new output directory required")
 		}
-		if err := verify(root, *bundle, *out, src); err != nil {
+		var verifiedAsset asset
+		if err := verify(root, *bundle, *out, src, &verifiedAsset); err != nil {
 			return err
 		}
 		if *payloadURL != "" {
-			return writeVerifiedWindowsManifest(*out, src, *payloadURL)
+			return writeVerifiedWindowsManifest(*out, src, *payloadURL, verifiedAsset)
 		}
 		return nil
 	default:
@@ -439,7 +455,7 @@ func single(bundle, pattern string) (string, error) {
 	return paths[0], nil
 }
 
-func verify(root, bundle, out string, src source) error {
+func verify(root, bundle, out string, src source, verifiedAsset *asset) error {
 	output, err := filepath.Abs(out)
 	if err != nil {
 		return fail("invalid output path")
@@ -516,5 +532,6 @@ func verify(root, bundle, out string, src source) error {
 	if err != nil || os.WriteFile(filepath.Join(output, "evidence.json"), append(data, '\n'), 0600) != nil {
 		return fail("cannot save evidence")
 	}
+	*verifiedAsset = a
 	return nil
 }
