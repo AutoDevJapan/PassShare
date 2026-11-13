@@ -72,6 +72,7 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const row=await api.create(input,signal);assert.equal((await api.create(input,signal)).id,row.id);assert.equal((await api.get(row.id,signal)).id,row.id);
   const preflight=await fetch(base+'/api/support-receipts',{method:'OPTIONS',headers:{Origin:base,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'X-PassShare-Receipt-Owner'}});
   assert.equal(preflight.status,204);assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Owner/i);
+  assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Session/i);
   assert.equal(posts,2);assert.equal(csrf,2);
   const cookie='passshare_session='+encodeURIComponent(a.sessionToken);
   const sameSessionTokens=await Promise.all([1,2].map(async()=>{
