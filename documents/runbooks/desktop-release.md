@@ -35,14 +35,12 @@ cargo tauri build
 - 未接続callerの実装は、既存の画像承認範囲との照合後に行う。endpoint・公開鍵の存在だけで、更新取得・署名検証・install・再起動が成功したとはしない。
 - 更新／再導入の受入では、本人が選んだ既存 `.pbox` をインストール先と分離して保持し、更新前後に同じファイルを開いて項目・添付参照・版を照合する。別保存の添付payloadは保存先を個別に保持し、取得後の全bytes・サイズ・SHA256も前後比較する。`.pbox` の再読取だけで外部添付bytesの保持を確認したとはしない。同期のbase revision metadataと秘密資格は別に扱い、旧資格を更新で再有効化しない。現状の非UI publisher検査はこのアプリ更新・再起動の証明ではない。
 
-## CI
-
-### Public OSSの本人ローカル署名
+## Public OSSの本人ローカル署名
 
 public repoのために既存private-only workflowのgateや署名条件を外さない。
 既存の本人Windows PCで `owner-preflight` / `owner-build` / `owner-verify` を使える。
 この入口は通常の `gh` keyring認証から本人IDと対象repo ID・組織ID・管理権限を読み、
-GitHubの現在main SHA、origin、main branch、tracked cleanとビルド範囲のuntracked source不在を独立に照合する。
+GitHubの現在main SHA、origin、main branch、tracked cleanと作業ツリー全体のuntracked source不在を独立に照合する。
 workflow環境・別本人・別repo・旧SHA・未確認APIでは署名へ進まない。
 認証用tokenを引数・新しい保存先へ渡さず、通常のtoken環境上書きも子へ継承しない。
 
@@ -55,15 +53,25 @@ go run -mod=readonly . owner-verify --repo ../.. --source-sha <main-full-sha> --
 ```
 
 Go moduleは `tools/desktop-release-check` にあり、root go.modによる実行を要求しない。
+専用の新しいclean cloneを検証済みmain SHAから用意し、既存の開発checkout・dist・node_modulesをコピーして使わない。
+rootとdesktopの `.env*` は拒否し、`.cargo/config.toml`・`rust-toolchain.toml`・`.npmrc` 等の
+未追跡build設定も拒否する。`owner-build` は既鍵・証明書の前提確認後、両packageのfrozen installと
+Connect SDKの再buildを行う。元の依存storeを汚したローカル攻撃への防御証明ではない。
+公開設定名は `WINDOWS_CERT_THUMBPRINT`、`WINDOWS_PUBLISHER_SUBJECT`、`WINDOWS_TIMESTAMP_URL`。
+秘密値は既存の正規保管から `TAURI_SIGNING_PRIVATE_KEY`（必要なら `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）へ
+渡し、CLI引数・本文・ログに書かない。`RUNNER_TEMP` は担当が作成した専用一時領域を指定する。
 既存の更新秘密鍵、信頼済みWindowsコード署名証明書、正確なpublisher/HTTPS timestamp設定、
 SDK signtoolと7-Zipが必要である。未保有ならfail closedし、無料・テスト証明書で代用しない。
-署名子も同じ認証・sourceを再照合し、従来の限定されたexe/sidecar以外は署名できない。
+署名子も同じ認証・sourceを再照合する。署名先は正確な本体・sidecar、版付きx64 NSIS installer、
+固定Tauri CLI 2.12.4の5個のNSIS DLLだけとし、`target/release` 内でも未知exe/DLLは拒否する。
+NSIS 3.13の `!uninstfinalize` が作る `nst<hex>.tmp` は同build専用TEMP直下のみとし、
+PEの製品名・版を確認する。一般TEMP配下や任意の一時ファイルを署名対象にしない。
 更新署名の版、Authenticode、NSIS内本体とpublisherの同bytes検査は共通処理で行う。
 owner-local evidenceはCI run IDを捏造せず `execution` と本人IDで識別し、
 署名候補の検証を公開・インストール・更新・再起動やデータ保持の完了としない。
 公開APIのmainはビルド完了時と候補保存前にも再照合し、main移動時はその候補を成功にしない。
 
-### 旧公開版と署名移行の境界
+## 旧公開版と署名移行の境界
 
 公開 `v1.1.0` のtag source `4094a327c0ae4009508ce4de652ba8c2fed3966c` はElectron版で、
 `desktop/src/main/auto-updater.ts` は更新無効のplaceholderだった。
@@ -74,6 +82,8 @@ repo直下の同名JSONはdownload catalogで、署名付きTauri manifestでは
 旧版の登録project pathを自動探索して秘密情報を取り込まない。
 現行の `requireSignedVersion` を有効化する前に、正規の現鍵で署名した同版payloadと
 実更新元の互換性を確認する。本人key/certificateの発行・購入はこの技術入口へ含めない。
+
+## CI
 
 `desktop-build.yml`:
 

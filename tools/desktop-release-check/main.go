@@ -116,6 +116,9 @@ func run(args []string) error {
 		if err = checkOwnerSource(root, *sha); err != nil {
 			return err
 		}
+		if err = checkOwnerBuildEnvironment(os.Getenv); err != nil {
+			return err
+		}
 	} else if err = checkTrust(*sha, os.Getenv); err != nil {
 		return err
 	}
@@ -246,7 +249,10 @@ func cleanEnv(signing bool) []string {
 	var env []string
 	for _, v := range os.Environ() {
 		name := strings.ToUpper(strings.SplitN(v, "=", 2)[0])
-		if name == "PASSSHARE_OWNER_SIGNING_ROOT" || name == "PASSSHARE_OWNER_SIGNING_SHA" {
+		if name == "PASSSHARE_OWNER_SIGNING_ROOT" || name == "PASSSHARE_OWNER_SIGNING_SHA" || name == "PASSSHARE_SIGNING_TEMP" {
+			continue
+		}
+		if name == "RUSTC_WRAPPER" || name == "RUSTC_WORKSPACE_WRAPPER" {
 			continue
 		}
 		// PS7 module paths cannot be loaded by Windows PowerShell 5.1.
@@ -314,6 +320,11 @@ func buildCandidate(root string, src source, ownerLocal bool) error {
 		if err := windowsPrerequisites(); err != nil {
 			return err
 		}
+		if ownerLocal {
+			if err := prepareOwnerDependencies(root); err != nil {
+				return err
+			}
+		}
 		exe, err := os.Executable()
 		if err != nil {
 			return fail("cannot locate signer")
@@ -356,6 +367,10 @@ func buildCandidate(root string, src source, ownerLocal bool) error {
 	if os.WriteFile(configPath, config, 0600) != nil {
 		return fail("cannot prepare candidate overlay")
 	}
+	nsisTemp := filepath.Join(configDir, "nsis-temp")
+	if runtime.GOOS == "windows" && os.Mkdir(nsisTemp, 0700) != nil {
+		return fail("cannot prepare NSIS signing temporary directory")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 	program := "pnpm"
@@ -373,6 +388,7 @@ func buildCandidate(root string, src source, ownerLocal bool) error {
 	}
 	if runtime.GOOS == "windows" {
 		c.Env = append(c.Env, "CANDIDATE_CONFIG="+configPath, "CANDIDATE_BUNDLES="+bundles)
+		c.Env = replaceEnvironment(c.Env, map[string]string{"TEMP": nsisTemp, "TMP": nsisTemp, "PASSSHARE_SIGNING_TEMP": nsisTemp})
 	}
 	c.Stdout = io.Discard
 	c.Stderr = io.Discard

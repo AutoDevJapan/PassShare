@@ -346,7 +346,7 @@ func TestSigningPathAllowsOnlyExactPublisherException(t *testing.T) {
 	if !allowedWindowsSigningPath(root, filepath.Join(root, "target/release/passshare-desktop.exe")) {
 		t.Fatal("existing build output rejected")
 	}
-	for _, p := range []string{exact + ".other.exe", filepath.Join(root, "apps/desktop/src-tauri/binaries/other.exe"), filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-aarch64-pc-windows-msvc.exe"), filepath.Join(root, "target/release-other/file.exe")} {
+	for _, p := range []string{exact + ".other.exe", filepath.Join(root, "apps/desktop/src-tauri/binaries/other.exe"), filepath.Join(root, "apps/desktop/src-tauri/binaries/passshare-export-publish-aarch64-pc-windows-msvc.exe"), filepath.Join(root, "target/release-other/file.exe"), filepath.Join(root, "target/release/arbitrary.exe"), filepath.Join(root, "target/release/deps/passshare-desktop.exe")} {
 		if allowedWindowsSigningPath(root, p) {
 			t.Fatalf("unqualified signing path accepted: %s", p)
 		}

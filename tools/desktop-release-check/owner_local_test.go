@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,11 @@ func TestOwnerLocalSourceContract(t *testing.T) {
 		{"local feature branch", "branch", false},
 		{"unknown origin", "remote", false},
 		{"untracked build source", "untracked", false},
+		{"root Cargo configuration", ".cargo/config.toml", false},
+		{"root Rust toolchain", "rust-toolchain.toml", false},
+		{"root package configuration", ".npmrc", false},
+		{"ignored frontend environment", "ignored-env", false},
+		{"Git environment override", "git-env", false},
 		{"dirty source", "dirty", false},
 		{"wrong local platform", "platform", false},
 		{"no source SHA", "sha", false},
@@ -37,6 +43,9 @@ func TestOwnerLocalSourceContract(t *testing.T) {
 			env := map[string]string{}
 			if tc.change == "workflow" {
 				env["GITHUB_ACTIONS"] = "true"
+			}
+			if tc.change == "git-env" {
+				env["GIT_DIR"] = "unrelated"
 			}
 			id, repoID, ownerID := signingOwnerID, repositoryID, repositoryOwnerID
 			name, mainSHA, defaultBranch := repository, sha, "main"
@@ -96,9 +105,17 @@ func TestOwnerLocalSourceContract(t *testing.T) {
 						return []byte("https://example.invalid/PassShare.git\n"), nil
 					}
 					return []byte("git@github.com:" + repository + ".git\n"), nil
-				case "ls-files --others --exclude-standard -- apps/desktop packages/connect-js crates scripts tools/desktop-release-check":
+				case "ls-files --others --exclude-standard --":
 					if tc.change == "untracked" {
 						return []byte("tools/desktop-release-check/extra.go\n"), nil
+					}
+					if tc.change == ".cargo/config.toml" || tc.change == "rust-toolchain.toml" || tc.change == ".npmrc" {
+						return []byte(tc.change + "\n"), nil
+					}
+					return nil, nil
+				case "ls-files --others --ignored --exclude-standard -- .env .env.* apps/desktop/.env apps/desktop/.env.*":
+					if tc.change == "ignored-env" {
+						return []byte("apps/desktop/.env.production\n"), nil
 					}
 					return nil, nil
 				default:
@@ -127,6 +144,16 @@ func TestOwnerLocalSourceContract(t *testing.T) {
 				t.Fatal("CI reached local owner API")
 			}
 		})
+	}
+}
+
+func TestSignWindowsRechecksOwnerSourceFirst(t *testing.T) {
+	t.Setenv("PASSSHARE_OWNER_SIGNING_ROOT", "untrusted-source")
+	t.Setenv("PASSSHARE_OWNER_SIGNING_SHA", strings.Repeat("a", 40))
+	t.Setenv("GITHUB_ACTIONS", "true")
+	err := signWindows("unrelated.exe")
+	if err == nil || err.Error() != "owner local signing is not permitted inside a workflow" {
+		t.Fatalf("signer did not recheck owner context first: %v", err)
 	}
 }
 
@@ -202,6 +229,124 @@ func TestOwnerWorkflowRefusedBeforePlatformOrAPI(t *testing.T) {
 				func(string, string) (source, error) { t.Fatal("workflow reached source"); return source{}, nil })
 			if err == nil || err.Error() != "owner local signing is not permitted inside a workflow" {
 				t.Fatalf("wrong workflow rejection: %v", err)
+			}
+		})
+	}
+}
+
+func TestWindowsSigningAllowsOnlyProductCallbacks(t *testing.T) {
+	root := filepath.Join(scratch(t), "repo")
+	owned := scratch(t)
+	t.Setenv("RUNNER_TEMP", owned)
+	temporary := filepath.Join(owned, "candidate-config-1234", "nsis-temp")
+	for _, name := range []string{"target/release/bundle/nsis/PassShare_0.1.0_x64-setup.exe", "target/release/nsis/x64/Plugins/x86-unicode/NSISdl.dll", "target/release/nsis/x64/Plugins/x86-unicode/StartMenu.dll", "target/release/nsis/x64/Plugins/x86-unicode/System.dll", "target/release/nsis/x64/Plugins/x86-unicode/nsDialogs.dll", "target/release/nsis/x64/Plugins/x86-unicode/additional/nsis_tauri_utils.dll"} {
+		if !allowedWindowsBundlerPath(root, filepath.Join(root, filepath.FromSlash(name)), "0.1.0", temporary) {
+			t.Fatalf("official callback rejected: %s", name)
+		}
+	}
+	if !allowedWindowsBundlerPath(root, filepath.Join(temporary, "nstA12F.tmp"), "0.1.0", temporary) {
+		t.Fatal("owned NSIS uninstaller callback rejected")
+	}
+	for _, name := range []string{"target/release/arbitrary.exe", "target/release/deps/evil.exe", "target/release/bundle/nsis/PassShare_0.2.0_x64-setup.exe", "target/release/bundle/nsis/evil-setup.exe", "target/release/nsis/x64/Plugins/x86-unicode/evil.dll", "target/release/nsis/arm64/Plugins/x86-unicode/System.dll"} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if allowedWindowsSigningPath(root, p) || allowedWindowsBundlerPath(root, p, "0.1.0", temporary) {
+			t.Fatalf("unknown callback accepted: %s", name)
+		}
+	}
+	for _, p := range []string{filepath.Join(temporary, "evil.tmp"), filepath.Join(temporary, "nst12345.tmp"), filepath.Join(temporary, "nested/nst123.tmp"), filepath.Join(filepath.Dir(temporary), "nst123.tmp")} {
+		if allowedWindowsBundlerPath(root, p, "0.1.0", temporary) {
+			t.Fatal("unknown temporary signing target accepted")
+		}
+	}
+	if allowedWindowsBundlerPath(root, filepath.Join(temporary, "nst123.tmp"), "0.1.0", "") || allowedWindowsBundlerPath(root, filepath.Join(temporary, "nst123.tmp"), "bad", temporary) {
+		t.Fatal("temporary signing without bound build accepted")
+	}
+	for _, other := range []string{filepath.Join(owned, "other", "nsis-temp"), filepath.Join(filepath.Dir(owned), "candidate-config-1234", "nsis-temp"), owned} {
+		if allowedWindowsBundlerPath(root, filepath.Join(other, "nst123.tmp"), "0.1.0", other) {
+			t.Fatal("temporary target outside owned build context accepted")
+		}
+	}
+}
+
+func TestOwnerSourceRealGitRejectsExtraInputs(t *testing.T) {
+	for _, extra := range []string{".cargo/config.toml", "rust-toolchain.toml", ".npmrc", "apps/desktop/.env.production"} {
+		t.Run(strings.ReplaceAll(extra, "/", "_"), func(t *testing.T) {
+			root := scratch(t)
+			write(t, filepath.Join(root, ".gitignore"), []byte(".env*\n"))
+			for _, args := range [][]string{{"init", "--quiet", "--initial-branch=main"}, {"add", ".gitignore"}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "owned metadata fixture"}, {"remote", "add", "origin", "git@github.com:" + repository + ".git"}} {
+				if _, err := command(root, nil, "git", args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			shaBytes, err := command(root, nil, "git", "rev-parse", "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sha := strings.TrimSpace(string(shaBytes))
+			api := func(endpoint string, out any) error {
+				var data string
+				switch endpoint {
+				case "user":
+					data = `{"id":88025750}`
+				case "repos/" + repository:
+					data = `{"id":1131498455,"full_name":"AutoDevJapan/PassShare","owner":{"id":246834983},"default_branch":"main","permissions":{"admin":true}}`
+				case "repos/" + repository + "/branches/main":
+					data = `{"commit":{"sha":"` + sha + `"}}`
+				default:
+					t.Fatal("unexpected endpoint")
+				}
+				return json.Unmarshal([]byte(data), out)
+			}
+			inspect := func(r, s string) (source, error) {
+				if r != root || s != sha {
+					t.Fatal("source mismatched")
+				}
+				return source{SHA: s}, nil
+			}
+			env := func(string) string { return "" }
+			if err := checkOwnerSourceWith(root, sha, "windows", env, api, command, inspect); err != nil {
+				t.Fatalf("clean positive rejected: %v", err)
+			}
+			write(t, filepath.Join(root, filepath.FromSlash(extra)), []byte("fixture=not-production\n"))
+			if err := checkOwnerSourceWith(root, sha, "windows", env, api, command, inspect); err == nil {
+				t.Fatalf("extra build input accepted: %s", extra)
+			}
+		})
+	}
+}
+
+func TestSigningTemporaryEnvironmentIsReplaced(t *testing.T) {
+	values := map[string]string{"TEMP": "owned", "TMP": "owned", "PASSSHARE_SIGNING_TEMP": "owned"}
+	got := replaceEnvironment([]string{"temp=outside", "TMP=elsewhere", "PASSSHARE_SIGNING_TEMP=bad", "PATH=retained"}, values)
+	counts := map[string]int{}
+	for _, item := range got {
+		pair := strings.SplitN(item, "=", 2)
+		key := strings.ToUpper(pair[0])
+		counts[key]++
+		if expected, ok := values[key]; ok && pair[1] != expected {
+			t.Fatal("old temp inherited")
+		}
+	}
+	for key := range values {
+		if counts[key] != 1 {
+			t.Fatalf("temporary context count %s=%d", key, counts[key])
+		}
+	}
+}
+
+func TestOwnerEntryBuildEnvironmentIsNotInheritedAuthority(t *testing.T) {
+	if err := checkOwnerBuildEnvironment(func(string) string { return "" }); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"CARGO_TARGET_DIR", "CARGO_BUILD_TARGET", "RUSTFLAGS", "TAURI_CONFIG", "VITE_API_BASE_URL"} {
+		t.Run(key, func(t *testing.T) {
+			if checkOwnerBuildEnvironment(func(k string) string {
+				if k == key {
+					return "override"
+				}
+				return ""
+			}) == nil {
+				t.Fatal("build override accepted")
 			}
 		})
 	}
