@@ -41,7 +41,7 @@ func TestCandidateWindowsOnlyPrerequisites(t *testing.T) {
 	if strings.TrimSpace(matrix) != "matrix:\n        include:\n          - os: windows\n            runner: [self-hosted, Windows, X64, passshare-windows-signing]" {
 		t.Fatal("candidate must select only the existing Windows signing runner")
 	}
-	if strings.Contains(text, "MACOS_READY") || strings.Contains(text, "LINUX_READY") {
+	if strings.Contains(text, "MACOS_READY") || strings.Contains(text, "LINUX_READY") || strings.Contains(text, "DESKTOP_MACOS_SIGNING_READY") || strings.Contains(text, "DESKTOP_LINUX_SIGNING_READY") {
 		t.Fatal("deferred readiness dependency anywhere in workflow")
 	}
 	if !strings.Contains(text, "  signed:\n    needs: gate\n") {
