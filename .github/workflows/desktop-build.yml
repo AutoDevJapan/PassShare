@@ -135,4 +135,3 @@ jobs:
             target/release/bundle/**/*
           if-no-files-found: error
           retention-days: 7
-    if: needs.smoke.outputs.desktop == 'true'
