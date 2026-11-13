@@ -29,7 +29,7 @@ jobs:
         shell: pwsh
         env:
           CANDIDATE_SHA: ${{ inputs.source_sha }}
-          CANDIDATE_PAYLOAD_URL: ${{ inputs.payload_url }}
+
           CANDIDATE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
         run: |
           if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or

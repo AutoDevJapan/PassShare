@@ -181,3 +181,29 @@ func TestManifestWiringRechecksStagedBytesAndIgnoresDiskEvidence(t *testing.T) {
 		t.Fatal("disk evidence influenced output")
 	}
 }
+
+func TestManifestEarlyURLAndExplicitEmpty(t *testing.T) {
+	good := "https://github.com/" + repository + "/releases/download/v0.1.0/PassShare_0.1.0_x64-setup.exe"
+	if validateManifestURL("0.1.0", good) != nil {
+		t.Fatal("valid early URL")
+	}
+	for _, bad := range []string{strings.Replace(good, "_x64", "_arm64", 1), good + "?x=1", strings.Replace(good, "v0.1.0", "v0.2.0", 1), strings.Replace(good, "https:", "http:", 1)} {
+		if validateManifestURL("0.1.0", bad) == nil {
+			t.Fatal("invalid early URL")
+		}
+	}
+	for _, cmd := range []string{"preflight", "build", "verify"} {
+		if err := run([]string{cmd, "--payload-url="}); err == nil || err.Error() != "explicit payload URL must not be empty" {
+			t.Fatal("explicit empty must fail before trust")
+		}
+	}
+}
+func TestManifestRejectsMultilineSignature(t *testing.T) {
+	a := asset{Name: "PassShare_0.1.0_x64-setup.exe", Bytes: 1, SHA256: strings.Repeat("a", 64), UpdaterSignature: "verified", OSSignature: "authenticode_trusted_publisher_and_timestamp", EmbeddedVersion: "0.1.0", ApplicationSHA256: strings.Repeat("b", 64)}
+	u := "https://github.com/" + repository + "/releases/download/v0.1.0/" + a.Name
+	for _, sig := range []string{"dGVz\ndA==", "dGVz\rdA=="} {
+		if _, err := verifiedWindowsManifest(source{TauriVersion: "0.1.0"}, a, u, sig); err == nil {
+			t.Fatal("multiline accepted")
+		}
+	}
+}

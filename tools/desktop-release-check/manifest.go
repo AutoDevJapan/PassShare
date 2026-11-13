@@ -102,6 +102,9 @@ func validateManifestURL(version, raw string) error {
 		return fail("update URL must bind exact repository version and payload")
 	}
 	name, err := url.PathUnescape(strings.TrimPrefix(raw, prefix))
+	if name != "PassShare_"+version+"_x64-setup.exe" {
+		return fail("update URL must name the exact Windows NSIS candidate")
+	}
 	if err != nil || filepath.Base(name) != name || strings.ContainsAny(name, "/\\:") || !strings.HasSuffix(name, "-setup.exe") || raw != prefix+url.PathEscape(name) {
 		return fail("invalid NSIS candidate update URL")
 	}
