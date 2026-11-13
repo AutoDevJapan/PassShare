@@ -183,3 +183,26 @@ func TestOwnerEntryDoesNotReuseWorkflowTrustOrSignOnUnknownCommand(t *testing.T)
 		t.Fatal("rejected owner operation created output")
 	}
 }
+
+func TestOwnerWorkflowRefusedBeforePlatformOrAPI(t *testing.T) {
+	for _, platform := range []string{"windows", "linux", "darwin"} {
+		t.Run(platform, func(t *testing.T) {
+			err := checkOwnerSourceWith("owned-source", strings.Repeat("a", 40), platform,
+				func(k string) string {
+					if k == "GITHUB_ACTIONS" {
+						return "true"
+					}
+					return ""
+				},
+				func(string, any) error { t.Fatal("workflow reached local API"); return nil },
+				func(string, []string, string, ...string) ([]byte, error) {
+					t.Fatal("workflow reached local Git")
+					return nil, nil
+				},
+				func(string, string) (source, error) { t.Fatal("workflow reached source"); return source{}, nil })
+			if err == nil || err.Error() != "owner local signing is not permitted inside a workflow" {
+				t.Fatalf("wrong workflow rejection: %v", err)
+			}
+		})
+	}
+}

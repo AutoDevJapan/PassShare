@@ -24,13 +24,13 @@ type apiRead func(string, any) error
 type localRead func(string, []string, string, ...string) ([]byte, error)
 
 func checkOwnerSourceWith(root, sha, platform string, env func(string) string, api apiRead, local localRead, inspect func(string, string) (source, error)) error {
-	if platform != "windows" || !shaPattern.MatchString(sha) || root == "" {
-		return fail("owner signing requires Windows and an exact main source SHA")
-	}
 	for _, key := range []string{"GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_WORKFLOW_REF", "GITHUB_WORKFLOW_SHA", "GITHUB_RUN_ID", "GITHUB_SHA"} {
 		if env(key) != "" {
 			return fail("owner local signing is not permitted inside a workflow")
 		}
+	}
+	if platform != "windows" || !shaPattern.MatchString(sha) || root == "" {
+		return fail("owner signing requires Windows and an exact main source SHA")
 	}
 	var account struct {
 		ID int64 `json:"id"`
