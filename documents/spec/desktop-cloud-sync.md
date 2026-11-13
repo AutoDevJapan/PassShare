@@ -40,6 +40,16 @@
 - [x] 競合検出 + 手動解決 UI
 - [x] 1PUX インポート（クラウド経由）
 
+session認証の1PUX取込は、API接続先・正規化したemail・Boxごとに、最初の
+非同期login/file読取前から応答完了まで1件を所有する。並行呼出しは追加loginや
+upload前にIMPORT_IN_PROGRESSで拒否する。既存native JSON loginの返却資格だけを
+mode/Connect送信へ使い、共有Cookieを送らない。再試行keyは認証済みactor ID・Box・
+archive SHA-256へ束縛し、不明/partial時に保持、完了時だけ解放する。
+完了後の明示取込は正当な新試行である。HTTPにはflight全体の120秒期限と任意の
+caller取消signalを通し、終了時にtimer/listenerと排他を解除する。file読取自体は
+ブラウザAPIの完了まで待つが、その後に取消済みuploadを開始しない。
+秘密archiveの永続保存、再起動復帰、実WebView、暗号化移行、実PGの受入とは別である。
+
 ## 自動テスト対応表（#211）
 
 Quality Gate `docker-e2e`（`backend/test/cloud-sync.integration.test.js`）が Desktop `cloud-sync.ts` と同じ Auth + Connect HTTP フローを検証する。

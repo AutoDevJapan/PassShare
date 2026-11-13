@@ -322,7 +322,7 @@ test('legacy archive never reads or uploads file bytes for encrypted/rejected mo
   let modeStatus = 200, encrypted = true, metadataStatus = 200, reads = 0, uploads = 0;
   const imports = load('../../shared/lib/1pux-import.ts', {}, { fetch: async (url, init) => {
     if (url.endsWith('/csrf')) return new Response('{"csrfToken":"synthetic-csrf"}');
-    if (url.endsWith('/login')) return new Response('{}');
+    if (url.endsWith('/login')) return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'synthetic-session',connectAccessToken:'synthetic-connect'});
     if (url.includes('/api/encrypted/')) return new Response(JSON.stringify({ mode: encrypted ? 'encrypted' : 'compatibility', keyEpoch: encrypted ? 17 : null }), { status: modeStatus });
     if (url.endsWith('/connect-token')) return new Response('{"accessToken":"synthetic-connect"}');
     if (url.endsWith(`/v1/vaults/${box}`)) return new Response('{}', { status: metadataStatus });
@@ -335,6 +335,89 @@ test('legacy archive never reads or uploads file bytes for encrypted/rejected mo
   modeStatus = 404; metadataStatus = 409; await assert.rejects(run()); assert.equal(reads, 0); assert.equal(uploads, 0);
   metadataStatus = 200; await run(); assert.equal(reads, 1); assert.equal(uploads, 1);
   encrypted = false; modeStatus = 200; await run(); assert.equal(reads, 2); assert.equal(uploads, 2);
+});
+
+test('same archive session import owns one flight until its response completes', async () => {
+  let release, uploads=0;
+  const entered=new Promise(resolve=>{release={entered:resolve};});
+  const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url)=>{
+    if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
+    if(url.endsWith('/login'))return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'synthetic-session',connectAccessToken:'synthetic-connect'});
+    if(url.includes('/api/encrypted/'))return Response.json({mode:'compatibility',keyEpoch:null});
+    if(url.endsWith('/connect-token'))return Response.json({accessToken:'synthetic'});
+    if(url.endsWith('/imports/1pux')){uploads++;release.entered();return new Promise(resolve=>{release.response=resolve;});}
+    throw Error('unexpected route');
+  }});
+  const file={arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};
+  const run=()=>imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic');
+  const first=run();await entered;
+  let secondError;
+  const second=run().catch(error=>{secondError=error;});
+  for(let i=0;i<100 && !secondError && uploads===1;i++)await new Promise(resolve=>setTimeout(resolve,1));
+  try {assert.equal(uploads,1);assert.equal(secondError?.code,'IMPORT_IN_PROGRESS');}
+  finally {release.response(Response.json({imported:1}));}
+  await first;await second;
+});
+
+test('session archive retry retains its operation key after uncertainty and renews only after completion', async () => {
+  const keys=[];let fail=true;
+  const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url,init)=>{
+    if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
+    if(url.endsWith('/login'))return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'synthetic-session',connectAccessToken:'synthetic-connect'});
+    if(url.includes('/api/encrypted/'))return Response.json({mode:'compatibility',keyEpoch:null});
+    if(url.endsWith('/connect-token'))return Response.json({accessToken:'synthetic'});
+    if(url.endsWith('/imports/1pux')){keys.push(init.headers['Idempotency-Key']);if(fail)throw Error('synthetic lost reply');return Response.json({imported:1});}
+    throw Error('unexpected route');
+  }});
+  const file={arrayBuffer:async()=>new Uint8Array([3,2,1]).buffer};
+  const run=(origin='https://example.invalid')=>imports.import1puxWithSession(origin,box,file,'synthetic@example.invalid','synthetic');
+  await assert.rejects(run());fail=false;await run('https://EXAMPLE.invalid:443/');await run();
+  assert.equal(keys.length,3);assert.equal(keys[0],keys[1]);assert.notEqual(keys[1],keys[2]);
+});
+
+test('session archive excludes a second caller before a delayed file read and binds native login credentials', async () => {
+  let resolveRead, enteredRead, logins=0, uploads=0;
+  const reading=new Promise(resolve=>{enteredRead=resolve;});
+  const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(url,init)=>{
+    if(url.endsWith('/csrf'))return Response.json({csrfToken:'synthetic'});
+    if(url.endsWith('/login')){logins++;assert.equal(init.credentials,'omit');assert.equal(init.headers['X-Passshare-Client'],'mobile');return Response.json({user:{id:owner,email:'synthetic@example.invalid'},refreshToken:'own-session',connectAccessToken:'own-connect'});}
+    if(url.includes('/api/encrypted/')){assert.equal(init.headers.Authorization,'Bearer own-session');assert.equal(init.credentials,'omit');return Response.json({mode:'compatibility',keyEpoch:null});}
+    if(url.endsWith('/imports/1pux')){uploads++;assert.equal(init.headers.Authorization,'Bearer own-connect');return Response.json({imported:1});}
+    throw Error('unexpected cookie-based credential lookup');
+  }});
+  const file={arrayBuffer:()=>{enteredRead();return new Promise(resolve=>{resolveRead=resolve;});}};
+  const run=()=>imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic');
+  const first=run();await reading;
+  try{await assert.rejects(run(),error=>error.code==='IMPORT_IN_PROGRESS');assert.equal(logins,1);assert.equal(uploads,0);}
+  finally{resolveRead(new Uint8Array([1]).buffer);}
+  await first;assert.equal(uploads,1);
+});
+
+test('session archive cancellation aborts held login and releases its flight for retry',async()=>{
+ let entered, calls=0;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const imports=load('../../shared/lib/1pux-import.ts',{}, {fetch:async(_url,init)=>{
+  calls++;entered();return new Promise((_resolve,reject)=>{if(init.signal.aborted)reject(init.signal.reason);else init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true});});
+ }});
+ const file={arrayBuffer:async()=>new ArrayBuffer(0)};
+ for(let i=0;i<2;i++){
+  const cancel=new AbortController();
+  const pending=imports.import1puxWithSession('https://example.invalid',box,file,'synthetic@example.invalid','synthetic',cancel.signal);
+  await started;cancel.abort(new Error('synthetic cancellation'));
+  await assert.rejects(pending,/synthetic cancellation/);
+ }
+ assert.equal(calls,2);
+});
+
+test('session archive deadline aborts pending authentication and clears its timer',async()=>{
+ let expire,entered,cleared=0;
+ const started=new Promise(resolve=>{entered=resolve;});
+ const imports=load('../../shared/lib/1pux-import.ts',{}, {
+  setTimeout(fn,ms){assert.equal(ms,120000);expire=fn;return 7;},clearTimeout(id){assert.equal(id,7);cleared++;},
+  fetch:async(_url,init)=>{entered();return new Promise((_resolve,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));},
+ });
+ const pending=imports.import1puxWithSession('https://example.invalid',box,{arrayBuffer:async()=>new ArrayBuffer(0)},'synthetic@example.invalid','synthetic');
+ await started;expire();await assert.rejects(pending,/deadline exceeded/);assert.equal(cleared,1);
 });
 
 test('desktop cloud entry locks an open .pbox before another account may be shown', async () => {
