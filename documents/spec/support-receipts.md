@@ -84,3 +84,33 @@ Web receipt factories bind an expected authenticated owner ID. X-PassShare-Recei
 Authenticated CSRF issuance is stable per live session, derived with a domain-separated HMAC using the existing opaque session credential. It exposes neither that credential nor the session ID and is consistent across router instances. Unauthenticated CSRF issuance remains random; cookie/header equality and session validation are unchanged. Concurrent authenticated receipt requests therefore do not rotate each other's CSRF cookie.
 
 A Web receipt factory also requires a current-session predicate and exposes dispose. Callers dispose on logout/account-lifetime change. Its cancellation remains active through response body completion, so a disposed factory cannot publish a late receipt or start another request. The expected-owner server precondition and session lifetime serve different boundaries.
+
+AuthSessionProvider exposes supportClient for the confirmed account. Logout,
+login and signup invalidate that client before awaiting authentication I/O;
+account changes, confirmed authorization rejection and Provider unmount also
+dispose it. A same-account metadata refresh preserves the current client.
+Background refresh cannot acquire another account client while login, signup or
+logout owns an outstanding authentication transition. Only that transition's
+matching generation releases the refresh exclusion, including on failure.
+A receipt response with HTTP 401 retires that factory and clears only its
+matching Provider generation. A subsequently confirmed same-owner session gets
+a new factory; the old reference cannot follow a replacement cookie. Other
+HTTP failures retain their existing error semantics.
+The Connect response includes sessionBinding, the existing session-derived CSRF
+projection already available to Web callers. It is an equality marker, not an
+authentication credential. It remains stable for one cookie session and changes
+for another session, even for the same owner. Receipt lifetime follows this
+marker, not the independently rotating Connect access token. Existing Connect
+response fields and bearer authorization are unchanged.
+Provider factories send this marker as X-PassShare-Receipt-Session. The server
+compares it with the currently authenticated cookie session before handling a
+receipt. A same-owner cookie change before this tab refreshes is therefore
+rejected as 401 and retires the stale factory. It grants no access; existing
+clients omitting this optional precondition retain normal session authorization.
+If an older backend omits sessionBinding, the Provider disables only its receipt
+factory. Existing Connect access remains available during deployment ordering.
+Consumers must treat a null supportClient as unavailable and obtain a newly
+confirmed client through refresh; a retired client is never automatically retried.
+Controlled React Provider tests execute the real receipt adapter with synthetic
+HTTP responses. They do not prove browser cookies, PostgreSQL persistence or a
+visible support operation. The visible entry still requires its scoped UI answer.

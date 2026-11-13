@@ -10,6 +10,7 @@ import {
 } from "react";
 import { ConnectClient } from "@passshare/connect";
 import { lockCloudUi } from "../lib/cloud-worker";
+import { createWebSupportReceiptApi } from "../lib/support-receipts-api";
 import {
   authFetch,
   fetchCurrentUser,
@@ -27,6 +28,7 @@ type AuthSessionContextValue = {
   loading: boolean;
   connectClient: ConnectClient | null;
   connectLoading: boolean;
+  supportClient: ReturnType<typeof createWebSupportReceiptApi> | null;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string) => Promise<void>;
   logout: (fromLocationKey?: string) => Promise<void>;
@@ -44,17 +46,41 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [connectLoading, setConnectLoading] = useState(false);
   const [logoutLocationKey, setLogoutLocationKey] = useState<string | null>(null);
   const generation = useRef(0);
+  const authMutation = useRef<number | null>(null);
   const mounted = useRef(true);
   const currentAccount = useRef<string | null>(null);
   const currentCredential = useRef<string | null>(null);
+  const [supportClient, setSupportClient] = useState<ReturnType<typeof createWebSupportReceiptApi> | null>(null);
+  const supportRef = useRef<ReturnType<typeof createWebSupportReceiptApi> | null>(null);
+  const supportGeneration = useRef(0);
+  const receiptSession = useRef<string | null>(null);
+  const clearSupport = useCallback(() => {
+    ++supportGeneration.current;
+    supportRef.current?.dispose();
+    supportRef.current = null;
+    receiptSession.current = null;
+    setSupportClient(null);
+  }, []);
+  const bindSupport = useCallback((id: string) => {
+    if (supportRef.current) return;
+    const epoch = supportGeneration.current;
+    const client = createWebSupportReceiptApi(id,
+      () => mounted.current && currentAccount.current === id && supportGeneration.current === epoch,
+      () => {
+        if (mounted.current && currentAccount.current === id && supportGeneration.current === epoch) clearSupport();
+      }, receiptSession.current ?? undefined);
+    supportRef.current = client;
+    setSupportClient(client);
+  }, [clearSupport]);
 
   const invalidate = useCallback(() => {
     const token = ++generation.current;
+    clearSupport();
     lockCloudUi();
     currentCredential.current = null;
     setConnectClient(null);
     return token;
-  }, []);
+  }, [clearSupport]);
 
   const syncSession = useCallback(async (token: number): Promise<ConnectClient | null> => {
     const active = () => mounted.current && generation.current === token;
@@ -63,6 +89,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     // Compare identity before publishing any state or acquiring new credentials.
     // A valid same-account refresh keeps the opened worker and its draft alive.
     if (!currentUser || currentAccount.current !== currentUser.id) {
+      clearSupport();
       lockCloudUi();
       currentCredential.current = null;
       setConnectClient(null);
@@ -79,6 +106,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       lockCloudUi();
       currentCredential.current = null;
       currentAccount.current = null;
+      clearSupport();
       setConnectClient(null);
       setUser(null);
       return null;
@@ -86,16 +114,26 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     if (!response.ok) throw new Error("Connect credential refresh failed");
     const credentials = await response.json() as ConnectTokenResponse;
     if (!active()) return null;
+    if (typeof credentials.sessionBinding !== 'string' || !credentials.sessionBinding) {
+      clearSupport();
+    } else {
+      if (receiptSession.current !== credentials.sessionBinding) clearSupport();
+      receiptSession.current = credentials.sessionBinding;
+      bindSupport(currentUser.id);
+    }
     // Same-account metadata refresh with the same credential preserves drafts.
     // A changed credential is a new lifetime boundary for all private handles.
-    if (currentCredential.current !== null && currentCredential.current !== credentials.accessToken) lockCloudUi();
+    if (currentCredential.current !== null && currentCredential.current !== credentials.accessToken) {
+      lockCloudUi();
+    }
     currentCredential.current = credentials.accessToken;
     const client = new ConnectClient({ host: getApiBaseUrl(), token: credentials.accessToken });
     setConnectClient(client);
     return client;
-  }, []);
+  }, [clearSupport, bindSupport]);
 
   const refreshConnect = useCallback(async () => {
+    if (authMutation.current !== null) return null;
     const token = ++generation.current;
     setLoading(currentAccount.current === null);
     setConnectLoading(true);
@@ -112,6 +150,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   }, [syncSession]);
 
   const refresh = useCallback(async () => {
+    if (authMutation.current !== null) return;
     const token = ++generation.current;
     // ProtectedRoute replaces its outlet while loading. Keep the current
     // account mounted until the identity check confirms a boundary change.
@@ -134,12 +173,13 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    return () => { mounted.current = false; ++generation.current; currentCredential.current = null; lockCloudUi(); };
+    return () => { mounted.current = false; ++generation.current; ++supportGeneration.current; supportRef.current?.dispose(); supportRef.current = null; currentCredential.current = null; lockCloudUi(); };
   }, [refresh]);
 
   const login = useCallback(
     async (email: string, password: string) => {
       const token = invalidate();
+      authMutation.current = token;
       currentAccount.current = null;
       setUser(null);
       setLoading(true);
@@ -151,6 +191,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
         setUser(currentUser);
         await syncSession(token).catch(() => null);
       } finally {
+        if (authMutation.current === token) authMutation.current = null;
         if (mounted.current && generation.current === token) { setLoading(false); setConnectLoading(false); }
       }
     },
@@ -160,6 +201,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const signup = useCallback(
     async (email: string, password: string) => {
       const token = invalidate();
+      authMutation.current = token;
       currentAccount.current = null;
       setUser(null);
       setLoading(true);
@@ -171,6 +213,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
         setUser(currentUser);
         await syncSession(token).catch(() => null);
       } finally {
+        if (authMutation.current === token) authMutation.current = null;
         if (mounted.current && generation.current === token) { setLoading(false); setConnectLoading(false); }
       }
     },
@@ -179,16 +222,21 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async (fromLocationKey?: string) => {
     const token = invalidate();
+    authMutation.current = token;
     setLoading(false);
     setConnectLoading(false);
-    await logoutRequest();
-    if (!mounted.current || generation.current !== token) return;
-    // One route guard owns the destination after confirmed sign-out. Bind it
-    // to the requesting page so a late response cannot redirect a new page.
-    setLogoutLocationKey(fromLocationKey ?? null);
-    currentAccount.current = null;
-    setUser(null);
-    await primeCsrfToken();
+    try {
+      await logoutRequest();
+      if (!mounted.current || generation.current !== token) return;
+      // One route guard owns the destination after confirmed sign-out. Bind it
+      // to the requesting page so a late response cannot redirect a new page.
+      setLogoutLocationKey(fromLocationKey ?? null);
+      currentAccount.current = null;
+      setUser(null);
+      await primeCsrfToken();
+    } finally {
+      if (authMutation.current === token) authMutation.current = null;
+    }
   }, [invalidate]);
 
   const value = useMemo(
@@ -197,6 +245,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       loading,
       connectClient,
       connectLoading,
+      supportClient,
       logoutLocationKey,
       login,
       signup,
@@ -204,7 +253,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       refresh,
       refreshConnect,
     }),
-    [user, loading, connectClient, connectLoading, logoutLocationKey, login, signup, logout, refresh, refreshConnect],
+    [user, loading, connectClient, connectLoading, supportClient, logoutLocationKey, login, signup, logout, refresh, refreshConnect],
   );
 
   return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;

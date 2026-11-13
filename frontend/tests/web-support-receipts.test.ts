@@ -70,10 +70,38 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const api=load(a.sessionToken,owner.id),signal=new AbortController().signal;
   const input={requestId:'33333333-3333-4333-8333-333333333333',kind:'technical',version:'0.1.0',platform:'web',errorCode:''};
   const row=await api.create(input,signal);assert.equal((await api.create(input,signal)).id,row.id);assert.equal((await api.get(row.id,signal)).id,row.id);
-  const preflight=await fetch(base+'/api/support-receipts',{method:'OPTIONS',headers:{Origin:base,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'X-PassShare-Receipt-Owner'}});
-  assert.equal(preflight.status,204);assert.match(preflight.headers.get('Access-Control-Allow-Headers')??'',/X-PassShare-Receipt-Owner/i);
+  const preflight=await fetch(base+'/api/support-receipts',{method:'OPTIONS',headers:{Origin:base,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'X-PassShare-Receipt-Owner, X-PassShare-Receipt-Session'}});
+  assert.equal(preflight.status,204);
+  const allowedHeaders=(preflight.headers.get('Access-Control-Allow-Headers')??'').split(',').map(value=>value.trim().toLowerCase());
+  assert.ok(allowedHeaders.includes('x-passshare-receipt-owner'));
+  assert.ok(allowedHeaders.includes('x-passshare-receipt-session'));
   assert.equal(posts,2);assert.equal(csrf,2);
   const cookie='passshare_session='+encodeURIComponent(a.sessionToken);
+  const sameSessionTokens=await Promise.all([1,2].map(async()=>{
+   const response=await fetch(base+'/api/auth/connect-token',{headers:{Cookie:cookie}});
+   assert.equal(response.status,200);return response.json();
+  }));
+  assert.equal(typeof sameSessionTokens[0].sessionBinding,'string');
+  assert.ok(sameSessionTokens[0].sessionBinding.length>20);
+  assert.equal(sameSessionTokens[0].sessionBinding,sameSessionTokens[1].sessionBinding);
+  assert.notEqual(sameSessionTokens[0].accessToken,sameSessionTokens[1].accessToken);
+  const nextSession=await authStore.createSession(owner.id,owner.password_hash);
+  const nextToken=await fetch(base+'/api/auth/connect-token',{headers:{Cookie:'passshare_session='+encodeURIComponent(nextSession.sessionToken)}});
+  assert.equal(nextToken.status,200);
+  const nextBinding=(await nextToken.json()).sessionBinding;
+  assert.notEqual(nextBinding,sameSessionTokens[0].sessionBinding);
+  const staleReceipt=await fetch(base+'/api/support-receipts/'+row.id,{headers:{
+   Cookie:'passshare_session='+encodeURIComponent(nextSession.sessionToken),
+   'X-PassShare-Receipt-Owner':owner.id,'X-PassShare-Receipt-Session':sameSessionTokens[0].sessionBinding}});
+  assert.equal(staleReceipt.status,401,'old receipt session cannot follow another same-owner cookie');
+  const switchedRequest={...input,requestId:'88888888-8888-4888-8888-888888888888'};
+  const switchedHeaders={Cookie:'passshare_session='+encodeURIComponent(nextSession.sessionToken)+'; passshare_csrf='+nextBinding,
+   'X-CSRF-Token':nextBinding,'content-type':'application/json','X-PassShare-Receipt-Owner':owner.id,
+   'X-PassShare-Receipt-Session':sameSessionTokens[0].sessionBinding};
+  const stalePost=await fetch(base+'/api/support-receipts',{method:'POST',headers:switchedHeaders,body:JSON.stringify(switchedRequest)});
+  assert.equal(stalePost.status,401);
+  const currentPost=await fetch(base+'/api/support-receipts',{method:'POST',headers:{...switchedHeaders,'X-PassShare-Receipt-Session':nextBinding},body:JSON.stringify(switchedRequest)});
+  assert.equal(currentPost.status,201);
   const tokens=await Promise.all([fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}}),fetch(base+'/api/auth/csrf',{headers:{Cookie:cookie}})]);
   const t1=(await tokens[0].json()).csrfToken,t2=(await tokens[1].json()).csrfToken;
   assert.equal(t1,t2);
@@ -95,6 +123,10 @@ test('Web receipt adapter uses real cookie/CSRF transport with owner isolation a
   const correct=await freshB.create({...input,requestId:switchedId},signal);
   assert.equal(correct.status,'received');
   assert.equal(correct.request.requestId,switchedId);
-  await authStore.deleteSession(a.sessionId);await assert.rejects(api.get(row.id,signal),e=>(e as any).status===401);
+  const retiredCalls=calls;
+  await assert.rejects(api.get(row.id,signal),e=>(e as any).status===0);
+  assert.equal(calls,retiredCalls,'401-retired client cannot follow a replacement cookie');
+  const revokedA=load(a.sessionToken,owner.id);
+  await authStore.deleteSession(a.sessionId);await assert.rejects(revokedA.get(row.id,signal),e=>(e as any).status===401);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
