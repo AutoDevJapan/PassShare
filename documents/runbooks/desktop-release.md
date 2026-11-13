@@ -128,3 +128,5 @@ go vet ./...
 
 これはローカル候補の生成のみで、公開・upload・URLの実在確認はしない。署名を持たない現在の通常artifactは入力にできない。元の `verify` は引数省略時の挙動を保つ。実署名環境、同scopeの更新UI確認、導入・再起動・データ保持と実公開の受入は別工程である。
 手動workflowの任意入力 payload_url は環境変数から引数配列へ渡す。式をshell本文に展開しない。候補検証の失敗時にはartifact保存へ進まず、成功した同じ出力先のmanifestだけを既存artifactに含める。
+
+manifest公開は同directoryのhard linkを使うためNTFS/ReFS等の対応FSが必要で、非対応FSでは失敗し署名検証を弱めるfallbackは行わない。一時file削除がOSに拒否された場合、完全なfinalは存在してもhidden一時fileが残り得る。これは回収未確認として対象・理由を記録し、通常の所有回収へ戻す。更新署名のtrusted commentへの版束縛は既存pipeline全体の別受入であり、この候補生成の成功だけでは実更新を認定しない。
