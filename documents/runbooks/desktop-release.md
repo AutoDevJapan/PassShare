@@ -185,3 +185,19 @@ manifest公開は同directoryのhard linkを使うためNTFS/ReFS等の対応FS�
 新署名は既存の公開鍵を保持し、署名済みの `timestamp` / `file` にtab区切りの `version` を加えるTauri CLIの形式を使う。変更されていないminisign一般検証は従来vectorを引き続き認証するが、新候補/manifestは版なし署名を受け付けない。固定updater rev `ba98bfad` は、認証済みtrusted commentに版があればmanifestとの一致を検査する。
 
 `requireSignedVersion` は今は有効化しない。公式updaterは版なしの旧署名を拒否するため、実公開の既署名payloadすべての再署名・互換性と利用者の更新元を確認してから移行する。未署名の旧releaseや、今回のテスト鍵を本番署名の代用としない。この変更は鍵ローテーション・公開・実インストール・更新/再起動成功ではない。private-only候補入口とpublic OSSの不一致は別設計契約で修復し、検証器の信頼境界を単に解除しない。
+
+### 固定updaterの非UI移行検査
+
+`apps/desktop/src-tauri/tests/updater_download.rs` は、既存Desktop smokeの
+`smoke_` 対象として固定updater pluginを実行する。MockRuntimeのためOSのウィンドウは
+作らず、担当所有のloopback HTTPからmanifestとpayloadを取得して検証する。
+使い捨て公開vectorで、旧版なし署名の互換受理とstrict拒否、版付き正常、manifest版不一致、
+本文改変、別公開鍵拒否を対照にする。cached metadataの復元は版なし署名を拒否し、
+metadata内の鍵設定ではruntimeの検証鍵を置き換えないことも確認する。
+legacy `Ed` と本番Tauri形式のprehashed `ED` で同じ6caseずつを実行し、
+各caseでmanifest/payload各1取得を要求する。遅延・分割headerのfixture対照を加え、
+Windowsでaccept後のsocketをblockingへ戻した上で、serverを終了・joinする。
+
+本検査はdownload/verifyまでで、install・extract・restartを呼ばない。
+本番の公開鍵・`requireSignedVersion`・更新URLは変更しない。
+実署名候補と旧Electronデータの移行、配布物の導入・更新・再起動・保持の受入は別に残る。
