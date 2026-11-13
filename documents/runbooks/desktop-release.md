@@ -93,7 +93,7 @@ Linuxの[linuxdeploy実装](https://github.com/linuxdeploy/linuxdeploy/blob/mast
 
 本実装は版0.1.0と現行公開鍵を保持する。署名済みWindows新候補、Windowsの実導入・起動・更新・削除、実更新manifest、実配布URLはまだ確認できていない。署名の候補検査だけでM7や原22全体を完了にしない。Mac/Linuxの実検査は未実施として別に保持し、現在のWindows受入の前提にしない。
 
-公開の判断後は別工程で、実在するHTTPS manifestと対象URLから取得した実バイトを確認する。HTTP200だけでは不足し、manifestの全対象・版・公開署名、取得した本体の署名と版・SHA256を確認し、各OSで旧版から実更新する。未来の架空URLや生成したmanifestとの自己照合を有効な配布と数えない。このworkflowは `latest.json` を生成せず、公開URLを作る権限も持たない。
+公開の判断後は別工程で、実在するHTTPS manifestと対象URLから取得した実バイトを確認する。HTTP200だけでは不足し、manifestの全対象・版・公開署名、取得した本体の署名と版・SHA256を確認し、各OSで旧版から実更新する。未来の架空URLや生成したmanifestとの自己照合を有効な配布と数えない。手動workflowは任意の `payload_url` 入力時だけ、署名済み候補検証後にローカル `latest.json` を生成し同候補artifactへ保存する。入力省略時は生成せず、公開URLを作る権限は持たない。
 
 ### Go回帰テスト（署名秘密不要）
 
@@ -121,3 +121,12 @@ go vet ./...
 ### Windows x64 publisher sidecarの署名境界
 
 既存のmain・workflow・非公開・証明書の前提をすべて満たす署名候補のみ、正確な apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe 1 pathを追加署名対象とする。任意pathは許可しない。publisherのcold release buildには45分の有限上限を使い、短命な検査コマンドの3分上限とは分ける。NSIS抽出publisherは署名後の同sidecarと全bytes一致し、同じ発行元のAuthenticode検証にも成功する必要がある。prepare時のreceipt hashは署名前コピーの整合であり、署名後hashや実配布成功を表さない。現public repoでは既存private限定workflowの前提を満たさず、この変更は署名制御を解除しない。
+
+### Windows更新manifestのローカル候補
+
+`verify` の任意引数 `--payload-url` は、既存のprivate main/SHA/実更新署名/Authenticode/版/内包bytes検証が成功した後だけ、同じ新規出力先へ `latest.json` を作る。URLは `https://github.com/AutoDevJapan/PassShare/releases/download/v<検証済み版>/<検証済みNSIS名>` の完全一致で、別repo・別版・query・別payloadを拒否する。`windows-x86_64-nsis` のURLと `.sig` 内容を記録し、既存ファイルを上書きしない。
+
+これはローカル候補の生成のみで、公開・upload・URLの実在確認はしない。署名を持たない現在の通常artifactは入力にできない。元の `verify` は引数省略時の挙動を保つ。実署名環境、同scopeの更新UI確認、導入・再起動・データ保持と実公開の受入は別工程である。
+手動workflowの任意入力 payload_url は環境変数から引数配列へ渡す。式をshell本文に展開しない。候補検証の失敗時にはartifact保存へ進まず、成功した同じ出力先のmanifestだけを既存artifactに含める。
+
+manifest公開は同directoryのhard linkを使うためNTFS/ReFS等の対応FSが必要で、非対応FSでは失敗し署名検証を弱めるfallbackは行わない。一時file削除がOSに拒否された場合、完全なfinalは存在してもhidden一時fileが残り得る。これは回収未確認として対象・理由を記録し、通常の所有回収へ戻す。更新署名のtrusted commentへの版束縛は既存pipeline全体の別受入であり、この候補生成の成功だけでは実更新を認定しない。

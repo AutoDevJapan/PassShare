@@ -8,6 +8,11 @@ on:
         required: true
         type: string
 
+      payload_url:
+        description: Optional exact future NSIS release URL; creates local manifest, never publishes
+        required: false
+        type: string
+
 permissions:
   contents: read
 
@@ -24,6 +29,7 @@ jobs:
         shell: pwsh
         env:
           CANDIDATE_SHA: ${{ inputs.source_sha }}
+
           CANDIDATE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
         run: |
           if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or
@@ -51,9 +57,12 @@ jobs:
         shell: pwsh
         env:
           CANDIDATE_SHA: ${{ inputs.source_sha }}
+          CANDIDATE_PAYLOAD_URL: ${{ inputs.payload_url }}
           CANDIDATE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
         run: |
-          go run -mod=readonly . preflight --repo ../.. --source-sha $env:CANDIDATE_SHA
+          $preflightArgs = @('preflight', '--repo', '../..', '--source-sha', $env:CANDIDATE_SHA)
+          if ($env:CANDIDATE_PAYLOAD_URL) { $preflightArgs += @('--payload-url', $env:CANDIDATE_PAYLOAD_URL) }
+          go run -mod=readonly . @preflightArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Require the Windows signing runner without receiving signing secrets
@@ -78,6 +87,7 @@ jobs:
     env:
       CANDIDATE_SHA: ${{ inputs.source_sha }}
       CANDIDATE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+      CANDIDATE_PAYLOAD_URL: ${{ inputs.payload_url }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       # Public policy, NOT credentials. No freely supplied signCommand/provider shell.
       WINDOWS_CERT_THUMBPRINT: ${{ matrix.os == 'windows' && vars.DESKTOP_WINDOWS_CERT_THUMBPRINT || '' }}
@@ -149,7 +159,9 @@ jobs:
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP ('passshare-candidate-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
-          & (Join-Path $env:RUNNER_TEMP 'desktop-release-check.exe') verify --repo . --source-sha $env:CANDIDATE_SHA --bundle "$env:GITHUB_WORKSPACE/target/release/bundle" --out $out
+          $verifyArgs = @('verify', '--repo', '.', '--source-sha', $env:CANDIDATE_SHA, '--bundle', "$env:GITHUB_WORKSPACE/target/release/bundle", '--out', $out)
+          if ($env:CANDIDATE_PAYLOAD_URL) { $verifyArgs += @('--payload-url', $env:CANDIDATE_PAYLOAD_URL) }
+          & (Join-Path $env:RUNNER_TEMP 'desktop-release-check.exe') @verifyArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "CANDIDATE_OUTPUT=$out" >> $env:GITHUB_ENV
 
