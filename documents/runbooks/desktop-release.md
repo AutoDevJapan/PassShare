@@ -78,20 +78,20 @@ Linuxの[linuxdeploy実装](https://github.com/linuxdeploy/linuxdeploy/blob/mast
 ### 検査と保存
 
 1. 秘密を渡す前にmain・workflow・入力SHA・非公開を検査する。ソースのDesktop package/Tauri/Cargo版と、独立固定した現行公開鍵を照合する。
-2. 全OSの署名runner準備フラグが無ければ入口で失敗する。専用のOS runnerで既存更新秘密鍵と実署名環境を確認し、不足があれば失敗する。未署名候補へ切り替える工程はない。
+2. Windowsの署名runner準備フラグ `DESKTOP_WINDOWS_SIGNING_READY` がtrueでなければ入口で失敗する。専用のWindows runnerで既存更新秘密鍵と実署名環境を確認し、不足があれば失敗する。未署名候補へ切り替える工程はない。
 3. ソース版のまま、公開されたOS署名設定だけで中間本体をビルドする。更新秘密鍵はfrontend/Cargo/OS署名/公証の子プロセスから外し、実本体を更新署名するTauri signerだけへ環境変数で渡す。Macは公証とstapleも先に行う。[更新署名](https://v2.tauri.app/plugin/updater/)を現行公開鍵で確認するまで候補ビルド成功とせず、中間ファイルをアップロードしない。追加設定はrunnerの一時領域だけ。署名工程の子プロセスのstdout/stderrは破棄し、秘密を含むログを別ファイルにも保存しない。
 4. Goが実ファイルの署名を確認する。ファイル名や作成manifestの一致だけでは通さない。WindowsはOS信頼と発行元・timestamp、Macは展開済みの実appと公証、Linuxは署名されたAppImageと版付きpackageの実バイトを検査する。
 5. 検査中・保存時の改ざんを再検査し、本体と `.sig` と `evidence.json` だけを新しい専用領域へ保存する。その領域だけを7日間のCI成果物へ保存する。署名・版・鍵・ソースのいずれかが違えば成功証拠は作らない。
 
 証拠の `candidate_verified: true` は、そのOSの候補検査に限る。`published` と `install_update_uninstall_verified` は常にfalse。OS検査を動かしていない場合、そのOSの成功結果を作らない。JSONのsource SHAはGitHub実行の由来であり、再現ビルド証明や第三者の署名証明ではない。
 
-取得する担当は、対象repository、workflowのpath、手動起動、main、固定SHA、run attempt、全3OSジョブのsuccessを先にGitHubの読み取り専用metadataで照合する。候補は一度だけ取得し、取得した本体のSHA256と証拠、現行公開鍵による署名、各OSの実検査を照合する。JSONだけを見て由来や成功を認めない。既存の古い公開setupを再取得して新候補の検査へ読み替えない。
+取得する担当は、対象repository、workflowのpath、手動起動、main、固定SHA、run attempt、同runのgateとWindows signedジョブのsuccessを先にGitHubの読み取り専用metadataで照合する。候補は一度だけ取得し、取得した本体のSHA256と証拠、現行公開鍵による署名、Windowsの実検査を照合する。JSONだけを見て由来や成功を認めない。既存の古い公開setupを再取得して新候補の検査へ読み替えない。
 
 ### 未達と公開後の確認
 
 親の監査では旧公開Windows setupはNotSigned/版1.1、更新URLの `latest.json` はHTTP404、署名secretはmetadata17件中0件だった。これらを新しい候補の成功へ読み替えない。Firefox配布の不一致もこのDesktop工程では解消しない。
 
-本実装は版0.1.0と現行公開鍵を保持する。署名済み新候補、全3OSの実導入・起動・更新・削除、実更新manifest、実配布URLはまだ確認できていない。署名の候補検査だけでM7や原22全体を完了にしない。
+本実装は版0.1.0と現行公開鍵を保持する。署名済みWindows新候補、Windowsの実導入・起動・更新・削除、実更新manifest、実配布URLはまだ確認できていない。署名の候補検査だけでM7や原22全体を完了にしない。Mac/Linuxの実検査は未実施として別に保持し、現在のWindows受入の前提にしない。
 
 公開の判断後は別工程で、実在するHTTPS manifestと対象URLから取得した実バイトを確認する。HTTP200だけでは不足し、manifestの全対象・版・公開署名、取得した本体の署名と版・SHA256を確認し、各OSで旧版から実更新する。未来の架空URLや生成したmanifestとの自己照合を有効な配布と数えない。このworkflowは `latest.json` を生成せず、公開URLを作る権限も持たない。
 
