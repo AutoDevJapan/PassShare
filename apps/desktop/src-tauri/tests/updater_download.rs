@@ -175,6 +175,12 @@ fn smoke_pinned_updater_signed_version_migration_over_real_http() {
         .filter(|key| !key.is_empty())
         .expect("deployed updater public key required");
     assert_ne!(deployed_key, vectors.public_key);
+    let defaults: tauri_plugin_updater::Config =
+        serde_json::from_value(json!({"pubkey": deployed_key})).unwrap();
+    assert!(
+        !defaults.require_signed_version,
+        "the pinned legacy compatibility default changed"
+    );
 
     let mut executed = 0;
     for (key, unversioned, versioned) in [
@@ -305,10 +311,17 @@ fn smoke_pinned_updater_signed_version_migration_over_real_http() {
                     matches!(result, Err(Error::SignedVersionMismatch { .. })),
                     "{name}: {result:?}"
                 ),
-                "payload tampering" | "different key" => assert!(
+                "payload tampering" => assert!(
                     matches!(result, Err(Error::Minisign(_))),
                     "{name}: {result:?}"
                 ),
+                "different key" => match result {
+                    Err(Error::Minisign(error)) => assert_eq!(
+                        error.to_string(),
+                        "The signature was created with a different key than the one provided"
+                    ),
+                    other => panic!("{name}: {other:?}"),
+                },
                 _ => unreachable!(),
             }
         }
