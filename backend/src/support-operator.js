@@ -39,12 +39,16 @@ export function installSupportOperatorRoutes(router,{pool,operatorIds=[]}) {
    const operator=b.operatorId.toLowerCase();if(!operators.has(operator))throw denied();
    const token=randomBytes(32).toString('base64url');
    const result=await transaction(async c=>{
+    // Establish ordering on the database clock before waiting for actor/receipt
+    // locks. A request admitted earlier must not replace a newer grant.
+    const admitted=(await c.query("SELECT clock_timestamp()::text AS admitted")).rows[0].admitted;
     const sessions=await lockActors(c,[{user:req.auth.userId,session:req.auth.sessionId}]);
     const r=(await c.query('SELECT * FROM support_receipts WHERE id=$1 AND user_id=$2 FOR UPDATE',[req.params.id,req.auth.userId])).rows[0];
     await assertUnexpired(c,sessions);
     if(!r)throw denied();
     if(r.revision!==b.revision||!((r.status==='received'&&b.status==='in_progress')||(r.status==='in_progress'&&b.status==='resolved')))throw authHttpError(409,'PS015','Receipt state changed');
-    const value=await c.query(`UPDATE support_receipts SET operator_consent=jsonb_build_object('hash',$2::text,'operator',$3::text,'session',$4::text,'status',$5::text,'revision',$6::int,'expiresAt',clock_timestamp()+interval '10 minutes') WHERE id=$1 RETURNING operator_consent->>'expiresAt' AS expires`,[r.id,hash(token),operator,req.auth.sessionId,b.status,r.revision]);
+    const value=await c.query(`UPDATE support_receipts SET operator_consent=jsonb_build_object('hash',$2::text,'operator',$3::text,'session',$4::text,'status',$5::text,'revision',$6::int,'issuedAt',clock_timestamp(),'expiresAt',clock_timestamp()+interval '10 minutes') WHERE id=$1 AND (operator_consent->>'issuedAt' IS NULL OR (operator_consent->>'issuedAt')::timestamptz < $7::timestamptz) RETURNING operator_consent->>'expiresAt' AS expires`,[r.id,hash(token),operator,req.auth.sessionId,b.status,r.revision,admitted]);
+    if(value.rowCount!==1)throw authHttpError(409,'PS015','Receipt authorization superseded');
     return {receiptId:r.id,status:b.status,revision:r.revision,expiresAt:value.rows[0].expires};
    });res.status(201).json({...result,confirmation:token});
   }catch(e){sendAuthError(res,e);}

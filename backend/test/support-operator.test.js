@@ -23,6 +23,26 @@ test('authenticated owner consent and operator status are persistent and single 
   const {app:configured}=await createApp({pool});const nested=configured.listen(0,'127.0.0.1');await new Promise(r=>nested.once('listening',r));
   const run=async(path,t,b)=>{const response=await fetch('http://127.0.0.1:'+nested.address().port+path,{method:b===undefined?'GET':'POST',headers:{'content-type':'application/json','x-passshare-client':'mobile',...(t?{authorization:'Bearer '+t}:{})},body:b===undefined?undefined:JSON.stringify(b)});return {status:response.status,body:await response.json().catch(()=>null)};};
   try{
+   // Hold the older transaction after its database admission timestamp, before
+   // row locks. A later request must retain its grant when the older one resumes.
+   const originalConnect=pool.connect.bind(pool);let releaseOld,admittedOld;
+   const admitted=new Promise(resolve=>{admittedOld=resolve;});
+   const held=new Promise(resolve=>{releaseOld=resolve;});let intercept=true;
+   pool.connect=async(...args)=>{
+    if(typeof args[0]==='function')return originalConnect(...args);
+    const c=await originalConnect(...args);const query=c.query.bind(c);
+    c.query=async(...q)=>{const result=await query(...q);if(intercept&&String(q[0]).includes('clock_timestamp()::text AS admitted')){intercept=false;admittedOld();await held;}return result;};
+    const release=c.release.bind(c);c.release=(...a)=>{c.query=query;c.release=release;return release(...a);};return c;
+   };
+   let old;
+   try{
+    old=run(auth,token,grant);await Promise.race([admitted,new Promise((_,reject)=>setTimeout(()=>reject(Error('admission not reached')),3000))]);
+    const newer=await run(auth,token,grant);assert.equal(newer.status,201);
+    releaseOld();assert.equal((await old).status,409,'older admission cannot replace the newer grant');
+    const stored=await pool.query('SELECT operator_consent FROM support_receipts WHERE id=$1',[id]);
+    const {createHash}=await import('node:crypto');
+    assert.equal(stored.rows[0].operator_consent.hash,createHash('sha256').update(newer.body.confirmation).digest('hex'));
+   }finally{releaseOld();if(old)await old;pool.connect=originalConnect;}
    assert.equal((await run(auth,null,grant)).status,401);
    assert.equal((await run(auth,other.refreshToken,grant)).status,403);
    const first=await run(auth,token,grant);assert.equal(first.status,201);
