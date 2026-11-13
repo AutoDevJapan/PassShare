@@ -121,3 +121,9 @@ go vet ./...
 ### Windows x64 publisher sidecarの署名境界
 
 既存のmain・workflow・非公開・証明書の前提をすべて満たす署名候補のみ、正確な apps/desktop/src-tauri/binaries/passshare-export-publish-x86_64-pc-windows-msvc.exe 1 pathを追加署名対象とする。任意pathは許可しない。publisherのcold release buildには45分の有限上限を使い、短命な検査コマンドの3分上限とは分ける。NSIS抽出publisherは署名後の同sidecarと全bytes一致し、同じ発行元のAuthenticode検証にも成功する必要がある。prepare時のreceipt hashは署名前コピーの整合であり、署名後hashや実配布成功を表さない。現public repoでは既存private限定workflowの前提を満たさず、この変更は署名制御を解除しない。
+
+### Windows更新manifestのローカル候補
+
+`verify` の任意引数 `--payload-url` は、既存のprivate main/SHA/実更新署名/Authenticode/版/内包bytes検証が成功した後だけ、同じ新規出力先へ `latest.json` を作る。URLは `https://github.com/AutoDevJapan/PassShare/releases/download/v<検証済み版>/<検証済みNSIS名>` の完全一致で、別repo・別版・query・別payloadを拒否する。`windows-x86_64-nsis` のURLと `.sig` 内容を記録し、既存ファイルを上書きしない。
+
+これはローカル候補の生成のみで、公開・upload・URLの実在確認はしない。署名を持たない現在の通常artifactは入力にできない。元の `verify` は引数省略時の挙動を保つ。実署名環境、同scopeの更新UI確認、導入・再起動・データ保持と実公開の受入は別工程である。

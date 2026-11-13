@@ -83,6 +83,7 @@ func run(args []string) error {
 	repo := fs.String("repo", ".", "source checkout")
 	sha := fs.String("source-sha", "", "independently selected main SHA")
 	out := fs.String("out", "", "new output directory outside checkout")
+	payloadURL := fs.String("payload-url", "", "optional exact future release URL; no publication")
 	bundle := fs.String("bundle", "", "bundle directory")
 	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 {
 		return fail("invalid arguments")
@@ -107,7 +108,13 @@ func run(args []string) error {
 		if *out == "" || *bundle == "" {
 			return fail("bundle and new output directory required")
 		}
-		return verify(root, *bundle, *out, src)
+		if err := verify(root, *bundle, *out, src); err != nil {
+			return err
+		}
+		if *payloadURL != "" {
+			return writeVerifiedWindowsManifest(*out, src, *payloadURL)
+		}
+		return nil
 	default:
 		return fail("unknown command")
 	}
