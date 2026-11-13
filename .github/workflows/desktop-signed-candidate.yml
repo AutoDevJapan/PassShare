@@ -56,15 +56,13 @@ jobs:
           go run -mod=readonly . preflight --repo ../.. --source-sha $env:CANDIDATE_SHA
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Require provisioned signing runners without receiving signing secrets
+      - name: Require the Windows signing runner without receiving signing secrets
         shell: pwsh
         env:
           WINDOWS_READY: ${{ vars.DESKTOP_WINDOWS_SIGNING_READY }}
-          MACOS_READY: ${{ vars.DESKTOP_MACOS_SIGNING_READY }}
-          LINUX_READY: ${{ vars.DESKTOP_LINUX_SIGNING_READY }}
         run: |
-          if ($env:WINDOWS_READY -ne 'true' -or $env:MACOS_READY -ne 'true' -or $env:LINUX_READY -ne 'true') {
-            throw 'All three dedicated signing runners must be provisioned; no unsigned fallback'
+          if ($env:WINDOWS_READY -ne 'true') {
+            throw 'The dedicated Windows signing runner must be provisioned; no unsigned fallback'
           }
 
   signed:
@@ -76,10 +74,6 @@ jobs:
         include:
           - os: windows
             runner: [self-hosted, Windows, X64, passshare-windows-signing]
-          - os: macos
-            runner: [self-hosted, macOS, ARM64, passshare-macos-signing]
-          - os: linux
-            runner: [self-hosted, Linux, X64, passshare-linux-signing]
     runs-on: ${{ matrix.runner }}
     env:
       CANDIDATE_SHA: ${{ inputs.source_sha }}
