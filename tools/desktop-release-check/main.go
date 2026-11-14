@@ -73,7 +73,15 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run(args []string) error {
+func run(args []string) (result error) {
+	defer func() {
+		if signingQuiescenceUnconfirmed {
+			result = errSigningProcessRecovery
+		}
+	}()
+	if signingQuiescenceUnconfirmed {
+		return errSigningProcessRecovery
+	}
 	if len(args) == 0 {
 		return fail("expected preflight, build, verify, owner-preflight, owner-build, owner-verify or sign-windows")
 	}
@@ -296,7 +304,9 @@ func commandWithin(timeout time.Duration, dir string, extra []string, program st
 	c.Stdout = &out
 	c.Stderr = io.Discard
 	c.WaitDelay = 5 * time.Second
-	if c.Run() != nil {
+	if err := runSigningCommand(ctx, c); errors.Is(err, errSigningProcessRecovery) {
+		return nil, errSigningProcessRecovery
+	} else if err != nil {
 		return nil, fail("native command failed")
 	}
 	return out.buffer.Bytes(), nil
@@ -393,7 +403,9 @@ func buildCandidate(root string, src source, ownerLocal bool) error {
 	c.Stdout = io.Discard
 	c.Stderr = io.Discard
 	c.WaitDelay = 5 * time.Second
-	if c.Run() != nil {
+	if err := runSigningCommand(ctx, c); errors.Is(err, errSigningProcessRecovery) {
+		return errSigningProcessRecovery
+	} else if err != nil {
 		return fail("signed candidate build failed; child logs suppressed to protect secrets")
 	}
 	if runtime.GOOS == "darwin" {
@@ -427,7 +439,9 @@ func signUpdater(root, program, path, version string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	c := updaterSigningCommand(ctx, root, program, path, version)
-	if c.Run() != nil {
+	if err := runSigningCommand(ctx, c); errors.Is(err, errSigningProcessRecovery) {
+		return errSigningProcessRecovery
+	} else if err != nil {
 		return fail("updater signing failed; child logs suppressed to protect secrets")
 	}
 	if _, err := updaterCheckForVersion(path, trustedKey, version); err != nil {
