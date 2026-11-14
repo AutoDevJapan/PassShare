@@ -1,4 +1,4 @@
-//go:build windows && !signingprocessred
+//go:build windows
 
 package main
 
@@ -13,9 +13,13 @@ import (
 var errSigningProcessRecovery = errors.New("signing process recovery unconfirmed")
 var signingQuiescenceUnconfirmed bool
 
+func runSigningCommand(ctx context.Context, cmd *exec.Cmd) error {
+	return runOwnedSigningCommand(ctx, cmd)
+}
+
 // A signing command finishes only after its child scope and output readers
 // have stopped. Callers must preserve any affected outputs if recovery fails.
-func runSigningCommand(ctx context.Context, cmd *exec.Cmd) error {
+func runOwnedSigningCommand(ctx context.Context, cmd *exec.Cmd) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

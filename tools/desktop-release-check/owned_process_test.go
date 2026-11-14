@@ -53,7 +53,11 @@ func TestSigningOwnedCommandCancelsAndReapsDescendant(t *testing.T) {
 	var output boundedBuffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	done := make(chan error, 1)
-	go func() { done <- runSigningCommand(ctx, cmd) }()
+	runner := runSigningCommand
+	if os.Getenv("PASSSHARE_SIGNING_LEGACY_CONTROL") == "1" {
+		runner = func(_ context.Context, old *exec.Cmd) error { return old.Run() }
+	}
+	go func() { done <- runner(ctx, cmd) }()
 	joined := false
 	defer func() {
 		cancel()
