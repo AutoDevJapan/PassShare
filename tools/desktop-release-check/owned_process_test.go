@@ -50,6 +50,8 @@ func TestSigningOwnedCommandCancelsAndReapsDescendant(t *testing.T) {
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSigningOwnedFixture$")
 	cmd.Env = append(os.Environ(), "PASSSHARE_SIGNING_FIXTURE=parent", "PASSSHARE_SIGNING_FIXTURE_READY="+ready)
 	cmd.WaitDelay = time.Second
+	var output boundedBuffer
+	cmd.Stdout, cmd.Stderr = &output, &output
 	done := make(chan error, 1)
 	go func() { done <- runSigningCommand(ctx, cmd) }()
 	joined := false

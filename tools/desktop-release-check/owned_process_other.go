@@ -3,16 +3,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os/exec"
 )
 
-// The existing non-Windows candidate path is unchanged. The Windows release
-// path below owns its process tree before any signing child can execute.
-type signingProcessTree struct{}
+var errSigningProcessRecovery = errors.New("signing process recovery unconfirmed")
+var signingQuiescenceUnconfirmed bool
 
-func prepareSigningTree(_ *exec.Cmd) (*signingProcessTree, error) {
-	return &signingProcessTree{}, nil
-}
-func (*signingProcessTree) started(_ *exec.Cmd) error { return nil }
-func (*signingProcessTree) stop() error              { return nil }
-func (*signingProcessTree) close()                   {}
+// The existing non-Windows candidate path is unchanged. Windows signs in an
+// owned job so cancellation cannot leave signing descendants behind.
+func runSigningCommand(_ context.Context, cmd *exec.Cmd) error { return cmd.Run() }

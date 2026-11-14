@@ -1,4 +1,4 @@
-//go:build !signingprocessred
+//go:build windows && !signingprocessred
 
 package main
 
