@@ -3,7 +3,8 @@
 PassShareはパスワードマネージャーです。Web版では、サイトごとのログイン情報をパスワードボックスに保存し、必要なときに検索できます。
 
 - [公式ドキュメント（GitHub Wiki）](https://github.com/AutoDevJapan/PassShare/wiki)
-- [Web版](https://pass-share.bm1314.net/) · [デスクトップとブラウザー拡張の配布ファイル](https://github.com/AutoDevJapan/PassShare/releases/latest) · [公開版で使える機能](https://github.com/AutoDevJapan/PassShare/wiki/%E3%83%87%E3%82%B9%E3%82%AF%E3%83%88%E3%83%83%E3%83%97%E3%81%A8%E3%83%96%E3%83%A9%E3%82%A6%E3%82%B6%E3%83%BC%E6%8B%A1%E5%BC%B5)
+- [Web版を開く](https://pass-share.bm1314.net/)
+- [デスクトップアプリとブラウザー拡張 v1.1.0 でできること](https://github.com/AutoDevJapan/PassShare/wiki/%E3%83%87%E3%82%B9%E3%82%AF%E3%83%88%E3%83%83%E3%83%97%E3%81%A8%E3%83%96%E3%83%A9%E3%82%A6%E3%82%B6%E3%83%BC%E6%8B%A1%E5%BC%B5) · [v1.1.0 の配布ファイル](https://github.com/AutoDevJapan/PassShare/releases/tag/v1.1.0)
 
 ## ライセンス
 
